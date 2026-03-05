@@ -8,11 +8,12 @@ Two ways to configure channels:
 - **Console** (recommended) — In the [Console](./console) under **Control → Channels**, click a channel card, enable it and fill in credentials in the drawer. Changes take effect when you save.
 - **Edit `config.json` directly** — Default `~/.copaw/config.json` (created by `copaw init`), set `enabled: true` and fill in that platform's credentials. Saving triggers a reload without restarting the app.
 
-All channels share two fields:
+All channels have common fields below:
 
 - **enabled** — Turn the channel on or off.
 - **bot_prefix** — Prefix for bot replies (e.g. `[BOT]`) so they're easy to spot.
 - **filter_tool_messages** — (optional, default `false`) Filter tool call and output messages from being sent to users. Set to `true` to hide tool execution details.
+- **filter_thinking** — (optional, default `false`) Filter model thinking/reasoning content from being sent to users. Set to `true` to hide thinking blocks.
 
 Below is how to get credentials and fill config for each channel.
 
