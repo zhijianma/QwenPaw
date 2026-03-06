@@ -114,28 +114,28 @@ export function QuickStart({ config, lang, delay = 0 }: QuickStartProps) {
                 tab === "pip"
                   ? t(lang, "quickstart.tabPip")
                   : tab === "unix"
-                  ? t(lang, "quickstart.tabUnix")
-                  : tab === "windows"
-                  ? t(lang, "quickstart.tabWindows")
-                  : tab === "docker"
-                  ? t(lang, "quickstart.tabDocker")
-                  : t(lang, "quickstart.tabAliyun");
+                    ? t(lang, "quickstart.tabUnix")
+                    : tab === "windows"
+                      ? t(lang, "quickstart.tabWindows")
+                      : tab === "docker"
+                        ? t(lang, "quickstart.tabDocker")
+                        : t(lang, "quickstart.tabAliyun");
               const shortLabel =
                 tab === "pip"
                   ? t(lang, "quickstart.tabPipShort")
                   : tab === "unix"
-                  ? t(lang, "quickstart.tabUnixShort")
-                  : tab === "windows"
-                  ? t(lang, "quickstart.tabWindowsShort")
-                  : tab === "docker"
-                  ? t(lang, "quickstart.tabDockerShort")
-                  : t(lang, "quickstart.tabAliyunShort");
+                    ? t(lang, "quickstart.tabUnixShort")
+                    : tab === "windows"
+                      ? t(lang, "quickstart.tabWindowsShort")
+                      : tab === "docker"
+                        ? t(lang, "quickstart.tabDockerShort")
+                        : t(lang, "quickstart.tabAliyunShort");
               const BadgeIcon =
                 tab === "pip"
                   ? Star
                   : tab === "unix" || tab === "windows"
-                  ? TriangleAlert
-                  : null;
+                    ? TriangleAlert
+                    : null;
               return (
                 <button
                   key={tab}
@@ -210,10 +210,10 @@ export function QuickStart({ config, lang, delay = 0 }: QuickStartProps) {
                 {isAliyun
                   ? t(lang, "quickstart.optionAliyun")
                   : isDocker
-                  ? t(lang, "quickstart.optionDocker")
-                  : activeTab === "pip"
-                  ? t(lang, "quickstart.optionPip")
-                  : t(lang, "quickstart.optionLocal")}
+                    ? t(lang, "quickstart.optionDocker")
+                    : activeTab === "pip"
+                      ? t(lang, "quickstart.optionPip")
+                      : t(lang, "quickstart.optionLocal")}
               </span>
             </div>
             {!isAliyun && (
