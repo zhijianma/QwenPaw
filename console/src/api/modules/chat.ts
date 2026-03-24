@@ -17,6 +17,11 @@ export interface ChatUploadResponse {
 
 const CONSOLE_FILES_PREFIX = "/console/files";
 
+/** API URL → blob: URL cache (page-session lifetime). */
+const _blobUrlCache = new Map<string, string>();
+/** blob: URL → stored filename (e.g. "abc123_photo.png") reverse lookup. */
+const _blobToStoredName = new Map<string, string>();
+
 function getSelectedAgentId(): string {
   try {
     const agentStorage = localStorage.getItem("copaw-agent-storage");
@@ -63,6 +68,34 @@ export const chatApi = {
       "",
     )}`;
     return getApiUrl(path);
+  },
+
+  /** Fetch a file URL with auth headers and return a cached blob: URL. Falls back to plain URL on error. */
+  fileBlobUrl: async (filename: string): Promise<string> => {
+    const apiUrl = chatApi.fileUrl(filename);
+    if (!apiUrl) return "";
+    const cached = _blobUrlCache.get(apiUrl);
+    if (cached) return cached;
+    try {
+      const res = await fetch(apiUrl, { headers: buildAuthHeaders() });
+      if (!res.ok) return apiUrl;
+      const blobUrl = URL.createObjectURL(await res.blob());
+      _blobUrlCache.set(apiUrl, blobUrl);
+      // Extract stored filename from the API path for reverse lookup.
+      const storedName =
+        apiUrl.match(/\/console\/files\/[^/]+\/(.+)$/)?.[1] ?? filename;
+      _blobToStoredName.set(blobUrl, storedName);
+      return blobUrl;
+    } catch {
+      return apiUrl;
+    }
+  },
+
+  /** Resolve a blob: URL or API URL back to the stored filename sent to the backend. */
+  storedNameFromUrl: (url: string): string => {
+    if (url.startsWith("blob:")) return _blobToStoredName.get(url) ?? url;
+    const m = url.match(/\/console\/files\/[^/]+\/(.+)$/);
+    return m ? m[1] : url;
   },
   listChats: (params?: { user_id?: string; channel?: string }) => {
     const searchParams = new URLSearchParams();

@@ -450,13 +450,8 @@ export default function ChatPage() {
                 ...lastMsg,
                 content: lastMsg.content.map((part: any) => {
                   const p = { ...part };
-                  const toStoredName = (v: string) => {
-                    const m1 = v.match(/\/console\/files\/[^/]+\/(.+)$/);
-                    if (m1) return m1[1];
-                    const m2 = v.match(/^[^/]+\/(.+)$/);
-                    if (m2) return m2[1];
-                    return v;
-                  };
+                  const toStoredName = (v: string) =>
+                    chatApi.storedNameFromUrl(v);
                   if (p.type === "image" && typeof p.image_url === "string")
                     p.image_url = toStoredName(p.image_url);
                   if (p.type === "file" && typeof p.file_url === "string")
@@ -596,7 +591,7 @@ export default function ChatPage() {
               options.onProgress?.({ percent: 0 });
               const res = await chatApi.uploadFile(options.file);
               options.onProgress?.({ percent: 100 });
-              options.onSuccess({ url: chatApi.fileUrl(res.url) });
+              options.onSuccess({ url: await chatApi.fileBlobUrl(res.url) });
             } catch (e) {
               options.onError?.(e instanceof Error ? e : new Error(String(e)));
             }

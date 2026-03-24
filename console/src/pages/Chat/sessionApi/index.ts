@@ -78,11 +78,15 @@ function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
 
-/** Turn a backend content URL (path or full URL) into a full URL for display. */
-function toDisplayUrl(url: string | undefined): string {
+// ---------------------------------------------------------------------------
+// Authenticated blob URL fetching
+// ---------------------------------------------------------------------------
+
+/** Resolve backend path to API URL then fetch as blob: URL. External http(s) URLs pass through. */
+async function toAuthBlobUrl(url: string | undefined): Promise<string> {
   if (!url) return "";
   if (url.startsWith("http://") || url.startsWith("https://")) return url;
-  return chatApi.fileUrl(url.startsWith("/") ? url : `/${url}`);
+  return chatApi.fileBlobUrl(url.startsWith("/") ? url : `/${url}`);
 }
 
 /** Extract plain text from a message's content array. */
@@ -97,9 +101,9 @@ const extractTextFromContent = (content: unknown): string => {
 };
 
 /** Map backend message content to request card content (text + image + file). */
-function contentToRequestParts(
+async function contentToRequestParts(
   content: unknown,
-): Array<Record<string, unknown>> {
+): Promise<Array<Record<string, unknown>>> {
   if (typeof content === "string") {
     return [{ type: "text", text: content, status: "created" }];
   }
@@ -113,25 +117,27 @@ function contentToRequestParts(
     } else if (c.type === "image" && c.image_url) {
       parts.push({
         type: "image",
-        image_url: toDisplayUrl(c.image_url as string),
+        image_url: await toAuthBlobUrl(c.image_url as string),
         status: "created",
       });
     } else if (c.type === "audio" && c.data) {
       parts.push({
         type: "audio",
-        data: toDisplayUrl(c.data as string),
+        data: await toAuthBlobUrl(c.data as string),
         status: "created",
       });
     } else if (c.type === "video" && c.video_url) {
       parts.push({
         type: "video",
-        video_url: toDisplayUrl(c.video_url as string),
+        video_url: await toAuthBlobUrl(c.video_url as string),
         status: "created",
       });
     } else if (c.type === "file" && (c.file_url || c.file_id)) {
       parts.push({
         type: "file",
-        file_url: toDisplayUrl((c.file_url as string) || (c.file_id as string)),
+        file_url: await toAuthBlobUrl(
+          (c.file_url as string) || (c.file_id as string),
+        ),
         file_name: (c.filename as string) || (c.file_name as string) || "file",
         status: "created",
       });
@@ -157,8 +163,10 @@ const toOutputMessage = (msg: Message): OutputMessage => ({
 });
 
 /** Build a user card (AgentScopeRuntimeRequestCard) from a user message. */
-function buildUserCard(msg: Message): IAgentScopeRuntimeWebUIMessage {
-  const contentParts = contentToRequestParts(msg.content);
+async function buildUserCard(
+  msg: Message,
+): Promise<IAgentScopeRuntimeWebUIMessage> {
+  const contentParts = await contentToRequestParts(msg.content);
   return {
     id: (msg.id as string) || generateId(),
     role: "user",
@@ -222,15 +230,15 @@ const buildResponseCard = (
  * - Consecutive non-user messages (assistant / system / tool) → grouped
  *   into a single AgentScopeRuntimeResponseCard with all output messages.
  */
-const convertMessages = (
+const convertMessages = async (
   messages: Message[],
-): IAgentScopeRuntimeWebUIMessage[] => {
+): Promise<IAgentScopeRuntimeWebUIMessage[]> => {
   const result: IAgentScopeRuntimeWebUIMessage[] = [];
   let i = 0;
 
   while (i < messages.length) {
     if (messages[i].role === ROLE_USER) {
-      result.push(buildUserCard(messages[i++]));
+      result.push(await buildUserCard(messages[i++]));
     } else {
       const outputMsgs: OutputMessage[] = [];
       while (i < messages.length && messages[i].role !== ROLE_USER) {
@@ -376,11 +384,11 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
    *
    * When not generating the conversation is done — clear the cached entry.
    */
-  private patchLastUserMessage(
+  private async patchLastUserMessage(
     messages: IAgentScopeRuntimeWebUIMessage[],
     generating: boolean,
     backendSessionId: string,
-  ): void {
+  ): Promise<void> {
     if (!generating) {
       clearPendingUserMessage(backendSessionId);
       return;
@@ -395,14 +403,16 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
         lastMsg?.cards?.[0]?.data?.input?.[0]?.content,
       );
       if (!text) {
-        lastMsg.cards = buildUserCard({
-          content: [{ type: "text", text: cachedText }],
-          role: ROLE_USER,
-        } as Message).cards;
+        lastMsg.cards = (
+          await buildUserCard({
+            content: [{ type: "text", text: cachedText }],
+            role: ROLE_USER,
+          } as Message)
+        ).cards;
       }
     } else {
       messages.push(
-        buildUserCard({
+        await buildUserCard({
           content: [{ type: "text", text: cachedText }],
           role: ROLE_USER,
         } as Message),
@@ -509,8 +519,8 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
       if (fromList?.realId) {
         const chatHistory = await api.getChat(fromList.realId);
         const generating = isGenerating(chatHistory);
-        const messages = convertMessages(chatHistory.messages || []);
-        this.patchLastUserMessage(messages, generating, fromList.realId);
+        const messages = await convertMessages(chatHistory.messages || []);
+        await this.patchLastUserMessage(messages, generating, fromList.realId);
         const session: ExtendedSession = {
           id: sessionId,
           name: fromList.name || DEFAULT_SESSION_NAME,
@@ -548,8 +558,8 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
       if (refreshed?.realId) {
         const chatHistory = await api.getChat(refreshed.realId);
         const generating = isGenerating(chatHistory);
-        const messages = convertMessages(chatHistory.messages || []);
-        this.patchLastUserMessage(messages, generating, refreshed.realId);
+        const messages = await convertMessages(chatHistory.messages || []);
+        await this.patchLastUserMessage(messages, generating, refreshed.realId);
         const session: ExtendedSession = {
           id: sessionId,
           name: refreshed.name || DEFAULT_SESSION_NAME,
@@ -580,8 +590,8 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
 
     const chatHistory = await api.getChat(sessionId);
     const generating = isGenerating(chatHistory);
-    const messages = convertMessages(chatHistory.messages || []);
-    this.patchLastUserMessage(messages, generating, sessionId);
+    const messages = await convertMessages(chatHistory.messages || []);
+    await this.patchLastUserMessage(messages, generating, sessionId);
     const session: ExtendedSession = {
       id: sessionId,
       name: fromList?.name || sessionId,
