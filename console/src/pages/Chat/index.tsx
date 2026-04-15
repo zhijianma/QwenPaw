@@ -20,6 +20,7 @@ import type { ProviderInfo, ModelInfo } from "../../api/types";
 import ModelSelector from "./ModelSelector";
 import { useTheme } from "../../contexts/ThemeContext";
 import { useAgentStore } from "../../stores/agentStore";
+import { usePlugins } from "../../plugins/PluginContext";
 import { useChatAnywhereInput } from "@agentscope-ai/chat";
 import styles from "./index.module.less";
 import { IconButton } from "@agentscope-ai/design";
@@ -402,6 +403,7 @@ export default function ChatPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { isDark } = useTheme();
+  const { messageTypes: pluginMessageTypes } = usePlugins();
   const chatId = useMemo(() => {
     const match = location.pathname.match(/^\/chat\/(.+)$/);
     return match?.[1];
@@ -598,11 +600,11 @@ export default function ChatPage() {
       const rewrittenInput =
         lastMsg?.content && Array.isArray(lastMsg.content)
           ? [
-              {
-                ...lastMsg,
-                content: lastMsg.content.map(normalizeContentUrls),
-              },
-            ]
+            {
+              ...lastMsg,
+              content: lastMsg.content.map(normalizeContentUrls),
+            },
+          ]
           : lastInput;
 
       const requestBody = {
@@ -717,6 +719,8 @@ export default function ChatPage() {
 
     return {
       ...i18nConfig,
+      // Merge plugin-registered custom message renderers
+      customToolRenderConfig: pluginMessageTypes,
       theme: {
         ...defaultConfig.theme,
         darkMode: isDark,
@@ -824,7 +828,7 @@ export default function ChatPage() {
         replace: true,
       },
     } as unknown as IAgentScopeRuntimeWebUIOptions;
-  }, [customFetch, copyResponse, handleFileUpload, t, isDark, multimodalCaps]);
+  }, [customFetch, copyResponse, handleFileUpload, t, isDark, multimodalCaps, pluginMessageTypes]);
 
   return (
     <div

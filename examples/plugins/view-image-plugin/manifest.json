@@ -1,0 +1,10 @@
+{
+  "name": "view-image-plugin",
+  "version": "1.0.0",
+  "description": "Renders view_image tool calls with a JSON inspector",
+  "author": "QwenPaw",
+  "type": "backend",
+  "entry": {
+    "frontend": "dist/index.umd.js"
+  }
+}

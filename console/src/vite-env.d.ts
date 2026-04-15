@@ -20,6 +20,11 @@ declare global {
     pywebview?: {
       api: PyWebViewAPI;
     };
+    /** Plugin registration hook – called by plugin JS bundles */
+    __registerPlugin?: (
+      manifest: import("./plugins/types").PluginManifest,
+      config: import("./plugins/types").PluginConfig,
+    ) => void;
   }
 }
 

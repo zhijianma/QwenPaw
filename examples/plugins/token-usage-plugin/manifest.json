@@ -1,0 +1,9 @@
+{
+  "name": "token-usage-plugin",
+  "version": "1.0.0",
+  "description": "Token Usage dashboard page – shows daily trend chart and per-model breakdown",
+  "author": "QwenPaw",
+  "entry": {
+    "frontend": "dist/index.umd.js"
+  }
+}

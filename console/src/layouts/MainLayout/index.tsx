@@ -7,6 +7,7 @@ import Header from "../Header";
 import ConsoleCronBubble from "../../components/ConsoleCronBubble";
 import { ChunkErrorBoundary } from "../../components/ChunkErrorBoundary";
 import { lazyWithRetry } from "../../utils/lazyWithRetry";
+import { usePlugins } from "../../plugins/PluginContext";
 import styles from "../index.module.less";
 
 // Chat is eagerly loaded (default landing page)
@@ -77,6 +78,7 @@ export default function MainLayout() {
   const location = useLocation();
   const currentPath = location.pathname;
   const selectedKey = pathToKey[currentPath] || "chat";
+  const { routes: pluginRoutes } = usePlugins();
 
   return (
     <Layout className={styles.mainLayout}>
@@ -117,6 +119,15 @@ export default function MainLayout() {
                     path="/voice-transcription"
                     element={<VoiceTranscriptionPage />}
                   />
+
+                  {/* Plugin routes – dynamically injected at runtime */}
+                  {pluginRoutes.map((route) => (
+                    <Route
+                      key={route.path}
+                      path={route.path}
+                      element={<route.component />}
+                    />
+                  ))}
                 </Routes>
               </Suspense>
             </ChunkErrorBoundary>
