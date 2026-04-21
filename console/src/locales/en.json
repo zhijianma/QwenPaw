@@ -712,12 +712,22 @@
     "completionTokens": "Completion Tokens",
     "byModel": "By Model",
     "byDate": "By Date",
+    "byAgent": "By Agent",
+    "bySession": "By Session",
     "provider": "Provider",
     "model": "Model",
     "date": "Date",
+    "agentId": "Agent",
+    "sessionId": "Session",
+    "lastUpdated": "Last Updated",
+    "tabOverview": "Overview",
+    "tabAgents": "Agents",
+    "tabSessions": "Sessions",
     "refresh": "Refresh",
     "loadFailed": "Failed to load token usage",
-    "noData": "No token usage data in the selected period"
+    "noData": "No token usage data in the selected period",
+    "noAgentData": "No agent token usage data",
+    "noSessionData": "No session token usage data"
   },
   "models": {
     "llmConfiguration": "LLM Configuration",

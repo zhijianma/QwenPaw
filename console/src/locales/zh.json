@@ -681,12 +681,22 @@
     "completionTokens": "输出 Token",
     "byModel": "按模型",
     "byDate": "按日期",
+    "byAgent": "按智能体",
+    "bySession": "按对话",
     "provider": "提供商",
     "model": "模型",
     "date": "日期",
+    "agentId": "智能体",
+    "sessionId": "对话",
+    "lastUpdated": "最后更新",
+    "tabOverview": "总览",
+    "tabAgents": "智能体",
+    "tabSessions": "对话",
     "refresh": "刷新",
     "loadFailed": "加载 Token 消耗数据失败",
-    "noData": "所选时间段内暂无 Token 消耗数据"
+    "noData": "所选时间段内暂无 Token 消耗数据",
+    "noAgentData": "暂无智能体 Token 消耗数据",
+    "noSessionData": "暂无对话 Token 消耗数据"
   },
   "modelSelector": {
     "selectModel": "选择模型",

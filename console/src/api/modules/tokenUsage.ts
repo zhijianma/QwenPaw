@@ -1,5 +1,9 @@
 import { request } from "../request";
-import type { TokenUsageSummary } from "../types/tokenUsage";
+import type {
+  TokenUsageAgentStats,
+  TokenUsageSessionStats,
+  TokenUsageSummary,
+} from "../types/tokenUsage";
 
 export interface GetTokenUsageParams {
   start_date: string;
@@ -17,4 +21,13 @@ function buildQuery(params: GetTokenUsageParams): string {
 export const tokenUsageApi = {
   getTokenUsage: (params: GetTokenUsageParams) =>
     request<TokenUsageSummary>(`/token-usage${buildQuery(params)}`),
+
+  getSessionTokenUsage: (sessionId: string) =>
+    request<TokenUsageSessionStats>(`/token-usage/sessions/${encodeURIComponent(sessionId)}`),
+
+  getAllAgentsTokenUsage: () =>
+    request<Record<string, TokenUsageAgentStats>>("/token-usage/agents"),
+
+  getAgentTokenUsage: (agentId: string) =>
+    request<TokenUsageAgentStats>(`/token-usage/agents/${encodeURIComponent(agentId)}`),
 };

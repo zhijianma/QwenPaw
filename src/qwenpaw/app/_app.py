@@ -260,6 +260,11 @@ async def lifespan(  # pylint: disable=too-many-statements,too-many-branches
     provider_manager = ProviderManager.get_instance()
     local_model_manager = LocalModelManager.get_instance()
 
+    # Start token usage manager background flush task
+    from ..token_usage import get_token_usage_manager as _get_tum
+
+    _get_tum().start()
+
     # Expose to endpoints (must be set before first request arrives)
     app.state.multi_agent_manager = multi_agent_manager
     app.state.provider_manager = provider_manager
@@ -482,6 +487,15 @@ async def lifespan(  # pylint: disable=too-many-statements,too-many-branches
                         f"from plugin '{hook.plugin_id}': {e}",
                         exc_info=True,
                     )
+
+        # Flush and stop token usage buffer
+        logger.info("Stopping token usage manager...")
+        try:
+            from ..token_usage import get_token_usage_manager as _get_tum
+
+            await _get_tum().stop()
+        except Exception as _tum_exc:
+            logger.error("Error stopping token usage manager: %s", _tum_exc)
 
         local_model_mgr = getattr(app.state, "local_model_manager", None)
         if local_model_mgr is not None:
