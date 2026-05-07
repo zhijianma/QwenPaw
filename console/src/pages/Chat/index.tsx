@@ -31,6 +31,7 @@ import { ApprovalCard } from "../../components/ApprovalCard/ApprovalCard";
 import { commandsApi } from "../../api/modules/commands";
 import { useApprovalContext } from "../../contexts/ApprovalContext";
 import { planApi } from "../../api/modules/plan";
+import { Files } from "../../components/CustomCards";
 
 interface ApprovalMessageData {
   requestId: string;
@@ -1113,6 +1114,9 @@ export default function ChatPage() {
       },
       customToolRenderConfig:
         Object.keys(toolRenderConfig).length > 0 ? toolRenderConfig : undefined,
+      cards: {
+        Files: Files,
+      },
       actions: {
         list: [
           {
