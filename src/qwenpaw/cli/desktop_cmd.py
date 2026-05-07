@@ -232,7 +232,9 @@ def desktop_cmd(
                 logger.info(
                     "Calling webview.start() (blocks until closed)...",
                 )
+                # Enable debug mode to allow Safari Web Inspector
                 webview.start(
+                    debug=True,  # Enable debugging
                     private_mode=False,
                 )  # blocks until user closes the window
                 logger.info("webview.start() returned (window closed).")
