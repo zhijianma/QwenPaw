@@ -206,7 +206,7 @@ export function ChannelDrawer({
     channel: "feishu",
     successStatus: "success",
     successCredentialKey: "app_id",
-    pollInterval: 3000,
+    pollInterval: 2000,
     onSuccess: useCallback(
       (credentials: Record<string, string>) => {
         form.setFieldsValue({

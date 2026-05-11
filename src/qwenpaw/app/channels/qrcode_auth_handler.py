@@ -394,9 +394,7 @@ class DingtalkQRCodeAuthHandler(QRCodeAuthHandler):
 
 _FEISHU_ACCOUNTS_DOMAIN = "https://accounts.feishu.cn"
 _LARK_ACCOUNTS_DOMAIN = "https://accounts.larksuite.com"
-
-# Global cache for ongoing registration sessions
-_FEISHU_REGISTRATION_SESSIONS: Dict[str, Dict[str, Any]] = {}
+_FEISHU_REGISTER_ENDPOINT = "/oauth/v1/app/registration"
 
 
 class FeishuQRCodeAuthHandler(QRCodeAuthHandler):
@@ -405,12 +403,10 @@ class FeishuQRCodeAuthHandler(QRCodeAuthHandler):
     Uses the OAuth 2.0 Device Authorization Grant (RFC 8628) protocol
     to enable one-click app creation by scanning a QR code.
 
-    Flow:
-    1. Call lark_oapi.aregister_app() to get QR code URL
-    2. User scans QR code in Feishu/Lark mobile app
-    3. Poll for completion to get app_id and app_secret
-
-    Note: This requires lark-oapi >= 1.5.5
+    Flow (stateless, similar to DingTalk):
+    1. POST action=init   → get supported auth methods
+    2. POST action=begin  → device_code + verification_uri_complete
+    3. POST action=poll   → client_id + client_secret on SUCCESS
     """
 
     async def _get_domain(self, request: Request) -> str:
@@ -438,219 +434,146 @@ class FeishuQRCodeAuthHandler(QRCodeAuthHandler):
         )
 
     async def fetch_qrcode(self, request: Request) -> QRCodeResult:
-        """Initiate device authorization flow and return QR code URL."""
-        import asyncio
-        import secrets
-
-        # Check if lark-oapi is installed
-        try:
-            import lark_oapi as lark
-        except ImportError as exc:
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    "lark-oapi SDK not installed. "
-                    "Please install it: pip install lark-oapi>=1.5.5"
-                ),
-            ) from exc
+        """Initiate device authorization flow and return QR code."""
+        import httpx
+        from urllib.parse import urlencode
 
         domain = await self._get_domain(request)
-        accounts_domain = self._get_accounts_domain(domain)
-        lark_domain = self._get_accounts_domain(
-            "lark" if domain == "feishu" else "feishu",
-        )
+        base_url = self._get_accounts_domain(domain)
+        endpoint = base_url + _FEISHU_REGISTER_ENDPOINT
 
-        # Generate a unique session ID for this registration attempt
-        session_id = secrets.token_urlsafe(32)
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                # Step 1: init - get supported auth methods
+                init_resp = await client.post(
+                    endpoint,
+                    content=urlencode({"action": "init"}),
+                    headers={
+                        "Content-Type": "application/x-www-form-urlencoded",
+                    },
+                )
+                init_resp.raise_for_status()
+                init_data = init_resp.json()
 
-        # Shared state between coroutine and callbacks
-        qrcode_info = {}
-        registration_result = {}
-        registration_error = None
+                methods = init_data.get("supported_auth_methods", [])
+                if "client_secret" not in methods:
+                    raise HTTPException(
+                        status_code=502,
+                        detail="Feishu: unsupported auth methods",
+                    )
 
-        def on_qr_code_ready(info):
-            """Callback when QR code URL is ready."""
-            qrcode_info["url"] = info["url"]
-            qrcode_info["expire_in"] = info.get("expire_in", 300)
+                # Step 2: begin - get device_code and QR URL
+                begin_resp = await client.post(
+                    endpoint,
+                    content=urlencode(
+                        {
+                            "action": "begin",
+                            "archetype": "PersonalAgent",
+                            "auth_method": "client_secret",
+                            "request_user_info": "open_id",
+                        },
+                    ),
+                    headers={
+                        "Content-Type": "application/x-www-form-urlencoded",
+                    },
+                )
+                begin_resp.raise_for_status()
+                begin_data = begin_resp.json()
 
-        def on_status_change(info):
-            """Callback for status changes during polling."""
-            # We can log this for debugging
-            status = info.get("status", "unknown")
-            if status == "slow_down":
-                # SDK is slowing down polling
-                pass
-
-        async def register_app_task():
-            """Background task to complete the registration."""
-            nonlocal registration_result, registration_error
-            try:
-                result = await lark.aregister_app(
-                    on_qr_code=on_qr_code_ready,
-                    on_status_change=on_status_change,
-                    source=PROJECT_NAME,
-                    domain=accounts_domain,
-                    lark_domain=lark_domain,
+                device_code = begin_data.get("device_code", "")
+                verification_uri = begin_data.get(
+                    "verification_uri_complete",
+                    "",
                 )
 
-                # Update the shared dictionary
-                registration_result.update(result)
+                if not device_code or not verification_uri:
+                    raise HTTPException(
+                        status_code=502,
+                        detail="Feishu: missing device_code or QR URL",
+                    )
 
-                # Also update the session dict directly
-                if session_id in _FEISHU_REGISTRATION_SESSIONS:
-                    _FEISHU_REGISTRATION_SESSIONS[session_id][
-                        "result"
-                    ] = result
+                # Build the final QR code URL with source parameter
+                if "?" in verification_uri:
+                    scan_url = f"{verification_uri}&source={PROJECT_NAME}"
+                else:
+                    scan_url = f"{verification_uri}?source={PROJECT_NAME}"
 
-            except Exception as e:
-                registration_error = e
-                import logging
-
-                logging.error(
-                    f"Feishu register_app failed: {e}",
-                    exc_info=True,
+                return QRCodeResult(
+                    scan_url=scan_url,
+                    poll_token=device_code,
                 )
 
-        # Start the background task
-        task = asyncio.create_task(register_app_task())
-
-        # Wait briefly for the QR code URL to be ready
-        # (the SDK calls on_qr_code very quickly)
-        max_wait_seconds = 10
-        wait_iterations = max_wait_seconds * 10  # 0.1s per iteration
-        for _ in range(wait_iterations):
-            if "url" in qrcode_info:
-                break
-            # Check if task failed early
-            if registration_error is not None:
-                task.cancel()
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"Feishu registration failed: {registration_error}",
-                )
-            await asyncio.sleep(0.1)
-
-        if "url" not in qrcode_info:
-            task.cancel()
-            # Provide more detailed error message
-            error_detail = "Feishu QR code URL not ready in time"
-            if registration_error:
-                error_detail += f": {registration_error}"
+        except HTTPException:
+            raise
+        except Exception as exc:
             raise HTTPException(
                 status_code=502,
-                detail=error_detail,
+                detail=f"Feishu QR code fetch failed: {exc}",
+            ) from exc
+
+    async def poll_status(self, token: str, request: Request) -> PollResult:
+        """Poll authorization status using device_code."""
+        import httpx
+        from urllib.parse import urlencode
+
+        domain = await self._get_domain(request)
+        base_url = self._get_accounts_domain(domain)
+        endpoint = base_url + _FEISHU_REGISTER_ENDPOINT
+
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(
+                    endpoint,
+                    content=urlencode(
+                        {
+                            "action": "poll",
+                            "device_code": token,
+                        },
+                    ),
+                    headers={
+                        "Content-Type": "application/x-www-form-urlencoded",
+                    },
+                )
+                data = resp.json()
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Feishu status check failed: {exc}",
+            ) from exc
+
+        # Check for success
+        if data.get("client_id") and data.get("client_secret"):
+            user_info = data.get("user_info", {})
+            return PollResult(
+                status="success",
+                credentials={
+                    "app_id": data["client_id"],
+                    "app_secret": data["client_secret"],
+                    "open_id": user_info.get("open_id", ""),
+                    "tenant_brand": user_info.get("tenant_brand", "feishu"),
+                },
             )
 
-        # Store the session for later polling
-        import time
-
-        _FEISHU_REGISTRATION_SESSIONS[session_id] = {
-            "qrcode_url": qrcode_info["url"],
-            "expire_in": qrcode_info.get("expire_in", 300),
-            "task": task,
-            "result": registration_result,
-            "error": None,
-            "created_at": time.time(),
-        }
-
-        return QRCodeResult(
-            scan_url=qrcode_info["url"],
-            poll_token=session_id,
-        )
-
-    # pylint: disable=too-many-return-statements
-    async def poll_status(self, token: str, request: Request) -> PollResult:
-        """Poll authorization status until user scans and confirms.
-
-        Args:
-            token: The session_id returned from fetch_qrcode
-            request: FastAPI request object
-
-        Returns:
-            PollResult with status and credentials
-        """
-        session = _FEISHU_REGISTRATION_SESSIONS.get(token)
-
-        if not session:
+        # Check for OAuth errors
+        error = data.get("error", "")
+        if error in ("expired_token", "invalid_grant"):
             return PollResult(
                 status="expired",
-                credentials={"fail_reason": "Session not found or expired"},
+                credentials={"fail_reason": "QR code expired"},
+            )
+        elif error == "access_denied":
+            return PollResult(
+                status="fail",
+                credentials={"fail_reason": "User denied authorization"},
+            )
+        elif error and error not in ("authorization_pending", "slow_down"):
+            return PollResult(
+                status="fail",
+                credentials={"fail_reason": error},
             )
 
-        task = session["task"]
-
-        # Check if task is done
-        if task.done():
-            try:
-                # Clean up session
-                _FEISHU_REGISTRATION_SESSIONS.pop(token, None)
-
-                # Check for errors first
-                if task.exception():
-                    exc = task.exception()
-                    error_msg = str(exc)
-
-                    # Check for specific error types
-                    if (
-                        "AppAccessDeniedError" in error_msg
-                        or "access_denied" in error_msg
-                    ):
-                        return PollResult(
-                            status="fail",
-                            credentials={
-                                "fail_reason": "User denied authorization",
-                            },
-                        )
-                    elif (
-                        "AppExpiredError" in error_msg
-                        or "expired_token" in error_msg
-                    ):
-                        return PollResult(
-                            status="expired",
-                            credentials={"fail_reason": "QR code expired"},
-                        )
-                    else:
-                        return PollResult(
-                            status="fail",
-                            credentials={"fail_reason": error_msg},
-                        )
-
-                result = session["result"]
-
-                if result and "client_id" in result:
-                    # Success!
-                    user_info = result.get("user_info", {})
-                    return PollResult(
-                        status="success",
-                        credentials={
-                            "app_id": result["client_id"],
-                            "app_secret": result["client_secret"],
-                            "open_id": user_info.get("open_id", ""),
-                            "tenant_brand": user_info.get(
-                                "tenant_brand",
-                                "feishu",
-                            ),
-                        },
-                    )
-                else:
-                    return PollResult(
-                        status="fail",
-                        credentials={"fail_reason": "No credentials returned"},
-                    )
-            except Exception as exc:
-                import logging
-
-                logging.error(
-                    f"Feishu poll_status error: {exc}",
-                    exc_info=True,
-                )
-                return PollResult(
-                    status="fail",
-                    credentials={"fail_reason": str(exc)},
-                )
-        else:
-            # Still waiting
-            return PollResult(status="waiting", credentials={})
+        # Default: waiting (authorization_pending, slow_down, or no error)
+        return PollResult(status="waiting", credentials={})
 
 
 # ---------------------------------------------------------------------------
