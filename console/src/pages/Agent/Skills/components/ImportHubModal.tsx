@@ -14,6 +14,7 @@ import {
 } from "@ant-design/icons";
 import { skillMarkets, type SkillMarket } from "./index";
 import styles from "./ImportHubModal.module.less";
+import { openExternalLink } from "../../../../utils/openExternalLink";
 
 interface ImportHubModalProps {
   open: boolean;
@@ -213,12 +214,15 @@ export function ImportHubModal({
           >
             <a
               href={market.homepage}
-              target="_blank"
-              rel="noopener noreferrer"
               className={styles.externalLink}
-              onClick={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                openExternalLink(market.homepage);
+              }}
               title={market.homepage}
               aria-label={`${market.name} homepage`}
+              style={{ cursor: "pointer" }}
             >
               <ExportOutlined />
             </a>

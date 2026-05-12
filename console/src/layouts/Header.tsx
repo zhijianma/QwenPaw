@@ -21,6 +21,7 @@ import { useState, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CopyOutlined, CheckOutlined, TagOutlined } from "@ant-design/icons";
+import { openExternalLink } from "../utils/openExternalLink";
 
 const { Header: AntHeader } = Layout;
 
@@ -140,12 +141,7 @@ export default function Header() {
 
   const handleNavClick = (url: string) => {
     if (url) {
-      const pywebview = (window as any).pywebview;
-      if (pywebview?.api) {
-        pywebview.api.open_external_link(url);
-      } else {
-        window.open(url, "_blank");
-      }
+      openExternalLink(url);
     }
   };
 

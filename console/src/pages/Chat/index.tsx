@@ -32,6 +32,7 @@ import { ApprovalCard } from "../../components/ApprovalCard/ApprovalCard";
 import { commandsApi } from "../../api/modules/commands";
 import { useApprovalContext } from "../../contexts/ApprovalContext";
 import { planApi } from "../../api/modules/plan";
+import { openExternalLink } from "../../utils/openExternalLink";
 
 interface ApprovalMessageData {
   requestId: string;
@@ -1045,6 +1046,14 @@ export default function ChatPage() {
         ...i18nConfig.welcome,
         nick: "QwenPaw",
         avatar: "/qwenpaw.png",
+      },
+      markdown: {
+        onLinkClick: (href: string, event: React.MouseEvent) => {
+          event.preventDefault();
+          if (href) {
+            openExternalLink(href);
+          }
+        },
       },
       sender: {
         ...(i18nConfig as any)?.sender,

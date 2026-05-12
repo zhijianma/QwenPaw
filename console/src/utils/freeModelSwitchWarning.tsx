@@ -1,5 +1,6 @@
 import { Checkbox, Modal } from "@agentscope-ai/design";
 import type { TFunction } from "i18next";
+import { openExternalLink } from "./openExternalLink";
 
 const FREE_MODEL_WARNING_DISABLED_KEY =
   "qwenpaw_free_model_switch_warning_disabled";
@@ -64,7 +65,14 @@ export async function confirmFreeModelSwitch({
         <div>
           <div>{t("models.freeModelWarningMessage")}</div>
           <div className="qwenpaw-free-model-warning-link-row">
-            <a href={providerWebsite} target="_blank" rel="noreferrer">
+            <a
+              href={providerWebsite}
+              onClick={(e) => {
+                e.preventDefault();
+                openExternalLink(providerWebsite);
+              }}
+              style={{ cursor: "pointer" }}
+            >
               {providerWebsite}
             </a>
           </div>

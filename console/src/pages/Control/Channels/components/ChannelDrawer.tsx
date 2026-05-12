@@ -16,6 +16,7 @@ import { getChannelLabel, type ChannelKey } from "./constants";
 import { QrcodeAuthBlock } from "./QrcodeAuthBlock";
 import styles from "../index.module.less";
 import { useAgentStore } from "../../../../stores/agentStore";
+import { openExternalLink } from "../../../../utils/openExternalLink";
 
 const CHANNELS_WITH_ACCESS_CONTROL: ChannelKey[] = [
   "telegram",
@@ -1157,7 +1158,7 @@ export function ChannelDrawer({
                 isQwenPawDoc && currentLang === "zh"
                   ? CHANNEL_DOC_ZH_URLS[activeKey]!
                   : CHANNEL_DOC_EN_URLS[activeKey]!;
-              window.open(finalUrl, "_blank");
+              openExternalLink(finalUrl);
             }}
             className={styles.dingtalkDocBtn}
             style={{ color: "#FF7F16" }}
@@ -1170,9 +1171,7 @@ export function ChannelDrawer({
           type="text"
           size="small"
           icon={<LinkOutlined />}
-          onClick={() =>
-            window.open(TWILIO_CONSOLE_URL, "_blank", "noopener,noreferrer")
-          }
+          onClick={() => openExternalLink(TWILIO_CONSOLE_URL)}
           className={styles.dingtalkDocBtn}
           style={{ color: "#FF7F16" }}
         >

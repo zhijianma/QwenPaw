@@ -15,6 +15,7 @@ import type { CronJobSpecOutput } from "../../../../api/types";
 import { DEFAULT_FORM_VALUES } from "./constants";
 import { useTimezoneOptions } from "../../../../hooks/useTimezoneOptions";
 import styles from "../index.module.less";
+import { openExternalLink } from "../../../../utils/openExternalLink";
 
 type CronJob = CronJobSpecOutput;
 
@@ -200,9 +201,12 @@ export function JobDrawer({
                         {t("cronJobs.cronHelper")}{" "}
                         <a
                           href="https://crontab.guru/"
-                          target="_blank"
-                          rel="noopener noreferrer"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            openExternalLink("https://crontab.guru/");
+                          }}
                           className={styles.formHelperLink}
+                          style={{ cursor: "pointer" }}
                         >
                           {t("cronJobs.cronHelperLink")} →
                         </a>
