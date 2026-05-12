@@ -171,7 +171,7 @@ class QwenPawAgent(ToolGuardMixin, ReActAgent):
         )
         # Initialize parent ReActAgent
         init_kwargs: dict[str, Any] = {
-            "name": "Friday",
+            "name": agent_config.name or "QwenPaw",
             "model": model,
             "sys_prompt": sys_prompt,
             "toolkit": toolkit,
@@ -242,13 +242,16 @@ class QwenPawAgent(ToolGuardMixin, ReActAgent):
                 enabled_tools = {
                     name: tool.enabled for name, tool in builtin_tools.items()
                 }
-                # Only execute_shell_command supports async_execution
+                # Only selected long-running tools support async_execution.
+                async_capable_tool_names = {
+                    "execute_shell_command",
+                    "delegate_external_agent",
+                }
                 async_execution_tools = {
-                    "execute_shell_command": builtin_tools.get(
-                        "execute_shell_command",
-                    ).async_execution
-                    if "execute_shell_command" in builtin_tools
-                    else False,
+                    name: builtin_tools.get(name).async_execution
+                    if name in builtin_tools
+                    else False
+                    for name in async_capable_tool_names
                 }
         except Exception as e:
             logger.warning(
