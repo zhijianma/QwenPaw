@@ -6,7 +6,17 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Modal, Result, Tooltip } from "antd";
 import { useAppMessage } from "../../hooks/useAppMessage";
-import { ExclamationCircleOutlined, SettingOutlined } from "@ant-design/icons";
+import {
+  ExclamationCircleOutlined,
+  SettingOutlined,
+  FileOutlined,
+  LinkOutlined,
+  FilePdfOutlined,
+  FileWordOutlined,
+  FileExcelOutlined,
+  FilePptOutlined,
+  FileTextOutlined,
+} from "@ant-design/icons";
 import { SparkCopyLine, SparkAttachmentLine } from "@agentscope-ai/icons";
 import { usePlugins } from "../../plugins/PluginContext";
 import { useTranslation } from "react-i18next";
@@ -684,6 +694,73 @@ export default function ChatPage() {
   const whisperSpeechRef = useRef<WhisperSpeechButtonRef>(null);
   const [whisperEnabled, setWhisperEnabled] = useState(false);
 
+  // Helper function to detect if a URL is a file/document link
+  const isFileLink = useCallback((url: string): boolean => {
+    if (!url) return false;
+
+    const lowerUrl = url.toLowerCase();
+
+    // Common document platforms
+    const docPlatforms = [
+      "feishu.cn",
+      "docs.google.com",
+      "drive.google.com",
+      "onedrive.live.com",
+      "sharepoint.com",
+      "dropbox.com",
+      "notion.so",
+      "airtable.com",
+      "quip.com",
+    ];
+
+    // File extensions
+    const fileExtensions = [
+      ".pdf",
+      ".doc",
+      ".docx",
+      ".xls",
+      ".xlsx",
+      ".ppt",
+      ".pptx",
+      ".txt",
+      ".md",
+      ".csv",
+      ".zip",
+      ".rar",
+      ".7z",
+    ];
+
+    return (
+      docPlatforms.some((platform) => lowerUrl.includes(platform)) ||
+      fileExtensions.some((ext) => lowerUrl.includes(ext))
+    );
+  }, []);
+
+  // Get file icon based on URL
+  const getFileIcon = useCallback((url: string) => {
+    const lowerUrl = url.toLowerCase();
+
+    if (lowerUrl.includes(".pdf")) return <FilePdfOutlined />;
+    if (lowerUrl.includes(".doc") || lowerUrl.includes(".docx"))
+      return <FileWordOutlined />;
+    if (lowerUrl.includes(".xls") || lowerUrl.includes(".xlsx"))
+      return <FileExcelOutlined />;
+    if (lowerUrl.includes(".ppt") || lowerUrl.includes(".pptx"))
+      return <FilePptOutlined />;
+    if (lowerUrl.includes(".txt") || lowerUrl.includes(".md"))
+      return <FileTextOutlined />;
+
+    // Document platforms
+    if (
+      lowerUrl.includes("feishu.cn") ||
+      lowerUrl.includes("docs.google.com")
+    ) {
+      return <FileTextOutlined />;
+    }
+
+    return <FileOutlined />;
+  }, []);
+
   // Check if Whisper transcription is configured
   useEffect(() => {
     agentApi
@@ -1054,6 +1131,98 @@ export default function ChatPage() {
             openExternalLink(href);
           }
         },
+        components: {
+          a: ({ href, children, ...props }: any) => {
+            if (!href) {
+              return <a {...props}>{children}</a>;
+            }
+
+            const isFile = isFileLink(href);
+
+            if (isFile) {
+              // Render file links as enhanced cards
+              const icon = getFileIcon(href);
+
+              return (
+                <span
+                  onClick={(e) => {
+                    e.preventDefault();
+                    openExternalLink(href);
+                  }}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    padding: "6px 12px",
+                    background: isDark
+                      ? "rgba(255, 255, 255, 0.08)"
+                      : "rgba(0, 0, 0, 0.04)",
+                    border: `1px solid ${
+                      isDark
+                        ? "rgba(255, 255, 255, 0.12)"
+                        : "rgba(0, 0, 0, 0.08)"
+                    }`,
+                    borderRadius: "6px",
+                    cursor: "pointer",
+                    transition: "all 0.2s",
+                    margin: "2px 0",
+                    fontSize: "14px",
+                    textDecoration: "none",
+                    color: isDark
+                      ? "rgba(255, 255, 255, 0.85)"
+                      : "rgba(0, 0, 0, 0.85)",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = isDark
+                      ? "rgba(255, 255, 255, 0.12)"
+                      : "rgba(0, 0, 0, 0.08)";
+                    e.currentTarget.style.borderColor = isDark
+                      ? "rgba(255, 255, 255, 0.2)"
+                      : "rgba(0, 0, 0, 0.15)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = isDark
+                      ? "rgba(255, 255, 255, 0.08)"
+                      : "rgba(0, 0, 0, 0.04)";
+                    e.currentTarget.style.borderColor = isDark
+                      ? "rgba(255, 255, 255, 0.12)"
+                      : "rgba(0, 0, 0, 0.08)";
+                  }}
+                  title={href}
+                >
+                  {icon}
+                  <span style={{ fontWeight: 500 }}>{children}</span>
+                  <LinkOutlined
+                    style={{
+                      fontSize: "12px",
+                      opacity: 0.6,
+                      marginLeft: "2px",
+                    }}
+                  />
+                </span>
+              );
+            }
+
+            // Regular links - simple style
+            return (
+              <a
+                {...props}
+                href={href}
+                onClick={(e) => {
+                  e.preventDefault();
+                  openExternalLink(href);
+                }}
+                style={{
+                  cursor: "pointer",
+                  color: isDark ? "#4096ff" : "#1890ff",
+                  textDecoration: "underline",
+                }}
+              >
+                {children}
+              </a>
+            );
+          },
+        },
       },
       sender: {
         ...(i18nConfig as any)?.sender,
@@ -1168,6 +1337,8 @@ export default function ChatPage() {
     toolRenderConfig,
     scheduleHistoryClear,
     planEnabled,
+    isFileLink,
+    getFileIcon,
   ]);
 
   return (
