@@ -214,17 +214,26 @@ export function ACPDrawer({
         </Form.Item>
 
         <div className={styles.formTopActions}>
-          <Button
-            type="text"
-            size="small"
-            icon={<LinkOutlined />}
-            onClick={() => openExternalLink(getACPDocsUrl(i18n.language))}
+          <a
+            href={getACPDocsUrl(i18n.language)}
+            onClick={(e) => {
+              e.preventDefault();
+              openExternalLink(getACPDocsUrl(i18n.language));
+            }}
             title={t("acp.docsHelp")}
             className={styles.dingtalkDocBtn}
-            style={{ color: "#FF7F16" }}
+            style={{
+              color: "#FF7F16",
+              cursor: "pointer",
+              textDecoration: "none",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "4px",
+            }}
           >
+            <LinkOutlined />
             {t("acp.docs")}
-          </Button>
+          </a>
         </div>
 
         <Form.Item

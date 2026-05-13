@@ -1142,41 +1142,60 @@ export function ChannelDrawer({
       </span>
       {activeKey &&
         CHANNEL_DOC_EN_URLS[activeKey] &&
-        CHANNEL_DOC_ZH_URLS[activeKey] && (
-          <Button
-            type="text"
-            size="small"
-            icon={<LinkOutlined />}
-            onClick={() => {
-              const url =
-                CHANNEL_DOC_EN_URLS[activeKey]! ||
-                CHANNEL_DOC_ZH_URLS[activeKey]!;
-              const isQwenPawDoc = url.includes(
-                "qwenpaw.agentscope.io/docs/channels/",
-              );
-              const finalUrl =
-                isQwenPawDoc && currentLang === "zh"
-                  ? CHANNEL_DOC_ZH_URLS[activeKey]!
-                  : CHANNEL_DOC_EN_URLS[activeKey]!;
-              openExternalLink(finalUrl);
-            }}
-            className={styles.dingtalkDocBtn}
-            style={{ color: "#FF7F16" }}
-          >
-            {label} Doc
-          </Button>
-        )}
+        CHANNEL_DOC_ZH_URLS[activeKey] &&
+        (() => {
+          const url =
+            CHANNEL_DOC_EN_URLS[activeKey]! || CHANNEL_DOC_ZH_URLS[activeKey]!;
+          const isQwenPawDoc = url.includes(
+            "qwenpaw.agentscope.io/docs/channels/",
+          );
+          const finalUrl =
+            isQwenPawDoc && currentLang === "zh"
+              ? CHANNEL_DOC_ZH_URLS[activeKey]!
+              : CHANNEL_DOC_EN_URLS[activeKey]!;
+
+          return (
+            <a
+              href={finalUrl}
+              onClick={(e) => {
+                e.preventDefault();
+                openExternalLink(finalUrl);
+              }}
+              className={styles.dingtalkDocBtn}
+              style={{
+                color: "#FF7F16",
+                cursor: "pointer",
+                textDecoration: "none",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "4px",
+              }}
+            >
+              <LinkOutlined />
+              {label} Doc
+            </a>
+          );
+        })()}
       {activeKey === "voice" && (
-        <Button
-          type="text"
-          size="small"
-          icon={<LinkOutlined />}
-          onClick={() => openExternalLink(TWILIO_CONSOLE_URL)}
+        <a
+          href={TWILIO_CONSOLE_URL}
+          onClick={(e) => {
+            e.preventDefault();
+            openExternalLink(TWILIO_CONSOLE_URL);
+          }}
           className={styles.dingtalkDocBtn}
-          style={{ color: "#FF7F16" }}
+          style={{
+            color: "#FF7F16",
+            cursor: "pointer",
+            textDecoration: "none",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "4px",
+          }}
         >
+          <LinkOutlined />
           {t("channels.voiceSetupLink")}
-        </Button>
+        </a>
       )}
     </div>
   );
