@@ -143,11 +143,13 @@ const ChatSessionDrawer: React.FC<ChatSessionDrawerProps> = (props) => {
 
   const { createSession } = useChatAnywhereSessions();
 
-  /** Create a new session and close the drawer */
+  /** Create a new session; close the drawer only when not pinned */
   const handleCreateSession = useCallback(async () => {
     await createSession();
-    props.onClose();
-  }, [createSession, props.onClose]);
+    if (!props.pinned) {
+      props.onClose();
+    }
+  }, [createSession, props.onClose, props.pinned]);
 
   /** ID of the session currently being renamed */
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
