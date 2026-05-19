@@ -301,6 +301,30 @@ OPENAI_MODELS: List[ModelInfo] = [
 
 OPENCODE_MODELS: List[ModelInfo] = [
     ModelInfo(
+        id="deepseek-v4-flash-free",
+        name="DeepSeek V4 Flash Free",
+        supports_image=False,
+        supports_video=False,
+        probe_source="documentation",
+        is_free=True,
+    ),
+    ModelInfo(
+        id="minimax-m2.5-free",
+        name="MiniMax M2.5 Free",
+        supports_image=False,
+        supports_video=False,
+        probe_source="documentation",
+        is_free=True,
+    ),
+    ModelInfo(
+        id="qwen3.6-plus-free",
+        name="Qwen3.6 Plus Free",
+        supports_image=True,
+        supports_video=True,
+        probe_source="documentation",
+        is_free=True,
+    ),
+    ModelInfo(
         id="big-pickle",
         name="Big Pickle",
         supports_image=False,
