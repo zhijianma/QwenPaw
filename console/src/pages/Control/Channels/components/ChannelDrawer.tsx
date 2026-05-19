@@ -121,6 +121,7 @@ export function ChannelDrawer({
   const { message } = useAppMessage();
   const matrixAuthMethod = Form.useWatch("auth_method", form);
   const isMatrixPasswordAuth = matrixAuthMethod === "password";
+  const feishuDomain = (Form.useWatch("domain", form) as string) || "feishu";
 
   // Parent calls form.setFieldsValue() before the Form mounts, which wins over
   // initialValues. Re-apply auth_method after open so the dropdown is correct.
@@ -477,6 +478,7 @@ export function ChannelDrawer({
               successStatus="success"
               successCredentialKey="app_id"
               pollInterval={2000}
+              params={{ domain: feishuDomain }}
               onSuccess={(credentials) => {
                 form.setFieldsValue({
                   app_id: credentials.app_id,
