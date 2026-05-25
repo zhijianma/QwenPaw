@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import { useChatStore } from "../stores/chatStore";
 import MessageItem from "./MessageItem";
 import styles from "./MessageList.module.less";
@@ -30,19 +30,37 @@ const MessageList: React.FC<MessageListProps> = ({
   const streamingMessageId = useChatStore((s) => s.streamingMessageId);
   const containerRef = useRef<HTMLDivElement>(null);
   const isUserScrollRef = useRef(false);
+  const prevSessionIdRef = useRef<string | null>(null);
 
-  // Auto-scroll to bottom on new messages
-  const scrollToBottom = useCallback(() => {
-    if (!autoScroll || isUserScrollRef.current) return;
-    const container = containerRef.current;
-    if (container) {
-      container.scrollTop = container.scrollHeight;
-    }
-  }, [autoScroll]);
+  const showWelcome = !activeSessionId || messages.length === 0;
 
+  // Reset user-scroll flag when switching sessions
   useEffect(() => {
-    scrollToBottom();
-  }, [messages.length, streamingMessageId, scrollToBottom]);
+    if (activeSessionId !== prevSessionIdRef.current) {
+      isUserScrollRef.current = false;
+      prevSessionIdRef.current = activeSessionId;
+    }
+  }, [activeSessionId]);
+
+  // Scroll to bottom when messages change (new messages loaded or streaming)
+  useEffect(() => {
+    if (showWelcome || !autoScroll || isUserScrollRef.current) return;
+
+    const doScroll = () => {
+      const container = containerRef.current;
+      if (container) {
+        container.scrollTop = container.scrollHeight;
+      }
+    };
+
+    // Double rAF: first waits for React commit, second waits for browser layout.
+    // Additional delayed scroll catches async-rendered content (images, videos).
+    requestAnimationFrame(() => {
+      requestAnimationFrame(doScroll);
+    });
+    const timer = setTimeout(doScroll, 300);
+    return () => clearTimeout(timer);
+  }, [messages, streamingMessageId, autoScroll, showWelcome]);
 
   // Detect user scroll
   useEffect(() => {
@@ -59,13 +77,11 @@ const MessageList: React.FC<MessageListProps> = ({
     return () => container.removeEventListener("scroll", handleScroll);
   }, []);
 
-  // Show welcome when no messages
-  if (!activeSessionId || messages.length === 0) {
-    if (welcome) {
-      return <div className={styles.messageList}>{welcome}</div>;
-    }
-    return (
-      <div className={styles.messageList}>
+  // Render welcome or messages inside the same stable container
+  const renderContent = () => {
+    if (showWelcome) {
+      if (welcome) return welcome;
+      return (
         <div className={styles.welcome}>
           <div className={styles.welcomeAvatar}>
             <img src="/qwenpaw.png" alt="QwenPaw" />
@@ -75,22 +91,24 @@ const MessageList: React.FC<MessageListProps> = ({
             I&apos;m your AI assistant. Ask me anything.
           </div>
         </div>
+      );
+    }
+
+    return messages.map((msg, idx) => (
+      <div key={msg.id} className={styles.messageItem}>
+        <MessageItem
+          message={msg}
+          index={idx}
+          isLast={idx === messages.length - 1}
+          isStreaming={msg.id === streamingMessageId}
+        />
       </div>
-    );
-  }
+    ));
+  };
 
   return (
     <div ref={containerRef} className={styles.messageList}>
-      {messages.map((msg, idx) => (
-        <div key={msg.id} className={styles.messageItem}>
-          <MessageItem
-            message={msg}
-            index={idx}
-            isLast={idx === messages.length - 1}
-            isStreaming={msg.id === streamingMessageId}
-          />
-        </div>
-      ))}
+      {renderContent()}
     </div>
   );
 };
