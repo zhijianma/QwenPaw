@@ -13,7 +13,9 @@ export function useChatV2Router(selectedAgent: string) {
   const loadSessions = useSessionStore((s) => s.loadSessions);
 
   // Load sessions on mount and when agent changes
-  useEffect(() => { loadSessions(); }, [loadSessions, selectedAgent]);
+  useEffect(() => {
+    loadSessions();
+  }, [loadSessions, selectedAgent]);
 
   // URL → state
   useEffect(() => {

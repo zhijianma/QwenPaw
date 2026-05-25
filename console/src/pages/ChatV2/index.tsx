@@ -42,9 +42,11 @@ export default function ChatV2Page() {
 
   // Custom hooks
   const { navigate } = useChatV2Router(selectedAgent);
-  const { whisperEnabled, whisperSpeechRef, handleTranscription } = useWhisperSpeech();
+  const { whisperEnabled, whisperSpeechRef, handleTranscription } =
+    useWhisperSpeech();
   const multimodalCaps = useMultimodalCapabilities(selectedAgent);
-  const { showPrompt: showModelPrompt, setShowPrompt: setShowModelPrompt } = useModelCheck(selectedAgent);
+  const { showPrompt: showModelPrompt, setShowPrompt: setShowModelPrompt } =
+    useModelCheck(selectedAgent);
 
   // Chat config
   const chatConfig = useMemo<ChatConfig>(
@@ -84,10 +86,32 @@ export default function ChatV2Page() {
   // Commands
   const commands = useMemo<CommandSuggestion[]>(
     () => [
-      { command: "/clear", value: "clear", description: t("chat.commands.clear.description", "Clear chat history") },
-      { command: "/compact", value: "compact", description: t("chat.commands.compact.description", "Compact mode") },
-      { command: "/mission", value: "mission", description: t("chat.commands.mission.description", "Show agent mission") },
-      { command: "/skills", value: "skills", description: t("chat.commands.skills.description", "Show available skills") },
+      {
+        command: "/clear",
+        value: "clear",
+        description: t("chat.commands.clear.description", "Clear chat history"),
+      },
+      {
+        command: "/compact",
+        value: "compact",
+        description: t("chat.commands.compact.description", "Compact mode"),
+      },
+      {
+        command: "/mission",
+        value: "mission",
+        description: t(
+          "chat.commands.mission.description",
+          "Show agent mission",
+        ),
+      },
+      {
+        command: "/skills",
+        value: "skills",
+        description: t(
+          "chat.commands.skills.description",
+          "Show available skills",
+        ),
+      },
     ],
     [t],
   );
@@ -102,7 +126,10 @@ export default function ChatV2Page() {
   }, []);
 
   const whisperPrefix = whisperEnabled ? (
-    <WhisperSpeechButton ref={whisperSpeechRef} onTranscription={handleTranscription} />
+    <WhisperSpeechButton
+      ref={whisperSpeechRef}
+      onTranscription={handleTranscription}
+    />
   ) : undefined;
 
   return (
@@ -117,14 +144,22 @@ export default function ChatV2Page() {
       >
         <SessionPanel
           collapsed={sessionPanelCollapsed}
-          onToggleCollapse={() => setSessionPanelCollapsed(!sessionPanelCollapsed)}
+          onToggleCollapse={() =>
+            setSessionPanelCollapsed(!sessionPanelCollapsed)
+          }
         />
         <div className={styles.chatMain}>
           <div className={styles.chatHeader}>
             <Button
               type="text"
               size="small"
-              icon={sessionPanelCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+              icon={
+                sessionPanelCollapsed ? (
+                  <MenuUnfoldOutlined />
+                ) : (
+                  <MenuFoldOutlined />
+                )
+              }
               onClick={() => setSessionPanelCollapsed(!sessionPanelCollapsed)}
               className={styles.collapseBtn}
             />
@@ -158,12 +193,16 @@ export default function ChatV2Page() {
         <Result
           icon={<ExclamationCircleOutlined style={{ color: "#faad14" }} />}
           title={
-            <span style={{ color: isDark ? "rgba(255,255,255,0.88)" : undefined }}>
+            <span
+              style={{ color: isDark ? "rgba(255,255,255,0.88)" : undefined }}
+            >
               {t("modelConfig.promptTitle")}
             </span>
           }
           subTitle={
-            <span style={{ color: isDark ? "rgba(255,255,255,0.55)" : undefined }}>
+            <span
+              style={{ color: isDark ? "rgba(255,255,255,0.55)" : undefined }}
+            >
               {t("modelConfig.promptMessage")}
             </span>
           }
@@ -175,7 +214,10 @@ export default function ChatV2Page() {
               key="configure"
               type="primary"
               icon={<SettingOutlined />}
-              onClick={() => { setShowModelPrompt(false); navigate("/models"); }}
+              onClick={() => {
+                setShowModelPrompt(false);
+                navigate("/models");
+              }}
             >
               {t("modelConfig.configureButton")}
             </Button>,

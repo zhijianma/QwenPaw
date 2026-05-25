@@ -7,8 +7,11 @@ export function useWhisperSpeech() {
   const [whisperEnabled, setWhisperEnabled] = useState(false);
 
   useEffect(() => {
-    agentApi.getTranscriptionProviderType()
-      .then((res) => setWhisperEnabled(res.transcription_provider_type !== "disabled"))
+    agentApi
+      .getTranscriptionProviderType()
+      .then((res) =>
+        setWhisperEnabled(res.transcription_provider_type !== "disabled"),
+      )
       .catch(() => setWhisperEnabled(false));
   }, []);
 
@@ -19,7 +22,8 @@ export function useWhisperSpeech() {
     if (!textarea) return;
 
     const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-      window.HTMLTextAreaElement.prototype, "value",
+      window.HTMLTextAreaElement.prototype,
+      "value",
     )?.set;
     const newValue = textarea.value ? `${textarea.value} ${text}` : text;
     nativeInputValueSetter?.call(textarea, newValue);

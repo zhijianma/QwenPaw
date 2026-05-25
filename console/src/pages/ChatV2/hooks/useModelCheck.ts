@@ -10,7 +10,10 @@ export function useModelCheck(selectedAgent: string) {
         scope: "effective",
         agent_id: selectedAgent,
       });
-      if (!activeModels?.active_llm?.provider_id || !activeModels?.active_llm?.model) {
+      if (
+        !activeModels?.active_llm?.provider_id ||
+        !activeModels?.active_llm?.model
+      ) {
         setShowPrompt(true);
       }
     } catch {
@@ -18,7 +21,9 @@ export function useModelCheck(selectedAgent: string) {
     }
   }, [selectedAgent]);
 
-  useEffect(() => { checkModel(); }, [checkModel]);
+  useEffect(() => {
+    checkModel();
+  }, [checkModel]);
 
   return { showPrompt, setShowPrompt };
 }

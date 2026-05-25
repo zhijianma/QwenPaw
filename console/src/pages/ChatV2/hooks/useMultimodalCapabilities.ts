@@ -14,23 +14,39 @@ const NO_CAPS: MultimodalCaps = {
   supportsVideo: false,
 };
 
-export function useMultimodalCapabilities(selectedAgent: string): MultimodalCaps {
+export function useMultimodalCapabilities(
+  selectedAgent: string,
+): MultimodalCaps {
   const [caps, setCaps] = useState<MultimodalCaps>(NO_CAPS);
 
   const fetchCaps = useCallback(async () => {
     try {
       const [providers, activeModels] = await Promise.all([
         providerApi.listProviders(),
-        providerApi.getActiveModels({ scope: "effective", agent_id: selectedAgent }),
+        providerApi.getActiveModels({
+          scope: "effective",
+          agent_id: selectedAgent,
+        }),
       ]);
       const providerId = activeModels?.active_llm?.provider_id;
       const modelId = activeModels?.active_llm?.model;
-      if (!providerId || !modelId) { setCaps(NO_CAPS); return; }
+      if (!providerId || !modelId) {
+        setCaps(NO_CAPS);
+        return;
+      }
 
-      const provider = (providers as ProviderInfo[]).find((p) => p.id === providerId);
-      if (!provider) { setCaps(NO_CAPS); return; }
+      const provider = (providers as ProviderInfo[]).find(
+        (p) => p.id === providerId,
+      );
+      if (!provider) {
+        setCaps(NO_CAPS);
+        return;
+      }
 
-      const allModels: ModelInfo[] = [...(provider.models ?? []), ...(provider.extra_models ?? [])];
+      const allModels: ModelInfo[] = [
+        ...(provider.models ?? []),
+        ...(provider.extra_models ?? []),
+      ];
       const model = allModels.find((m) => m.id === modelId);
       setCaps({
         supportsMultimodal: model?.supports_multimodal ?? false,
@@ -42,10 +58,14 @@ export function useMultimodalCapabilities(selectedAgent: string): MultimodalCaps
     }
   }, [selectedAgent]);
 
-  useEffect(() => { fetchCaps(); }, [fetchCaps]);
+  useEffect(() => {
+    fetchCaps();
+  }, [fetchCaps]);
 
   useEffect(() => {
-    const handler = () => { fetchCaps(); };
+    const handler = () => {
+      fetchCaps();
+    };
     window.addEventListener("model-switched", handler);
     return () => window.removeEventListener("model-switched", handler);
   }, [fetchCaps]);
