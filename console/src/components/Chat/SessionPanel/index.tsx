@@ -8,11 +8,8 @@ import SessionGroup from "./SessionGroup";
 import styles from "./SessionPanel.module.less";
 
 export interface SessionPanelProps {
-  /** Whether the panel is collapsed */
   collapsed?: boolean;
-  /** Toggle collapse */
   onToggleCollapse?: () => void;
-  /** Custom header */
   header?: React.ReactNode;
 }
 
@@ -41,7 +38,7 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
   }, [createSession]);
 
   const handleDelete = useCallback(
-    async (id: string) => {
+    (id: string) => {
       Modal.confirm({
         title: "Delete conversation?",
         content: "This action cannot be undone.",
@@ -68,9 +65,7 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
     [pinSession],
   );
 
-  if (collapsed) {
-    return null;
-  }
+  if (collapsed) return null;
 
   return (
     <div className={styles.sessionPanel}>
@@ -96,8 +91,7 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
           <div className={styles.emptyState}>No conversations yet</div>
         )}
         {searchQuery.trim()
-          ? // Flat list when searching
-            sessions.map((session) => (
+          ? sessions.map((session) => (
               <SessionItem
                 key={session.id}
                 session={session}
@@ -111,8 +105,7 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
                 onCancelEdit={() => setEditingId(null)}
               />
             ))
-          : // Grouped by date
-            groupedSessions.map((group) => (
+          : groupedSessions.map((group) => (
               <SessionGroup
                 key={group.label}
                 group={group}

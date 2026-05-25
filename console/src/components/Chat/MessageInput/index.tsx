@@ -33,6 +33,8 @@ export interface MessageInputProps {
   onUpload?: (file: File) => Promise<{ url: string }>;
   /** Whether multimodal is supported */
   supportsMultimodal?: boolean;
+  /** Whether to allow built-in speech (when custom whisper is not available) */
+  allowSpeech?: boolean;
 }
 
 const MessageInput: React.FC<MessageInputProps> = ({
@@ -44,6 +46,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
   maxFileSize = 10,
   onUpload,
   supportsMultimodal: _supportsMultimodal = false,
+  allowSpeech = false,
 }) => {
   void _supportsMultimodal;
   const { onSend, onCancel } = useChatContext();
@@ -196,19 +199,23 @@ const MessageInput: React.FC<MessageInputProps> = ({
     [onUpload],
   );
 
-  // Attachment button: controlled Upload with showUploadList={false}
-  const attachmentButton =
-    enableAttachments && onUpload ? (
-      <Upload
-        fileList={fileList}
-        showUploadList={false}
-        customRequest={handleFileUpload}
-        onChange={(info) => setFileList(info.fileList)}
-        multiple
-      >
-        <IconButton icon={<SparkAttachmentLine />} bordered={false} />
-      </Upload>
-    ) : null;
+  // Sender prefix: attachment button + custom prefix (e.g. whisper)
+  const senderPrefix = (
+    <>
+      {enableAttachments && onUpload && (
+        <Upload
+          fileList={fileList}
+          showUploadList={false}
+          customRequest={handleFileUpload}
+          onChange={(info) => setFileList(info.fileList)}
+          multiple
+        >
+          <IconButton icon={<SparkAttachmentLine />} bordered={false} />
+        </Upload>
+      )}
+      {prefix}
+    </>
+  );
 
   // File preview header: Attachments inside Sender.Header (Spark Design pattern)
   const headerNode =
@@ -240,9 +247,9 @@ const MessageInput: React.FC<MessageInputProps> = ({
             onCancel={handleCancel}
             loading={isGenerating}
             placeholder={placeholder}
-            allowSpeech={false}
+            allowSpeech={allowSpeech}
             submitType="enter"
-            prefix={attachmentButton}
+            prefix={senderPrefix}
             header={headerNode}
           />
         </div>
