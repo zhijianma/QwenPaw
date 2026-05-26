@@ -7,6 +7,12 @@ import type { ChatSession } from "../types";
 vi.mock("../../../api/modules/chat", () => ({
   chatApi: {
     listChats: vi.fn().mockResolvedValue([]),
+    createChat: vi.fn().mockResolvedValue({
+      id: "mock-chat-id",
+      session_id: "mock-session-id",
+      user_id: "default",
+      name: "New Chat",
+    }),
     deleteChat: vi.fn().mockResolvedValue(undefined),
     batchDeleteChats: vi.fn().mockResolvedValue(undefined),
     updateChat: vi.fn().mockResolvedValue(undefined),
