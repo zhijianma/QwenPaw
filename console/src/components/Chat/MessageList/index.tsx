@@ -1,4 +1,11 @@
-import React, { useEffect, useMemo, useRef } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { DownOutlined } from "@ant-design/icons";
 import { useChatStore } from "../stores/chatStore";
 import MessageItem from "./MessageItem";
 import styles from "./MessageList.module.less";
@@ -31,6 +38,7 @@ const MessageList: React.FC<MessageListProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const isUserScrollRef = useRef(false);
   const prevSessionIdRef = useRef<string | null>(null);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
 
   const showWelcome = !activeSessionId || messages.length === 0;
 
@@ -62,7 +70,7 @@ const MessageList: React.FC<MessageListProps> = ({
     return () => clearTimeout(timer);
   }, [messages, streamingMessageId, autoScroll, showWelcome]);
 
-  // Detect user scroll
+  // Detect user scroll & toggle scroll-to-bottom button
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -71,6 +79,9 @@ const MessageList: React.FC<MessageListProps> = ({
       const { scrollTop, scrollHeight, clientHeight } = container;
       const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
       isUserScrollRef.current = !isAtBottom;
+      setShowScrollToBottom(
+        !isAtBottom && scrollHeight - scrollTop - clientHeight > 200,
+      );
     };
 
     container.addEventListener("scroll", handleScroll);
@@ -106,9 +117,26 @@ const MessageList: React.FC<MessageListProps> = ({
     ));
   };
 
+  const handleScrollToBottom = useCallback(() => {
+    const container = containerRef.current;
+    if (container) {
+      container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+      isUserScrollRef.current = false;
+    }
+  }, []);
+
   return (
     <div ref={containerRef} className={styles.messageList}>
       {renderContent()}
+      {showScrollToBottom && (
+        <button
+          className={styles.scrollToBottomBtn}
+          onClick={handleScrollToBottom}
+          aria-label="Scroll to bottom"
+        >
+          <DownOutlined />
+        </button>
+      )}
     </div>
   );
 };

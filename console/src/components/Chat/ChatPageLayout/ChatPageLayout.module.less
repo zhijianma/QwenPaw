@@ -1,4 +1,4 @@
-.chatV2Page {
+.chatPageLayout {
   height: 100%;
   width: 100%;
   display: flex;
@@ -23,34 +23,14 @@
   border-bottom: 1px solid rgba(0, 0, 0, 0.06);
 }
 
-.chatTitle {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-}
-
 .collapseBtn {
   color: var(--ant-color-text-secondary, #666) !important;
   font-size: 16px;
-}
-
-.chatBadge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 4px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: #fff;
-  font-size: 11px;
-  font-weight: 500;
 }
 
 // Dark mode
 :global(.dark-mode) {
   .chatHeader {
     border-bottom-color: rgba(255, 255, 255, 0.08);
-  }
-
-  .chatTitle {
-    color: rgba(255, 255, 255, 0.88);
   }
 }

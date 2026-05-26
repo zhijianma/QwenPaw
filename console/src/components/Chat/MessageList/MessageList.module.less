@@ -4,6 +4,7 @@
   overflow-x: hidden;
   padding: 16px 24px;
   scroll-behavior: smooth;
+  position: relative;
 
   &::-webkit-scrollbar {
     width: 6px;
@@ -12,6 +13,34 @@
   &::-webkit-scrollbar-thumb {
     background: rgba(0, 0, 0, 0.15);
     border-radius: 3px;
+  }
+}
+
+.scrollToBottomBtn {
+  position: sticky;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: var(--ant-color-bg-container, #fff);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  cursor: pointer;
+  color: var(--ant-color-text-secondary, #666);
+  font-size: 14px;
+  z-index: 10;
+  transition: all 0.2s;
+  margin: 0 auto;
+
+  &:hover {
+    background: var(--ant-color-bg-container, #fff);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+    color: var(--ant-color-primary, #1677ff);
   }
 }
 
@@ -888,5 +917,145 @@
   &:hover {
     background: rgba(0, 0, 0, 0.04);
     border-color: var(--ant-color-primary, #1677ff);
+  }
+}
+
+// ── Dark mode overrides ──
+:global(.dark-mode) {
+  // Scrollbar
+  .messageList {
+    &::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.2);
+    }
+  }
+
+  // Scroll-to-bottom button
+  .scrollToBottomBtn {
+    border-color: rgba(255, 255, 255, 0.12);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+
+    &:hover {
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    }
+  }
+
+  // User bubble
+  .userBubble {
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.88);
+  }
+
+  // User file attachment
+  .userFile {
+    background: rgba(255, 255, 255, 0.08);
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.12);
+    }
+  }
+
+  // File link
+  .fileLink {
+    background: rgba(255, 255, 255, 0.06);
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+  }
+
+  // Action button hover
+  .actionBtn {
+    &:hover {
+      background: rgba(255, 255, 255, 0.08);
+    }
+  }
+
+  // Video / Audio borders
+  .bubbleVideo {
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+
+  .bubbleAudio {
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+
+  // Tool call spinner
+  .toolCallSpinner {
+    border-color: rgba(255, 255, 255, 0.15);
+  }
+
+  // Tool call result areas
+  .toolCallResultPre {
+    background: rgba(255, 255, 255, 0.04);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  }
+
+  .toolCallResultMd {
+    background: rgba(255, 255, 255, 0.04);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+
+    :global(pre) {
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    :global(th),
+    :global(td) {
+      border-color: rgba(255, 255, 255, 0.1);
+    }
+
+    :global(th) {
+      background: rgba(255, 255, 255, 0.04);
+    }
+  }
+
+  .toolCallDiff {
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  }
+
+  // Tool call default body / blocks
+  .toolCallDefaultBody {
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  }
+
+  .defaultBlock {
+    border-color: rgba(255, 255, 255, 0.1);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  }
+
+  .defaultBlockHeader {
+    background: rgba(255, 255, 255, 0.04);
+    border-bottom-color: rgba(255, 255, 255, 0.1);
+  }
+
+  .defaultBlockCopy {
+    &:hover {
+      background: rgba(255, 255, 255, 0.08);
+    }
+  }
+
+  // Markdown table in default block
+  .defaultBlockContentMd {
+    :global(th),
+    :global(td) {
+      border-color: rgba(255, 255, 255, 0.1);
+    }
+
+    :global(th) {
+      background: rgba(255, 255, 255, 0.04);
+    }
+  }
+
+  // Tool call image border
+  .toolCallImage {
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+
+  // Welcome prompts
+  .welcomePromptItem {
+    border-color: rgba(255, 255, 255, 0.12);
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.06);
+    }
   }
 }

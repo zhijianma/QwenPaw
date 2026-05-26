@@ -63,6 +63,10 @@
   }
 }
 
+.suggestionItemActive {
+  background: rgba(0, 0, 0, 0.06);
+}
+
 .suggestionCommand {
   font-family: monospace;
   font-size: 13px;
@@ -77,4 +81,27 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+// ── Dark mode overrides ──
+:global(.dark-mode) {
+  .inputContainer {
+    border-top-color: rgba(255, 255, 255, 0.08);
+  }
+
+  .suggestionsPanel {
+    border-color: rgba(255, 255, 255, 0.12);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  }
+
+  .suggestionItem {
+    &:hover,
+    &:focus {
+      background: rgba(255, 255, 255, 0.06);
+    }
+  }
+
+  .suggestionItemActive {
+    background: rgba(255, 255, 255, 0.1);
+  }
 }

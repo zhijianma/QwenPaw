@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { agentApi } from "../../../api/modules/agent";
-import type { WhisperSpeechButtonRef } from "../../Chat/components/WhisperSpeechButton";
 
-export function useWhisperSpeech() {
-  const whisperSpeechRef = useRef<WhisperSpeechButtonRef>(null);
+export function useWhisperSpeech<T = unknown>() {
+  const whisperSpeechRef = useRef<T>(null);
   const [whisperEnabled, setWhisperEnabled] = useState(false);
 
   useEffect(() => {

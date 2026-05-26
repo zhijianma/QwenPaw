@@ -157,32 +157,81 @@ export function useCommandSuggestions({
 }: UseCommandSuggestionsOptions) {
   const [query, setQuery] = useState("");
   const [visible, setVisible] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
 
   const filteredCommands = commands.filter((cmd) =>
     cmd.command.toLowerCase().startsWith(`/${query.toLowerCase()}`),
   );
 
+  const suggestions = visible ? filteredCommands : [];
+
   const handleInputChange = useCallback((value: string) => {
     if (value.startsWith("/")) {
       setQuery(value.slice(1));
       setVisible(true);
+      setActiveIndex(-1);
     } else {
       setVisible(false);
       setQuery("");
+      setActiveIndex(-1);
     }
   }, []);
 
   const selectCommand = useCallback((command: CommandSuggestion) => {
     setVisible(false);
     setQuery("");
+    setActiveIndex(-1);
     return command.value;
   }, []);
 
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent): CommandSuggestion | null => {
+      if (!visible || suggestions.length === 0) return null;
+
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setActiveIndex((prev) =>
+          prev < suggestions.length - 1 ? prev + 1 : 0,
+        );
+        return null;
+      }
+
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setActiveIndex((prev) =>
+          prev > 0 ? prev - 1 : suggestions.length - 1,
+        );
+        return null;
+      }
+
+      if (e.key === "Enter" && activeIndex >= 0 && !e.shiftKey) {
+        e.preventDefault();
+        const selected = suggestions[activeIndex];
+        return selected;
+      }
+
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setVisible(false);
+        setActiveIndex(-1);
+        return null;
+      }
+
+      return null;
+    },
+    [visible, suggestions, activeIndex],
+  );
+
   return {
-    suggestions: visible ? filteredCommands : [],
+    suggestions,
     visible,
+    activeIndex,
     handleInputChange,
     selectCommand,
-    dismiss: () => setVisible(false),
+    handleKeyDown,
+    dismiss: () => {
+      setVisible(false);
+      setActiveIndex(-1);
+    },
   };
 }

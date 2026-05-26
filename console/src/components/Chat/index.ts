@@ -58,6 +58,12 @@ export { default as MessageInput } from "./MessageInput";
 export type { MessageInputProps } from "./MessageInput";
 export { default as SessionPanel } from "./SessionPanel";
 export type { SessionPanelProps } from "./SessionPanel";
+export { default as ChatPageLayout } from "./ChatPageLayout";
+export type { ChatPageLayoutProps } from "./ChatPageLayout";
+export { default as ApprovalOverlay } from "./ApprovalOverlay";
+export type { ApprovalOverlayProps } from "./ApprovalOverlay";
+export { default as ModelPromptModal } from "./ModelPromptModal";
+export type { ModelPromptModalProps } from "./ModelPromptModal";
 
 // Tool Cards
 export { DefaultCard, CodeExecutionCard, CardRegistry } from "./ToolCards";
@@ -97,3 +103,12 @@ export type {
   UseToolCardsOptions,
   UseToolCardsReturn,
 } from "./hooks/useToolCards";
+export { useApprovals } from "./hooks/useApprovals";
+export type { ApprovalMessageData } from "./hooks/useApprovals";
+export { useMultimodalCapabilities } from "./hooks/useMultimodalCapabilities";
+export type { MultimodalCaps } from "./hooks/useMultimodalCapabilities";
+export { useModelCheck } from "./hooks/useModelCheck";
+export { useWhisperSpeech } from "./hooks/useWhisperSpeech";
+export { useChatRouter } from "./hooks/useChatRouter";
+export type { UseChatRouterOptions } from "./hooks/useChatRouter";
+export { usePlanConfig } from "./hooks/usePlanConfig";

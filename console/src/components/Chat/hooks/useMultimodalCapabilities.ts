@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { providerApi } from "../../../api/modules/provider";
 import type { ProviderInfo, ModelInfo } from "../../../api/types";
 
-interface MultimodalCaps {
+export interface MultimodalCaps {
   supportsMultimodal: boolean;
   supportsImage: boolean;
   supportsVideo: boolean;

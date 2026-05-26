@@ -1,20 +1,21 @@
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Button, Modal, Result } from "antd";
-import {
-  MenuFoldOutlined,
-  MenuUnfoldOutlined,
-  ExclamationCircleOutlined,
-  SettingOutlined,
-} from "@ant-design/icons";
+import { Tooltip } from "antd";
 import ModelSelector from "../Chat/ModelSelector";
 import {
-  ChatContainer,
-  MessageList,
-  MessageInput,
-  SessionPanel,
+  ChatPageLayout,
+  ApprovalOverlay,
+  ModelPromptModal,
+  useChatStore,
+  useChatRouter,
+  useMultimodalCapabilities,
+  useModelCheck,
+  useWhisperSpeech,
+  useApprovals,
+  usePlanConfig,
 } from "../../components/Chat";
 import type { ChatConfig, CommandSuggestion } from "../../components/Chat";
+import PlanPanel from "../../components/PlanPanel";
 import { getApiUrl } from "../../api/config";
 import { buildAuthHeaders } from "../../api/authHeaders";
 import { chatApi } from "../../api/modules/chat";
@@ -22,33 +23,37 @@ import { useAgentStore } from "../../stores/agentStore";
 import { usePlugins } from "../../plugins/PluginContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { getAgentDisplayName } from "../../utils/agentDisplayName";
-import WhisperSpeechButton from "../Chat/components/WhisperSpeechButton";
+import WhisperSpeechButton, {
+  type WhisperSpeechButtonRef,
+} from "../Chat/components/WhisperSpeechButton";
 import type {
   UserDisplayInfo,
   AssistantDisplayInfo,
 } from "../../components/Chat/context/ChatContext";
-import { useMultimodalCapabilities } from "./hooks/useMultimodalCapabilities";
-import { useModelCheck } from "./hooks/useModelCheck";
-import { useWhisperSpeech } from "./hooks/useWhisperSpeech";
-import { useChatV2Router } from "./hooks/useChatV2Router";
-import styles from "./index.module.less";
 
 export default function ChatV2Page() {
   const { t } = useTranslation();
   const { isDark } = useTheme();
   const { selectedAgent, agents } = useAgentStore();
   const { toolRenderConfig } = usePlugins();
-  const [sessionPanelCollapsed, setSessionPanelCollapsed] = useState(false);
 
-  // Custom hooks
-  const { navigate } = useChatV2Router(selectedAgent);
+  // Hooks
+  const { chatId, navigate } = useChatRouter(selectedAgent, {
+    basePath: "/chat-v2",
+  });
   const { whisperEnabled, whisperSpeechRef, handleTranscription } =
-    useWhisperSpeech();
+    useWhisperSpeech<WhisperSpeechButtonRef>();
   const multimodalCaps = useMultimodalCapabilities(selectedAgent);
   const { showPrompt: showModelPrompt, setShowPrompt: setShowModelPrompt } =
     useModelCheck(selectedAgent);
+  const { planEnabled } = usePlanConfig(selectedAgent);
+  const [planOpen, setPlanOpen] = useState(false);
 
-  // Chat config
+  const activeSessionId = useChatStore((s) => s.activeSessionId);
+  const { approvalRequests, handleApprove, handleDeny, handleCancel } =
+    useApprovals(chatId, activeSessionId);
+
+  // Config
   const chatConfig = useMemo<ChatConfig>(
     () => ({
       apiEndpoint: getApiUrl("/console/chat"),
@@ -63,7 +68,6 @@ export default function ChatV2Page() {
     [],
   );
 
-  // Agent display info
   const currentAgent = useMemo(
     () => agents.find((a) => a.id === selectedAgent),
     [agents, selectedAgent],
@@ -83,9 +87,8 @@ export default function ChatV2Page() {
     [currentAgent, t],
   );
 
-  // Commands
-  const commands = useMemo<CommandSuggestion[]>(
-    () => [
+  const commands = useMemo<CommandSuggestion[]>(() => {
+    const list: CommandSuggestion[] = [
       {
         command: "/clear",
         value: "clear",
@@ -112,9 +115,16 @@ export default function ChatV2Page() {
           "Show available skills",
         ),
       },
-    ],
-    [t],
-  );
+    ];
+    if (planEnabled) {
+      list.push({
+        command: "/plan",
+        value: "plan ",
+        description: t("chat.commands.plan.description", "Create a plan"),
+      });
+    }
+    return list;
+  }, [t, planEnabled]);
 
   const handleUpload = useCallback(async (file: File) => {
     const res = await chatApi.uploadFile(file);
@@ -133,97 +143,78 @@ export default function ChatV2Page() {
   ) : undefined;
 
   return (
-    <div className={`${styles.chatV2Page} ${isDark ? styles.dark : ""}`}>
-      <ChatContainer
+    <>
+      <ChatPageLayout
         config={chatConfig}
         agentId={selectedAgent}
         toolCards={toolRenderConfig}
         userInfo={userInfo}
         assistantInfo={assistantInfo}
-        onError={handleError}
-      >
-        <SessionPanel
-          collapsed={sessionPanelCollapsed}
-          onToggleCollapse={() =>
-            setSessionPanelCollapsed(!sessionPanelCollapsed)
-          }
-        />
-        <div className={styles.chatMain}>
-          <div className={styles.chatHeader}>
-            <Button
-              type="text"
-              size="small"
-              icon={
-                sessionPanelCollapsed ? (
-                  <MenuUnfoldOutlined />
-                ) : (
-                  <MenuFoldOutlined />
-                )
-              }
-              onClick={() => setSessionPanelCollapsed(!sessionPanelCollapsed)}
-              className={styles.collapseBtn}
-            />
+        isDark={isDark}
+        placeholder={t("chat.inputPlaceholder", "Ask me anything...")}
+        commands={commands}
+        enableAttachments
+        onUpload={handleUpload}
+        maxFileSize={10}
+        inputPrefix={whisperPrefix}
+        allowSpeech={!whisperEnabled}
+        supportsMultimodal={multimodalCaps.supportsMultimodal}
+        headerExtra={
+          <>
             <ModelSelector />
-          </div>
-          <MessageList />
-          <MessageInput
-            placeholder={t("chat.inputPlaceholder", "Ask me anything...")}
-            commands={commands}
-            enableAttachments
-            onUpload={handleUpload}
-            maxFileSize={10}
-            prefix={whisperPrefix}
-            allowSpeech={!whisperEnabled}
-            supportsMultimodal={multimodalCaps.supportsMultimodal}
-          />
-        </div>
-      </ChatContainer>
-
-      <Modal
+            {planEnabled && (
+              <Tooltip title={t("plan.title", "Plan")} mouseEnterDelay={0.5}>
+                <button
+                  onClick={() => setPlanOpen(true)}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    padding: 4,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    color: "var(--ant-color-text-secondary, #666)",
+                    fontSize: 16,
+                  }}
+                >
+                  <svg
+                    width="1em"
+                    height="1em"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M9 11l3 3L22 4" />
+                    <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+                  </svg>
+                </button>
+              </Tooltip>
+            )}
+          </>
+        }
+        onError={handleError}
+      />
+      {planEnabled && (
+        <PlanPanel open={planOpen} onClose={() => setPlanOpen(false)} />
+      )}
+      <ApprovalOverlay
+        approvalRequests={approvalRequests}
+        onApprove={handleApprove}
+        onDeny={handleDeny}
+        onCancel={handleCancel}
+      />
+      <ModelPromptModal
         open={showModelPrompt}
-        closable={false}
-        footer={null}
-        width={480}
-        styles={{
-          content: isDark
-            ? { background: "#1f1f1f", boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }
-            : undefined,
+        isDark={isDark}
+        onSkip={() => setShowModelPrompt(false)}
+        onConfigure={() => {
+          setShowModelPrompt(false);
+          navigate("/models");
         }}
-      >
-        <Result
-          icon={<ExclamationCircleOutlined style={{ color: "#faad14" }} />}
-          title={
-            <span
-              style={{ color: isDark ? "rgba(255,255,255,0.88)" : undefined }}
-            >
-              {t("modelConfig.promptTitle")}
-            </span>
-          }
-          subTitle={
-            <span
-              style={{ color: isDark ? "rgba(255,255,255,0.55)" : undefined }}
-            >
-              {t("modelConfig.promptMessage")}
-            </span>
-          }
-          extra={[
-            <Button key="skip" onClick={() => setShowModelPrompt(false)}>
-              {t("modelConfig.skipButton")}
-            </Button>,
-            <Button
-              key="configure"
-              type="primary"
-              icon={<SettingOutlined />}
-              onClick={() => {
-                setShowModelPrompt(false);
-                navigate("/models");
-              }}
-            >
-              {t("modelConfig.configureButton")}
-            </Button>,
-          ]}
-        />
-      </Modal>
-    </div>
+      />
+    </>
   );
 }

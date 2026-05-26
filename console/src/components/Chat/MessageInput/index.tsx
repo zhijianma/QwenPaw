@@ -67,8 +67,10 @@ const MessageInput: React.FC<MessageInputProps> = ({
   const {
     suggestions: commandSuggestions,
     visible: showCommands,
+    activeIndex: commandActiveIndex,
     handleInputChange: handleCommandInput,
     selectCommand,
+    handleKeyDown: handleCommandKeyDown,
     dismiss: dismissCommands,
   } = useCommandSuggestions({ commands });
 
@@ -233,13 +235,26 @@ const MessageInput: React.FC<MessageInputProps> = ({
       {showCommands && commandSuggestions.length > 0 && (
         <CommandSuggestions
           suggestions={commandSuggestions}
+          activeIndex={commandActiveIndex}
           onSelect={handleCommandSelect}
           onDismiss={dismissCommands}
         />
       )}
       <div className={styles.inputWrapper}>
         {prefix && <div className={styles.prefixArea}>{prefix}</div>}
-        <div className={styles.senderArea} onPaste={handlePaste}>
+        <div
+          className={styles.senderArea}
+          onPaste={handlePaste}
+          onKeyDown={(e) => {
+            const selected = handleCommandKeyDown(
+              e as unknown as React.KeyboardEvent,
+            );
+            if (selected) {
+              const selectedValue = selectCommand(selected);
+              setValue(selectedValue);
+            }
+          }}
+        >
           <Sender
             value={value}
             onChange={handleChange}

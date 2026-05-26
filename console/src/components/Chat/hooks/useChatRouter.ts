@@ -1,9 +1,19 @@
 import { useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { useChatStore, useSessionStore } from "../../../components/Chat";
+import { useChatStore } from "../stores/chatStore";
+import { useSessionStore } from "../stores/sessionStore";
 import { useAgentStore } from "../../../stores/agentStore";
 
-export function useChatV2Router(selectedAgent: string) {
+export interface UseChatRouterOptions {
+  /** Base path for the chat route (e.g. "/chat-v2") */
+  basePath: string;
+}
+
+export function useChatRouter(
+  selectedAgent: string,
+  options: UseChatRouterOptions = { basePath: "/chat-v2" },
+) {
+  const { basePath } = options;
   const { chatId } = useParams<{ chatId?: string }>();
   const navigate = useNavigate();
   const { setLastChatId, getLastChatId } = useAgentStore();
@@ -27,7 +37,9 @@ export function useChatV2Router(selectedAgent: string) {
   useEffect(() => {
     const urlChatId = chatId || null;
     if (activeSessionId !== urlChatId) {
-      const path = activeSessionId ? `/chat-v2/${activeSessionId}` : "/chat-v2";
+      const path = activeSessionId
+        ? `${basePath}/${activeSessionId}`
+        : basePath;
       navigate(path, { replace: true });
     }
   }, [activeSessionId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -41,9 +53,9 @@ export function useChatV2Router(selectedAgent: string) {
 
       const restored = getLastChatId(selectedAgent);
       if (restored) {
-        navigate(`/chat-v2/${restored}`, { replace: true });
+        navigate(`${basePath}/${restored}`, { replace: true });
       } else {
-        navigate("/chat-v2", { replace: true });
+        navigate(basePath, { replace: true });
       }
     }
     prevAgentRef.current = selectedAgent;
