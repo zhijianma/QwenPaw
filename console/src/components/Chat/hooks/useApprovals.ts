@@ -4,6 +4,7 @@ import { useApprovalContext } from "../../../contexts/ApprovalContext";
 import { commandsApi } from "../../../api/modules/commands";
 import { chatApi } from "../../../api/modules/chat";
 import { useAppMessage } from "../../../hooks/useAppMessage";
+import { useSessionStore } from "../stores/sessionStore";
 
 export interface ApprovalMessageData {
   requestId: string;
@@ -19,6 +20,32 @@ export interface ApprovalMessageData {
   timeoutSeconds: number;
 }
 
+/**
+ * Build the set of all known IDs for the current session so that
+ * approval filtering works regardless of which ID format the backend
+ * stored as root_session_id (UUID, timestamp, or "console:default").
+ */
+function buildKnownSessionIds(
+  chatId: string | undefined,
+  activeSessionId: string | null,
+  sessions: Array<{ id: string; sessionId?: string }>,
+): Set<string> {
+  const ids = new Set<string>();
+  if (activeSessionId) ids.add(activeSessionId);
+  if (chatId) ids.add(chatId);
+
+  // The backend root_session_id is typically the "channel:user" format
+  // (e.g. "console:default") resolved by the channel's resolve_session_id.
+  // Look up the matching session and add its sessionId so filtering works.
+  const target = activeSessionId || chatId;
+  if (target) {
+    const session = sessions.find((s) => s.id === target);
+    if (session?.sessionId) ids.add(session.sessionId);
+  }
+
+  return ids;
+}
+
 export function useApprovals(
   chatId: string | undefined,
   activeSessionId: string | null,
@@ -26,6 +53,7 @@ export function useApprovals(
   const { t } = useTranslation();
   const { message } = useAppMessage();
   const { approvals, setApprovals } = useApprovalContext();
+  const sessions = useSessionStore((s) => s.sessions);
   const [approvalRequests, setApprovalRequests] = useState<
     Map<string, ApprovalMessageData>
   >(new Map());
@@ -33,18 +61,19 @@ export function useApprovals(
 
   // Filter approvals for current session
   useEffect(() => {
-    const currentSessionId = activeSessionId || chatId || "";
+    const knownIds = buildKnownSessionIds(chatId, activeSessionId, sessions);
 
-    let effectiveSessionId = currentSessionId;
-    if (!effectiveSessionId && approvals.length > 0) {
-      effectiveSessionId = approvals[0].root_session_id;
+    // When no session ID is available yet, use the first approval's
+    // root_session_id as a hint (handles the race where approval arrives
+    // before the session ID is propagated).
+    if (knownIds.size === 0 && approvals.length > 0) {
+      knownIds.add(approvals[0].root_session_id);
     }
 
-    const sessionApprovals = effectiveSessionId
-      ? approvals.filter(
-          (approval) => approval.root_session_id === effectiveSessionId,
-        )
-      : approvals;
+    const sessionApprovals =
+      knownIds.size > 0
+        ? approvals.filter((approval) => knownIds.has(approval.root_session_id))
+        : approvals;
 
     const approvalKey = sessionApprovals
       .map((a) => a.request_id)
@@ -72,11 +101,15 @@ export function useApprovals(
     }
 
     setApprovalRequests(newMap);
-  }, [approvals, chatId, activeSessionId]);
+  }, [approvals, chatId, activeSessionId, sessions]);
 
   const handleApprove = useCallback(
     async (requestId: string) => {
-      const rootSessionId = activeSessionId || chatId || "";
+      // Use the approval record's own rootSessionId — it matches what the
+      // backend stored and avoids 403 "root session mismatch" errors.
+      const request = approvalRequests.get(requestId);
+      const rootSessionId =
+        request?.rootSessionId || activeSessionId || chatId || "";
 
       try {
         const cardElement = document.querySelector(
@@ -108,12 +141,14 @@ export function useApprovals(
         console.error("Failed to approve:", error);
       }
     },
-    [activeSessionId, chatId, t, message, setApprovals],
+    [approvalRequests, activeSessionId, chatId, t, message, setApprovals],
   );
 
   const handleDeny = useCallback(
     async (requestId: string) => {
-      const rootSessionId = activeSessionId || chatId || "";
+      const request = approvalRequests.get(requestId);
+      const rootSessionId =
+        request?.rootSessionId || activeSessionId || chatId || "";
 
       try {
         const cardElement = document.querySelector(
@@ -141,7 +176,7 @@ export function useApprovals(
         console.error("Failed to deny:", error);
       }
     },
-    [activeSessionId, chatId, t, message, setApprovals],
+    [approvalRequests, activeSessionId, chatId, t, message, setApprovals],
   );
 
   const handleCancel = useCallback(

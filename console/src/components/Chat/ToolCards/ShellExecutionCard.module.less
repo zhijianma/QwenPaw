@@ -155,3 +155,43 @@
   color: var(--ant-color-text-quaternary, #bbb);
   font-style: italic;
 }
+
+// ── Dark mode overrides ──
+:global(.dark-mode) {
+  .commandPreview {
+    color: rgba(255, 255, 255, 0.85);
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  .commandFull {
+    color: rgba(255, 255, 255, 0.85);
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .outputPre {
+    color: rgba(255, 255, 255, 0.85);
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .stderrPre {
+    color: #ff6b6b;
+    background: rgba(255, 77, 79, 0.1);
+  }
+
+  .label {
+    color: rgba(255, 255, 255, 0.55);
+  }
+
+  .iconDone {
+    color: rgba(255, 255, 255, 0.45);
+  }
+
+  .spinner {
+    border-color: rgba(255, 255, 255, 0.15);
+    border-top-color: var(--ant-color-primary, #ff7f16);
+  }
+
+  .summary::before {
+    color: rgba(255, 255, 255, 0.35);
+  }
+}

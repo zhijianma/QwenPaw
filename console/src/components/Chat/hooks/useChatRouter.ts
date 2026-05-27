@@ -33,8 +33,14 @@ export function useChatRouter(
     if (target !== activeSessionId) setActiveSession(target);
   }, [chatId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // State → URL
+  // State → URL (skip on initial mount to avoid overwriting the URL before
+  // the "URL → state" effect has a chance to restore activeSessionId)
+  const isInitialMountRef = useRef(true);
   useEffect(() => {
+    if (isInitialMountRef.current) {
+      isInitialMountRef.current = false;
+      return;
+    }
     const urlChatId = chatId || null;
     if (activeSessionId !== urlChatId) {
       const path = activeSessionId

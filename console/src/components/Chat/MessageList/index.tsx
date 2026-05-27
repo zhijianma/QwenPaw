@@ -71,22 +71,44 @@ const MessageList: React.FC<MessageListProps> = ({
   }, [messages, streamingMessageId, autoScroll, showWelcome]);
 
   // Detect user scroll & toggle scroll-to-bottom button
+  const checkScrollPosition = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
+    isUserScrollRef.current = !isAtBottom;
+    setShowScrollToBottom(
+      !isAtBottom && scrollHeight - scrollTop - clientHeight > 200,
+    );
+  }, []);
+
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
-    const handleScroll = () => {
-      const { scrollTop, scrollHeight, clientHeight } = container;
-      const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
-      isUserScrollRef.current = !isAtBottom;
-      setShowScrollToBottom(
-        !isAtBottom && scrollHeight - scrollTop - clientHeight > 200,
-      );
-    };
+    container.addEventListener("scroll", checkScrollPosition);
+    return () => container.removeEventListener("scroll", checkScrollPosition);
+  }, [checkScrollPosition]);
 
-    container.addEventListener("scroll", handleScroll);
-    return () => container.removeEventListener("scroll", handleScroll);
-  }, []);
+  // Re-check scroll position when content height changes (e.g. expanding
+  // collapsible sections) — scrollHeight grows but no scroll event fires,
+  // which could cause the scroll-to-bottom button to appear incorrectly.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const resizeObserver = new ResizeObserver(() => {
+      checkScrollPosition();
+    });
+
+    // Observe the first child (the scrollable content wrapper) so we detect
+    // height changes from expanded/collapsed sections, loaded images, etc.
+    for (const child of Array.from(container.children)) {
+      resizeObserver.observe(child);
+    }
+
+    return () => resizeObserver.disconnect();
+  }, [messages, checkScrollPosition]);
 
   // Render welcome or messages inside the same stable container
   const renderContent = () => {

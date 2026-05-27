@@ -64,27 +64,41 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
     onError,
   });
 
-  // Auto-reconnect when switching FROM one session TO another that is still running
-  const prevSessionRef = useRef<string | null>(null);
+  // Auto-reconnect when switching to a session that is still running.
+  // Serialized: wait for historyLoaded THEN check status and reconnect.
+  // This mirrors Chat V1's approach — no concurrency between history load
+  // and reconnect, so no need for complex "save live messages" logic.
+  const reconnectAttemptedRef = useRef<string | null>(null);
+  const isGenerating = useChatStore((s) => s.isGenerating);
+  const historyLoaded = useChatStore((s) => s.historyLoaded);
+  const sessions = useSessionStore((s) => s.sessions);
+
+  const currentSessionStatus = useMemo(
+    () => sessions.find((s) => s.id === activeSessionId)?.status,
+    [sessions, activeSessionId],
+  );
+
   useEffect(() => {
-    const prev = prevSessionRef.current;
-    if (!activeSessionId || activeSessionId === prev) {
-      prevSessionRef.current = activeSessionId;
-      return;
-    }
-    prevSessionRef.current = activeSessionId;
+    if (!activeSessionId || !historyLoaded) return;
 
-    // Only reconnect when switching between sessions (prev was a real session)
-    // Skip when coming from null (new session just created by send)
-    if (!prev) return;
+    // If we're already generating (e.g. send just created this session),
+    // don't reconnect — we're already streaming.
+    if (isGenerating) return;
 
-    const session = useSessionStore
-      .getState()
-      .sessions.find((s) => s.id === activeSessionId);
-    if (session?.status === SESSION_STATUS.RUNNING) {
+    // Only attempt reconnect once per session id to avoid loops
+    if (reconnectAttemptedRef.current === activeSessionId) return;
+
+    if (currentSessionStatus === SESSION_STATUS.RUNNING) {
+      reconnectAttemptedRef.current = activeSessionId;
       reconnect();
     }
-  }, [activeSessionId, reconnect]);
+  }, [
+    activeSessionId,
+    historyLoaded,
+    currentSessionStatus,
+    reconnect,
+    isGenerating,
+  ]);
 
   const handleSend = useCallback(
     (input: ChatInputData) => {

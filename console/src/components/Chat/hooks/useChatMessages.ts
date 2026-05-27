@@ -290,6 +290,8 @@ export interface UseChatMessagesReturn {
   loadHistory: () => Promise<void>;
   clearHistory: () => void;
   isLoading: boolean;
+  /** True once the initial history load for the current session has completed */
+  historyLoaded: boolean;
   getUserMessageTexts: () => string[];
 }
 
@@ -304,16 +306,34 @@ export function useChatMessages({
   );
   const addMessage = useChatStore((s) => s.addMessage);
   const clearMessages = useChatStore((s) => s.clearMessages);
+  const setHistoryLoaded = useChatStore((s) => s.setHistoryLoaded);
+  const historyLoaded = useChatStore((s) => s.historyLoaded);
 
   const loadHistory = useCallback(async () => {
     if (!sessionId) return;
 
+    // If we're currently streaming into this session (e.g. send() just created
+    // it), skip history loading — clearMessages would wipe the live messages.
+    // The stream will populate the messages; historyLoaded is still marked true
+    // so that reconnect logic can proceed if needed.
+    const currentState = useChatStore.getState();
+    if (
+      currentState.isGenerating &&
+      currentState.activeSessionId === sessionId
+    ) {
+      setHistoryLoaded(true);
+      return;
+    }
+
     try {
       const history = await chatApi.getChat(sessionId);
-      if (!history.messages?.length) return;
 
       // Clear existing and reload
       clearMessages(sessionId);
+
+      if (!history.messages?.length) {
+        return;
+      }
 
       // Merge tool input+output, then group consecutive non-user messages
       const rawMessages = history.messages as Record<string, unknown>[];
@@ -346,8 +366,10 @@ export function useChatMessages({
       }
     } catch (err) {
       console.error("Failed to load chat history:", err);
+    } finally {
+      setHistoryLoaded(true);
     }
-  }, [sessionId, addMessage, clearMessages]);
+  }, [sessionId, addMessage, clearMessages, setHistoryLoaded]);
 
   // Load history when session changes
   useEffect(() => {
@@ -376,6 +398,7 @@ export function useChatMessages({
     loadHistory,
     clearHistory,
     isLoading,
+    historyLoaded,
     getUserMessageTexts,
   };
 }

@@ -199,6 +199,42 @@
 
 // ── Dark mode overrides ──
 :global(.dark-mode) {
+  .sessionPanel,
+  .collapsedPanel {
+    background: #1f1f1f;
+    border-right-color: rgba(255, 255, 255, 0.08);
+  }
+
+  .panelTitle {
+    color: rgba(255, 255, 255, 0.95);
+  }
+
+  .searchInput {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.88);
+
+    :global(.ant-input),
+    :global(.qwenpaw-input) {
+      background: transparent;
+      color: rgba(255, 255, 255, 0.88);
+
+      &::placeholder {
+        color: rgba(255, 255, 255, 0.35);
+      }
+    }
+
+    :global(.ant-input-prefix),
+    :global(.qwenpaw-input-prefix) {
+      color: rgba(255, 255, 255, 0.35);
+    }
+
+    :global(.ant-input-clear-icon),
+    :global(.qwenpaw-input-clear-icon) {
+      color: rgba(255, 255, 255, 0.35);
+    }
+  }
+
   .sessionList {
     &::-webkit-scrollbar-thumb {
       background: rgba(255, 255, 255, 0.15);
@@ -219,9 +255,33 @@
     }
   }
 
+  .sessionName {
+    color: rgba(255, 255, 255, 0.88);
+  }
+
+  .sessionPreview {
+    color: rgba(255, 255, 255, 0.45);
+  }
+
+  .pinIcon {
+    color: rgba(255, 255, 255, 0.3);
+  }
+
   .sessionActions {
+    color: rgba(255, 255, 255, 0.45);
+
     &:hover {
       background: rgba(255, 255, 255, 0.1);
+      color: rgba(255, 255, 255, 0.85);
     }
+  }
+
+  .groupLabel {
+    color: rgba(255, 255, 255, 0.45);
+  }
+
+  .loadingState,
+  .emptyState {
+    color: rgba(255, 255, 255, 0.45);
   }
 }

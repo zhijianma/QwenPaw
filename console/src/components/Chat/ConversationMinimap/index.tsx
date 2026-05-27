@@ -55,18 +55,20 @@ const ConversationMinimap: React.FC<ConversationMinimapProps> = ({
   );
 
   // Locate the scroll container via DOM query
-  useEffect(() => {
+  const resolveScrollContainer = useCallback(() => {
+    if (scrollContainerRef.current) return scrollContainerRef.current;
     const parent = minimapRef.current?.closest("[data-minimap-root]");
     if (parent) {
       scrollContainerRef.current = parent.querySelector(
         scrollContainerSelector,
       ) as HTMLElement | null;
     }
+    return scrollContainerRef.current;
   }, [scrollContainerSelector]);
 
   // Track which user message is currently in view
   useEffect(() => {
-    const container = scrollContainerRef.current;
+    const container = resolveScrollContainer();
     if (!container || userMessages.length === 0) return;
 
     const handleScroll = () => {
@@ -97,16 +99,20 @@ const ConversationMinimap: React.FC<ConversationMinimapProps> = ({
     container.addEventListener("scroll", handleScroll, { passive: true });
     handleScroll();
     return () => container.removeEventListener("scroll", handleScroll);
-  }, [userMessages]);
+  }, [userMessages, resolveScrollContainer]);
 
-  const handleClick = useCallback((messageId: string) => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
-    const element = container.querySelector(`#msg-${CSS.escape(messageId)}`);
-    if (element) {
-      element.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
-  }, []);
+  const handleClick = useCallback(
+    (messageId: string) => {
+      setActiveMessageId(messageId);
+      const container = resolveScrollContainer();
+      if (!container) return;
+      const element = container.querySelector(`#msg-${CSS.escape(messageId)}`);
+      if (element) {
+        element.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    },
+    [resolveScrollContainer],
+  );
 
   if (userMessages.length <= 2) return null;
 

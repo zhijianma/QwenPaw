@@ -147,6 +147,10 @@ export interface ChatConfig {
   supportedMediaTypes: string[];
   userId?: string;
   channel?: string;
+  /** Max auto-reconnect attempts when SSE stream disconnects unexpectedly */
+  maxStreamRetries?: number;
+  /** Base delay in ms between reconnect attempts (exponential backoff) */
+  streamRetryDelayMs?: number;
 }
 
 // ---------------------------------------------------------------------------

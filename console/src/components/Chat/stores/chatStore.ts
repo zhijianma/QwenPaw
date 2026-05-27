@@ -20,10 +20,13 @@ interface ChatState {
   isGenerating: boolean;
   /** ID of the message currently being streamed */
   streamingMessageId: string | null;
+  /** Whether initial history has been loaded for the active session */
+  historyLoaded: boolean;
 
   // Actions
   setActiveSession: (sessionId: string | null) => void;
   setGenerating: (generating: boolean) => void;
+  setHistoryLoaded: (loaded: boolean) => void;
 
   /** Add a complete message to a session */
   addMessage: (sessionId: string, message: ChatMessage) => void;
@@ -78,10 +81,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
   activeSessionId: null,
   isGenerating: false,
   streamingMessageId: null,
+  historyLoaded: false,
 
-  setActiveSession: (sessionId) => set({ activeSessionId: sessionId }),
+  setActiveSession: (sessionId) =>
+    set({ activeSessionId: sessionId, historyLoaded: false }),
 
   setGenerating: (generating) => set({ isGenerating: generating }),
+
+  setHistoryLoaded: (loaded) => set({ historyLoaded: loaded }),
 
   addMessage: (sessionId, message) =>
     set((state) => {

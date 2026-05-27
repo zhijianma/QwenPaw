@@ -12,7 +12,13 @@ import type {
   StreamResponseMessage,
   StreamContentItem,
 } from "../types";
-import { MESSAGE_STATUS, ROLES } from "../constants";
+import {
+  MESSAGE_STATUS,
+  ROLES,
+  STORAGE_KEYS,
+  DEFAULT_MAX_STREAM_RETRIES,
+  DEFAULT_STREAM_RETRY_DELAY_MS,
+} from "../constants";
 import {
   STREAM_MESSAGE_TYPES,
   TOOL_INPUT_TYPES,
@@ -541,6 +547,76 @@ function stateToMessages(state: ResponseState): StreamResponseMessage[] {
     .filter(Boolean) as StreamResponseMessage[];
 }
 
+// ---------------------------------------------------------------------------
+// Streaming session persistence helpers (page-refresh recovery)
+// ---------------------------------------------------------------------------
+
+interface StreamingSessionInfo {
+  sessionId: string;
+  timestamp: number;
+}
+
+function saveStreamingSession(sessionId: string): void {
+  try {
+    sessionStorage.setItem(
+      STORAGE_KEYS.STREAMING_SESSION_KEY,
+      JSON.stringify({
+        sessionId,
+        timestamp: Date.now(),
+      } as StreamingSessionInfo),
+    );
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function clearStreamingSession(): void {
+  try {
+    sessionStorage.removeItem(STORAGE_KEYS.STREAMING_SESSION_KEY);
+  } catch {
+    // Ignore
+  }
+}
+
+/**
+ * Save pending user message so it can be restored after page refresh.
+ * The backend may not yet have persisted it when the history is reloaded.
+ */
+function savePendingUserMessage(sessionId: string, msg: ChatMessage): void {
+  try {
+    localStorage.setItem(
+      STORAGE_KEYS.PENDING_USER_MSG_PREFIX + sessionId,
+      JSON.stringify(msg),
+    );
+  } catch {
+    // Ignore
+  }
+}
+
+function loadPendingUserMessage(sessionId: string): ChatMessage | null {
+  try {
+    const raw = localStorage.getItem(
+      STORAGE_KEYS.PENDING_USER_MSG_PREFIX + sessionId,
+    );
+    if (!raw) return null;
+    return JSON.parse(raw) as ChatMessage;
+  } catch {
+    return null;
+  }
+}
+
+function clearPendingUserMessage(sessionId: string): void {
+  try {
+    localStorage.removeItem(STORAGE_KEYS.PENDING_USER_MSG_PREFIX + sessionId);
+  } catch {
+    // Ignore
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Hook
+// ---------------------------------------------------------------------------
+
 export function useChatStream({
   config,
   sessionId,
@@ -554,6 +630,7 @@ export function useChatStream({
   const cancel = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
+    clearStreamingSession();
 
     const state = store.getState();
     if (state.streamingMessageId && sessionId) {
@@ -575,6 +652,41 @@ export function useChatStream({
       ).catch(() => {});
     }
   }, [sessionId, config, store]);
+
+  /**
+   * Issue a reconnect request to the backend.
+   * Shared by both manual reconnect and auto-retry logic.
+   */
+  const fetchReconnect = useCallback(
+    (targetSessionId: string, signal: AbortSignal): Promise<Response> => {
+      const session = sessionStore
+        .getState()
+        .sessions.find((s) => s.id === targetSessionId);
+      const streamSessionId = session?.sessionId || targetSessionId;
+
+      return fetch(config.apiEndpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...config.headers,
+        },
+        body: JSON.stringify({
+          reconnect: true,
+          session_id: streamSessionId,
+          user_id: config.userId || "default",
+          channel: config.channel || "console",
+        }),
+        signal,
+      });
+    },
+    [config, sessionStore],
+  );
+
+  // Refs to hold mutable config/callbacks so processStream can stay stable
+  const configRef = useRef(config);
+  configRef.current = config;
+  const fetchReconnectRef = useRef(fetchReconnect);
+  fetchReconnectRef.current = fetchReconnect;
 
   const processStream = useCallback(
     async (
@@ -620,6 +732,8 @@ export function useChatStream({
 
             // Check completion
             if (responseState.status === "completed") {
+              clearStreamingSession();
+              clearPendingUserMessage(targetSessionId);
               store
                 .getState()
                 .finalizeMessage(targetSessionId, assistantMsgId, {
@@ -634,17 +748,94 @@ export function useChatStream({
         }
       } catch (err) {
         if ((err as Error).name === "AbortError") return;
+
+        // Network error — attempt auto-reconnect before giving up
+        if (configRef.current.enableReconnect) {
+          const recovered = await autoReconnectRef.current(
+            assistantMsgId,
+            targetSessionId,
+          );
+          // If recovered, the new processStream call handles its own cleanup.
+          // Do NOT reset generating state here.
+          if (recovered) return;
+        }
+
         store.getState().updateMessage(targetSessionId, assistantMsgId, {
           status: MESSAGE_STATUS.ERROR,
         });
+        clearStreamingSession();
         onError?.(err as Error);
+        // Fall through to finally for state cleanup
       } finally {
-        store.getState().setGenerating(false);
-        store.getState().setStreamingMessage(null);
+        // Only reset if we're still the active streaming message
+        // (autoReconnect may have already started a new stream)
+        const currentState = store.getState();
+        if (currentState.streamingMessageId === assistantMsgId) {
+          store.getState().setGenerating(false);
+          store.getState().setStreamingMessage(null);
+        }
       }
     },
+    // Keep deps minimal and stable — mutable values accessed via refs
     [store, onHistoryClear, onError],
   );
+
+  // Ref-based auto-reconnect to avoid stale closure in processStream's catch.
+  // processStream captures autoReconnectRef instead of a bare function, so it
+  // always calls the latest version without needing it in its deps array.
+  const autoReconnectRef = useRef<
+    (msgId: string, sid: string) => Promise<boolean>
+  >(async () => false);
+
+  autoReconnectRef.current = async (
+    assistantMsgId: string,
+    targetSessionId: string,
+  ): Promise<boolean> => {
+    const currentMaxRetries =
+      configRef.current.maxStreamRetries ?? DEFAULT_MAX_STREAM_RETRIES;
+    const currentRetryDelay =
+      configRef.current.streamRetryDelayMs ?? DEFAULT_STREAM_RETRY_DELAY_MS;
+
+    for (let attempt = 0; attempt < currentMaxRetries; attempt++) {
+      const delay = currentRetryDelay * Math.pow(2, attempt);
+      console.warn(
+        `[useChatStream] SSE disconnected. Retry ${
+          attempt + 1
+        }/${currentMaxRetries} in ${delay}ms`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, delay));
+
+      if (!abortRef.current || abortRef.current.signal.aborted) return false;
+
+      try {
+        const abortController = new AbortController();
+        abortRef.current = abortController;
+
+        const reconnectResponse = await fetchReconnectRef.current(
+          targetSessionId,
+          abortController.signal,
+        );
+
+        if (!reconnectResponse.ok) {
+          throw new Error(`Reconnect failed: ${reconnectResponse.status}`);
+        }
+
+        // Re-enter stream processing with the new response.
+        // Reset generating state since processStream's finally will set it again.
+        store.getState().setStreamingMessage(assistantMsgId);
+        store.getState().setGenerating(true);
+        await processStream(reconnectResponse, assistantMsgId, targetSessionId);
+        return true;
+      } catch (err) {
+        if ((err as Error).name === "AbortError") return false;
+        console.warn(
+          `[useChatStream] Retry ${attempt + 1}/${currentMaxRetries} failed:`,
+          err,
+        );
+      }
+    }
+    return false;
+  };
 
   const send = useCallback(
     async (input: ChatInputData) => {
@@ -692,6 +883,9 @@ export function useChatStream({
 
       store.getState().addMessage(currentSessionId, userMsg);
 
+      // Persist user message for page-refresh recovery
+      savePendingUserMessage(currentSessionId, userMsg);
+
       // Create placeholder assistant message
       const assistantMsgId = generateId();
       const assistantMsg: ChatMessage = {
@@ -704,6 +898,9 @@ export function useChatStream({
       store.getState().addMessage(currentSessionId, assistantMsg);
       store.getState().setStreamingMessage(assistantMsgId);
       store.getState().setGenerating(true);
+
+      // Persist streaming state for page-refresh recovery
+      saveStreamingSession(currentSessionId);
 
       // Update session
       sessionStore.getState().updateSessionStatus(currentSessionId, "running");
@@ -769,6 +966,7 @@ export function useChatStream({
         });
         store.getState().setGenerating(false);
         store.getState().setStreamingMessage(null);
+        clearStreamingSession();
         onError?.(err as Error);
       } finally {
         sessionStore.getState().updateSessionStatus(currentSessionId, "idle");
@@ -779,6 +977,19 @@ export function useChatStream({
 
   const reconnect = useCallback(async () => {
     if (!sessionId || !config.enableReconnect) return;
+
+    // Restore pending user message if it's missing from the loaded history
+    // (backend may not have persisted it yet when history was fetched)
+    const pendingUserMsg = loadPendingUserMessage(sessionId);
+    if (pendingUserMsg) {
+      const existingMessages = store.getState().getMessages(sessionId) || [];
+      const alreadyExists = existingMessages.some(
+        (m) => m.id === pendingUserMsg.id,
+      );
+      if (!alreadyExists) {
+        store.getState().addMessage(sessionId, pendingUserMsg);
+      }
+    }
 
     const assistantMsgId = generateId();
     const assistantMsg: ChatMessage = {
@@ -792,29 +1003,14 @@ export function useChatStream({
     store.getState().setStreamingMessage(assistantMsgId);
     store.getState().setGenerating(true);
 
+    // Persist streaming state for page-refresh recovery
+    saveStreamingSession(sessionId);
+
     const abortController = new AbortController();
     abortRef.current = abortController;
 
     try {
-      const response = await fetch(config.apiEndpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...config.headers,
-        },
-        body: JSON.stringify({
-          reconnect: true,
-          session_id: (() => {
-            const s = sessionStore
-              .getState()
-              .sessions.find((s) => s.id === sessionId);
-            return s?.sessionId || sessionId;
-          })(),
-          user_id: config.userId || "default",
-          channel: config.channel || "console",
-        }),
-        signal: abortController.signal,
-      });
+      const response = await fetchReconnect(sessionId, abortController.signal);
 
       if (!response.ok) {
         throw new Error(`Reconnect failed: ${response.status}`);
@@ -832,16 +1028,24 @@ export function useChatStream({
         store.getState().removeMessage(sessionId, assistantMsgId);
         store.getState().setGenerating(false);
         store.getState().setStreamingMessage(null);
+        clearStreamingSession();
       }
     } catch (err) {
       if ((err as Error).name === "AbortError") return;
       store.getState().removeMessage(sessionId, assistantMsgId);
       store.getState().setGenerating(false);
       store.getState().setStreamingMessage(null);
+      clearStreamingSession();
+      clearPendingUserMessage(sessionId);
     } finally {
       sessionStore.getState().updateSessionStatus(sessionId, "idle");
     }
-  }, [sessionId, config, store, sessionStore, processStream]);
+  }, [sessionId, config, store, sessionStore, processStream, fetchReconnect]);
+
+  // Page-refresh/reopen recovery is handled by ChatContainer which watches
+  // the backend session status (SESSION_STATUS.RUNNING) and calls reconnect().
+  // No sessionStorage-based recovery needed here — this ensures close-then-
+  // reopen also works (sessionStorage is cleared on tab close).
 
   const isStreaming = useChatStore((s) => s.isGenerating);
 
