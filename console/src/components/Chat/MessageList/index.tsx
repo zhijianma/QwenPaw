@@ -106,7 +106,7 @@ const MessageList: React.FC<MessageListProps> = ({
     }
 
     return messages.map((msg, idx) => (
-      <div key={msg.id} className={styles.messageItem}>
+      <div key={msg.id} id={`msg-${msg.id}`} className={styles.messageItem}>
         <MessageItem
           message={msg}
           index={idx}
@@ -126,7 +126,7 @@ const MessageList: React.FC<MessageListProps> = ({
   }, []);
 
   return (
-    <div ref={containerRef} className={styles.messageList}>
+    <div ref={containerRef} data-minimap-scroll className={styles.messageList}>
       {renderContent()}
       {showScrollToBottom && (
         <button

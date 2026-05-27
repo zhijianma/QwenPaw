@@ -5,6 +5,7 @@ import ChatContainer from "../ChatContainer";
 import MessageList from "../MessageList";
 import MessageInput from "../MessageInput";
 import SessionPanel from "../SessionPanel";
+import ConversationMinimap from "../ConversationMinimap";
 import type { ChatConfig, ToolCardRegistry, CommandSuggestion } from "../types";
 import type {
   UserDisplayInfo,
@@ -92,7 +93,7 @@ const ChatPageLayout: React.FC<ChatPageLayoutProps> = ({
           collapsed={sessionPanelCollapsed}
           onToggleCollapse={toggleCollapse}
         />
-        <div className={styles.chatMain}>
+        <div className={styles.chatMain} data-minimap-root>
           <div className={styles.chatHeader}>
             <Button
               type="text"
@@ -109,7 +110,10 @@ const ChatPageLayout: React.FC<ChatPageLayoutProps> = ({
             />
             {headerExtra}
           </div>
-          <MessageList />
+          <div className={styles.messageArea}>
+            <MessageList />
+            <ConversationMinimap isDark={isDark} />
+          </div>
           <MessageInput
             placeholder={placeholder}
             commands={commands}
