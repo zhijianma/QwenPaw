@@ -88,7 +88,7 @@ function generateId(): string {
 }
 
 /** Parse metadata.timestamp string (e.g. "2026-05-27 10:44:53.362") to unix seconds. */
-const parseTimestamp = (msg: Message): number => {
+const parseTimestamp = (msg: Record<string, unknown>): number => {
   const ts = (msg.metadata as Record<string, unknown>)?.timestamp;
   if (!ts || typeof ts !== "string") return 0;
   const ms = new Date(ts.replace(" ", "T")).getTime();
@@ -210,10 +210,8 @@ const buildResponseCard = (
     0,
   );
 
-  const firstTs = parseTimestamp(outputMessages[0] as unknown as Message);
-  const lastTs = parseTimestamp(
-    outputMessages[outputMessages.length - 1] as unknown as Message,
-  );
+  const firstTs = parseTimestamp(outputMessages[0]);
+  const lastTs = parseTimestamp(outputMessages[outputMessages.length - 1]);
 
   const normalizedMessages = outputMessages.map((msg) => ({
     ...msg,

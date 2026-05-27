@@ -111,7 +111,7 @@ export async function copyText(text: string): Promise<void> {
 // Timestamp formatting utilities
 // ---------------------------------------------------------------------------
 
-/** Format a unix timestamp (seconds or milliseconds) to a short time string (HH:mm). */
+/** Format a unix timestamp (seconds or milliseconds) to a short time string (HH:mm:ss). */
 export function formatMessageTime(ts: number): string {
   if (!ts) return "";
   // Normalize to milliseconds
@@ -128,14 +128,6 @@ export function formatMessageTime(ts: number): string {
     date.getMonth() === now.getMonth() &&
     date.getDate() === now.getDate();
   if (isToday) return time;
-
-  const yesterday = new Date(now);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const isYesterday =
-    date.getFullYear() === yesterday.getFullYear() &&
-    date.getMonth() === yesterday.getMonth() &&
-    date.getDate() === yesterday.getDate();
-  if (isYesterday) return `Yesterday ${time}`;
 
   const month = (date.getMonth() + 1).toString().padStart(2, "0");
   const day = date.getDate().toString().padStart(2, "0");

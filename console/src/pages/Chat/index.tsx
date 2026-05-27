@@ -599,6 +599,12 @@ function RuntimeLoadingBridge({
   return null;
 }
 
+const timestampStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: "var(--ant-color-text-quaternary)",
+  whiteSpace: "nowrap",
+};
+
 export default function ChatPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -1291,13 +1297,7 @@ export default function ChatPage() {
               data: { data?: { created_at?: number } };
             }) => {
               return (
-                <span
-                  style={{
-                    fontSize: 12,
-                    color: "var(--ant-color-text-quaternary)",
-                    whiteSpace: "nowrap",
-                  }}
-                >
+                <span style={timestampStyle}>
                   {formatMessageTime(data?.data?.created_at ?? 0)}
                 </span>
               );
@@ -1311,13 +1311,7 @@ export default function ChatPage() {
           {
             render: ({ data }: { data: { created_at?: number } }) => {
               return (
-                <span
-                  style={{
-                    fontSize: 12,
-                    color: "var(--ant-color-text-quaternary)",
-                    whiteSpace: "nowrap",
-                  }}
-                >
+                <span style={timestampStyle}>
                   {formatMessageTime(data?.created_at ?? 0)}
                 </span>
               );
@@ -1325,25 +1319,15 @@ export default function ChatPage() {
           },
           {
             icon: <SparkCopyLine />,
-            onClick: ({
-              data,
-            }: {
-              data: {
-                input?: Array<{
-                  content?: Array<{ type?: string; text?: string }>;
-                }>;
-              };
-            }) => {
+            onClick: ({ data }: { data: { input?: any[] } }) => {
               const text = (data?.input || [])
-                .flatMap((i: any) => i.content || [])
-                .filter((c: any) => c.type === "text")
-                .map((c: any) => c.text || "")
+                .map(extractUserMessageText)
                 .join("\n")
                 .trim();
               if (text) {
-                void copyText(text).then(() =>
-                  message.success(t("common.copied")),
-                );
+                void copyText(text)
+                  .then(() => message.success(t("common.copied")))
+                  .catch(() => message.error(t("common.copyFailed")));
               }
             },
           },
