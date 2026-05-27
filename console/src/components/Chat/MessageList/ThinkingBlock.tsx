@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { BulbOutlined } from "@ant-design/icons";
 import type { ThinkingContent } from "../types";
 import styles from "./MessageList.module.less";
@@ -12,6 +13,7 @@ const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
   content,
   isStreaming,
 }) => {
+  const { t } = useTranslation();
   const isThinking = isStreaming && !content.collapsed;
 
   // Thinking in progress: open, show content
@@ -34,7 +36,7 @@ const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
           </span>
         )}
         <span className={styles.toolCallLabel}>
-          {isThinking ? "思考中" : "完成思考"}
+          {isThinking ? t("chat.thinking.thinking") : t("chat.thinking.done")}
         </span>
       </summary>
       <div className={styles.thinkingContent}>{content.text || "..."}</div>

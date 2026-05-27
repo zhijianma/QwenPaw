@@ -1,4 +1,6 @@
 import React, { useCallback, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { Attachments, Markdown } from "@agentscope-ai/chat";
 import { Audio, Video } from "@agentscope-ai/design";
 import { Image, ConfigProvider } from "antd";
@@ -60,7 +62,8 @@ function countLines(text: unknown): number {
 function getToolLabel(
   name: string,
   params: Record<string, unknown>,
-  _result?: unknown,
+  _result: unknown,
+  t: TFunction,
 ): string | null {
   const p = params || {};
 
@@ -68,57 +71,71 @@ function getToolLabel(
     // --- File I/O ---
     case "read_file": {
       const file = shortFileName((p.file_path || p.path || "") as string);
-      return file ? `阅读 ${file}` : "阅读文件";
+      return file ? t("tool.readFile", { file }) : t("tool.readFileDefault");
     }
     case "write_file": {
       const file = shortFileName((p.file_path || p.path || "") as string);
-      return file ? `写入 ${file}` : "写入文件";
+      return file ? t("tool.writeFile", { file }) : t("tool.writeFileDefault");
     }
     case "edit_file": {
       const file = shortFileName((p.file_path || p.path || "") as string);
-      return file ? `编辑 ${file}` : "编辑文件";
+      return file ? t("tool.editFile", { file }) : t("tool.editFileDefault");
     }
     case "append_file": {
       const file = shortFileName((p.file_path || p.path || "") as string);
-      return file ? `追加 ${file}` : "追加文件";
+      return file
+        ? t("tool.appendFile", { file })
+        : t("tool.appendFileDefault");
     }
 
     // --- File Search ---
     case "grep_search": {
       const pattern = (p.pattern || "") as string;
-      return pattern ? `搜索内容 "${pattern}"` : "搜索内容";
+      return pattern
+        ? t("tool.grepSearch", { pattern })
+        : t("tool.grepSearchDefault");
     }
     case "glob_search": {
       const pattern = (p.pattern || "") as string;
-      return pattern ? `查找文件 ${pattern}` : "查找文件";
+      return pattern
+        ? t("tool.globSearch", { pattern })
+        : t("tool.globSearchDefault");
     }
 
     // --- View Media ---
     case "view_image": {
       const img = shortFileName((p.image_path || "") as string);
-      return img ? `查看图片 ${img}` : "查看图片";
+      return img
+        ? t("tool.viewImage", { file: img })
+        : t("tool.viewImageDefault");
     }
     case "view_video": {
       const vid = shortFileName((p.video_path || "") as string);
-      return vid ? `查看视频 ${vid}` : "查看视频";
+      return vid
+        ? t("tool.viewVideo", { file: vid })
+        : t("tool.viewVideoDefault");
     }
 
     // --- Other built-in ---
     case "get_current_time":
-      return "获取当前时间";
+      return t("tool.getCurrentTime");
     case "set_user_timezone":
-      return `设置时区 ${(p.timezone_name || "") as string}`;
+      return t("tool.setTimezone", {
+        timezone: (p.timezone_name || "") as string,
+      });
     case "get_token_usage":
-      return "获取Token用量";
+      return t("tool.getTokenUsage");
     case "send_file_to_user": {
       const file = shortFileName((p.file_path || "") as string);
-      return file ? `发送文件 ${file}` : "发送文件";
+      return file ? t("tool.sendFile", { file }) : t("tool.sendFileDefault");
     }
     case "desktop_screenshot":
-      return "截取屏幕";
+      return t("tool.desktopScreenshot");
     case "materialize_skill": {
       const skill = (p.name || "") as string;
-      return skill ? `创建技能 ${skill}` : "创建技能";
+      return skill
+        ? t("tool.materializeSkill", { skill })
+        : t("tool.materializeSkillDefault");
     }
 
     // --- Browser ---
@@ -137,126 +154,165 @@ function getToolLabel(
       const detail = (() => {
         switch (action) {
           case "start":
-            return p.headed ? "启动 (有头模式)" : "启动";
+            return p.headed
+              ? t("tool.browserAction.startHeaded")
+              : t("tool.browserAction.start");
           case "stop":
-            return "关闭";
+            return t("tool.browserAction.stop");
           case "open":
-            return url ? `打开 ${url}` : "打开页面";
+            return url
+              ? t("tool.browserAction.open", { url })
+              : t("tool.browserAction.openDefault");
           case "navigate":
-            return url ? `导航 ${url}` : "导航";
+            return url
+              ? t("tool.browserAction.navigate", { url })
+              : t("tool.browserAction.navigateDefault");
           case "navigate_back":
-            return "返回";
+            return t("tool.browserAction.navigateBack");
           case "click":
-            return selector ? `点击 ${selector}` : "点击";
+            return selector
+              ? t("tool.browserAction.click", { selector })
+              : t("tool.browserAction.clickDefault");
           case "type":
             return text
-              ? `输入 "${text.length > 20 ? text.slice(0, 20) + "…" : text}"`
-              : "输入";
+              ? t("tool.browserAction.type", {
+                  text: text.length > 20 ? text.slice(0, 20) + "…" : text,
+                })
+              : t("tool.browserAction.typeDefault");
           case "snapshot":
-            return "快照";
+            return t("tool.browserAction.snapshot");
           case "screenshot":
-            return path ? `截图 → ${path}` : "截图";
+            return path
+              ? t("tool.browserAction.screenshot", { path })
+              : t("tool.browserAction.screenshotDefault");
           case "eval":
           case "evaluate":
             return code
-              ? `执行 ${code.length > 30 ? code.slice(0, 30) + "…" : code}`
-              : "执行脚本";
+              ? t("tool.browserAction.eval", {
+                  code: code.length > 30 ? code.slice(0, 30) + "…" : code,
+                })
+              : t("tool.browserAction.evalDefault");
           case "run_code":
             return code
-              ? `运行 ${code.length > 30 ? code.slice(0, 30) + "…" : code}`
-              : "运行代码";
+              ? t("tool.browserAction.runCode", {
+                  code: code.length > 30 ? code.slice(0, 30) + "…" : code,
+                })
+              : t("tool.browserAction.runCodeDefault");
           case "close":
-            return "关闭页面";
+            return t("tool.browserAction.closePage");
           case "tabs":
-            return tabAction ? `标签页 ${tabAction}` : "标签页";
+            return tabAction
+              ? t("tool.browserAction.tabs", { action: tabAction })
+              : t("tool.browserAction.tabsDefault");
           case "fill_form":
-            return "填写表单";
+            return t("tool.browserAction.fillForm");
           case "file_upload":
-            return filename ? `上传 ${filename}` : "上传文件";
+            return filename
+              ? t("tool.browserAction.fileUpload", { filename })
+              : t("tool.browserAction.fileUploadDefault");
           case "file_download":
             return filename
-              ? `下载 ${filename}`
+              ? t("tool.browserAction.fileDownload", { target: filename })
               : url
-              ? `下载 ${url}`
-              : "下载文件";
+              ? t("tool.browserAction.fileDownload", { target: url })
+              : t("tool.browserAction.fileDownloadDefault");
           case "press_key":
-            return key ? `按键 ${key}` : "按键";
+            return key
+              ? t("tool.browserAction.pressKey", { key })
+              : t("tool.browserAction.pressKeyDefault");
           case "hover":
-            return selector ? `悬停 ${selector}` : "悬停";
+            return selector
+              ? t("tool.browserAction.hover", { selector })
+              : t("tool.browserAction.hoverDefault");
           case "drag":
-            return "拖拽";
+            return t("tool.browserAction.drag");
           case "select_option":
-            return "选择";
+            return t("tool.browserAction.selectOption");
           case "wait_for":
             return text
-              ? `等待 "${text}"`
+              ? t("tool.browserAction.waitFor", { target: text })
               : selector
-              ? `等待 ${selector}`
-              : "等待";
+              ? t("tool.browserAction.waitFor", { target: selector })
+              : t("tool.browserAction.waitForDefault");
           case "resize":
-            return w && h ? `调整到 ${w} x ${h}` : "调整大小";
+            return w && h
+              ? t("tool.browserAction.resize", { w, h })
+              : t("tool.browserAction.resizeDefault");
           case "pdf":
-            return path ? `导出PDF → ${path}` : "导出PDF";
+            return path
+              ? t("tool.browserAction.pdf", { path })
+              : t("tool.browserAction.pdfDefault");
           case "install":
-            return "安装";
+            return t("tool.browserAction.install");
           case "batch":
-            return "批量操作";
+            return t("tool.browserAction.batch");
           default:
             return action;
         }
       })();
-      return `浏览器 ${detail}`;
+      return t("tool.browserUse", { detail });
     }
     case "browser_navigate":
     case "navigate": {
       const url = (p.url || "") as string;
-      return url ? `浏览器 导航 ${url}` : "浏览器 导航";
+      return url
+        ? t("tool.browserNavigate", { url })
+        : t("tool.browserNavigateDefault");
     }
     case "browser_click":
     case "click":
-      return "浏览器 点击";
+      return t("tool.browserClick");
     case "browser_type":
     case "type":
-      return "浏览器 输入";
+      return t("tool.browserType");
     case "browser_snapshot":
     case "snapshot":
-      return "浏览器 快照";
+      return t("tool.browserSnapshot");
     case "browser_scroll":
     case "scroll":
-      return "浏览器 滚动";
+      return t("tool.browserScroll");
 
     // --- Memory ---
     case "memory_search": {
       const query = (p.query || p.text || "") as string;
       const queryShort = query.length > 20 ? query.slice(0, 20) + "…" : query;
-      return queryShort ? `搜索记忆 ${queryShort}` : "搜索记忆";
+      return queryShort
+        ? t("tool.memorySearch", { query: queryShort })
+        : t("tool.memorySearchDefault");
     }
 
     // --- Agent management ---
     case "list_agents":
-      return "查看智能体列表";
+      return t("tool.listAgents");
     case "chat_with_agent": {
       const agent = (p.to_agent || "") as string;
-      return agent ? `与 ${agent} 智能体对话` : "与智能体对话";
+      return agent
+        ? t("tool.chatWithAgent", { agent })
+        : t("tool.chatWithAgentDefault");
     }
     case "submit_to_agent": {
       const agent = (p.to_agent || "") as string;
       const task = (p.text || "") as string;
       const taskShort = task.length > 20 ? task.slice(0, 20) + "…" : task;
       return agent
-        ? `委托 ${agent} 智能体${taskShort ? " " + taskShort : ""}`
-        : "委托智能体任务";
+        ? t("tool.submitToAgent", {
+            agent,
+            task: taskShort ? " " + taskShort : "",
+          })
+        : t("tool.submitToAgentDefault");
     }
     case "check_agent_task": {
       const agent = (p.agent_id || p.to_agent || "") as string;
       const taskId = (p.task_id || "") as string;
-      if (agent && taskId) return `检查 ${agent} 智能体 ${taskId} 任务`;
-      if (agent) return `检查 ${agent} 智能体任务`;
-      return "检查智能体任务状态";
+      if (agent && taskId) return t("tool.checkAgentTask", { agent, taskId });
+      if (agent) return t("tool.checkAgentTaskAgent", { agent });
+      return t("tool.checkAgentTaskDefault");
     }
     case "delegate_external_agent": {
       const runner = (p.runner || "") as string;
-      return runner ? `调用外部智能体 ${runner}` : "调用外部智能体";
+      return runner
+        ? t("tool.delegateExternalAgent", { runner })
+        : t("tool.delegateExternalAgentDefault");
     }
 
     default:
@@ -267,6 +323,7 @@ function getToolLabel(
 /** Get line count badge info for file/search tools */
 function getLineBadge(
   tc: ToolCallContent,
+  t: TFunction,
 ): { label: string; type: "read" | "write" | "search" } | null {
   const name = tc.name;
   const p = tc.params || {};
@@ -275,27 +332,42 @@ function getLineBadge(
     case "read_file": {
       if (tc.result == null) return null;
       const lines = countLines(tc.result);
-      return lines > 0 ? { label: `${lines}行`, type: "read" } : null;
+      return lines > 0
+        ? { label: t("tool.lineBadge.lines", { count: lines }), type: "read" }
+        : null;
     }
     case "write_file": {
       const content = (p.content as string) || "";
       if (!content) return null;
-      return { label: `${countLines(content)}行`, type: "write" };
+      return {
+        label: t("tool.lineBadge.lines", { count: countLines(content) }),
+        type: "write",
+      };
     }
     case "append_file": {
       const content = (p.content as string) || "";
       if (!content) return null;
-      return { label: `${countLines(content)}行`, type: "write" };
+      return {
+        label: t("tool.lineBadge.lines", { count: countLines(content) }),
+        type: "write",
+      };
     }
     case "grep_search": {
       if (tc.result == null) return null;
       const lines = countLines(tc.result);
-      return lines > 0 ? { label: `${lines}条`, type: "search" } : null;
+      return lines > 0
+        ? {
+            label: t("tool.lineBadge.matches", { count: lines }),
+            type: "search",
+          }
+        : null;
     }
     case "glob_search": {
       if (tc.result == null) return null;
       const lines = countLines(tc.result);
-      return lines > 0 ? { label: `${lines}个`, type: "search" } : null;
+      return lines > 0
+        ? { label: t("tool.lineBadge.files", { count: lines }), type: "search" }
+        : null;
     }
     default:
       return null;
@@ -471,7 +543,7 @@ function getFileLanguage(tc: ToolCallContent): string {
 }
 
 /** Format memory_search result as markdown table */
-function formatMemorySearch(raw: string): string {
+function formatMemorySearch(raw: string, t: TFunction): string {
   try {
     const items = JSON.parse(raw) as Array<{
       path?: string;
@@ -496,16 +568,18 @@ function formatMemorySearch(raw: string): string {
       return `| ${fileName} | ${lines} | ${score} | ${snippet} |`;
     });
 
-    return `| 文件 | 行号 | 分数 | 摘要 |\n| --- | --- | --- | --- |\n${rows.join(
-      "\n",
-    )}`;
+    return `| ${t("tool.formatTable.file")} | ${t(
+      "tool.formatTable.lineNumber",
+    )} | ${t("tool.formatTable.score")} | ${t(
+      "tool.formatTable.summary",
+    )} |\n| --- | --- | --- | --- |\n${rows.join("\n")}`;
   } catch {
     return raw;
   }
 }
 
 /** Format list_agents result as markdown table */
-function formatAgentList(raw: string): string {
+function formatAgentList(raw: string, t: TFunction): string {
   try {
     const parsed = JSON.parse(raw);
     const agents = (
@@ -521,16 +595,18 @@ function formatAgentList(raw: string): string {
       return `| ${name} | \`${id}\` | ${desc} | ${status} |`;
     });
 
-    return `| 名称 | ID | 描述 | 状态 |\n| --- | --- | --- | --- |\n${rows.join(
-      "\n",
-    )}`;
+    return `| ${t("tool.formatTable.name")} | ${t("tool.formatTable.id")} | ${t(
+      "tool.formatTable.description",
+    )} | ${t(
+      "tool.formatTable.status",
+    )} |\n| --- | --- | --- | --- |\n${rows.join("\n")}`;
   } catch {
     return raw;
   }
 }
 
 /** Get the content to display when expanded (for built-in tools) */
-function getDisplayContent(tc: ToolCallContent): string {
+function getDisplayContent(tc: ToolCallContent, t: TFunction): string {
   const p = tc.params || {};
   const name = tc.name;
 
@@ -546,14 +622,14 @@ function getDisplayContent(tc: ToolCallContent): string {
   if (name === "memory_search") {
     const raw =
       typeof tc.result === "string" ? tc.result : JSON.stringify(tc.result);
-    return formatMemorySearch(raw);
+    return formatMemorySearch(raw, t);
   }
 
   // list_agents: format as table
   if (name === "list_agents") {
     const raw =
       typeof tc.result === "string" ? tc.result : JSON.stringify(tc.result);
-    return formatAgentList(raw);
+    return formatAgentList(raw, t);
   }
 
   // Default: show tool result
@@ -564,7 +640,7 @@ function getDisplayContent(tc: ToolCallContent): string {
 }
 
 /** For inline tools, extract a short result to show in the title */
-function getInlineResult(tc: ToolCallContent): string | null {
+function getInlineResult(tc: ToolCallContent, t: TFunction): string | null {
   if (tc.status !== "done" || !tc.result) return null;
   const result = typeof tc.result === "string" ? tc.result : "";
   if (!result) return null;
@@ -572,7 +648,9 @@ function getInlineResult(tc: ToolCallContent): string | null {
   // submit_to_agent: extract TASK_ID
   if (tc.name === "submit_to_agent") {
     const match = result.match(/\[TASK_ID:\s*(.+?)\]/);
-    return match ? `任务ID: ${match[1]}` : "已提交";
+    return match
+      ? t("tool.inlineResult.taskId", { id: match[1] })
+      : t("tool.inlineResult.submitted");
   }
 
   // Truncate long results
@@ -743,7 +821,15 @@ function looksLikeMarkdown(text: string): boolean {
   return false;
 }
 
-function DefaultBlock({ title, content }: { title: string; content: string }) {
+function DefaultBlock({
+  title,
+  content,
+  copyTitle,
+}: {
+  title: string;
+  content: string;
+  copyTitle?: string;
+}) {
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMd = useMemo(() => looksLikeMarkdown(content), [content]);
@@ -766,7 +852,7 @@ function DefaultBlock({ title, content }: { title: string; content: string }) {
         <button
           className={styles.defaultBlockCopy}
           onClick={handleCopy}
-          title="复制"
+          title={copyTitle}
         >
           {copied ? <CheckOutlined /> : <CopyOutlined />}
         </button>
@@ -797,6 +883,8 @@ const ToolCallBlock: React.FC<ToolCallBlockProps> = ({
   isStreaming,
   registry,
 }) => {
+  const { t } = useTranslation();
+
   // 1. Check custom card registry first
   const CardComponent = registry[content.name];
   if (CardComponent) {
@@ -823,7 +911,12 @@ const ToolCallBlock: React.FC<ToolCallBlockProps> = ({
   }
 
   // 3. Default: compact single-line, click to expand result
-  const humanLabel = getToolLabel(content.name, content.params, content.result);
+  const humanLabel = getToolLabel(
+    content.name,
+    content.params,
+    content.result,
+    t,
+  );
   const title = humanLabel
     ? humanLabel
     : content.serverLabel
@@ -833,8 +926,8 @@ const ToolCallBlock: React.FC<ToolCallBlockProps> = ({
   const isLoading = content.status === "calling" && isStreaming;
   const isError = content.status === "error";
   const renderMode = getRenderMode(content.name);
-  const inlineResult = getInlineResult(content);
-  const displayContent = getDisplayContent(content);
+  const inlineResult = getInlineResult(content, t);
+  const displayContent = getDisplayContent(content, t);
   const mediaInfo = getMediaInfo(content);
   const icon = getToolIcon(content.name);
 
@@ -858,24 +951,28 @@ const ToolCallBlock: React.FC<ToolCallBlockProps> = ({
         )}
         <span className={styles.toolCallLabel}>
           {title}
-          {isLoading && "中"}
+          {isLoading && t("tool.loading")}
         </span>
         {content.name === "edit_file" && content.params && !isLoading && (
           <>
             <span className={styles.diffAddBadge}>
-              +{((content.params.new_text as string) || "").split("\n").length}
-              行
+              {t("tool.lineBadge.addLines", {
+                count: ((content.params.new_text as string) || "").split("\n")
+                  .length,
+              })}
             </span>
             <span className={styles.diffDelBadge}>
-              -{((content.params.old_text as string) || "").split("\n").length}
-              行
+              {t("tool.lineBadge.delLines", {
+                count: ((content.params.old_text as string) || "").split("\n")
+                  .length,
+              })}
             </span>
           </>
         )}
         {content.name !== "edit_file" &&
           !isLoading &&
           (() => {
-            const badge = getLineBadge(content);
+            const badge = getLineBadge(content, t);
             if (!badge) return null;
             const cls =
               badge.type === "write"
@@ -1033,18 +1130,20 @@ const ToolCallBlock: React.FC<ToolCallBlockProps> = ({
           )}
           {content.params && Object.keys(content.params).length > 0 && (
             <DefaultBlock
-              title="Input"
+              title={t("tool.input")}
               content={JSON.stringify(content.params, null, 2)}
+              copyTitle={t("tool.copy")}
             />
           )}
           {content.result != null && (
             <DefaultBlock
-              title="Output"
+              title={t("tool.output")}
               content={
                 typeof content.result === "string"
                   ? content.result
                   : JSON.stringify(content.result, null, 2)
               }
+              copyTitle={t("tool.copy")}
             />
           )}
         </div>

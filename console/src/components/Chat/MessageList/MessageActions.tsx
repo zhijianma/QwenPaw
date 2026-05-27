@@ -1,4 +1,5 @@
 import React, { useCallback, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { CopyOutlined, CheckOutlined } from "@ant-design/icons";
 import styles from "./MessageList.module.less";
 
@@ -8,6 +9,7 @@ interface MessageActionsProps {
 }
 
 const MessageActions: React.FC<MessageActionsProps> = ({ textToCopy }) => {
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(async () => {
@@ -40,7 +42,7 @@ const MessageActions: React.FC<MessageActionsProps> = ({ textToCopy }) => {
           copied ? styles.actionBtnActive : ""
         }`}
         onClick={handleCopy}
-        title={copied ? "Copied" : "Copy"}
+        title={copied ? t("tool.copied") : t("tool.copy")}
       >
         {copied ? <CheckOutlined /> : <CopyOutlined />}
       </button>

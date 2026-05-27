@@ -1,4 +1,5 @@
 import React, { useCallback, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Dropdown, Input } from "antd";
 import type { InputRef } from "antd";
 import {
@@ -34,6 +35,7 @@ const SessionItem: React.FC<SessionItemProps> = ({
   onStartEdit,
   onCancelEdit,
 }) => {
+  const { t } = useTranslation();
   const [editValue, setEditValue] = useState(session.name);
   const inputRef = useRef<InputRef>(null);
 
@@ -50,7 +52,7 @@ const SessionItem: React.FC<SessionItemProps> = ({
     {
       key: "rename",
       icon: <EditOutlined />,
-      label: "Rename",
+      label: t("chat.sessionPanel.rename"),
       onClick: () => {
         setEditValue(session.name);
         onStartEdit();
@@ -60,14 +62,16 @@ const SessionItem: React.FC<SessionItemProps> = ({
     {
       key: "pin",
       icon: session.pinned ? <PushpinFilled /> : <PushpinOutlined />,
-      label: session.pinned ? "Unpin" : "Pin to top",
+      label: session.pinned
+        ? t("chat.sessionPanel.unpin")
+        : t("chat.sessionPanel.pinToTop"),
       onClick: onPin,
     },
     { type: "divider" as const },
     {
       key: "delete",
       icon: <DeleteOutlined />,
-      label: "Delete",
+      label: t("chat.sessionPanel.delete"),
       danger: true,
       onClick: onDelete,
     },

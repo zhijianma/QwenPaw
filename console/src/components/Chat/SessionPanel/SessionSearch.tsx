@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { Input } from "antd";
 import { SearchOutlined } from "@ant-design/icons";
 import styles from "./SessionPanel.module.less";
@@ -9,11 +10,12 @@ interface SessionSearchProps {
 }
 
 const SessionSearch: React.FC<SessionSearchProps> = ({ value, onChange }) => {
+  const { t } = useTranslation();
   return (
     <div className={styles.searchContainer}>
       <Input
         prefix={<SearchOutlined />}
-        placeholder="Search conversations..."
+        placeholder={t("chat.sessionPanel.searchConversations")}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         allowClear

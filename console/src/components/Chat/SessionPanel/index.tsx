@@ -1,4 +1,5 @@
 import React, { useCallback, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Button, Modal } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import { useChatSessions } from "../hooks/useChatSessions";
@@ -17,6 +18,7 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
   collapsed = false,
   header,
 }) => {
+  const { t } = useTranslation();
   const {
     sessions,
     groupedSessions,
@@ -40,9 +42,9 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
   const handleDelete = useCallback(
     (id: string) => {
       Modal.confirm({
-        title: "Delete conversation?",
-        content: "This action cannot be undone.",
-        okText: "Delete",
+        title: t("chat.sessionPanel.deleteConversation"),
+        content: t("chat.sessionPanel.deleteConversationContent"),
+        okText: t("chat.sessionPanel.deleteConfirm"),
         okType: "danger",
         onOk: () => deleteSession(id),
       });
@@ -71,7 +73,9 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
     <div className={styles.sessionPanel}>
       {header || (
         <div className={styles.panelHeader}>
-          <span className={styles.panelTitle}>Conversations</span>
+          <span className={styles.panelTitle}>
+            {t("chat.sessionPanel.conversations")}
+          </span>
           <Button
             type="text"
             size="small"
@@ -85,10 +89,14 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
 
       <div className={styles.sessionList}>
         {loading && sessions.length === 0 && (
-          <div className={styles.loadingState}>Loading...</div>
+          <div className={styles.loadingState}>
+            {t("chat.sessionPanel.loadingConversations")}
+          </div>
         )}
         {!loading && sessions.length === 0 && (
-          <div className={styles.emptyState}>No conversations yet</div>
+          <div className={styles.emptyState}>
+            {t("chat.sessionPanel.noConversations")}
+          </div>
         )}
         {searchQuery.trim()
           ? sessions.map((session) => (

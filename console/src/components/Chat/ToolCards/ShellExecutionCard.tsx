@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { CodeOutlined } from "@ant-design/icons";
 import type { ToolCardProps, ToolCallContent } from "../types";
 import styles from "./ShellExecutionCard.module.less";
@@ -93,6 +94,7 @@ const ShellExecutionCard: React.FC<ShellExecutionCardProps> = ({
   status,
   toolCallContent,
 }) => {
+  const { t } = useTranslation();
   const params = toolCallContent?.params || {};
   const command = (params.command as string) || "";
   const parsed = parseShellResult(toolCallContent?.result);
@@ -122,7 +124,9 @@ const ShellExecutionCard: React.FC<ShellExecutionCardProps> = ({
             <CodeOutlined />
           </span>
         )}
-        <span className={styles.label}>{isLoading ? "执行中" : "执行"}</span>
+        <span className={styles.label}>
+          {isLoading ? t("chat.shell.executing") : t("chat.shell.execute")}
+        </span>
         {command && (
           <code className={styles.commandPreview}>
             {truncateCommand(command)}
