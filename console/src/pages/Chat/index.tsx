@@ -61,6 +61,7 @@ import {
   extractUserMessageText,
   extractTextFromMessage,
   setTextareaValue,
+  formatMessageTime,
   type CopyableResponse,
   type RuntimeLoadingBridgeApi,
 } from "./utils";
@@ -1283,8 +1284,70 @@ export default function ChatPage() {
               void copyResponse(data);
             },
           },
+          {
+            render: ({
+              data,
+            }: {
+              data: { data?: { created_at?: number } };
+            }) => {
+              return (
+                <span
+                  style={{
+                    fontSize: 12,
+                    color: "var(--ant-color-text-quaternary)",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {formatMessageTime(data?.data?.created_at ?? 0)}
+                </span>
+              );
+            },
+          },
         ],
         replace: true,
+      },
+      requestActions: {
+        list: [
+          {
+            render: ({ data }: { data: { created_at?: number } }) => {
+              return (
+                <span
+                  style={{
+                    fontSize: 12,
+                    color: "var(--ant-color-text-quaternary)",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {formatMessageTime(data?.created_at ?? 0)}
+                </span>
+              );
+            },
+          },
+          {
+            icon: <SparkCopyLine />,
+            onClick: ({
+              data,
+            }: {
+              data: {
+                input?: Array<{
+                  content?: Array<{ type?: string; text?: string }>;
+                }>;
+              };
+            }) => {
+              const text = (data?.input || [])
+                .flatMap((i: any) => i.content || [])
+                .filter((c: any) => c.type === "text")
+                .map((c: any) => c.text || "")
+                .join("\n")
+                .trim();
+              if (text) {
+                void copyText(text).then(() =>
+                  message.success(t("common.copied")),
+                );
+              }
+            },
+          },
+        ],
       },
     } as unknown as IAgentScopeRuntimeWebUIOptions;
   }, [

@@ -122,6 +122,20 @@
   }
 }
 
+/* Message actions: show on hover */
+.chatMessagesArea :global {
+  [class*="bubble-footer"] {
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+
+  [class*="bubble-end"]:hover [class*="bubble-footer"],
+  [class*="bubble-start"]:hover [class*="bubble-footer"],
+  [class*="bubble-footer"]:hover {
+    opacity: 1;
+  }
+}
+
 /* Fix #4216: Preserve newlines in user message bubbles.
  * The Raw text renderer (used when raw=true) renders \n as plain React
  * children which HTML collapses into whitespace. pre-wrap keeps them. */
