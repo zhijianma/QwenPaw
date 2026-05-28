@@ -18,9 +18,9 @@
     transform: rotate(90deg);
   }
 
-  // When open and has icon: show arrow, hide icon
+  // When open and has icon: keep icon visible
   &[open] > .summary .icon {
-    display: none;
+    display: inline-flex;
   }
 
   // When closed and has icon: hide arrow
@@ -41,11 +41,7 @@
   list-style: none;
 
   &::before {
-    content: "\25B8";
-    font-size: 10px;
-    color: var(--ant-color-text-quaternary, #bbb);
-    transition: transform 0.15s;
-    flex-shrink: 0;
+    display: none;
   }
 
   &::-webkit-details-marker {

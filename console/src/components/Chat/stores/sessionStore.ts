@@ -119,6 +119,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           status: c.status ?? SESSION_STATUS.IDLE,
           createdAt: c.created_at || new Date().toISOString(),
           updatedAt: c.updated_at || c.created_at || new Date().toISOString(),
+          channel: c.channel || undefined,
         }));
       // Sort: pinned first, then by createdAt descending
       sessions.sort((a, b) => {

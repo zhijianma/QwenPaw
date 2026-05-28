@@ -110,6 +110,8 @@ export interface ChatSession {
   createdAt: string;
   updatedAt: string;
   lastMessage?: string;
+  /** Channel key (e.g. console, dingtalk) for display in session list */
+  channel?: string;
 }
 
 export interface SessionGroup {

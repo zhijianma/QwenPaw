@@ -44,7 +44,7 @@ function ContentBlock({
         return (
           <>
             <Markdown content={first} />
-            <details className={styles.collapsibleText}>
+            <details className={styles.collapsibleText} open={isStreaming}>
               <summary className={styles.collapsibleSummary}>
                 <span className={styles.collapsibleIcon}>
                   <ScissorOutlined />

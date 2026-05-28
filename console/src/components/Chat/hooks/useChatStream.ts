@@ -351,6 +351,20 @@ function responseToContent(
     }
   }
 
+  // Post-process: if a thinking block is followed by non-thinking content,
+  // mark it as collapsed (thinking is done) even if backend didn't send
+  // a completed status for the reasoning message.
+  for (let i = 0; i < result.length; i++) {
+    if (result[i].type === "thinking" && !(result[i] as any).collapsed) {
+      const hasFollowingContent = result
+        .slice(i + 1)
+        .some((c) => c.type !== "thinking");
+      if (hasFollowingContent) {
+        (result[i] as any).collapsed = true;
+      }
+    }
+  }
+
   return result;
 }
 

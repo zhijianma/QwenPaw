@@ -14,10 +14,10 @@ const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
   isStreaming,
 }) => {
   const { t } = useTranslation();
+  // Show "thinking" spinner only when streaming AND this block is not yet collapsed
   const isThinking = isStreaming && !content.collapsed;
 
-  // Thinking in progress: open, show content
-  // Thinking done: collapsed
+  // Thinking in progress: expanded; thinking done: collapsed
   return (
     <details
       className={`${styles.toolCallCompact} ${

@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import { Attachments } from "@agentscope-ai/chat";
+import { Attachments, Markdown } from "@agentscope-ai/chat";
 import { Audio, Video } from "@agentscope-ai/design";
 import { Image, Space, ConfigProvider } from "antd";
 import type { Locale } from "antd/es/locale";
@@ -85,9 +85,9 @@ function renderContent(content: MessageContent[]) {
           break;
         }
         textItems.push(
-          <span key={`t${idx}`} className={styles.userText}>
-            {t}
-          </span>,
+          <div key={`t${idx}`} className={styles.userText}>
+            <Markdown content={t} />
+          </div>,
         );
         break;
       }
