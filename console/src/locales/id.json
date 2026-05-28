@@ -467,6 +467,8 @@
     "downloadPreparing": "Mempersiapkan unduhan workspace...",
     "downloadSuccess": "Workspace berhasil diunduh",
     "downloadFailed": "Gagal mengunduh workspace",
+    "uploadTooltip": "Hanya file ZIP",
+    "uploadTooltipWithLimit": "Hanya file ZIP, maks {{limit}}MB",
     "zipOnly": "Hanya file .zip yang didukung untuk unggahan",
     "saveSuccess": "Berhasil disimpan",
     "saveFailed": "Gagal menyimpan"

@@ -143,10 +143,16 @@ export default function WorkspacePage() {
                 onChange={handleFileUpload}
                 style={{ display: "none" }}
                 accept=".zip"
-                title="Select a ZIP file (max 100MB)"
+                title=""
               />
               <Tooltip
-                title={t("workspace.uploadTooltip")}
+                title={`${t("workspace.coreFilesDesc")} (${
+                  useUploadLimitStore.getState().uploadMaxSizeMb !== null
+                    ? t("workspace.uploadTooltipWithLimit", {
+                        limit: useUploadLimitStore.getState().uploadMaxSizeMb,
+                      })
+                    : t("workspace.uploadTooltip")
+                })`}
                 placement="top"
                 mouseEnterDelay={0.5}
               >
