@@ -7,6 +7,7 @@ import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/PageHeader";
 import { useAppMessage } from "../../../hooks/useAppMessage";
+import { useUploadLimitStore } from "../../../stores/uploadLimitStore";
 
 export default function WorkspacePage() {
   const { t } = useTranslation();
@@ -83,12 +84,11 @@ export default function WorkspacePage() {
       return;
     }
 
-    const maxSizeMb = 100;
-    const maxSize = maxSizeMb * 1024 * 1024;
-    if (file.size > maxSize) {
+    const uploadLimit = useUploadLimitStore.getState().uploadMaxSizeMb;
+    if (uploadLimit !== null && file.size > uploadLimit * 1024 * 1024) {
       message.error(
         t("workspace.fileSizeExceeded", {
-          limit: maxSizeMb,
+          limit: uploadLimit,
           size: (file.size / (1024 * 1024)).toFixed(2),
         }),
       );

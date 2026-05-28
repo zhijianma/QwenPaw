@@ -1931,9 +1931,10 @@
       }
     },
     "attachments": {
-      "tooltip": "Supports documents, images, videos, audio and more formats, single file up to {{limit}}MB",
-      "tooltipImageOnly": "Current model supports image upload only, single file up to {{limit}}MB",
-      "tooltipNoMultimodal": "No multimodal capability detected for current model, images or videos may not be processed correctly. Single file up to {{limit}}MB",
+      "tooltip": "Supports documents, images, videos, audio and more formats",
+      "tooltipImageOnly": "Current model supports image upload only",
+      "tooltipNoMultimodal": "No multimodal capability detected for current model, images or videos may not be processed correctly",
+      "fileSizeLimit": "File size limit: {{limit}}MB",
       "fileSizeExceeded": "File size exceeds {{limit}}MB limit. Current file: {{size}}MB",
       "multimodalDisabled": "Current model does not support file upload",
       "multimodalWarning": "No multimodal capability detected for current model, images or videos may not be processed correctly",
