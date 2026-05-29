@@ -11,6 +11,7 @@ import {
   useMessageHistory,
   useCommandSuggestions,
 } from "../hooks/useChatInput";
+import { useChatInputDraft } from "../hooks/useChatInputDraft";
 import { useChatMessages } from "../hooks/useChatMessages";
 import CommandSuggestions from "./CommandSuggestions";
 import type { CommandSuggestion, ChatInputData } from "../types";
@@ -60,6 +61,13 @@ const MessageInput: React.FC<MessageInputProps> = ({
     sessionId: activeSessionId,
   });
 
+  // Draft persistence – save unsent input to localStorage per session
+  const { clearDraft } = useChatInputDraft({
+    sessionId: activeSessionId,
+    value,
+    setValue,
+  });
+
   // History navigation
   useMessageHistory({ getUserMessages: getUserMessageTexts });
 
@@ -95,7 +103,8 @@ const MessageInput: React.FC<MessageInputProps> = ({
     setValue("");
     setFileList([]);
     dismissCommands();
-  }, [value, fileList, onSend, isComposingRef, dismissCommands]);
+    clearDraft();
+  }, [value, fileList, onSend, isComposingRef, dismissCommands, clearDraft]);
 
   const handleCancel = useCallback(() => {
     onCancel();
