@@ -1,0 +1,197 @@
+.a2uiContainer {
+  padding: 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.a2uiTitle {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 4px 0;
+  color: var(--ant-color-text);
+}
+
+.blockWrapper {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+// --- Text Block ---
+.textBlock {
+  line-height: 1.6;
+}
+
+// --- Diff Block ---
+.diffBlock {
+  border: 1px solid var(--ant-color-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.diffHeader {
+  padding: 6px 12px;
+  background: var(--ant-color-fill-quaternary);
+  border-bottom: 1px solid var(--ant-color-border);
+  font-size: 12px;
+  font-family: monospace;
+  color: var(--ant-color-text-secondary);
+}
+
+// --- Code Block ---
+.codeBlock {
+  border: 1px solid var(--ant-color-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.codeHeader {
+  padding: 4px 12px;
+  background: var(--ant-color-fill-quaternary);
+  border-bottom: 1px solid var(--ant-color-border);
+  font-size: 12px;
+  font-family: monospace;
+  color: var(--ant-color-text-secondary);
+}
+
+.codePre {
+  margin: 0;
+  padding: 12px;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.5;
+  background: var(--ant-color-bg-layout);
+}
+
+// --- Image Block ---
+.imageBlock {
+  text-align: center;
+
+  img {
+    max-width: 100%;
+    border-radius: 8px;
+    border: 1px solid var(--ant-color-border);
+  }
+}
+
+// --- Table Block ---
+.tableBlock {
+  :global(.ant-table) {
+    font-size: 13px;
+  }
+}
+
+// --- Card Block ---
+.cardGroup {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+
+  &::-webkit-scrollbar {
+    height: 4px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: var(--ant-color-border);
+    border-radius: 2px;
+  }
+}
+
+.card {
+  min-width: 200px;
+  max-width: 300px;
+  flex-shrink: 0;
+}
+
+.cardImage {
+  width: 100%;
+  height: 120px;
+  object-fit: cover;
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+
+// --- Progress Block ---
+.progressBlock {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.progressLabel {
+  font-size: 13px;
+  white-space: nowrap;
+  color: var(--ant-color-text-secondary);
+}
+
+// --- Buttons Block ---
+.buttonsBlock {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+// --- Form Block ---
+.formBlock {
+  max-width: 480px;
+}
+
+// --- Choice Block ---
+.choiceBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.choicePrompt {
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+
+.choiceOption {
+  padding: 8px 12px;
+  border: 1px solid var(--ant-color-border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+
+  &:hover {
+    border-color: var(--ant-color-primary);
+    background: var(--ant-color-primary-bg);
+  }
+
+  &.selected {
+    border-color: var(--ant-color-primary);
+    background: var(--ant-color-primary-bg);
+  }
+}
+
+.choiceOptionLabel {
+  font-weight: 500;
+}
+
+.choiceOptionDesc {
+  font-size: 12px;
+  color: var(--ant-color-text-secondary);
+  margin-top: 2px;
+}
+
+// --- Fallback Block ---
+.fallbackBlock {
+  border: 1px dashed var(--ant-color-border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--ant-color-text-secondary);
+
+  pre {
+    margin: 4px 0 0 0;
+    font-size: 11px;
+    max-height: 120px;
+    overflow: auto;
+  }
+}

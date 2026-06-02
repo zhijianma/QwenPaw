@@ -30,6 +30,8 @@ import ChatActionGroup from "./components/ChatActionGroup";
 import ChatHeaderTitle from "./components/ChatHeaderTitle";
 import ChatSessionInitializer from "./components/ChatSessionInitializer";
 import { ApprovalCard } from "../../components/ApprovalCard/ApprovalCard";
+import A2UIRenderer from "../../components/ToolRenderers/A2UIRenderer";
+import { A2UISubmitContext } from "../../components/ToolRenderers/A2UIRenderer/A2UISubmitContext";
 import { commandsApi } from "../../api/modules/commands";
 import { useApprovalContext } from "../../contexts/ApprovalContext";
 import { planApi } from "../../api/modules/plan";
@@ -1348,8 +1350,10 @@ export default function ChatPage() {
           });
         },
       },
-      customToolRenderConfig:
-        Object.keys(toolRenderConfig).length > 0 ? toolRenderConfig : undefined,
+      customToolRenderConfig: {
+        a2ui: A2UIRenderer,
+        ...toolRenderConfig,
+      },
       actions: {
         list: [
           {
@@ -1422,7 +1426,15 @@ export default function ChatPage() {
     handleWhisperTranscription,
   ]);
 
+  const a2uiSubmit = useCallback(
+    (query: string) => {
+      chatRef.current?.input?.submit?.({ query });
+    },
+    [],
+  );
+
   return (
+    <A2UISubmitContext.Provider value={a2uiSubmit}>
     <div
       style={{
         height: "100%",
@@ -1545,5 +1557,6 @@ export default function ChatPage() {
         />
       </Modal>
     </div>
+    </A2UISubmitContext.Provider>
   );
 }
