@@ -29,6 +29,7 @@ from .agent_management import (
     check_agent_task,
     spawn_subagent,
 )
+from .a2ui import a2ui
 from .delegate_external_agent import delegate_external_agent
 
 # Registered via react_agent's hardcoded tool_functions; kept out of
@@ -36,6 +37,7 @@ from .delegate_external_agent import delegate_external_agent
 from .make_skill_tools import materialize_skill  # noqa: F401
 
 __all__ = [
+    "a2ui",
     "execute_python_code",
     "execute_shell_command",
     "view_text_file",

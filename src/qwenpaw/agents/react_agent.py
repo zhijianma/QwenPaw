@@ -39,6 +39,7 @@ from .skill_system import (
 from .coding_mode_mixin import CodingModeMixin
 from .tool_guard_mixin import ToolGuardMixin
 from .tools import (
+    a2ui,
     browser_use,
     delegate_external_agent,
     chat_with_agent,
@@ -283,6 +284,7 @@ class QwenPawAgent(CodingModeMixin, ToolGuardMixin, ReActAgent):
 
         # Map of tool functions (hardcoded builtin tools)
         tool_functions = {
+            "a2ui": a2ui,
             "execute_shell_command": execute_shell_command,
             "read_file": read_file,
             "write_file": write_file,
