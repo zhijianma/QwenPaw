@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { toDisplayUrl } from "@/pages/Chat/utils";
 import FallbackBlock from "./blocks/FallbackBlock";
 import TextBlock from "./blocks/TextBlock";
 import DiffBlock from "./blocks/DiffBlock";
@@ -53,8 +54,29 @@ export default function A2UIRenderer({ data }: A2UIRendererProps) {
       (b): b is Record<string, unknown> =>
         b != null && typeof b === "object" && typeof (b as any).type === "string",
     );
+    // Resolve media URLs (image/audio/video/file, card.image)
+    const resolvedBlocks = validBlocks.map((b) => {
+      const t = b.type as string;
+      if (t === "image" && b.url) {
+        return { ...b, url: toDisplayUrl(b.url as string) };
+      }
+      if (t === "audio" && b.url) {
+        return { ...b, url: toDisplayUrl(b.url as string) };
+      }
+      if (t === "video" && b.url) {
+        return { ...b, url: toDisplayUrl(b.url as string) };
+      }
+      if (t === "file" && b.url) {
+        return { ...b, url: toDisplayUrl(b.url as string) };
+      }
+      if (t === "card" && b.image) {
+        return { ...b, image: toDisplayUrl(b.image as string) };
+      }
+      return b;
+    });
+
     return {
-      blocks: validBlocks,
+      blocks: resolvedBlocks,
       title: (args?.title ?? "") as string,
     };
   }, [data]);
