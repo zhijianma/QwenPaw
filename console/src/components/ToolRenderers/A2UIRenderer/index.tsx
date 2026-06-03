@@ -88,8 +88,17 @@ export default function A2UIRenderer({ data }: A2UIRendererProps) {
 
   return (
     <div className={styles.a2uiContainer}>
+      <div className={styles.a2uiBadge}>
+        <svg className={styles.a2uiBadgeIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <path d="M3 9h18" />
+          <path d="M9 21V9" />
+        </svg>
+        a2ui
+      </div>
       {title && <div className={styles.a2uiTitle}>{title}</div>}
       {elements}
+      <div className={styles.a2uiFooter}>— end of a2ui —</div>
     </div>
   );
 }
