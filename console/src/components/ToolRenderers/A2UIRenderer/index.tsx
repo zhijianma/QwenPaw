@@ -47,8 +47,14 @@ export default function A2UIRenderer({ data }: A2UIRendererProps) {
     } else if (rawArgs && typeof rawArgs === "object") {
       args = rawArgs as { blocks?: unknown[]; title?: string };
     }
+    // Filter: only keep items that are objects with a string "type" field
+    const rawBlocks = args?.blocks ?? [];
+    const validBlocks = (Array.isArray(rawBlocks) ? rawBlocks : []).filter(
+      (b): b is Record<string, unknown> =>
+        b != null && typeof b === "object" && typeof (b as any).type === "string",
+    );
     return {
-      blocks: (args?.blocks ?? []) as Record<string, unknown>[],
+      blocks: validBlocks,
       title: (args?.title ?? "") as string,
     };
   }, [data]);
@@ -60,11 +66,11 @@ export default function A2UIRenderer({ data }: A2UIRendererProps) {
   let i = 0;
   while (i < blocks.length) {
     const block = blocks[i];
-    const blockType = String(block.type || "");
+    const blockType = block.type as string;
 
     if (blockType === "card") {
       const cardGroup: Record<string, unknown>[] = [];
-      while (i < blocks.length && String(blocks[i].type) === "card") {
+      while (i < blocks.length && blocks[i].type === "card") {
         cardGroup.push(blocks[i]);
         i++;
       }
