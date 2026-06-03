@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import A2UIRenderer from "./index";
-import type { IAgentScopeRuntimeMessage } from "@agentscope-ai/chat";
 
 // Mock @ant-design/x-markdown
 vi.mock("@ant-design/x-markdown", () => ({
@@ -18,9 +17,7 @@ vi.mock("@/contexts/ThemeContext", () => ({
   useTheme: () => ({ isDark: false }),
 }));
 
-function makeMessage(
-  args: Record<string, unknown>,
-): IAgentScopeRuntimeMessage {
+function makeMessage(args: Record<string, unknown>) {
   return {
     id: "test-1",
     role: "assistant",
@@ -33,7 +30,7 @@ function makeMessage(
         data: { name: "a2ui", arguments: args },
       },
     ],
-  } as unknown as IAgentScopeRuntimeMessage;
+  };
 }
 
 describe("A2UIRenderer", () => {

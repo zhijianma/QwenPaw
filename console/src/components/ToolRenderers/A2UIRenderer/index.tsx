@@ -1,8 +1,4 @@
 import { useMemo } from "react";
-import type {
-  IAgentScopeRuntimeMessage,
-  IDataContent,
-} from "@agentscope-ai/chat";
 import FallbackBlock from "./blocks/FallbackBlock";
 import TextBlock from "./blocks/TextBlock";
 import DiffBlock from "./blocks/DiffBlock";
@@ -30,15 +26,15 @@ const BLOCK_COMPONENTS: Record<string, React.FC<{ block: any }>> = {
 };
 
 interface A2UIRendererProps {
-  data: IAgentScopeRuntimeMessage;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data: any;
 }
 
 export default function A2UIRenderer({ data }: A2UIRendererProps) {
   const { blocks, title } = useMemo(() => {
-    const content = data.content as IDataContent<{
-      name: string;
-      arguments: { blocks?: unknown[]; title?: string };
-    }>[];
+    const content = data?.content as
+      | { type: string; data?: { arguments?: { blocks?: unknown[]; title?: string } } }[]
+      | undefined;
     const args = content?.[0]?.data?.arguments;
     return {
       blocks: (args?.blocks ?? []) as Record<string, unknown>[],
