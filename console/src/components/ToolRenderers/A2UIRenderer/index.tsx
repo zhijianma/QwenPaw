@@ -33,9 +33,20 @@ interface A2UIRendererProps {
 export default function A2UIRenderer({ data }: A2UIRendererProps) {
   const { blocks, title } = useMemo(() => {
     const content = data?.content as
-      | { type: string; data?: { arguments?: { blocks?: unknown[]; title?: string } } }[]
+      | { type: string; data?: { arguments?: unknown } }[]
       | undefined;
-    const args = content?.[0]?.data?.arguments;
+    const rawArgs = content?.[0]?.data?.arguments;
+    // arguments may be a JSON string or already-parsed object
+    let args: { blocks?: unknown[]; title?: string } | undefined;
+    if (typeof rawArgs === "string") {
+      try {
+        args = JSON.parse(rawArgs);
+      } catch {
+        args = undefined;
+      }
+    } else if (rawArgs && typeof rawArgs === "object") {
+      args = rawArgs as { blocks?: unknown[]; title?: string };
+    }
     return {
       blocks: (args?.blocks ?? []) as Record<string, unknown>[],
       title: (args?.title ?? "") as string,

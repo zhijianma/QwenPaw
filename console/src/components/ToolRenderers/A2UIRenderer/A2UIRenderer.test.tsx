@@ -129,6 +129,30 @@ describe("A2UIRenderer", () => {
     expect(container.firstChild).toBeNull();
   });
 
+  it("handles arguments as JSON string (real API format)", () => {
+    const data = {
+      id: "test-str",
+      role: "assistant",
+      type: "plugin_call",
+      status: "completed",
+      content: [
+        {
+          type: "data",
+          data: {
+            name: "a2ui",
+            arguments: JSON.stringify({
+              title: "String Args Title",
+              blocks: [{ type: "text", content: "from string args" }],
+            }),
+          },
+        },
+      ],
+    };
+    render(<A2UIRenderer data={data} />);
+    expect(screen.getByText("String Args Title")).toBeInTheDocument();
+    expect(screen.getByText(/from string args/)).toBeInTheDocument();
+  });
+
   it("renders buttons block", () => {
     const data = makeMessage({
       blocks: [
