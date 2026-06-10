@@ -12,6 +12,7 @@ import { Image, ConfigProvider } from "antd";
 import type { Locale } from "antd/es/locale";
 import { DownloadOutlined } from "@ant-design/icons";
 import type { MediaInfo } from "./utils";
+import { openExternalLink } from "../../../../utils/openExternalLink";
 import styles from "./toolCards.module.less";
 
 export interface MediaPreviewProps {
@@ -57,7 +58,7 @@ const MediaPreview: React.FC<MediaPreviewProps> = ({ media }) => {
           {media.url && (
             <div
               className={styles.bubbleFileDownload}
-              onClick={() => window.open(media.url, "_blank")}
+              onClick={() => openExternalLink(media.url)}
             >
               <DownloadOutlined />
             </div>
