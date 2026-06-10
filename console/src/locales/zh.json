@@ -1999,7 +1999,9 @@
       "duplicate": "该路径已存在",
       "saveSuccess": "文件防护设置已保存",
       "saveFailed": "保存文件防护设置失败",
-      "loadFailed": "加载文件防护设置失败"
+      "loadFailed": "加载文件防护设置失败",
+      "allowPreviewOutsideWorkspace": "允许控制台预览工作区外文件",
+      "allowPreviewOutsideWorkspaceDesc": "允许在控制台中预览工作区目录之外的文件，敏感文件防护仍然生效。"
     },
     "allowNoAuthHosts": {
       "title": "免认证主机白名单",
@@ -2561,6 +2563,15 @@
     "inlineResult": {
       "taskId": "任务 #{{id}}",
       "submitted": "已提交"
+    }
+  },
+  "preview": {
+    "error": {
+      "SENSITIVE_FILE_BLOCKED": "该文件被文件防护拦截（敏感文件保护）。",
+      "OUTSIDE_WORKSPACE": "该文件位于工作区范围之外。请在 设置 → 安全 → 文件防护 中启用「允许控制台预览工作区外文件」。",
+      "FORBIDDEN": "访问被拒绝：没有预览此文件的权限。",
+      "NOT_FOUND": "文件未找到，可能已被移动或删除。",
+      "LOAD_FAILED": "加载文件预览失败。"
     }
   }
 }
