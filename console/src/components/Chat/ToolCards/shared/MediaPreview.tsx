@@ -45,7 +45,7 @@ const MediaPreview: React.FC<MediaPreviewProps> = ({ media }) => {
       if (translated) {
         setError(translated);
       } else if (status === 403) {
-        setError(t("preview.error.PERMISSION_DENIED"));
+        setError(t("preview.error.FORBIDDEN"));
       } else if (status === 404) {
         setError(t("preview.error.NOT_FOUND"));
       } else if (code) {

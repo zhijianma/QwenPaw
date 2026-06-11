@@ -2561,7 +2561,6 @@
       "SENSITIVE_FILE_BLOCKED": "This file is blocked by File Guard (sensitive file protection).",
       "OUTSIDE_WORKSPACE": "This file is outside the workspace scope. Enable \"Allow Console Preview Outside Workspace\" in Settings → Security → File Guard.",
       "FORBIDDEN": "Access denied: insufficient permissions to preview this file.",
-      "PERMISSION_DENIED": "Permission denied: the system does not allow access to this file path.",
       "NOT_FOUND": "File not found. It may have been moved or deleted.",
       "LOAD_FAILED": "Failed to load file preview.",
       "LOAD_FAILED_DETAIL": "Failed to load file preview: {{detail}}"
