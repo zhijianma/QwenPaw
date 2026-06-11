@@ -13,6 +13,7 @@ from .utils import (
     read_file_safe,
     DEFAULT_MAX_BYTES,
 )
+from .a2ui_visual import a2ui_visual
 from ...config.context import (
     get_current_workspace_dir,
     get_current_recent_max_bytes,
@@ -253,7 +254,44 @@ async def write_file(
         )
 
 
+def _edit_file_pre_hook(file_path: str, **_: object) -> dict:
+    """Capture file content before edit for diff visualization."""
+    resolved = _resolve_file_path(file_path)
+    if os.path.isfile(resolved):
+        try:
+            with open(resolved, "r", encoding="utf-8") as f:
+                return {"old_content": f.read()}
+        except Exception:  # noqa: BLE001
+            pass
+    return {}
+
+
+def _edit_file_blocks(
+    pre_state: dict,
+    file_path: str,
+    old_text: str,
+    new_text: str,
+) -> dict:
+    """Build a2ui diff blocks for edit_file."""
+    old_content = pre_state.get("old_content", old_text)
+    new_content = old_content.replace(old_text, new_text)
+    suffix = Path(file_path).suffix.lstrip(".")
+    return {
+        "title": f"Edit: {Path(file_path).name}",
+        "blocks": [
+            {
+                "type": "diff",
+                "file": file_path,
+                "language": suffix,
+                "old_content": old_content,
+                "new_content": new_content,
+            },
+        ],
+    }
+
+
 # pylint: disable=too-many-return-statements
+@a2ui_visual(blocks_builder=_edit_file_blocks, pre_hook=_edit_file_pre_hook)
 async def edit_file(
     file_path: str,
     old_text: str,

@@ -1352,6 +1352,7 @@ export default function ChatPage() {
       },
       customToolRenderConfig: {
         a2ui: A2UIRenderer,
+        edit_file: A2UIRenderer,
         ...toolRenderConfig,
       },
       actions: {

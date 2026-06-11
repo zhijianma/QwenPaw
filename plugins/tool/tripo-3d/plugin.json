@@ -1,0 +1,179 @@
+{
+  "id": "tripo-3d-tool",
+  "name": "Tripo 3D Generation Tool",
+  "version": "1.1.0",
+  "description": "Generate 3D models using Tripo via DashScope (text-to-3D, image-to-3D, multi-image-to-3D)",
+  "description_i18n": {
+    "zh-CN": "使用 Tripo 模型生成 3D 模型（文生3D、图生3D、多图生3D）",
+    "en-US": "Generate 3D models using Tripo via DashScope (text-to-3D, image-to-3D, multi-image-to-3D)"
+  },
+  "author": "QwenPaw Team",
+  "entry": {
+    "backend": "tripo_3d.py"
+  },
+  "dependencies": ["httpx>=0.24.0"],
+  "min_version": "1.1.6",
+  "meta": {
+    "tools": [
+      {
+        "name": "text_to_3d_tripo",
+        "description": "Generate 3D models from text prompts using Tripo",
+        "icon": "\ud83e\udea9",
+        "requires_config": true,
+        "config_fields": [
+          {
+            "name": "api_key",
+            "label": "DashScope API Key",
+            "type": "password",
+            "required": true,
+            "placeholder": "sk-...",
+            "help": "Get your API key from https://bailian.console.aliyun.com/"
+          },
+          {
+            "name": "endpoint",
+            "label": "API Endpoint",
+            "type": "text",
+            "required": false,
+            "placeholder": "https://dashscope.aliyuncs.com/api/v1",
+            "help": "Beijing: https://dashscope.aliyuncs.com/api/v1  Singapore: https://dashscope-intl.aliyuncs.com/api/v1"
+          },
+          {
+            "name": "model",
+            "label": "Model",
+            "type": "select",
+            "required": false,
+            "default": "Tripo/Tripo-P1.0",
+            "options": ["Tripo/Tripo-P1.0", "Tripo/Tripo-H3.1"],
+            "help": "P1.0: Fast preview (~20K faces). H3.1: Film-grade (~2M faces, slower)"
+          },
+          {
+            "name": "texture_quality",
+            "label": "Texture Quality",
+            "type": "select",
+            "required": false,
+            "default": "standard",
+            "options": ["standard", "detailed"],
+            "help": "Texture quality of the generated 3D model"
+          },
+          {
+            "name": "timeout",
+            "label": "Request Timeout (seconds)",
+            "type": "number",
+            "required": false,
+            "placeholder": "600",
+            "min": 60,
+            "max": 1800,
+            "help": "3D generation usually takes 2-10 minutes. Default: 600s"
+          }
+        ]
+      },
+      {
+        "name": "image_to_3d_tripo",
+        "description": "Generate 3D models from a single image using Tripo",
+        "icon": "\ud83d\uddbc\ufe0f",
+        "requires_config": true,
+        "config_fields": [
+          {
+            "name": "api_key",
+            "label": "DashScope API Key",
+            "type": "password",
+            "required": true,
+            "placeholder": "sk-...",
+            "help": "Get your API key from https://bailian.console.aliyun.com/"
+          },
+          {
+            "name": "endpoint",
+            "label": "API Endpoint",
+            "type": "text",
+            "required": false,
+            "placeholder": "https://dashscope.aliyuncs.com/api/v1",
+            "help": "Beijing: https://dashscope.aliyuncs.com/api/v1  Singapore: https://dashscope-intl.aliyuncs.com/api/v1"
+          },
+          {
+            "name": "model",
+            "label": "Model",
+            "type": "select",
+            "required": false,
+            "default": "Tripo/Tripo-P1.0",
+            "options": ["Tripo/Tripo-P1.0", "Tripo/Tripo-H3.1"],
+            "help": "P1.0: Fast preview (~20K faces). H3.1: Film-grade (~2M faces, slower)"
+          },
+          {
+            "name": "texture_quality",
+            "label": "Texture Quality",
+            "type": "select",
+            "required": false,
+            "default": "standard",
+            "options": ["standard", "detailed"],
+            "help": "Texture quality of the generated 3D model"
+          },
+          {
+            "name": "timeout",
+            "label": "Request Timeout (seconds)",
+            "type": "number",
+            "required": false,
+            "placeholder": "600",
+            "min": 60,
+            "max": 1800,
+            "help": "3D generation usually takes 2-10 minutes. Default: 600s"
+          }
+        ]
+      },
+      {
+        "name": "multi_images_to_3d_tripo",
+        "description": "Generate 3D models from multiple images (2-4 angles) using Tripo",
+        "icon": "\ud83d\uddbc\ufe0f",
+        "requires_config": true,
+        "config_fields": [
+          {
+            "name": "api_key",
+            "label": "DashScope API Key",
+            "type": "password",
+            "required": true,
+            "placeholder": "sk-...",
+            "help": "Get your API key from https://bailian.console.aliyun.com/"
+          },
+          {
+            "name": "endpoint",
+            "label": "API Endpoint",
+            "type": "text",
+            "required": false,
+            "placeholder": "https://dashscope.aliyuncs.com/api/v1",
+            "help": "Beijing: https://dashscope.aliyuncs.com/api/v1  Singapore: https://dashscope-intl.aliyuncs.com/api/v1"
+          },
+          {
+            "name": "model",
+            "label": "Model",
+            "type": "select",
+            "required": false,
+            "default": "Tripo/Tripo-P1.0",
+            "options": ["Tripo/Tripo-P1.0", "Tripo/Tripo-H3.1"],
+            "help": "P1.0: Fast preview (~20K faces). H3.1: Film-grade (~2M faces, slower)"
+          },
+          {
+            "name": "texture_quality",
+            "label": "Texture Quality",
+            "type": "select",
+            "required": false,
+            "default": "standard",
+            "options": ["standard", "detailed"],
+            "help": "Texture quality of the generated 3D model"
+          },
+          {
+            "name": "timeout",
+            "label": "Request Timeout (seconds)",
+            "type": "number",
+            "required": false,
+            "placeholder": "600",
+            "min": 60,
+            "max": 1800,
+            "help": "3D generation usually takes 2-10 minutes. Default: 600s"
+          }
+        ]
+      }
+    ],
+    "api_key_url": "https://bailian.console.aliyun.com/",
+    "api_key_hint": "Get your DashScope API key from Alibaba Cloud Bailian console",
+    "model_url": "https://help.aliyun.com/zh/model-studio/3d-generation-api"
+  }
+}
