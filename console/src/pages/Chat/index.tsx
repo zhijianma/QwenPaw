@@ -80,6 +80,81 @@ import {
 import { openExternalLink } from "../../utils/openExternalLink";
 import { getLastEditorCopy } from "../Coding/lastEditorCopy";
 import { useUploadLimitStore } from "../../stores/uploadLimitStore";
+import MessageQueuePanel, {
+  type QueueItem,
+  nextQueueId,
+} from "./components/MessageQueuePanel";
+
+// ---------------------------------------------------------------------------
+// Background queue sender — keeps sending after ChatPage unmounts
+// ---------------------------------------------------------------------------
+
+let _bgAbort: AbortController | null = null;
+
+function stopBackgroundQueue() {
+  if (_bgAbort) {
+    _bgAbort.abort();
+    _bgAbort = null;
+  }
+}
+
+async function startBackgroundQueue(
+  items: QueueItem[],
+  sessionId: string,
+  storageKey: string,
+) {
+  stopBackgroundQueue();
+  if (items.length === 0) return;
+
+  const ctrl = new AbortController();
+  _bgAbort = ctrl;
+  const remaining = [...items];
+
+  while (remaining.length > 0) {
+    if (ctrl.signal.aborted) break;
+    const item = remaining[0];
+
+    try {
+      const res = await fetch(getApiUrl("/console/chat"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...buildAuthHeaders(),
+        },
+        body: JSON.stringify({
+          input: [
+            { role: "user", content: [{ type: "text", text: item.text }] },
+          ],
+          session_id: sessionId,
+          user_id: DEFAULT_USER_ID,
+          channel: DEFAULT_CHANNEL,
+          stream: true,
+        }),
+        signal: ctrl.signal,
+      });
+
+      const reader = res.body?.getReader();
+      if (reader) {
+        while (!(await reader.read()).done) {
+          if (ctrl.signal.aborted) break;
+        }
+      }
+    } catch {
+      break;
+    }
+
+    remaining.shift();
+    if (remaining.length > 0) {
+      sessionStorage.setItem(storageKey, JSON.stringify(remaining));
+    } else {
+      sessionStorage.removeItem(storageKey);
+    }
+  }
+
+  if (_bgAbort === ctrl) _bgAbort = null;
+}
+
+// ---------------------------------------------------------------------------
 
 interface SessionInfo {
   session_id?: string;
@@ -654,15 +729,18 @@ function useChatPasteFromEditor() {
 
 function RuntimeLoadingBridge({
   bridgeRef,
+  onLoadingChange,
 }: {
   bridgeRef: { current: RuntimeLoadingBridgeApi | null };
+  onLoadingChange?: (loading: boolean | string) => void;
 }) {
-  const { setLoading, getLoading } = useChatAnywhereInput(
+  const { loading, setLoading, getLoading } = useChatAnywhereInput(
     (value) =>
       ({
+        loading: value.loading,
         setLoading: value.setLoading,
         getLoading: value.getLoading,
-      }) as RuntimeLoadingBridgeApi,
+      }) as { loading: boolean | string } & RuntimeLoadingBridgeApi,
   );
 
   useEffect(() => {
@@ -682,6 +760,10 @@ function RuntimeLoadingBridge({
       }
     };
   }, [getLoading, setLoading, bridgeRef]);
+
+  useEffect(() => {
+    onLoadingChange?.(loading ?? false);
+  }, [loading, onLoadingChange]);
 
   return null;
 }
@@ -725,6 +807,77 @@ export default function ChatPage() {
   const extLists = useChatListSnapshot();
   const [refreshKey, setRefreshKey] = useState(0);
   const runtimeLoadingBridgeRef = useRef<RuntimeLoadingBridgeApi | null>(null);
+  const queueStorageKey = `qwenpaw_mq_${chatId ?? "new"}`;
+  const [messageQueue, setMessageQueue] = useState<QueueItem[]>(() => {
+    try {
+      const saved = sessionStorage.getItem(queueStorageKey);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const messageQueueRef = useRef(messageQueue);
+  messageQueueRef.current = messageQueue;
+  const autoSendTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevQueueLenRef = useRef(messageQueue.length);
+
+  const scheduleNextSend = useCallback(() => {
+    if (autoSendTimerRef.current) clearTimeout(autoSendTimerRef.current);
+    autoSendTimerRef.current = setTimeout(() => {
+      autoSendTimerRef.current = null;
+      if (chatLoadingRef.current) return;
+      const q = messageQueueRef.current;
+      if (q.length === 0) return;
+      const next = q[0];
+      setMessageQueue((prev) => prev.slice(1));
+      chatRef.current?.input.submit({ query: next.text });
+    }, 500);
+  }, []);
+
+  // Reload queue when switching sessions
+  const prevQueueKeyRef = useRef(queueStorageKey);
+  useEffect(() => {
+    if (prevQueueKeyRef.current === queueStorageKey) return;
+
+    // Save old queue to storage (don't send — just preserve for when user returns)
+    const oldKey = prevQueueKeyRef.current;
+    const oldQueue = messageQueueRef.current;
+    if (oldQueue.length > 0) {
+      sessionStorage.setItem(oldKey, JSON.stringify(oldQueue));
+    }
+
+    prevQueueKeyRef.current = queueStorageKey;
+    // Cancel any pending auto-send from the old session
+    if (autoSendTimerRef.current) {
+      clearTimeout(autoSendTimerRef.current);
+      autoSendTimerRef.current = null;
+    }
+    prevChatLoadingRef.current = false;
+    // Keep prevQueueLenRef at current value to prevent auto-send effect from
+    // seeing a false 0→N transition on stale messageQueue in the same render.
+    prevQueueLenRef.current = messageQueue.length;
+
+    let newQueue: QueueItem[] = [];
+    try {
+      const saved = sessionStorage.getItem(queueStorageKey);
+      newQueue = saved ? JSON.parse(saved) : [];
+    } catch {
+      newQueue = [];
+    }
+    setMessageQueue(newQueue);
+
+    // If the new session has queued items, schedule auto-send after React
+    // updates messageQueueRef (next render). The 500ms delay ensures refs
+    // are current and the session-switch is fully settled.
+    if (newQueue.length > 0) {
+      scheduleNextSend();
+    }
+  }, [queueStorageKey, scheduleNextSend]);
+  const [chatLoading, setChatLoading] = useState<boolean | string>(false);
+  const chatLoadingRef = useRef<boolean | string>(false);
+  chatLoadingRef.current = chatLoading;
+  const prevChatLoadingRef = useRef<boolean | string>(false);
   const { message } = useAppMessage();
   const { approvals, setApprovals } = useApprovalContext();
   const [approvalRequests, setApprovalRequests] = useState<
@@ -991,6 +1144,123 @@ export default function ChatPage() {
   useMessageHistoryNavigation(chatRef, isChatActive, isComposingRef);
   useChatInputDraft(isChatActive, selectedAgent);
   useChatPasteFromEditor();
+
+  // ── Message Queue ───────────────────────────────────────────────────────
+
+  // Stop background sender when ChatPage mounts; start it on unmount
+  const queueStorageKeyRef = useRef(queueStorageKey);
+  queueStorageKeyRef.current = queueStorageKey;
+
+  useEffect(() => {
+    stopBackgroundQueue();
+    return () => {
+      if (autoSendTimerRef.current) {
+        clearTimeout(autoSendTimerRef.current);
+        autoSendTimerRef.current = null;
+      }
+      const remaining = messageQueueRef.current;
+      if (remaining.length > 0) {
+        const sid = window.currentSessionId || chatIdRef.current || "";
+        startBackgroundQueue(remaining, sid, queueStorageKeyRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const key = queueStorageKeyRef.current;
+    if (messageQueue.length > 0) {
+      sessionStorage.setItem(key, JSON.stringify(messageQueue));
+    } else {
+      sessionStorage.removeItem(key);
+    }
+  }, [messageQueue]);
+
+  // Auto-send next queue item when:
+  // 1. Response just completed (loading→idle), OR
+  // 2. Queue goes from empty→non-empty while idle (Ctrl+Enter while not chatting)
+  // Uses a delayed timer so session switches can cancel it before it fires.
+  useEffect(() => {
+    const wasLoading = prevChatLoadingRef.current;
+    const prevLen = prevQueueLenRef.current;
+    prevChatLoadingRef.current = chatLoading;
+    prevQueueLenRef.current = messageQueue.length;
+
+    const responseJustCompleted = wasLoading && !chatLoading;
+    const itemsJustQueued =
+      prevLen === 0 && messageQueue.length > 0 && !chatLoading;
+
+    if (responseJustCompleted || itemsJustQueued) {
+      scheduleNextSend();
+    }
+  }, [chatLoading, messageQueue, scheduleNextSend]);
+
+  // Intercept Enter to enqueue:
+  //  - Ctrl/Meta+Enter: always enqueue (even when idle)
+  //  - Plain Enter while loading: enqueue (SDK blocks triggerSend when loading)
+  useEffect(() => {
+    const handleEnterEnqueue = (e: KeyboardEvent) => {
+      if (!isChatActive() || e.key !== "Enter" || e.shiftKey) return;
+      const hasCtrl = e.ctrlKey || e.metaKey;
+      if (!hasCtrl && !chatLoadingRef.current) return;
+      if (!hasCtrl && e.altKey) return;
+      if (isComposingRef.current || (e as any).isComposing) return;
+      const textarea = hasCtrl
+        ? (document
+            .querySelector('[class*="sender"]')
+            ?.querySelector("textarea") as HTMLTextAreaElement | null)
+        : e.target instanceof HTMLTextAreaElement &&
+            e.target.closest('[class*="sender"]')
+          ? e.target
+          : null;
+      if (!textarea) return;
+      const val = textarea.value.trim();
+      if (!val) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setMessageQueue((prev) => [...prev, { id: nextQueueId(), text: val }]);
+      setTextareaValue(textarea, "");
+    };
+    document.addEventListener("keydown", handleEnterEnqueue, true);
+    return () =>
+      document.removeEventListener("keydown", handleEnterEnqueue, true);
+  }, [isChatActive]);
+
+  const handleQueueRemove = useCallback((id: string) => {
+    setMessageQueue((prev) => prev.filter((it) => it.id !== id));
+  }, []);
+
+  const handleQueueEdit = useCallback((id: string, text: string) => {
+    setMessageQueue((prev) =>
+      prev.map((it) => (it.id === id ? { ...it, text } : it)),
+    );
+  }, []);
+
+  const handleQueueReorder = useCallback((reordered: QueueItem[]) => {
+    setMessageQueue(reordered);
+  }, []);
+
+  const handleQueueInterruptAndSend = useCallback(
+    (item: QueueItem) => {
+      if (runtimeLoadingBridgeRef.current?.getLoading?.()) {
+        const sessionId = window.currentSessionId || chatIdRef.current;
+        if (sessionId) {
+          const resolvedId =
+            sessionApi.getRealIdForSession(sessionId) ?? sessionId;
+          chatApi.stopChat(resolvedId).catch(() => {});
+        }
+      }
+      setMessageQueue((prev) => prev.filter((it) => it.id !== item.id));
+      setTimeout(() => {
+        chatRef.current?.input.submit({ query: item.text });
+      }, 600);
+    },
+    [],
+  );
+
+  const handleQueueClear = useCallback(() => {
+    setMessageQueue([]);
+  }, []);
+  // ── End Message Queue ───────────────────────────────────────────────────
 
   const onFileCardClick = useCallback(
     (fileInfo: { name?: string; size?: number; url?: string }) => {
@@ -1528,7 +1798,7 @@ export default function ChatPage() {
         rightHeader: (
           <>
             <ChatSessionInitializer />
-            <RuntimeLoadingBridge bridgeRef={runtimeLoadingBridgeRef} />
+            <RuntimeLoadingBridge bridgeRef={runtimeLoadingBridgeRef} onLoadingChange={setChatLoading} />
             <ChatHeaderTitle />
             <span style={{ flex: 1 }} />
             <ModelSelector />
@@ -1553,6 +1823,16 @@ export default function ChatPage() {
         ...(i18nConfig as any)?.sender,
         beforeSubmit: handleBeforeSubmit,
         allowSpeech: whisperChecked && !whisperEnabled,
+        beforeUI: messageQueue.length > 0 ? (
+          <MessageQueuePanel
+            items={messageQueue}
+            onRemove={handleQueueRemove}
+            onEdit={handleQueueEdit}
+            onReorder={handleQueueReorder}
+            onInterruptAndSend={handleQueueInterruptAndSend}
+            onClear={handleQueueClear}
+          />
+        ) : undefined,
         prefix:
           whisperEnabled || pluginSenderPrefix.length > 0 ? (
             <>
@@ -1745,6 +2025,12 @@ export default function ChatPage() {
     whisperChecked,
     whisperEnabled,
     handleWhisperTranscription,
+    messageQueue,
+    handleQueueRemove,
+    handleQueueEdit,
+    handleQueueReorder,
+    handleQueueInterruptAndSend,
+    handleQueueClear,
   ]);
 
   return (
