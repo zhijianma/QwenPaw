@@ -80,10 +80,12 @@ import {
 import { openExternalLink } from "../../utils/openExternalLink";
 import { getLastEditorCopy } from "../Coding/lastEditorCopy";
 import { useUploadLimitStore } from "../../stores/uploadLimitStore";
-import MessageQueuePanel, {
+import MessageQueuePanel from "./components/MessageQueuePanel";
+import {
+  useMessageQueueStore,
   type QueueItem,
-  nextQueueId,
-} from "./components/MessageQueuePanel";
+  MAX_QUEUE_SIZE,
+} from "../../stores/messageQueueStore";
 
 // ---------------------------------------------------------------------------
 // Background queue sender — keeps sending after ChatPage unmounts
@@ -98,17 +100,14 @@ function stopBackgroundQueue() {
   }
 }
 
-async function startBackgroundQueue(
-  items: QueueItem[],
-  sessionId: string,
-  storageKey: string,
-) {
+async function startBackgroundQueue(items: QueueItem[], sessionId: string) {
   stopBackgroundQueue();
   if (items.length === 0) return;
 
   const ctrl = new AbortController();
   _bgAbort = ctrl;
   const remaining = [...items];
+  const storageKey = `qwenpaw:message-queue:${sessionId}`;
 
   while (remaining.length > 0) {
     if (ctrl.signal.aborted) break;
@@ -807,47 +806,81 @@ export default function ChatPage() {
   const extLists = useChatListSnapshot();
   const [refreshKey, setRefreshKey] = useState(0);
   const runtimeLoadingBridgeRef = useRef<RuntimeLoadingBridgeApi | null>(null);
-  const queueStorageKey = `qwenpaw_mq_${chatId ?? "new"}`;
-  const [messageQueue, setMessageQueue] = useState<QueueItem[]>(() => {
-    try {
-      const saved = sessionStorage.getItem(queueStorageKey);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
-
+  const queueSessionId = chatId ?? "new";
+  const messageQueue =
+    useMessageQueueStore((s) => s.queues[queueSessionId]) ?? [];
   const messageQueueRef = useRef(messageQueue);
   messageQueueRef.current = messageQueue;
   const autoSendTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevQueueLenRef = useRef(messageQueue.length);
+
+  // Track pending attachments for queue support
+  const pendingFileListRef = useRef<
+    {
+      uid: string;
+      name: string;
+      url: string;
+      thumbUrl?: string;
+      type?: string;
+      size?: number;
+    }[]
+  >([]);
+
+  // Build SDK fileList from QueueItem.attachments
+  // SDK reads file.response.url for image_url / file_url (see AgentScopeRuntimeRequestBuilder)
+  const buildFileList = useCallback(
+    (item: {
+      attachments?: {
+        url: string;
+        name?: string;
+        type?: string;
+        size?: number;
+      }[];
+    }) => {
+      if (!item.attachments || item.attachments.length === 0) return undefined;
+      return item.attachments.map((a) => ({
+        uid: a.url,
+        name: a.name ?? "file",
+        url: a.url,
+        thumbUrl: a.type?.startsWith("image/") ? a.url : undefined,
+        status: "done" as const,
+        response: { url: a.url },
+        size: a.size,
+        type: a.type,
+      }));
+    },
+    [],
+  );
+
+  const runState = useMessageQueueStore((s) => s.runState);
 
   const scheduleNextSend = useCallback(() => {
     if (autoSendTimerRef.current) clearTimeout(autoSendTimerRef.current);
     autoSendTimerRef.current = setTimeout(() => {
       autoSendTimerRef.current = null;
       if (chatLoadingRef.current) return;
+      // Respect pause/error state — read fresh from store
+      const state = useMessageQueueStore.getState().runState;
+      if (state === "paused" || state === "error") return;
       const q = messageQueueRef.current;
       if (q.length === 0) return;
       const next = q[0];
-      setMessageQueue((prev) => prev.slice(1));
-      chatRef.current?.input.submit({ query: next.text });
+      useMessageQueueStore.getState().remove(queueSessionId, next.id);
+      chatRef.current?.input.submit({
+        query: next.text,
+        fileList: buildFileList(next),
+      });
     }, 500);
-  }, []);
+  }, [queueSessionId]);
 
-  // Reload queue when switching sessions
-  const prevQueueKeyRef = useRef(queueStorageKey);
+  // Reload queue when switching sessions or on first mount
+  const prevQueueSessionIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (prevQueueKeyRef.current === queueStorageKey) return;
+    const isFirstMount = prevQueueSessionIdRef.current === null;
+    const isSameSession = prevQueueSessionIdRef.current === queueSessionId;
 
-    // Save old queue to storage (don't send — just preserve for when user returns)
-    const oldKey = prevQueueKeyRef.current;
-    const oldQueue = messageQueueRef.current;
-    if (oldQueue.length > 0) {
-      sessionStorage.setItem(oldKey, JSON.stringify(oldQueue));
-    }
+    if (!isFirstMount && isSameSession) return;
 
-    prevQueueKeyRef.current = queueStorageKey;
     // Cancel any pending auto-send from the old session
     if (autoSendTimerRef.current) {
       clearTimeout(autoSendTimerRef.current);
@@ -858,22 +891,19 @@ export default function ChatPage() {
     // seeing a false 0→N transition on stale messageQueue in the same render.
     prevQueueLenRef.current = messageQueue.length;
 
-    let newQueue: QueueItem[] = [];
-    try {
-      const saved = sessionStorage.getItem(queueStorageKey);
-      newQueue = saved ? JSON.parse(saved) : [];
-    } catch {
-      newQueue = [];
-    }
-    setMessageQueue(newQueue);
+    // Load queue for new session from storage into store
+    useMessageQueueStore.getState().loadFromStorage(queueSessionId);
+
+    prevQueueSessionIdRef.current = queueSessionId;
 
     // If the new session has queued items, schedule auto-send after React
     // updates messageQueueRef (next render). The 500ms delay ensures refs
     // are current and the session-switch is fully settled.
+    const newQueue = useMessageQueueStore.getState().getQueue(queueSessionId);
     if (newQueue.length > 0) {
       scheduleNextSend();
     }
-  }, [queueStorageKey, scheduleNextSend]);
+  }, [queueSessionId, scheduleNextSend]);
   const [chatLoading, setChatLoading] = useState<boolean | string>(false);
   const chatLoadingRef = useRef<boolean | string>(false);
   chatLoadingRef.current = chatLoading;
@@ -1148,9 +1178,6 @@ export default function ChatPage() {
   // ── Message Queue ───────────────────────────────────────────────────────
 
   // Stop background sender when ChatPage mounts; start it on unmount
-  const queueStorageKeyRef = useRef(queueStorageKey);
-  queueStorageKeyRef.current = queueStorageKey;
-
   useEffect(() => {
     stopBackgroundQueue();
     return () => {
@@ -1161,19 +1188,10 @@ export default function ChatPage() {
       const remaining = messageQueueRef.current;
       if (remaining.length > 0) {
         const sid = window.currentSessionId || chatIdRef.current || "";
-        startBackgroundQueue(remaining, sid, queueStorageKeyRef.current);
+        startBackgroundQueue(remaining, sid);
       }
     };
   }, []);
-
-  useEffect(() => {
-    const key = queueStorageKeyRef.current;
-    if (messageQueue.length > 0) {
-      sessionStorage.setItem(key, JSON.stringify(messageQueue));
-    } else {
-      sessionStorage.removeItem(key);
-    }
-  }, [messageQueue]);
 
   // Auto-send next queue item when:
   // 1. Response just completed (loading→idle), OR
@@ -1209,35 +1227,70 @@ export default function ChatPage() {
             .querySelector('[class*="sender"]')
             ?.querySelector("textarea") as HTMLTextAreaElement | null)
         : e.target instanceof HTMLTextAreaElement &&
-            e.target.closest('[class*="sender"]')
-          ? e.target
-          : null;
+          e.target.closest('[class*="sender"]')
+        ? e.target
+        : null;
       if (!textarea) return;
       const val = textarea.value.trim();
       if (!val) return;
       e.preventDefault();
       e.stopPropagation();
-      setMessageQueue((prev) => [...prev, { id: nextQueueId(), text: val }]);
+      const currentQ = useMessageQueueStore.getState().getQueue(queueSessionId);
+      if (currentQ.length >= MAX_QUEUE_SIZE) {
+        message.warning(
+          `队列已满 (最多 ${MAX_QUEUE_SIZE} 条)，请先发送或删除部分消息`,
+        );
+        return;
+      }
+      useMessageQueueStore.getState().enqueue(queueSessionId, {
+        text: val,
+        attachments:
+          pendingFileListRef.current.length > 0
+            ? pendingFileListRef.current.map((f) => ({
+                url: f.url,
+                name: f.name,
+                type: f.type,
+                size: f.size,
+              }))
+            : undefined,
+      });
+      // Clear tracked attachments after enqueuing
+      pendingFileListRef.current = [];
       setTextareaValue(textarea, "");
+      // Clear sender attachment preview by clicking remove buttons
+      const senderEl = textarea.closest('[class*="sender"]');
+      if (senderEl) {
+        const removeBtns = senderEl.querySelectorAll<HTMLButtonElement>(
+          'button[class*="attachment-list-card-remove"]',
+        );
+        removeBtns.forEach((btn) => btn.click());
+      }
     };
     document.addEventListener("keydown", handleEnterEnqueue, true);
     return () =>
       document.removeEventListener("keydown", handleEnterEnqueue, true);
-  }, [isChatActive]);
+  }, [isChatActive, queueSessionId]);
 
-  const handleQueueRemove = useCallback((id: string) => {
-    setMessageQueue((prev) => prev.filter((it) => it.id !== id));
-  }, []);
+  const handleQueueRemove = useCallback(
+    (id: string) => {
+      useMessageQueueStore.getState().remove(queueSessionId, id);
+    },
+    [queueSessionId],
+  );
 
-  const handleQueueEdit = useCallback((id: string, text: string) => {
-    setMessageQueue((prev) =>
-      prev.map((it) => (it.id === id ? { ...it, text } : it)),
-    );
-  }, []);
+  const handleQueueEdit = useCallback(
+    (id: string, text: string) => {
+      useMessageQueueStore.getState().edit(queueSessionId, id, text);
+    },
+    [queueSessionId],
+  );
 
-  const handleQueueReorder = useCallback((reordered: QueueItem[]) => {
-    setMessageQueue(reordered);
-  }, []);
+  const handleQueueReorder = useCallback(
+    (reordered: QueueItem[]) => {
+      useMessageQueueStore.getState().reorder(queueSessionId, reordered);
+    },
+    [queueSessionId],
+  );
 
   const handleQueueInterruptAndSend = useCallback(
     (item: QueueItem) => {
@@ -1249,17 +1302,81 @@ export default function ChatPage() {
           chatApi.stopChat(resolvedId).catch(() => {});
         }
       }
-      setMessageQueue((prev) => prev.filter((it) => it.id !== item.id));
+      useMessageQueueStore.getState().remove(queueSessionId, item.id);
       setTimeout(() => {
-        chatRef.current?.input.submit({ query: item.text });
+        chatRef.current?.input.submit({
+          query: item.text,
+          fileList: buildFileList(item),
+        });
       }, 600);
     },
-    [],
+    [queueSessionId],
   );
 
   const handleQueueClear = useCallback(() => {
-    setMessageQueue([]);
-  }, []);
+    useMessageQueueStore.getState().clear(queueSessionId);
+  }, [queueSessionId]);
+
+  const handleQueuePauseResume = useCallback(() => {
+    const current = useMessageQueueStore.getState().runState;
+    if (current === "paused") {
+      useMessageQueueStore.getState().setRunState("running");
+      // Try to resume sending immediately
+      if (!chatLoadingRef.current) {
+        const q = useMessageQueueStore.getState().getQueue(queueSessionId);
+        if (q.length > 0) {
+          useMessageQueueStore.getState().remove(queueSessionId, q[0].id);
+          chatRef.current?.input.submit({
+            query: q[0].text,
+            fileList: buildFileList(q[0]),
+          });
+        }
+      }
+    } else {
+      useMessageQueueStore.getState().setRunState("paused");
+    }
+  }, [queueSessionId]);
+
+  const handleQueueRetry = useCallback(
+    (id: string) => {
+      useMessageQueueStore
+        .getState()
+        .setItemStatus(queueSessionId, id, "pending");
+      useMessageQueueStore.getState().setRunState("running");
+      // Trigger send if idle
+      if (!chatLoadingRef.current) {
+        const q = useMessageQueueStore.getState().getQueue(queueSessionId);
+        const target = q.find((it) => it.id === id);
+        if (target) {
+          useMessageQueueStore.getState().remove(queueSessionId, id);
+          chatRef.current?.input.submit({
+            query: target.text,
+            fileList: buildFileList(target),
+          });
+        }
+      }
+    },
+    [queueSessionId],
+  );
+
+  const handleQueueSkip = useCallback(
+    (id: string) => {
+      useMessageQueueStore.getState().remove(queueSessionId, id);
+      // After skip, try to continue sending
+      if (!chatLoadingRef.current) {
+        const q = useMessageQueueStore.getState().getQueue(queueSessionId);
+        if (q.length > 0) {
+          const next = q[0];
+          useMessageQueueStore.getState().remove(queueSessionId, next.id);
+          chatRef.current?.input.submit({
+            query: next.text,
+            fileList: buildFileList(next),
+          });
+        }
+      }
+    },
+    [queueSessionId],
+  );
   // ── End Message Queue ───────────────────────────────────────────────────
 
   const onFileCardClick = useCallback(
@@ -1546,7 +1663,19 @@ export default function ChatPage() {
 
         const res = await chatApi.uploadFile(file);
         onProgress?.({ percent: 100 });
-        onSuccess({ url: chatApi.filePreviewUrl(res.url) });
+        const previewUrl = chatApi.filePreviewUrl(res.url);
+        onSuccess({ url: previewUrl });
+        // Track uploaded file for queue attachment support
+        pendingFileListRef.current = [
+          ...pendingFileListRef.current,
+          {
+            uid: res.url,
+            name: file.name,
+            url: previewUrl,
+            type: file.type,
+            size: file.size,
+          },
+        ];
       } catch (e) {
         onError?.(e instanceof Error ? e : new Error(String(e)));
       }
@@ -1600,6 +1729,8 @@ export default function ChatPage() {
       if (isComposingRef.current) return false;
       localStorage.removeItem(getDraftStorageKey(selectedAgent));
       draftSuppressed = true;
+      // Clear pending attachments when sending directly (not through queue)
+      pendingFileListRef.current = [];
       return true;
     };
 
@@ -1798,7 +1929,10 @@ export default function ChatPage() {
         rightHeader: (
           <>
             <ChatSessionInitializer />
-            <RuntimeLoadingBridge bridgeRef={runtimeLoadingBridgeRef} onLoadingChange={setChatLoading} />
+            <RuntimeLoadingBridge
+              bridgeRef={runtimeLoadingBridgeRef}
+              onLoadingChange={setChatLoading}
+            />
             <ChatHeaderTitle />
             <span style={{ flex: 1 }} />
             <ModelSelector />
@@ -1823,16 +1957,21 @@ export default function ChatPage() {
         ...(i18nConfig as any)?.sender,
         beforeSubmit: handleBeforeSubmit,
         allowSpeech: whisperChecked && !whisperEnabled,
-        beforeUI: messageQueue.length > 0 ? (
-          <MessageQueuePanel
-            items={messageQueue}
-            onRemove={handleQueueRemove}
-            onEdit={handleQueueEdit}
-            onReorder={handleQueueReorder}
-            onInterruptAndSend={handleQueueInterruptAndSend}
-            onClear={handleQueueClear}
-          />
-        ) : undefined,
+        beforeUI:
+          messageQueue.length > 0 ? (
+            <MessageQueuePanel
+              items={messageQueue}
+              runState={runState}
+              onRemove={handleQueueRemove}
+              onEdit={handleQueueEdit}
+              onReorder={handleQueueReorder}
+              onInterruptAndSend={handleQueueInterruptAndSend}
+              onClear={handleQueueClear}
+              onPauseResume={handleQueuePauseResume}
+              onRetry={handleQueueRetry}
+              onSkip={handleQueueSkip}
+            />
+          ) : undefined,
         prefix:
           whisperEnabled || pluginSenderPrefix.length > 0 ? (
             <>
@@ -2031,6 +2170,10 @@ export default function ChatPage() {
     handleQueueReorder,
     handleQueueInterruptAndSend,
     handleQueueClear,
+    handleQueuePauseResume,
+    handleQueueRetry,
+    handleQueueSkip,
+    runState,
   ]);
 
   return (
