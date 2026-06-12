@@ -1258,12 +1258,19 @@ export default function ChatPage() {
       pendingFileListRef.current = [];
       setTextareaValue(textarea, "");
       // Clear sender attachment preview by clicking remove buttons
+      // Note: SDK renders remove buttons with display:none (only visible on hover).
+      // We must temporarily set display before calling .click() so the handler fires.
       const senderEl = textarea.closest('[class*="sender"]');
       if (senderEl) {
         const removeBtns = senderEl.querySelectorAll<HTMLButtonElement>(
           'button[class*="attachment-list-card-remove"]',
         );
-        removeBtns.forEach((btn) => btn.click());
+        removeBtns.forEach((btn) => {
+          const prevDisplay = btn.style.display;
+          btn.style.display = "flex";
+          btn.click();
+          btn.style.display = prevDisplay;
+        });
       }
     };
     document.addEventListener("keydown", handleEnterEnqueue, true);

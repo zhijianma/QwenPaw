@@ -1,10 +1,18 @@
 import { useState, useCallback, useRef } from "react";
-import { Input } from "antd";
+import { Input, Tooltip } from "antd";
+import { IconButton } from "@agentscope-ai/design";
 import {
   SparkDragDotLine,
   SparkEditLine,
   SparkSendLine,
   SparkDeleteLine,
+  SparkRefreshLine,
+  SparkNextSentenceLine,
+  SparkPauseLine,
+  SparkPlayFill,
+  SparkAlertLine,
+  SparkErrorCircleLine,
+  SparkClearLine,
 } from "@agentscope-ai/icons";
 import { useTheme } from "../../../contexts/ThemeContext";
 import {
@@ -113,11 +121,12 @@ export default function MessageQueuePanel({
 
   if (items.length === 0) return null;
 
-  const muted = isDark ? "#888" : "#999";
+  const isPausedOrError = runState === "paused" || runState === "error";
+  const borderColor = isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)";
   const rowBg = isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.02)";
   const hoverBg = isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.05)";
   const dragOverBg = isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.06)";
-  const borderColor = isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)";
+  const mutedColor = isDark ? "#888" : "#999";
 
   return (
     <div
@@ -133,6 +142,7 @@ export default function MessageQueuePanel({
         border: `1px solid ${borderColor}`,
       }}
     >
+      {/* Header */}
       <div
         style={{
           display: "flex",
@@ -148,8 +158,12 @@ export default function MessageQueuePanel({
           borderBottom: `1px solid ${borderColor}`,
         }}
       >
+        {/* Title + status badge */}
         <span
           style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
             fontSize: 12,
             fontWeight: 500,
             color: isDark ? "#bbb" : "#555",
@@ -160,76 +174,69 @@ export default function MessageQueuePanel({
           {runState === "paused" && (
             <span
               style={{
-                marginLeft: 8,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 3,
                 fontSize: 11,
                 color: "#faad14",
                 fontWeight: 400,
               }}
             >
-              ⏸ 已暂停
+              已暂停
             </span>
           )}
           {runState === "error" && (
             <span
               style={{
-                marginLeft: 8,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 3,
                 fontSize: 11,
                 color: "#ff4d4f",
                 fontWeight: 400,
               }}
             >
-              ⚠ 发送失败
+              <SparkErrorCircleLine style={{ fontSize: 11 }} />
+              发送失败
             </span>
           )}
         </span>
-        <span style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <span
-            onClick={onPauseResume}
-            style={{
-              fontSize: 11,
-              fontWeight: 500,
-              color:
-                runState === "paused" || runState === "error"
-                  ? "#52c41a"
-                  : "#faad14",
-              cursor: "pointer",
-              userSelect: "none",
-              padding: "2px 6px",
-              borderRadius: 4,
-              background:
-                runState === "paused" || runState === "error"
-                  ? "rgba(82,196,26,0.1)"
-                  : "rgba(250,173,20,0.1)",
-            }}
-            title={
-              runState === "paused" || runState === "error"
-                ? "继续发送队列"
-                : "暂停发送队列"
-            }
+
+        {/* Header actions */}
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+          <Tooltip
+            title={isPausedOrError ? "继续发送队列" : "暂停发送队列"}
+            mouseEnterDelay={0.5}
           >
-            {runState === "paused" || runState === "error"
-              ? "▶ 继续"
-              : "⏸ 暂停"}
-          </span>
+            <IconButton
+              bordered={false}
+              size="small"
+              icon={
+                isPausedOrError ? (
+                  <SparkPlayFill style={{ fontSize: 14, color: "#52c41a" }} />
+                ) : (
+                  <SparkPauseLine style={{ fontSize: 14, color: "#faad14" }} />
+                )
+              }
+              onClick={onPauseResume}
+            />
+          </Tooltip>
           {items.length > 1 && (
-            <span
-              onClick={onClear}
-              style={{
-                fontSize: 11,
-                color: muted,
-                cursor: "pointer",
-                userSelect: "none",
-                padding: "2px 6px",
-                borderRadius: 4,
-              }}
-              title="清空队列"
-            >
-              清空
-            </span>
+            <Tooltip title="清空队列" mouseEnterDelay={0.5}>
+              <IconButton
+                bordered={false}
+                size="small"
+                icon={
+                  <SparkClearLine style={{ fontSize: 14, color: mutedColor }} />
+                }
+                onClick={onClear}
+              />
+            </Tooltip>
           )}
         </span>
       </div>
 
+      {/* Queue rows */}
       {items.map((item) => {
         const statusColor =
           item.status === "failed"
@@ -237,10 +244,13 @@ export default function MessageQueuePanel({
             : item.status === "sending"
             ? "#1890ff"
             : "#52c41a";
+        const isHovered = hoveredId === item.id;
+        const isEditing = editingId === item.id;
+
         return (
           <div
             key={item.id}
-            draggable={editingId !== item.id && item.status !== "sending"}
+            draggable={!isEditing && item.status !== "sending"}
             onDragStart={() => handleDragStart(item.id)}
             onDragOver={(e) => handleDragOver(e, item.id)}
             onDrop={() => handleDrop(item.id)}
@@ -252,23 +262,23 @@ export default function MessageQueuePanel({
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 8,
-              padding: "5px 10px",
+              gap: 4,
+              padding: "4px 8px 4px 4px",
               borderRadius: 6,
               fontSize: 12,
               background:
                 dragOverId === item.id
                   ? dragOverBg
-                  : hoveredId === item.id
+                  : isHovered
                   ? hoverBg
                   : rowBg,
-              cursor: editingId === item.id ? "default" : "grab",
+              cursor: isEditing ? "default" : "grab",
               transition: "background 0.15s ease",
               position: "relative",
               overflow: "hidden",
             }}
           >
-            {/* Status indicator bar */}
+            {/* Status bar */}
             <div
               style={{
                 position: "absolute",
@@ -283,24 +293,23 @@ export default function MessageQueuePanel({
             />
 
             {/* Drag handle */}
-            <span
-              style={{
-                color: muted,
-                fontSize: 10,
-                minWidth: 20,
-                userSelect: "none",
-                cursor: "grab",
-                paddingLeft: 4,
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 2,
-              }}
-              title="拖动排序"
-            >
-              <SparkDragDotLine style={{ fontSize: 12, flexShrink: 0 }} />
-            </span>
+            <Tooltip title="拖动排序" mouseEnterDelay={0.8}>
+              <span
+                style={{
+                  color: mutedColor,
+                  cursor: "grab",
+                  paddingLeft: 6,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  flexShrink: 0,
+                }}
+              >
+                <SparkDragDotLine style={{ fontSize: 13 }} />
+              </span>
+            </Tooltip>
 
-            {editingId === item.id ? (
+            {/* Content: editing or display */}
+            {isEditing ? (
               <Input
                 size="small"
                 autoFocus
@@ -315,6 +324,7 @@ export default function MessageQueuePanel({
               />
             ) : (
               <>
+                {/* Text */}
                 <span
                   style={{
                     flex: 1,
@@ -350,218 +360,140 @@ export default function MessageQueuePanel({
                 {(item.attachments?.length || 0) > 0 && (
                   <span
                     style={{
-                      display: "flex",
+                      display: "inline-flex",
                       alignItems: "center",
                       gap: 4,
-                      marginLeft: 6,
                       flexShrink: 0,
                     }}
                   >
                     {item.attachments!.map((att, ai) => {
                       const isImage = att.type?.startsWith("image/");
                       return (
-                        <span
+                        <Tooltip
                           key={ai}
-                          style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 3,
-                            padding: "2px 5px",
-                            borderRadius: 4,
-                            background: isDark
-                              ? "rgba(255,255,255,0.06)"
-                              : "rgba(0,0,0,0.04)",
-                            fontSize: 10,
-                            color: muted,
-                            maxWidth: 120,
-                            overflow: "hidden",
-                            whiteSpace: "nowrap" as const,
-                          }}
                           title={att.name || att.url}
+                          mouseEnterDelay={0.5}
                         >
-                          {isImage ? (
-                            <img
-                              src={att.url}
-                              alt={att.name || "image"}
-                              style={{
-                                width: 18,
-                                height: 18,
-                                objectFit: "cover" as const,
-                                borderRadius: 3,
-                                flexShrink: 0,
-                              }}
-                            />
-                          ) : (
-                            <span style={{ flexShrink: 0 }}>📎</span>
-                          )}
                           <span
                             style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 3,
+                              padding: "2px 5px",
+                              borderRadius: 4,
+                              background: isDark
+                                ? "rgba(255,255,255,0.06)"
+                                : "rgba(0,0,0,0.04)",
+                              fontSize: 10,
+                              color: mutedColor,
+                              maxWidth: 100,
                               overflow: "hidden",
-                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap" as const,
                             }}
                           >
-                            {att.name || "文件"}
+                            {isImage ? (
+                              <img
+                                src={att.url}
+                                alt={att.name || "image"}
+                                style={{
+                                  width: 18,
+                                  height: 18,
+                                  objectFit: "cover" as const,
+                                  borderRadius: 3,
+                                  flexShrink: 0,
+                                }}
+                              />
+                            ) : (
+                              <SparkAlertLine
+                                style={{ fontSize: 12, flexShrink: 0 }}
+                              />
+                            )}
+                            <span
+                              style={{
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                              }}
+                            >
+                              {att.name || "文件"}
+                            </span>
                           </span>
-                        </span>
+                        </Tooltip>
                       );
                     })}
                   </span>
                 )}
 
-                {/* Action buttons */}
+                {/* Row action buttons — always reserve space for layout stability */}
                 <span
                   style={{
-                    display: "flex",
+                    display: "inline-flex",
                     alignItems: "center",
-                    gap: 10,
-                    marginLeft: 8,
+                    gap: 2,
                     flexShrink: 0,
+                    opacity: isHovered ? 1 : 0,
+                    transition: "opacity 0.15s ease",
+                    pointerEvents: isHovered ? "auto" : "none",
                   }}
                 >
-                  {hoveredId === item.id ? (
+                  <Tooltip title="编辑" mouseEnterDelay={0.5}>
+                    <IconButton
+                      bordered={false}
+                      size="small"
+                      icon={<SparkEditLine style={{ fontSize: 13 }} />}
+                      onClick={() => startEdit(item)}
+                    />
+                  </Tooltip>
+
+                  {item.status === "failed" && (
                     <>
-                      <span
-                        onClick={() => startEdit(item)}
-                        style={{
-                          cursor: "pointer",
-                          fontSize: 12,
-                          opacity: 0.7,
-                          whiteSpace: "nowrap",
-                          display: "inline-flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          width: 20,
-                          height: 20,
-                          borderRadius: 4,
-                        }}
-                        title="编辑"
-                      >
-                        <SparkEditLine style={{ fontSize: 14 }} />
-                      </span>
-
-                      {item.status === "failed" && (
-                        <>
-                          <span
-                            onClick={() => onRetry(item.id)}
-                            style={{
-                              cursor: "pointer",
-                              fontSize: 13,
-                              color: "#1890ff",
-                              whiteSpace: "nowrap",
-                              display: "inline-flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              width: 20,
-                              height: 20,
-                              borderRadius: 4,
-                            }}
-                            title="重试"
-                          >
-                            ↻
-                          </span>
-                          <span
-                            onClick={() => onSkip(item.id)}
-                            style={{
-                              cursor: "pointer",
-                              fontSize: 13,
-                              color: muted,
-                              whiteSpace: "nowrap",
-                              display: "inline-flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              width: 20,
-                              height: 20,
-                              borderRadius: 4,
-                            }}
-                            title="跳过"
-                          >
-                            ⏭
-                          </span>
-                        </>
-                      )}
-
-                      <span
-                        onClick={() => onInterruptAndSend(item)}
-                        style={{
-                          cursor: "pointer",
-                          fontSize: 12,
-                          opacity: 0.7,
-                          whiteSpace: "nowrap",
-                          display: "inline-flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          width: 20,
-                          height: 20,
-                          borderRadius: 4,
-                        }}
-                        title="打断并发送"
-                      >
-                        <SparkSendLine style={{ fontSize: 14 }} />
-                      </span>
-
-                      <span
-                        onClick={() => onRemove(item.id)}
-                        style={{
-                          cursor: "pointer",
-                          fontSize: 14,
-                          opacity: 0.6,
-                          lineHeight: 1,
-                          display: "inline-flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          width: 20,
-                          height: 20,
-                          borderRadius: 4,
-                        }}
-                        title="删除"
-                      >
-                        <SparkDeleteLine style={{ fontSize: 14 }} />
-                      </span>
-                    </>
-                  ) : (
-                    /* Hidden placeholders to keep layout stable */
-                    <>
-                      <span
-                        style={{
-                          display: "inline-flex",
-                          width: 20,
-                          height: 20,
-                        }}
-                      />
-                      {item.status === "failed" && (
-                        <>
-                          <span
-                            style={{
-                              display: "inline-flex",
-                              width: 20,
-                              height: 20,
-                            }}
-                          />
-                          <span
-                            style={{
-                              display: "inline-flex",
-                              width: 20,
-                              height: 20,
-                            }}
-                          />
-                        </>
-                      )}
-                      <span
-                        style={{
-                          display: "inline-flex",
-                          width: 20,
-                          height: 20,
-                        }}
-                      />
-                      <span
-                        style={{
-                          display: "inline-flex",
-                          width: 20,
-                          height: 20,
-                        }}
-                      />
+                      <Tooltip title="重试" mouseEnterDelay={0.5}>
+                        <IconButton
+                          bordered={false}
+                          size="small"
+                          icon={
+                            <SparkRefreshLine
+                              style={{ fontSize: 13, color: "#1890ff" }}
+                            />
+                          }
+                          onClick={() => onRetry(item.id)}
+                        />
+                      </Tooltip>
+                      <Tooltip title="跳过" mouseEnterDelay={0.5}>
+                        <IconButton
+                          bordered={false}
+                          size="small"
+                          icon={
+                            <SparkNextSentenceLine
+                              style={{ fontSize: 13, color: mutedColor }}
+                            />
+                          }
+                          onClick={() => onSkip(item.id)}
+                        />
+                      </Tooltip>
                     </>
                   )}
+
+                  <Tooltip title="打断并发送" mouseEnterDelay={0.5}>
+                    <IconButton
+                      bordered={false}
+                      size="small"
+                      icon={<SparkSendLine style={{ fontSize: 13 }} />}
+                      onClick={() => onInterruptAndSend(item)}
+                    />
+                  </Tooltip>
+
+                  <Tooltip title="删除" mouseEnterDelay={0.5}>
+                    <IconButton
+                      bordered={false}
+                      size="small"
+                      icon={
+                        <SparkDeleteLine
+                          style={{ fontSize: 13, color: "#ff4d4f" }}
+                        />
+                      }
+                      onClick={() => onRemove(item.id)}
+                    />
+                  </Tooltip>
                 </span>
               </>
             )}
