@@ -1,5 +1,11 @@
 import { useState, useCallback, useRef } from "react";
 import { Input } from "antd";
+import {
+  SparkDragDotLine,
+  SparkEditLine,
+  SparkSendLine,
+  SparkDeleteLine,
+} from "@agentscope-ai/icons";
 import { useTheme } from "../../../contexts/ThemeContext";
 import {
   type QueueItem,
@@ -224,7 +230,7 @@ export default function MessageQueuePanel({
         </span>
       </div>
 
-      {items.map((item, idx) => {
+      {items.map((item) => {
         const statusColor =
           item.status === "failed"
             ? "#ff4d4f"
@@ -291,21 +297,7 @@ export default function MessageQueuePanel({
               }}
               title="拖动排序"
             >
-              <svg
-                width="10"
-                height="14"
-                viewBox="0 0 10 14"
-                fill="currentColor"
-                style={{ flexShrink: 0 }}
-              >
-                <circle cx="3" cy="2" r="1.2" />
-                <circle cx="7" cy="2" r="1.2" />
-                <circle cx="3" cy="7" r="1.2" />
-                <circle cx="7" cy="7" r="1.2" />
-                <circle cx="3" cy="12" r="1.2" />
-                <circle cx="7" cy="12" r="1.2" />
-              </svg>
-              {idx + 1}
+              <SparkDragDotLine style={{ fontSize: 12, flexShrink: 0 }} />
             </span>
 
             {editingId === item.id ? (
@@ -444,7 +436,7 @@ export default function MessageQueuePanel({
                         }}
                         title="编辑"
                       >
-                        ✎
+                        <SparkEditLine style={{ fontSize: 14 }} />
                       </span>
 
                       {item.status === "failed" && (
@@ -504,7 +496,7 @@ export default function MessageQueuePanel({
                         }}
                         title="打断并发送"
                       >
-                        ⬆
+                        <SparkSendLine style={{ fontSize: 14 }} />
                       </span>
 
                       <span
@@ -523,7 +515,7 @@ export default function MessageQueuePanel({
                         }}
                         title="删除"
                       >
-                        ×
+                        <SparkDeleteLine style={{ fontSize: 14 }} />
                       </span>
                     </>
                   ) : (
