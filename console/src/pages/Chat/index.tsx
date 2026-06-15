@@ -1352,6 +1352,10 @@ export default function ChatPage() {
       if (!val) return;
       e.preventDefault();
       e.stopPropagation();
+      if (!chatId) {
+        message.warning("请先发送一条消息创建对话，再使用队列功能");
+        return;
+      }
       const currentQ = useMessageQueueStore.getState().getQueue(queueSessionId);
       if (currentQ.length >= MAX_QUEUE_SIZE) {
         message.warning(
@@ -1916,6 +1920,10 @@ export default function ChatPage() {
           ?.querySelector("textarea") as HTMLTextAreaElement | null;
         const val = textarea?.value.trim() ?? "";
         if (!val) return false;
+        if (!chatId) {
+          message.warning("请先发送一条消息创建对话，再使用队列功能");
+          return false;
+        }
         const currentQ = useMessageQueueStore
           .getState()
           .getQueue(queueSessionId);
