@@ -1827,6 +1827,14 @@
       "imageOnlyWarning": "当前模型仅检测到图片支持，视频等非图片文件可能无法被正确处理"
     },
     "rateLimitHit": "当前模型已触发限流，请尝试切换其他免费模型。",
+    "turnUsagePopover": {
+      "ariaLabel": "查看本轮 Token 与上下文用量",
+      "turn": "本轮",
+      "turnEstimated": "本轮约",
+      "tok": "tok",
+      "inOut": "in {{inTok}} · out {{outTok}}",
+      "contextLabel": "上下文窗口："
+    },
     "rateLimitMessage": "已触发限流，切换其他免费模型：",
     "rateLimitSwitched": "已切换至 {{model}}",
     "speech": {
@@ -2413,9 +2421,12 @@
   },
   "market": {
     "searchPlaceholder": "在多平台中搜索技能",
+    "categoryAll": "全部",
+    "searchResult": "\"{{keyword}}\" 相关技能共搜索到 {{count}} 个结果",
     "providerUnavailable": "数据源不可用",
     "noResults": "没有找到结果",
     "startTyping": "在上方输入关键字以搜索技能市场",
+    "browseHint": "选择分类或输入关键词以浏览 {{providers}} 中的技能",
     "noDescription": "暂无描述",
     "targetPool": "技能池",
     "targetWorkspace": "工作区",
@@ -2509,6 +2520,16 @@
     "materializeSkillDefault": "创建 技能",
     "shell": "执行 {{command}}",
     "shellDefault": "执行 命令",
+    "formatTable": {
+      "file": "文件",
+      "lineNumber": "行号",
+      "score": "分数",
+      "summary": "摘要",
+      "name": "名称",
+      "id": "ID",
+      "description": "描述",
+      "status": "状态"
+    },
     "loading": "处理中...",
     "browserAction": {
       "startHeaded": "启动浏览器(有界面)",
@@ -2563,7 +2584,9 @@
     "inlineResult": {
       "taskId": "任务 #{{id}}",
       "submitted": "已提交"
-    }
+    },
+    "execute": "执行 {{tool}}",
+    "executeDefault": "执行 工具"
   },
   "preview": {
     "error": {

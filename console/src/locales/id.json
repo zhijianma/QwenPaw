@@ -808,9 +808,12 @@
   },
   "market": {
     "searchPlaceholder": "Cari skill di berbagai platform",
+    "categoryAll": "Semua",
+    "searchResult": "Ditemukan {{count}} skill yang cocok dengan \"{{keyword}}\"",
     "providerUnavailable": "Sumber tidak tersedia",
     "noResults": "Tidak ada hasil",
     "startTyping": "Ketik kata kunci di atas untuk mencari di marketplace",
+    "browseHint": "Pilih kategori atau masukkan kata kunci untuk menjelajahi skill di {{providers}}",
     "noDescription": "Tidak ada deskripsi",
     "targetPool": "Pool",
     "targetWorkspace": "Workspace",

@@ -16,7 +16,7 @@ export interface ShellCardProps {
   isStreaming?: boolean;
 }
 
-const ShellCard: React.FC<ShellCardProps> = ({ content }) => {
+const ShellCard: React.FC<ShellCardProps> = ({ content, isStreaming }) => {
   const { t } = useTranslation();
   const command =
     (content.params?.command as string) ||
@@ -29,6 +29,7 @@ const ShellCard: React.FC<ShellCardProps> = ({ content }) => {
       icon={<CodeOutlined />}
       title={command ? t("tool.shell", { command }) : t("tool.shellDefault")}
       content={content}
+      isStreaming={isStreaming}
     >
       {resultText && <DefaultBlock title="Output" content={resultText} />}
     </ToolCardShell>

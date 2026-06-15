@@ -28,6 +28,8 @@ import { useChatAnywhereInput } from "@agentscope-ai/chat";
 import styles from "./index.module.less";
 import { IconButton } from "@agentscope-ai/design";
 import ChatActionGroup from "./components/ChatActionGroup";
+import TurnUsageAction from "./components/TurnUsageAction";
+import { wrapChatResponseUsageStream } from "./turnUsage";
 import ChatHeaderTitle from "./components/ChatHeaderTitle";
 import ChatSessionInitializer from "./components/ChatSessionInitializer";
 import { ApprovalCard } from "../../components/ApprovalCard/ApprovalCard";
@@ -45,6 +47,7 @@ import {
 } from "../../plugins/registry/types";
 import { ChatScalar, ChatList } from "../../plugins/registry/slotKeys";
 import { HostRequestCard, HostResponseCard } from "./HostBubbles";
+import { withGenericFallback } from "../../components/Chat/ToolCards/adapters/v1Adapter";
 
 interface ApprovalMessageData {
   requestId: string;
@@ -77,6 +80,12 @@ import {
   type CopyableResponse,
   type RuntimeLoadingBridgeApi,
 } from "./utils";
+import {
+  getSessionIdFromPath,
+  buildBasePath,
+  buildSessionPath,
+  type SessionRouteMode,
+} from "../../utils/sessionRoute";
 import { openExternalLink } from "../../utils/openExternalLink";
 import { getLastEditorCopy } from "../Coding/lastEditorCopy";
 import { useUploadLimitStore } from "../../stores/uploadLimitStore";
@@ -324,6 +333,12 @@ function useIMEComposition(isChatActive: () => boolean) {
   }, [isChatActive]);
 
   return isComposingRef;
+}
+
+function sortByOrder<T extends { item: { order?: number } }>(arr: T[]): T[] {
+  return arr
+    .slice()
+    .sort((a, b) => (a.item.order ?? 100) - (b.item.order ?? 100));
 }
 
 /** Fetch and track multimodal capabilities for the active model. */
@@ -797,18 +812,25 @@ export default function ChatPage() {
   const location = useLocation();
   const { isDark } = useTheme();
   const { codingMode, initialized } = useCodingMode();
+  const codingModeRef = useRef(codingMode);
+  codingModeRef.current = codingMode;
 
-  // Redirect to /coding when coding mode is active
+  // Redirect to /coding when coding mode is active, preserving sessionId.
   useEffect(() => {
-    if (initialized && codingMode) {
-      navigate("/coding", { replace: true });
+    if (initialized && codingMode && !location.pathname.startsWith("/coding")) {
+      // Issue #5142: Carry over the current chatId so the session survives
+      // the redirect from /chat/<id> to /coding/<id>.
+      const currentChatId = getSessionIdFromPath(location.pathname);
+      navigate(buildSessionPath("coding", currentChatId), {
+        replace: true,
+      });
     }
-  }, [initialized, codingMode, navigate]);
+  }, [initialized, codingMode, navigate, location.pathname]);
 
-  const chatId = useMemo(() => {
-    const match = location.pathname.match(/^\/chat\/(.+)$/);
-    return match?.[1];
-  }, [location.pathname]);
+  const chatId = useMemo(
+    () => getSessionIdFromPath(location.pathname),
+    [location.pathname],
+  );
   const [showModelPrompt, setShowModelPrompt] = useState(false);
   const [rateLimitAlternatives, setRateLimitAlternatives] = useState<
     Array<{
@@ -1009,8 +1031,12 @@ export default function ChatPage() {
   }, [selectedAgent]);
 
   const isChatActiveRef = useRef(false);
+  // Issue #5142: In Coding mode the Chat component is embedded under /coding/*,
+  // so session callbacks must also fire on /coding paths.
   isChatActiveRef.current =
-    location.pathname === "/" || location.pathname.startsWith("/chat");
+    location.pathname === "/" ||
+    location.pathname.startsWith("/chat") ||
+    location.pathname.startsWith("/coding");
 
   const isChatActive = useCallback(() => isChatActiveRef.current, []);
 
@@ -1536,7 +1562,15 @@ export default function ChatPage() {
   // Register session API event callbacks for URL synchronization
 
   useEffect(() => {
-    sessionApi.onSessionIdResolved = (realId) => {
+    const getCurrentRouteMode = (): SessionRouteMode =>
+      codingModeRef.current ? "coding" : "chat";
+
+    const buildCurrentSessionPath = (sessionId: string) =>
+      buildSessionPath(getCurrentRouteMode(), sessionId);
+
+    const buildCurrentBasePath = () => buildBasePath(getCurrentRouteMode());
+
+    sessionApi.onSessionIdResolved = (_tempId, realId) => {
       if (!isChatActiveRef.current) return;
       // Migrate any items still queued under the temporary "new" key over to
       // the resolved real session id BEFORE the URL changes, so the same
@@ -1551,7 +1585,7 @@ export default function ChatPage() {
       // Update URL when realId is resolved, regardless of current chatId
       // (chatId may be undefined if URL was cleared in onSessionCreated)
       lastSessionIdRef.current = realId;
-      navigateRef.current(`/chat/${realId}`, { replace: true });
+      navigateRef.current(buildCurrentSessionPath(realId), { replace: true });
     };
 
     sessionApi.onSessionRemoved = (removedId) => {
@@ -1563,7 +1597,7 @@ export default function ChatPage() {
       );
       if (chatIdRef.current === removedId || currentRealId === removedId) {
         lastSessionIdRef.current = null;
-        navigateRef.current("/chat", { replace: true });
+        navigateRef.current(buildCurrentBasePath(), { replace: true });
       }
     };
 
@@ -1608,7 +1642,9 @@ export default function ChatPage() {
       if (targetId !== lastSessionIdRef.current) {
         lastSessionIdRef.current = targetId;
         sessionApi.lastNavigatedChatId = targetId;
-        navigateRef.current(`/chat/${targetId}`, { replace: true });
+        navigateRef.current(buildCurrentSessionPath(targetId), {
+          replace: true,
+        });
       }
     };
 
@@ -1625,7 +1661,7 @@ export default function ChatPage() {
       }
       // Clear URL when creating new session, wait for realId resolution to update
       lastSessionIdRef.current = null;
-      navigateRef.current("/chat", { replace: true });
+      navigateRef.current(buildCurrentBasePath(), { replace: true });
     };
 
     return () => {
@@ -1654,7 +1690,9 @@ export default function ChatPage() {
       // Restore last chat ID for the agent we're switching to
       const restored = getLastChatId(selectedAgent);
       if (restored) {
-        navigateRef.current(`/chat/${restored}`, { replace: true });
+        navigateRef.current(buildSessionPath("chat", restored), {
+          replace: true,
+        });
         sessionApi.preferredChatId = restored;
       } else {
         navigateRef.current("/chat", { replace: true });
@@ -1720,7 +1758,7 @@ export default function ChatPage() {
             ]
           : lastInput;
 
-      const requestBody = {
+      let requestBody: Record<string, unknown> = {
         input: rewrittenInput,
         session_id: window.currentSessionId || session?.session_id || "",
         user_id: window.currentUserId || session?.user_id || DEFAULT_USER_ID,
@@ -1729,10 +1767,23 @@ export default function ChatPage() {
         ...biz_params,
       };
 
+      for (const entry of sortByOrder(
+        extLists[ChatList.requestPayloadTransforms],
+      )) {
+        const next = entry.item.transform({
+          payload: requestBody,
+          sessionId: String(requestBody.session_id || ""),
+          selectedAgent,
+        });
+        if (next && typeof next === "object") {
+          requestBody = next;
+        }
+      }
+
       const backendChatId =
-        sessionApi.getRealIdForSession(requestBody.session_id) ??
+        sessionApi.getRealIdForSession(String(requestBody.session_id || "")) ??
         chatIdRef.current ??
-        requestBody.session_id;
+        String(requestBody.session_id || "");
       if (backendChatId) {
         const userText = rewrittenInput
           .filter((m: any) => m.role === "user")
@@ -1751,9 +1802,9 @@ export default function ChatPage() {
         signal: data.signal,
       });
 
-      return response;
+      return wrapChatResponseUsageStream(response, chatRef);
     },
-    [selectedAgent],
+    [extLists, selectedAgent],
   );
 
   const handleFileUpload = useCallback(
@@ -1969,9 +2020,6 @@ export default function ChatPage() {
           </PluginSlotBoundary>
         )
       : undefined;
-
-    const sortByOrder = <T extends { item: { order?: number } }>(arr: T[]) =>
-      arr.slice().sort((a, b) => (a.item.order ?? 100) - (b.item.order ?? 100));
 
     const pluginRightHeader = sortByOrder(extLists[ChatList.rightHeader]).map(
       (e) => (
@@ -2223,6 +2271,10 @@ export default function ChatPage() {
         responseParser: (chunk: string) => {
           const payload = JSON.parse(chunk) as Record<string, unknown>;
 
+          if (payload.type === "turn_usage") {
+            return null;
+          }
+
           if (payload.type === "rate_limited") {
             const alts =
               (payload.alternatives as typeof rateLimitAlternatives) || [];
@@ -2259,23 +2311,23 @@ export default function ChatPage() {
             ...buildAuthHeaders(),
           };
 
-          return fetch(getApiUrl("/console/chat"), {
+          const sessionId = window.currentSessionId || data.session_id;
+          const response = await fetch(getApiUrl("/console/chat"), {
             method: "POST",
             headers,
             body: JSON.stringify({
               reconnect: true,
-              session_id: window.currentSessionId || data.session_id,
+              session_id: sessionId,
               user_id: window.currentUserId || DEFAULT_USER_ID,
               channel: window.currentChannel || DEFAULT_CHANNEL,
             }),
             signal: data.signal,
           });
+
+          return wrapChatResponseUsageStream(response, chatRef);
         },
       },
-      customToolRenderConfig:
-        Object.keys(mergedToolRenderers).length > 0
-          ? mergedToolRenderers
-          : undefined,
+      customToolRenderConfig: withGenericFallback(mergedToolRenderers),
       cards: {
         // Host wrappers that delegate to vendor defaults when no plugin
         // request/response render/prepend/append is registered — and
@@ -2286,6 +2338,13 @@ export default function ChatPage() {
       },
       actions: {
         list: [
+          {
+            render: ({
+              data,
+            }: {
+              data: { data?: Record<string, unknown> };
+            }) => <TurnUsageAction data={data} />,
+          },
           {
             icon: (
               <span title={t("common.copy")}>
