@@ -475,6 +475,7 @@ function renderSuggestionLabel(command: string, description?: string) {
 
 const DEFAULT_USER_ID = "default";
 const DEFAULT_CHANNEL = "console";
+const WIDE_MODE_STORAGE_KEY = "qwenpaw_chat_wide_mode";
 
 function isSkillAvailableInConsole(skill: SkillSpec): boolean {
   if (!skill.enabled) return false;
@@ -1026,6 +1027,30 @@ export default function ChatPage() {
   const { codingMode, initialized } = useCodingMode();
   const codingModeRef = useRef(codingMode);
   codingModeRef.current = codingMode;
+
+  // Wide mode toggle: expand chat content to full available width
+  const [isWideMode, setIsWideMode] = useState(() => {
+    try {
+      return localStorage.getItem(WIDE_MODE_STORAGE_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
+  const toggleWideMode = useCallback(() => {
+    setIsWideMode((prev) => {
+      const next = !prev;
+      try {
+        if (next) {
+          localStorage.setItem(WIDE_MODE_STORAGE_KEY, "true");
+        } else {
+          localStorage.removeItem(WIDE_MODE_STORAGE_KEY);
+        }
+      } catch {
+        // storage unavailable
+      }
+      return next;
+    });
+  }, []);
 
   // Redirect to /coding when coding mode is active, preserving sessionId.
   useEffect(() => {
@@ -2374,7 +2399,11 @@ export default function ChatPage() {
             <ChatHeaderTitle />
             <span style={{ flex: 1 }} />
             <ModelSelector />
-            <ChatActionGroup planEnabled={planEnabled} />
+            <ChatActionGroup
+              planEnabled={planEnabled}
+              isWideMode={isWideMode}
+              onToggleWideMode={toggleWideMode}
+            />
             {pluginRightHeader}
           </>
         ),
@@ -2468,6 +2497,21 @@ export default function ChatPage() {
         fetch: customFetch,
         responseParser: (chunk: string) => {
           const payload = JSON.parse(chunk) as Record<string, unknown>;
+
+          if (payloadCompletesResponse(payload)) {
+            const output = payload.output;
+            if (!output || (Array.isArray(output) && output.length === 0)) {
+              const errorMsg =
+                (payload.error as any)?.message || t("chat.emptyOutputError");
+              payload.output = [
+                {
+                  type: "message",
+                  role: "assistant",
+                  content: [{ type: "text", text: errorMsg }],
+                },
+              ];
+            }
+          }
 
           if (payload.type === "turn_usage") {
             return null;
@@ -2618,17 +2662,8 @@ export default function ChatPage() {
     whisperChecked,
     whisperEnabled,
     handleWhisperTranscription,
-    messageQueue,
-    handleQueueRemove,
-    handleQueueEdit,
-    handleQueueReorder,
-    handleQueueInterruptAndSend,
-    handleQueueClear,
-    handleQueuePauseResume,
-    handleQueueRetry,
-    handleQueueSkip,
-    runState,
-    isOwner,
+    isWideMode,
+    toggleWideMode,
   ]);
 
   return (
@@ -2640,7 +2675,13 @@ export default function ChatPage() {
         flexDirection: "column",
       }}
     >
-      <div className={styles.chatMessagesArea}>
+      <div
+        className={
+          isWideMode
+            ? `${styles.chatMessagesArea} ${styles.wideMode}`
+            : styles.chatMessagesArea
+        }
+      >
         <AgentScopeRuntimeWebUI
           ref={chatRef}
           key={refreshKey}

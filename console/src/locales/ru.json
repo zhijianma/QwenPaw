@@ -1118,6 +1118,8 @@
     "builtin": "Встроенный",
     "freeTierGroup": "Бесплатный уровень",
     "paidGroup": "Платные",
+    "localCustomGroup": "Локальные и пользовательские",
+    "endpointCount": "{{count}} конечных точек",
     "connect": "OAuth",
     "saveApiKey": "Сохранить",
     "addProvider": "Добавить провайдера",
@@ -1618,6 +1620,8 @@
     "newChatTooltip": "Новый чат",
     "searchTooltip": "Поиск во всех чатах",
     "chatHistoryTooltip": "История чатов",
+    "wideModeTooltip": "Широкий режим",
+    "normalModeTooltip": "Обычный режим",
     "allChats": "Все чаты",
     "createNewChat": "Создать новый чат",
     "pinDrawer": "Закрепить",
@@ -1630,6 +1634,7 @@
     "prompt1": "Давайте начнём новое путешествие!",
     "prompt2": "Расскажи мне, какими навыками ты обладаешь?",
     "inputPlaceholder": "\"↑↓\" для навигации по сообщениям · \"/\" для быстрых команд (\"/approve\" или \"/deny\" во время подтверждения)",
+    "emptyOutputError": "Ассистент вернул пустой ответ.",
     "commands": {
       "clear": {
         "description": "Очистить контекст диалога"

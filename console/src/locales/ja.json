@@ -1118,6 +1118,8 @@
     "builtin": "組み込み",
     "freeTierGroup": "無料枠",
     "paidGroup": "有料",
+    "localCustomGroup": "ローカル & カスタム",
+    "endpointCount": "{{count}} エンドポイント",
     "connect": "OAuth",
     "saveApiKey": "保存",
     "addProvider": "プロバイダーを追加",
@@ -1603,6 +1605,8 @@
     "newChatTooltip": "新しいチャット",
     "searchTooltip": "すべてのチャットを検索",
     "chatHistoryTooltip": "チャット履歴",
+    "wideModeTooltip": "ワイドモード",
+    "normalModeTooltip": "標準モード",
     "allChats": "すべてのチャット",
     "createNewChat": "新しいチャットを作成",
     "pinDrawer": "固定",
@@ -1615,6 +1619,7 @@
     "prompt1": "新しい旅を始めましょう！",
     "prompt2": "あなたのスキルを教えてください。",
     "inputPlaceholder": "\"↑↓\"でメッセージ移動 · \"/\"でクイックコマンド（承認時は\"/approve\"または\"/deny\"）",
+    "emptyOutputError": "アシスタントが空のレスポンスを返しました。",
     "commands": {
       "clear": {
         "description": "会話のコンテキストをクリア"

@@ -114,6 +114,8 @@
     "newChatTooltip": "Chat baru",
     "searchTooltip": "Cari semua chat",
     "chatHistoryTooltip": "Riwayat chat",
+    "wideModeTooltip": "Mode lebar",
+    "normalModeTooltip": "Mode normal",
     "allChats": "Semua Chat",
     "createNewChat": "Buat Chat Baru",
     "pinDrawer": "Sematkan",
@@ -126,6 +128,7 @@
     "prompt1": "Mari mulai perjalanan baru!",
     "prompt2": "Bisa jelaskan skill apa saja yang Anda miliki?",
     "inputPlaceholder": "\"↑↓\" untuk navigasi pesan · \"/\" untuk perintah cepat (\"/approve\" atau \"/deny\" saat approval)",
+    "emptyOutputError": "Asisten mengembalikan respons kosong.",
     "commands": {
       "clear": {
         "description": "Bersihkan konteks percakapan"

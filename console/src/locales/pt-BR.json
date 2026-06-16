@@ -1321,6 +1321,8 @@
     "builtin": "Integrado",
     "freeTierGroup": "Gratuito",
     "paidGroup": "Pago",
+    "localCustomGroup": "Local e Personalizado",
+    "endpointCount": "{{count}} endpoints",
     "connect": "OAuth",
     "saveApiKey": "Salvar",
     "addProvider": "Adicionar Provedor",
@@ -1810,6 +1812,8 @@
     "newChatTooltip": "Novo Chat",
     "searchTooltip": "Pesquisar Todos chats",
     "chatHistoryTooltip": "Chat history",
+    "wideModeTooltip": "Modo amplo",
+    "normalModeTooltip": "Modo normal",
     "allChats": "Todos Chats",
     "createNewChat": "Criar Novo Chat",
     "pinDrawer": "Fixar",
@@ -1822,6 +1826,7 @@
     "prompt1": "Let's start a new journey!",
     "prompt2": "Can you tell me what skills you have?",
     "inputPlaceholder": "\"↑↓\" for message navigation · \"/\" for quick commands (\"/approve\" or \"/deny\" during approvals)",
+    "emptyOutputError": "O assistente retornou uma resposta vazia.",
     "commands": {
       "clear": {
         "description": "Limpar the conversation context"
