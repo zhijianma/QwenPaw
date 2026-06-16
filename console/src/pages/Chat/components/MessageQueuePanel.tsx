@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { Input, Tooltip } from "antd";
 import { IconButton } from "@agentscope-ai/design";
 import {
@@ -47,6 +48,7 @@ export default function MessageQueuePanel({
   onRetry,
   onSkip,
 }: MessageQueuePanelProps) {
+  const { t } = useTranslation();
   const { isDark } = useTheme();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
@@ -170,7 +172,7 @@ export default function MessageQueuePanel({
             userSelect: "none",
           }}
         >
-          消息队列 ({items.length})
+          {t("chat.queue.title")} ({items.length})
           {runState === "paused" && (
             <span
               style={{
@@ -182,7 +184,7 @@ export default function MessageQueuePanel({
                 fontWeight: 400,
               }}
             >
-              已暂停
+              {t("chat.queue.paused")}
             </span>
           )}
           {runState === "error" && (
@@ -197,7 +199,7 @@ export default function MessageQueuePanel({
               }}
             >
               <SparkErrorCircleLine style={{ fontSize: 11 }} />
-              发送失败
+              {t("chat.queue.sendFailed")}
             </span>
           )}
         </span>
@@ -205,7 +207,9 @@ export default function MessageQueuePanel({
         {/* Header actions */}
         <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
           <Tooltip
-            title={isPausedOrError ? "继续发送队列" : "暂停发送队列"}
+            title={
+              isPausedOrError ? t("chat.queue.resume") : t("chat.queue.pause")
+            }
             mouseEnterDelay={0.5}
           >
             <IconButton
@@ -222,7 +226,7 @@ export default function MessageQueuePanel({
             />
           </Tooltip>
           {items.length > 1 && (
-            <Tooltip title="清空队列" mouseEnterDelay={0.5}>
+            <Tooltip title={t("chat.queue.clear")} mouseEnterDelay={0.5}>
               <IconButton
                 bordered={false}
                 size="small"
@@ -293,7 +297,7 @@ export default function MessageQueuePanel({
             />
 
             {/* Drag handle */}
-            <Tooltip title="拖动排序" mouseEnterDelay={0.8}>
+            <Tooltip title={t("chat.queue.dragSort")} mouseEnterDelay={0.8}>
               <span
                 style={{
                   color: mutedColor,
@@ -414,7 +418,7 @@ export default function MessageQueuePanel({
                                 textOverflow: "ellipsis",
                               }}
                             >
-                              {att.name || "文件"}
+                              {att.name || t("chat.queue.file")}
                             </span>
                           </span>
                         </Tooltip>
@@ -435,7 +439,7 @@ export default function MessageQueuePanel({
                     pointerEvents: isHovered ? "auto" : "none",
                   }}
                 >
-                  <Tooltip title="编辑" mouseEnterDelay={0.5}>
+                  <Tooltip title={t("chat.queue.edit")} mouseEnterDelay={0.5}>
                     <IconButton
                       bordered={false}
                       size="small"
@@ -446,7 +450,10 @@ export default function MessageQueuePanel({
 
                   {item.status === "failed" && (
                     <>
-                      <Tooltip title="重试" mouseEnterDelay={0.5}>
+                      <Tooltip
+                        title={t("chat.queue.retry")}
+                        mouseEnterDelay={0.5}
+                      >
                         <IconButton
                           bordered={false}
                           size="small"
@@ -458,7 +465,10 @@ export default function MessageQueuePanel({
                           onClick={() => onRetry(item.id)}
                         />
                       </Tooltip>
-                      <Tooltip title="跳过" mouseEnterDelay={0.5}>
+                      <Tooltip
+                        title={t("chat.queue.skip")}
+                        mouseEnterDelay={0.5}
+                      >
                         <IconButton
                           bordered={false}
                           size="small"
@@ -473,7 +483,10 @@ export default function MessageQueuePanel({
                     </>
                   )}
 
-                  <Tooltip title="打断并发送" mouseEnterDelay={0.5}>
+                  <Tooltip
+                    title={t("chat.queue.interruptAndSend")}
+                    mouseEnterDelay={0.5}
+                  >
                     <IconButton
                       bordered={false}
                       size="small"
@@ -482,7 +495,7 @@ export default function MessageQueuePanel({
                     />
                   </Tooltip>
 
-                  <Tooltip title="删除" mouseEnterDelay={0.5}>
+                  <Tooltip title={t("chat.queue.delete")} mouseEnterDelay={0.5}>
                     <IconButton
                       bordered={false}
                       size="small"

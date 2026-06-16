@@ -10,6 +10,7 @@ import { ExclamationCircleOutlined, SettingOutlined } from "@ant-design/icons";
 import { SparkCopyLine, SparkAttachmentLine } from "@agentscope-ai/icons";
 import { usePlugins } from "../../plugins/PluginContext";
 import { useTranslation } from "react-i18next";
+import i18n from "../../i18n";
 import { useLocation, useNavigate } from "react-router-dom";
 import sessionApi from "./sessionApi";
 import defaultConfig, { getDefaultConfig } from "./OptionsPanel/defaultConfig";
@@ -69,6 +70,7 @@ import WhisperSpeechButton, {
 
 import {
   toDisplayUrl,
+  toStoredName,
   copyText,
   extractCopyableText,
   buildModelError,
@@ -145,6 +147,51 @@ async function waitForChatIdle(
   return false;
 }
 
+/**
+ * Convert a queue item's attachments array into the content-item format
+ * expected by the backend POST body and by patchLastUserMessage.
+ */
+function buildAttachmentContentItems(
+  attachments: Array<{ url: string; name?: string; type?: string }> | undefined,
+): Array<{ type: string; [key: string]: unknown }> {
+  if (!attachments || attachments.length === 0) return [];
+  return attachments.map((a) => {
+    const storedUrl = toStoredName(a.url);
+    if (a.type?.startsWith("image/")) {
+      return { type: "image", image_url: storedUrl };
+    }
+    if (a.type?.startsWith("video/")) {
+      return { type: "video", video_url: storedUrl };
+    }
+    if (a.type?.startsWith("audio/")) {
+      return { type: "audio", data: storedUrl };
+    }
+    return { type: "file", file_url: storedUrl, file_name: a.name || "file" };
+  });
+}
+
+/**
+ * Clear the SDK Sender's attachment preview by clicking all remove buttons.
+ * Deferred to next tick so React commits pending state updates first.
+ */
+function clearSenderAttachments(): void {
+  setTimeout(() => {
+    const senderRoot = document
+      .querySelector('[class*="sender-header"] [class*="attachment-list-card"]')
+      ?.closest('[class*="sender"]');
+    if (senderRoot) {
+      const removeBtns = senderRoot.querySelectorAll<HTMLButtonElement>(
+        'button[class*="attachment-list-card-remove"]',
+      );
+      removeBtns.forEach((btn) => {
+        btn.dispatchEvent(
+          new MouseEvent("click", { bubbles: true, cancelable: true }),
+        );
+      });
+    }
+  }, 0);
+}
+
 async function startBackgroundQueue(
   queueKey: string,
   backendSessionId: string,
@@ -193,7 +240,13 @@ async function startBackgroundQueue(
       // message into history (otherwise the previous turn's stale text
       // would surface, e.g. showing user="2" while task3 is generating).
       if (chatIdForStatus) {
-        sessionApi.setLastUserMessage(chatIdForStatus, item.text);
+        // Build content items matching the POST body (stored-name format)
+        // so patchLastUserMessage can rebuild the user card with attachments.
+        const contentItems: Array<{ type: string; [key: string]: unknown }> = [
+          { type: "text", text: item.text },
+          ...buildAttachmentContentItems(item.attachments),
+        ];
+        sessionApi.setLastUserMessage(chatIdForStatus, item.text, contentItems);
       }
 
       let fetchSucceeded = false;
@@ -212,7 +265,13 @@ async function startBackgroundQueue(
           },
           body: JSON.stringify({
             input: [
-              { role: "user", content: [{ type: "text", text: item.text }] },
+              {
+                role: "user",
+                content: [
+                  { type: "text", text: item.text },
+                  ...buildAttachmentContentItems(item.attachments),
+                ],
+              },
             ],
             session_id: backendSessionId,
             user_id: DEFAULT_USER_ID,
@@ -264,7 +323,12 @@ async function startBackgroundQueue(
         // so the user can retry from the queue panel on next visit.
         useMessageQueueStore
           .getState()
-          .setItemStatus(queueKey, item.id, "failed", "发送失败");
+          .setItemStatus(
+            queueKey,
+            item.id,
+            "failed",
+            i18n.t("chat.queue.sendFailed"),
+          );
         break;
       }
     }
@@ -1452,14 +1516,11 @@ export default function ChatPage() {
       e.preventDefault();
       e.stopPropagation();
       if (!chatId) {
-        message.warning("请先发送一条消息创建对话，再使用队列功能");
         return;
       }
       const currentQ = useMessageQueueStore.getState().getQueue(queueSessionId);
       if (currentQ.length >= MAX_QUEUE_SIZE) {
-        message.warning(
-          `队列已满 (最多 ${MAX_QUEUE_SIZE} 条)，请先发送或删除部分消息`,
-        );
+        message.warning(t("chat.queue.queueFull", { max: MAX_QUEUE_SIZE }));
         return;
       }
       useMessageQueueStore.getState().enqueue(queueSessionId, {
@@ -1477,21 +1538,10 @@ export default function ChatPage() {
       // Clear tracked attachments after enqueuing
       pendingFileListRef.current = [];
       setTextareaValue(textarea, "");
-      // Clear sender attachment preview by clicking remove buttons
-      // Note: SDK renders remove buttons with display:none (only visible on hover).
-      // We must temporarily set display before calling .click() so the handler fires.
-      const senderEl = textarea.closest('[class*="sender"]');
-      if (senderEl) {
-        const removeBtns = senderEl.querySelectorAll<HTMLButtonElement>(
-          'button[class*="attachment-list-card-remove"]',
-        );
-        removeBtns.forEach((btn) => {
-          const prevDisplay = btn.style.display;
-          btn.style.display = "flex";
-          btn.click();
-          btn.style.display = prevDisplay;
-        });
-      }
+      // Clear sender attachment preview. Defer to next tick so React commits
+      // any pending state updates (e.g. from setTextareaValue) before we
+      // interact with the Attachments component's remove buttons.
+      clearSenderAttachments();
     };
     document.addEventListener("keydown", handleEnterEnqueue, true);
     return () =>
@@ -1894,7 +1944,18 @@ export default function ChatPage() {
           .join("\n")
           .trim();
         if (userText) {
-          sessionApi.setLastUserMessage(backendChatId, userText);
+          // Also pass the full content array so patchLastUserMessage can
+          // rebuild user card with images/files when reconnecting.
+          const lastUserMsg = rewrittenInput
+            .filter((m: any) => m.role === "user")
+            .slice(-1)[0];
+          const contentArr = Array.isArray(lastUserMsg?.content)
+            ? (lastUserMsg.content as Array<{
+                type: string;
+                [key: string]: unknown;
+              }>)
+            : undefined;
+          sessionApi.setLastUserMessage(backendChatId, userText, contentArr);
         }
       }
 
@@ -2020,16 +2081,13 @@ export default function ChatPage() {
         const val = textarea?.value.trim() ?? "";
         if (!val) return false;
         if (!chatId) {
-          message.warning("请先发送一条消息创建对话，再使用队列功能");
           return false;
         }
         const currentQ = useMessageQueueStore
           .getState()
           .getQueue(queueSessionId);
         if (currentQ.length >= MAX_QUEUE_SIZE) {
-          message.warning(
-            `队列已满 (最多 ${MAX_QUEUE_SIZE} 条)，请先发送或删除部分消息`,
-          );
+          message.warning(t("chat.queue.queueFull", { max: MAX_QUEUE_SIZE }));
           return false;
         }
         useMessageQueueStore.getState().enqueue(queueSessionId, {
@@ -2046,19 +2104,8 @@ export default function ChatPage() {
         });
         pendingFileListRef.current = [];
         if (textarea) setTextareaValue(textarea, "");
-        // Clear sender attachment preview
-        const senderEl = textarea?.closest('[class*="sender"]');
-        if (senderEl) {
-          const removeBtns = senderEl.querySelectorAll<HTMLButtonElement>(
-            'button[class*="attachment-list-card-remove"]',
-          );
-          removeBtns.forEach((btn) => {
-            const prevDisplay = btn.style.display;
-            btn.style.display = "flex";
-            btn.click();
-            btn.style.display = prevDisplay;
-          });
-        }
+        // Clear sender attachment preview (deferred to next tick)
+        clearSenderAttachments();
         localStorage.removeItem(getDraftStorageKey(selectedAgent));
         draftSuppressed = true;
         return false;
@@ -2293,21 +2340,7 @@ export default function ChatPage() {
         beforeUI:
           !isOwner || messageQueue.length > 0 ? (
             <>
-              {!isOwner ? (
-                <div
-                  style={{
-                    padding: "8px 12px",
-                    marginBottom: 8,
-                    borderRadius: 6,
-                    background: "rgba(250, 173, 20, 0.12)",
-                    color: "#d48806",
-                    fontSize: 12,
-                    lineHeight: 1.4,
-                  }}
-                >
-                  当前对话已在另一个标签页中发送，本标签页只能将输入加入队列；所有发送操作均由其他标签页完成。
-                </div>
-              ) : null}
+              {null}
               {messageQueue.length > 0 ? (
                 <MessageQueuePanel
                   items={messageQueue}

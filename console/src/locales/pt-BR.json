@@ -1895,6 +1895,24 @@
       "pin": "Pin",
       "unpin": "Unpin",
       "delete": "Excluir"
+    },
+    "queue": {
+      "title": "Fila de mensagens",
+      "paused": "Pausado",
+      "sendFailed": "Falha no envio",
+      "resume": "Retomar fila",
+      "pause": "Pausar fila",
+      "clear": "Limpar fila",
+      "dragSort": "Arraste para reordenar",
+      "edit": "Editar",
+      "retry": "Tentar novamente",
+      "skip": "Pular",
+      "interruptAndSend": "Interromper e enviar",
+      "delete": "Excluir",
+      "file": "Arquivo",
+      "noChatWarning": "Envie uma mensagem primeiro para criar uma conversa antes de usar a fila",
+      "queueFull": "Fila cheia (m\u00e1x. {{max}} itens). Envie ou remova algumas mensagens primeiro",
+      "otherTabOwner": "Esta conversa est\u00e1 sendo enviada de outra aba. Nesta aba, voc\u00ea s\u00f3 pode adicionar entradas \u00e0 fila."
     }
   },
   "security": {
