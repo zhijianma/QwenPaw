@@ -1619,6 +1619,7 @@
     "prompt1": "新しい旅を始めましょう！",
     "prompt2": "あなたのスキルを教えてください。",
     "inputPlaceholder": "\"↑↓\"でメッセージ移動 · \"/\"でクイックコマンド（承認時は\"/approve\"または\"/deny\"）",
+    "emptyOutputError": "アシスタントが空のレスポンスを返しました。",
     "commands": {
       "clear": {
         "description": "会話のコンテキストをクリア"

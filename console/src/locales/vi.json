@@ -158,6 +158,7 @@
     "prompt1": "Hãy bắt đầu hành trình mới!",
     "prompt2": "Bạn có thể cho tôi biết những kỹ năng của mình không?",
     "inputPlaceholder": "\"↑↓\" điều hướng tin nhắn · \"/\" lệnh nhanh (\"/approve\" hoặc \"/deny\" khi phê duyệt)",
+    "emptyOutputError": "Trợ lý đã trả về phản hồi trống.",
     "commands": {
       "clear": {
         "description": "Xóa ngữ cảnh cuộc trò chuyện"

@@ -1682,6 +1682,21 @@ export default function ChatPage() {
         responseParser: (chunk: string) => {
           const payload = JSON.parse(chunk) as Record<string, unknown>;
 
+          if (payloadCompletesResponse(payload)) {
+            const output = payload.output;
+            if (!output || (Array.isArray(output) && output.length === 0)) {
+              const errorMsg =
+                (payload.error as any)?.message || t("chat.emptyOutputError");
+              payload.output = [
+                {
+                  type: "message",
+                  role: "assistant",
+                  content: [{ type: "text", text: errorMsg }],
+                },
+              ];
+            }
+          }
+
           if (payload.type === "turn_usage") {
             return null;
           }

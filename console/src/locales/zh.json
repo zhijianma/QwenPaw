@@ -1811,6 +1811,7 @@
     "prompt1": "让我们开启一段新的旅程吧！",
     "prompt2": "能告诉我你有哪些技能吗？",
     "inputPlaceholder": "\"↑↓\" 浏览消息 · \"/\" 快捷指令（审批时 \"/approve\" 或 \"/deny\"）",
+    "emptyOutputError": "助手返回了空响应。",
     "commands": {
       "clear": {
         "description": "清空对话上下文"
