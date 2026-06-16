@@ -96,20 +96,31 @@ import {
   useMessageQueueStore,
   type QueueItem,
   MAX_QUEUE_SIZE,
+  STORAGE_PREFIX,
   withSendLock,
   holdOwnershipLock,
 } from "../../stores/messageQueueStore";
 
 // ---------------------------------------------------------------------------
-// Background queue sender — keeps sending after ChatPage unmounts
+// Background queue sender — keeps sending after ChatPage unmounts.
+// Supports multiple concurrent sessions: each session has its own controller.
 // ---------------------------------------------------------------------------
 
-let _bgAbort: AbortController | null = null;
+const _bgAborts = new Map<string, AbortController>();
 
-function stopBackgroundQueue() {
-  if (_bgAbort) {
-    _bgAbort.abort();
-    _bgAbort = null;
+function stopBackgroundQueue(queueKey?: string) {
+  if (queueKey) {
+    const ctrl = _bgAborts.get(queueKey);
+    if (ctrl) {
+      ctrl.abort();
+      _bgAborts.delete(queueKey);
+    }
+  } else {
+    // Stop all (used during full cleanup if needed)
+    for (const ctrl of _bgAborts.values()) {
+      ctrl.abort();
+    }
+    _bgAborts.clear();
   }
 }
 
@@ -197,11 +208,12 @@ async function startBackgroundQueue(
   backendSessionId: string,
   chatIdForStatus: string,
 ) {
-  stopBackgroundQueue();
+  // Stop only THIS session's previous background sender (if any)
+  stopBackgroundQueue(queueKey);
   if (useMessageQueueStore.getState().getQueue(queueKey).length === 0) return;
 
   const ctrl = new AbortController();
-  _bgAbort = ctrl;
+  _bgAborts.set(queueKey, ctrl);
 
   // Acquire the per-session send lock so only one tab keeps draining the queue
   // after the page unmounts. If the lock is taken, skip background sending.
@@ -335,7 +347,49 @@ async function startBackgroundQueue(
     useMessageQueueStore.getState().setCurrentSendingId(null);
   });
 
-  if (_bgAbort === ctrl) _bgAbort = null;
+  if (_bgAborts.get(queueKey) === ctrl) _bgAborts.delete(queueKey);
+}
+
+/**
+ * Scan localStorage for all sessions with pending queue items and start
+ * background senders for each one (except the excluded foreground session
+ * and any that already have an active background sender).
+ */
+function startAllBackgroundQueues(excludeSessionId?: string) {
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key || !key.startsWith(STORAGE_PREFIX)) continue;
+    const sessionId = key.slice(STORAGE_PREFIX.length);
+    if (sessionId === excludeSessionId) continue;
+    // Skip sessions already running a background sender
+    if (_bgAborts.has(sessionId)) continue;
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      const items: Array<{ status: string }> = Array.isArray(parsed)
+        ? parsed
+        : parsed.items;
+      if (!items || items.length === 0) continue;
+      // Only start if there are actionable items
+      const hasPending = items.some(
+        (it) => it.status === "pending" || it.status === "failed",
+      );
+      if (!hasPending) continue;
+      // Check runState: respect paused queues
+      const runState = Array.isArray(parsed) ? "idle" : parsed.runState;
+      if (runState === "paused") continue;
+    } catch {
+      continue;
+    }
+    // For background sending, resolve the actual session_id the backend
+    // expects (chat.session_id), which may differ from the localStorage key
+    // (chat.id). Fall back to the key itself for locally-created sessions.
+    const backendSessionId = sessionApi.getBackendSessionId(sessionId);
+    const chatIdForStatus =
+      sessionApi.getRealIdForSession(sessionId) || sessionId;
+    startBackgroundQueue(sessionId, backendSessionId, chatIdForStatus);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1415,9 +1469,13 @@ export default function ChatPage() {
 
   // ── Message Queue ───────────────────────────────────────────────────────
 
-  // Stop background sender when ChatPage mounts; start it on unmount
+  // Stop background sender for THIS session when ChatPage mounts (foreground
+  // takes over); start background senders for all OTHER sessions with pending
+  // items. On unmount (or session switch), start bg sender for THIS session.
   useEffect(() => {
-    stopBackgroundQueue();
+    stopBackgroundQueue(queueSessionId);
+    // Kick off background senders for other sessions that have pending items
+    startAllBackgroundQueues(queueSessionId);
     return () => {
       if (autoSendTimerRef.current) {
         clearTimeout(autoSendTimerRef.current);
@@ -1446,7 +1504,7 @@ export default function ChatPage() {
         }
       }
     };
-  }, []);
+  }, [queueSessionId]);
 
   // Auto-send next queue item when:
   // 1. Response just completed (loading→idle), OR

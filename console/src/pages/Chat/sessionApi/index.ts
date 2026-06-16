@@ -661,6 +661,19 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     return s?.realId ?? null;
   }
 
+  /**
+   * Returns the backend session_id field for a session identified by id.
+   * This is what should be sent in POST body as `session_id`.
+   * Falls back to the id itself when not found (locally-created sessions
+   * have id === sessionId).
+   */
+  getBackendSessionId(id: string): string {
+    const s = this.sessionList.find((x) => x.id === id) as
+      | ExtendedSession
+      | undefined;
+    return s?.sessionId || id;
+  }
+
   /** Apply listChats to sessionList; merge realId and generating by session_id. */
   private applyChatsToSessionList(
     chats: ChatSpec[],
