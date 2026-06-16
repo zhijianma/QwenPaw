@@ -69,6 +69,21 @@
     "backups": "Backups",
     "pluginManager": "Plugin Manager"
   },
+  "sidebar": {
+    "newVersion": "New version available: v{{version}}, click to upgrade",
+    "updateModal": {
+      "title": "New version available: v{{version}}",
+      "viewReleases": "View Releases",
+      "close": "Close"
+    },
+    "settings": {
+      "language": "Language",
+      "theme": "Theme",
+      "mode": "Mode"
+    },
+    "simpleMode": "Simple Mode",
+    "fullMode": "Full Mode"
+  },
   "debug": {
     "title": "Debug",
     "desc": "View the backend daemon log file to help diagnose issues. Logs refresh automatically while this page is open.",
@@ -1918,14 +1933,6 @@
     "light": "Light",
     "system": "System"
   },
-  "sidebar": {
-    "newVersion": "New version available: v{{version}}, click to upgrade",
-    "updateModal": {
-      "title": "New version available: v{{version}}",
-      "viewReleases": "View Releases",
-      "close": "Close"
-    }
-  },
   "chat": {
     "modelSelectTooltip": "Select model",
     "newChatTooltip": "New chat",
@@ -2016,7 +2023,20 @@
       "pin": "Pin",
       "unpin": "Unpin",
       "delete": "Delete"
-    }
+    },
+    "group": {
+      "pinned": "Pinned",
+      "today": "Today",
+      "week": "Within 7 days",
+      "month": "Within 30 days",
+      "older": "Earlier"
+    },
+    "sessionPanel": {
+      "searchConversations": "Search conversations…",
+      "noConversations": "No conversations yet",
+      "loadingConversations": "Loading…"
+    },
+    "conversationHistory": "Conversation History"
   },
   "security": {
     "parent": "Settings",

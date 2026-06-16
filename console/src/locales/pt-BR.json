@@ -67,6 +67,10 @@
     "backups": "Backups",
     "pluginManager": "Gerenciador de Plugins"
   },
+  "sidebar": {
+    "simpleMode": "Modo simples",
+    "fullMode": "Modo completo"
+  },
   "debug": {
     "title": "Depuracao",
     "desc": "View the backend daemon log file to help diagnose issues. Logs refresh automatically while this page is open.",

@@ -67,6 +67,10 @@
     "pluginManager": "Manajer Plugin",
     "backups": "Cadangan"
   },
+  "sidebar": {
+    "simpleMode": "Mode sederhana",
+    "fullMode": "Mode lengkap"
+  },
   "header": {
     "changelog": "Catatan Perubahan",
     "docs": "Dokumentasi",
