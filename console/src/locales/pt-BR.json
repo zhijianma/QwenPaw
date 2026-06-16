@@ -1810,6 +1810,8 @@
     "newChatTooltip": "Novo Chat",
     "searchTooltip": "Pesquisar Todos chats",
     "chatHistoryTooltip": "Chat history",
+    "wideModeTooltip": "Modo amplo",
+    "normalModeTooltip": "Modo normal",
     "allChats": "Todos Chats",
     "createNewChat": "Criar Novo Chat",
     "pinDrawer": "Fixar",

@@ -1618,6 +1618,8 @@
     "newChatTooltip": "Новый чат",
     "searchTooltip": "Поиск во всех чатах",
     "chatHistoryTooltip": "История чатов",
+    "wideModeTooltip": "Широкий режим",
+    "normalModeTooltip": "Обычный режим",
     "allChats": "Все чаты",
     "createNewChat": "Создать новый чат",
     "pinDrawer": "Закрепить",

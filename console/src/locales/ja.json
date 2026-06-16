@@ -1603,6 +1603,8 @@
     "newChatTooltip": "新しいチャット",
     "searchTooltip": "すべてのチャットを検索",
     "chatHistoryTooltip": "チャット履歴",
+    "wideModeTooltip": "ワイドモード",
+    "normalModeTooltip": "標準モード",
     "allChats": "すべてのチャット",
     "createNewChat": "新しいチャットを作成",
     "pinDrawer": "固定",

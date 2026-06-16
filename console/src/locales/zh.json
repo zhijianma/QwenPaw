@@ -1780,6 +1780,8 @@
     "newChatTooltip": "新建聊天",
     "searchTooltip": "搜索所有聊天",
     "chatHistoryTooltip": "聊天历史",
+    "wideModeTooltip": "宽屏模式",
+    "normalModeTooltip": "正常模式",
     "allChats": "全部聊天",
     "createNewChat": "创建新聊天",
     "pinDrawer": "固定",

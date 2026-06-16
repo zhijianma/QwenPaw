@@ -1931,6 +1931,8 @@
     "newChatTooltip": "New chat",
     "searchTooltip": "Search all chats",
     "chatHistoryTooltip": "Chat history",
+    "wideModeTooltip": "Wide mode",
+    "normalModeTooltip": "Normal mode",
     "allChats": "All Chats",
     "createNewChat": "Create New Chat",
     "pinDrawer": "Pin",
