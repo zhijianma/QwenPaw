@@ -65,10 +65,6 @@
     "backups": "Резервные копии",
     "pluginManager": "Менеджер плагинов"
   },
-  "sidebar": {
-    "simpleMode": "Простой режим",
-    "fullMode": "Полный режим"
-  },
   "debug": {
     "title": "Отладка",
     "desc": "Просмотр файла логов backend-демона для диагностики. Пока открыта эта страница, логи обновляются автоматически.",
@@ -1617,7 +1613,14 @@
       "title": "Доступна новая версия: v{{version}}",
       "viewReleases": "Открыть релизы",
       "close": "Закрыть"
-    }
+    },
+    "settings": {
+      "language": "Язык",
+      "theme": "Тема",
+      "mode": "Режим"
+    },
+    "simpleMode": "Простой режим",
+    "fullMode": "Полный режим"
   },
   "chat": {
     "modelSelectTooltip": "Выбор модели",
@@ -1711,6 +1714,19 @@
       "pin": "Закрепить",
       "unpin": "Открепить",
       "delete": "Удалить"
+    },
+    "conversationHistory": "История диалогов",
+    "group": {
+      "pinned": "Закреплённые",
+      "today": "Сегодня",
+      "week": "За 7 дней",
+      "month": "За 30 дней",
+      "older": "Ранее"
+    },
+    "sessionPanel": {
+      "searchConversations": "Поиск…",
+      "noConversations": "Нет диалогов",
+      "loadingConversations": "Загрузка…"
     }
   },
   "security": {

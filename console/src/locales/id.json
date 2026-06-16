@@ -67,10 +67,6 @@
     "pluginManager": "Manajer Plugin",
     "backups": "Cadangan"
   },
-  "sidebar": {
-    "simpleMode": "Mode sederhana",
-    "fullMode": "Mode lengkap"
-  },
   "header": {
     "changelog": "Catatan Perubahan",
     "docs": "Dokumentasi",
@@ -92,7 +88,14 @@
       "title": "Versi baru tersedia: v{{version}}",
       "viewReleases": "Lihat Rilis",
       "close": "Tutup"
-    }
+    },
+    "settings": {
+      "language": "Bahasa",
+      "theme": "Tema",
+      "mode": "Mode"
+    },
+    "simpleMode": "Mode sederhana",
+    "fullMode": "Mode lengkap"
   },
   "login": {
     "title": "Masuk ke QwenPaw",
@@ -197,6 +200,19 @@
       "pin": "Sematkan",
       "unpin": "Lepas sematan",
       "delete": "Hapus"
+    },
+    "conversationHistory": "Riwayat Percakapan",
+    "group": {
+      "pinned": "Disematkan",
+      "today": "Hari ini",
+      "week": "7 hari terakhir",
+      "month": "30 hari terakhir",
+      "older": "Sebelumnya"
+    },
+    "sessionPanel": {
+      "searchConversations": "Cari…",
+      "noConversations": "Tidak ada percakapan",
+      "loadingConversations": "Memuat…"
     }
   },
   "modelSelector": {
