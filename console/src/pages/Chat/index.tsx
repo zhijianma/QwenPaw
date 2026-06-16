@@ -111,38 +111,98 @@ function stopBackgroundQueue() {
   }
 }
 
+/**
+ * Wait until the backend reports the chat is no longer generating
+ * (status !== "running"). Used so the next queued item is sent only after
+ * the currently running task finishes — preserving order task1 → task2 → 3.
+ *
+ * Returns true when the chat became idle (or status is unknown / 404, which
+ * we treat as idle to avoid blocking the queue forever); false if aborted.
+ */
+async function waitForChatIdle(
+  chatIdForStatus: string,
+  signal: AbortSignal,
+): Promise<boolean> {
+  if (!chatIdForStatus) return true;
+  while (!signal.aborted) {
+    try {
+      const chat = await chatApi.getChat(chatIdForStatus);
+      if (chat?.status !== "running") return true;
+    } catch {
+      // Backend unreachable / 404 (e.g. id is still a local timestamp).
+      // Treat as idle so we don't block forever.
+      return true;
+    }
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 1000);
+      const onAbort = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+  return false;
+}
+
 async function startBackgroundQueue(
-  items: QueueItem[],
   queueKey: string,
   backendSessionId: string,
+  chatIdForStatus: string,
 ) {
   stopBackgroundQueue();
-  if (items.length === 0) return;
+  if (useMessageQueueStore.getState().getQueue(queueKey).length === 0) return;
 
   const ctrl = new AbortController();
   _bgAbort = ctrl;
-  const remaining = [...items];
 
   // Acquire the per-session send lock so only one tab keeps draining the queue
   // after the page unmounts. If the lock is taken, skip background sending.
   await withSendLock(queueKey, async () => {
-    while (remaining.length > 0) {
-      if (ctrl.signal.aborted) break;
-      const item = remaining[0];
+    while (!ctrl.signal.aborted) {
+      // Always read the latest queue from the store: items may have been
+      // added / removed / reordered by the user, by other tabs, or by the
+      // foreground page mounting again.
+      const current = useMessageQueueStore.getState().getQueue(queueKey);
+      if (current.length === 0) break;
 
-      // CRITICAL: remove from queue & persist BEFORE firing the request.
-      // If we crash / the tab is killed mid-flight, the item must not be
-      // re-sent by another tab that picks up ownership.
-      // Use the store's `remove` action so:
-      //   - in-memory Zustand state is updated (visible if the user navigates
-      //     back to ChatPage in the same tab, no stale flash);
-      //   - localStorage is rewritten;
-      //   - other tabs are notified via BroadcastChannel.
-      // queueKey is the localStorage / store key (may be "new" for an
-      // unsaved chat); backendSessionId is the resolved id sent to the API.
-      remaining.shift();
-      useMessageQueueStore.getState().remove(queueKey, item.id);
+      // Respect pause/error state.
+      const rs = useMessageQueueStore.getState().runState;
+      if (rs === "paused" || rs === "error") break;
 
+      const item = current[0];
+
+      // Wait until the backend finishes the currently running task before
+      // sending the next one. This preserves order task1 → task2 → task3
+      // and prevents firing while task1 is still generating.
+      const idle = await waitForChatIdle(chatIdForStatus, ctrl.signal);
+      if (!idle) break;
+
+      // Mark as sending — visible to other tabs and to the foreground page
+      // if the user navigates back. Crucially we do NOT remove the item
+      // before the request completes, so a navigate-back during sending
+      // still shows the item in the queue.
+      useMessageQueueStore
+        .getState()
+        .setItemStatus(queueKey, item.id, "sending");
+      useMessageQueueStore.getState().setCurrentSendingId(item.id);
+
+      // Mirror what foreground customFetch does: cache the in-flight user
+      // text in sessionStorage so that when ChatPage re-mounts during
+      // generation, sessionApi.patchLastUserMessage can patch THIS user
+      // message into history (otherwise the previous turn's stale text
+      // would surface, e.g. showing user="2" while task3 is generating).
+      if (chatIdForStatus) {
+        sessionApi.setLastUserMessage(chatIdForStatus, item.text);
+      }
+
+      let fetchSucceeded = false;
+      // True once fetch() has resolved with an HTTP response. For a streaming
+      // chat endpoint, this means the backend has already accepted the
+      // request and started generating — a subsequent abort only severs
+      // OUR read stream; the backend keeps producing the turn and the
+      // foreground SDK's reconnect will pick it up.
+      let fetchStarted = false;
       try {
         const res = await fetch(getApiUrl("/console/chat"), {
           method: "POST",
@@ -162,19 +222,53 @@ async function startBackgroundQueue(
           signal: ctrl.signal,
         });
 
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        fetchStarted = true;
+
+        // Drain the stream; reaching `done` means the backend persisted the
+        // turn. Only then is it safe to remove the item from the queue.
         const reader = res.body?.getReader();
         if (reader) {
-          while (!(await reader.read()).done) {
-            if (ctrl.signal.aborted) break;
+          while (!ctrl.signal.aborted) {
+            const r = await reader.read();
+            if (r.done) break;
           }
         }
+        fetchSucceeded = !ctrl.signal.aborted;
       } catch {
-        // Item was already removed; on transient failure we drop it rather
-        // than risk a duplicate send from another tab. The user can resend
-        // manually if needed.
+        fetchSucceeded = false;
+      }
+
+      if (ctrl.signal.aborted) {
+        if (fetchStarted) {
+          // Backend already accepted and is generating this turn. The
+          // foreground SDK will reconnect and render the stream — keeping
+          // the item in the queue would double-show it (queue + bubble).
+          useMessageQueueStore.getState().remove(queueKey, item.id);
+        } else {
+          // Request never made it out (aborted while waiting for status idle
+          // or before the response head arrived). Restore to pending so the
+          // foreground sender can pick it up.
+          useMessageQueueStore
+            .getState()
+            .setItemStatus(queueKey, item.id, "pending");
+        }
+        break;
+      }
+
+      if (fetchSucceeded) {
+        // Backend finished generating → safe to remove from queue.
+        useMessageQueueStore.getState().remove(queueKey, item.id);
+      } else {
+        // Network/HTTP failure: keep the item visible with `failed` status
+        // so the user can retry from the queue panel on next visit.
+        useMessageQueueStore
+          .getState()
+          .setItemStatus(queueKey, item.id, "failed", "发送失败");
         break;
       }
     }
+    useMessageQueueStore.getState().setCurrentSendingId(null);
   });
 
   if (_bgAbort === ctrl) _bgAbort = null;
@@ -1279,7 +1373,12 @@ export default function ChatPage() {
         // resolved an id) — the items remain in storage to be picked up by
         // the next foreground load.
         if (backendSessionId) {
-          startBackgroundQueue(remaining, queueKey, backendSessionId);
+          // Resolve the chat UUID for status polling. queueKey may be a
+          // local timestamp if the URL hasn't been replaced yet; in that
+          // case sessionApi keeps the real backend UUID under realId.
+          const chatIdForStatus =
+            sessionApi.getRealIdForSession(queueKey) || queueKey;
+          startBackgroundQueue(queueKey, backendSessionId, chatIdForStatus);
         }
       }
     };
