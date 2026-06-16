@@ -69,6 +69,21 @@
     "backups": "备份",
     "pluginManager": "插件管理"
   },
+  "sidebar": {
+    "newVersion": "发现新版本 v{{version}}，点击前往升级",
+    "updateModal": {
+      "title": "发现新版本 v{{version}}",
+      "viewReleases": "查看 Releases",
+      "close": "关闭"
+    },
+    "settings": {
+      "language": "语言",
+      "theme": "主题",
+      "mode": "模式"
+    },
+    "simpleMode": "精简模式",
+    "fullMode": "完整模式"
+  },
   "debug": {
     "title": "调试",
     "desc": "查看后端守护进程日志文件，便于排查问题。在此页面打开时日志会自动刷新。",
@@ -1784,14 +1799,6 @@
     "light": "浅色",
     "system": "跟随系统"
   },
-  "sidebar": {
-    "newVersion": "发现新版本 v{{version}}，点击前往升级",
-    "updateModal": {
-      "title": "发现新版本 v{{version}}",
-      "viewReleases": "查看 Releases",
-      "close": "关闭"
-    }
-  },
   "chat": {
     "modelSelectTooltip": "模型选择",
     "newChatTooltip": "新建聊天",
@@ -1903,7 +1910,20 @@
       "noChatWarning": "请先发送一条消息创建对话，再使用队列功能",
       "queueFull": "队列已满（最多 {{max}} 条），请先发送或删除部分消息",
       "otherTabOwner": "当前对话已在另一个标签页中发送，本标签页只能将输入加入队列；所有发送操作均由其他标签页完成。"
-    }
+    },
+    "group": {
+      "pinned": "置顶",
+      "today": "今天",
+      "week": "7天内",
+      "month": "30天内",
+      "older": "更早"
+    },
+    "sessionPanel": {
+      "searchConversations": "搜索对话…",
+      "noConversations": "暂无对话",
+      "loadingConversations": "加载中…"
+    },
+    "conversationHistory": "历史对话"
   },
   "security": {
     "parent": "设置",

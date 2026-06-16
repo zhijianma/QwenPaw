@@ -85,7 +85,14 @@
       "title": "Phiên bản mới: v{{version}}",
       "viewReleases": "Xem ghi chú phát hành",
       "close": "Đóng"
-    }
+    },
+    "settings": {
+      "language": "Ngôn ngữ",
+      "theme": "Giao diện",
+      "mode": "Chế độ"
+    },
+    "simpleMode": "Chế độ đơn giản",
+    "fullMode": "Chế độ đầy đủ"
   },
   "theme": {
     "dark": "Tối",
@@ -178,6 +185,26 @@
       "plan": {
         "description": "Lên kế hoạch cho tác vụ được mô tả"
       }
+    },
+    "conversationHistory": "Lịch sử hội thoại",
+    "contextMenu": {
+      "open": "Mở",
+      "rename": "Đổi tên",
+      "pin": "Ghim",
+      "unpin": "Bỏ ghim",
+      "delete": "Xóa"
+    },
+    "group": {
+      "pinned": "Đã ghim",
+      "today": "Hôm nay",
+      "week": "7 ngày qua",
+      "month": "30 ngày qua",
+      "older": "Cũ hơn"
+    },
+    "sessionPanel": {
+      "searchConversations": "Tìm kiếm…",
+      "noConversations": "Không có hội thoại",
+      "loadingConversations": "Đang tải…"
     }
   },
   "debug": {

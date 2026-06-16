@@ -1805,7 +1805,14 @@
       "title": "Novo Versao available: v{{version}}",
       "viewReleases": "Visualizar Releases",
       "close": "Fechar"
-    }
+    },
+    "settings": {
+      "language": "Idioma",
+      "theme": "Tema",
+      "mode": "Modo"
+    },
+    "simpleMode": "Modo simples",
+    "fullMode": "Modo completo"
   },
   "chat": {
     "modelSelectTooltip": "Selecionar Modelo",
@@ -1918,7 +1925,20 @@
       "noChatWarning": "Envie uma mensagem primeiro para criar uma conversa antes de usar a fila",
       "queueFull": "Fila cheia (m\u00e1x. {{max}} itens). Envie ou remova algumas mensagens primeiro",
       "otherTabOwner": "Esta conversa est\u00e1 sendo enviada de outra aba. Nesta aba, voc\u00ea s\u00f3 pode adicionar entradas \u00e0 fila."
-    }
+    },
+    "group": {
+      "pinned": "Fixados",
+      "today": "Hoje",
+      "week": "Últimos 7 dias",
+      "month": "Últimos 30 dias",
+      "older": "Anteriores"
+    },
+    "sessionPanel": {
+      "searchConversations": "Pesquisar…",
+      "noConversations": "Sem conversas",
+      "loadingConversations": "Carregando…"
+    },
+    "conversationHistory": "Histórico de conversas"
   },
   "security": {
     "parent": "Configuracoes",
