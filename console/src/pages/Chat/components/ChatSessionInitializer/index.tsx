@@ -6,6 +6,7 @@ import {
 } from "@agentscope-ai/chat";
 import sessionApi from "../../sessionApi";
 import {
+  buildBasePath,
   buildSessionPath,
   getSessionIdFromPath,
 } from "../../../../utils/sessionRoute";
@@ -157,10 +158,10 @@ const ChatSessionInitializer: React.FC = () => {
             const targetUrl = buildSessionPath(mode, effectiveId);
             sessionApi.lastNavigatedChatId = effectiveId;
             navigate(targetUrl, { replace: true });
+            sessionApi.lastActiveChatId = effectiveId;
             setCurrentSessionId(sessionId);
           })
           .catch(() => {
-            // Fallback: just set the session id; URL sync via onSessionSelected
             setCurrentSessionId(sessionId);
           })
           .finally(() => {
@@ -175,9 +176,13 @@ const ChatSessionInitializer: React.FC = () => {
 
     /**
      * Handle new-chat request from sidebar.
-     * Creates a fresh session via the library's createSession().
+     * Mirrors useCreateNewSession: navigate to base path first, then
+     * set userInitiatedCreate so the adapter fires onSessionCreated.
      */
     const handleNewChat = () => {
+      const mode = codingModeRef.current ? "coding" : "chat";
+      navigate(buildBasePath(mode), { replace: true });
+      sessionApi.userInitiatedCreate = true;
       void createSession();
     };
 
@@ -186,6 +191,14 @@ const ChatSessionInitializer: React.FC = () => {
       handleSelectSession,
     );
     window.addEventListener("qwenpaw:sidebar-new-chat", handleNewChat);
+
+    // Check for pending new-chat flag set by Sidebar when navigating from
+    // another page. Must be deferred so the library has initialized.
+    const pendingNewChat = sessionStorage.getItem("qwenpaw_pending_new_chat");
+    if (pendingNewChat) {
+      sessionStorage.removeItem("qwenpaw_pending_new_chat");
+      requestAnimationFrame(() => handleNewChat());
+    }
 
     return () => {
       window.removeEventListener(

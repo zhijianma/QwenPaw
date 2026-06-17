@@ -892,7 +892,11 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
       const fromList = this.findSession(sessionId);
       if (fromList?.realId) {
         try {
-          return await this.fetchAndBuildSession(sessionId, fromList.realId, fromList);
+          return await this.fetchAndBuildSession(
+            sessionId,
+            fromList.realId,
+            fromList,
+          );
         } catch (error) {
           // If fetching with realId fails, return the local session without messages
           // This handles cases where the backend has an inconsistency
@@ -909,7 +913,11 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
         const resolved = this.findSession(sessionId);
         if (resolved?.realId) {
           try {
-            return await this.fetchAndBuildSession(sessionId, resolved.realId, resolved);
+            return await this.fetchAndBuildSession(
+              sessionId,
+              resolved.realId,
+              resolved,
+            );
           } catch {
             this.updateWindowVariables(resolved);
             return resolved;
@@ -935,7 +943,7 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
       // return an empty session to prevent repeated 404 API calls.
       // Note: the request layer throws Error(message) without attaching .status,
       // so only message-based detection is reliable here.
-      if (error.message?.includes('Chat not found')) {
+      if (error.message?.includes("Chat not found")) {
         const emptySession = this.createEmptySession(sessionId);
         emptySession.id = sessionId;
         return emptySession;
@@ -1039,13 +1047,19 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
 
     // Library auto-prepares a session after SSE ends. Skip when the user is
     // already viewing a resolved conversation to avoid navigating away.
-    if (!isUserInitiated && this.lastActiveChatId && !isLocalTimestamp(this.lastActiveChatId)) {
+    if (
+      !isUserInitiated &&
+      this.lastActiveChatId &&
+      !isLocalTimestamp(this.lastActiveChatId)
+    ) {
       const active = this.findSession(this.lastActiveChatId);
       if (active) session.id = active.id;
       return [...this.sessionList];
     }
 
-    const localId = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    const localId = `${Date.now()}-${Math.random()
+      .toString(36)
+      .substring(2, 9)}`;
     const extended = this.createEmptySession(localId);
     extended.name = session.name || DEFAULT_SESSION_NAME;
     this.sessionList.unshift(extended);
