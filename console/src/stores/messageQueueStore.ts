@@ -282,10 +282,8 @@ export function holdOwnershipLock(
 interface MessageQueueStore {
   /** All session queues: sessionId -> items */
   queues: Record<string, QueueItem[]>;
-  /** Currently active session ID */
-  activeSessionId: string | null;
-  /** Overall queue run state */
-  runState: QueueRunState;
+  /** Per-session run state: sessionId -> QueueRunState (replaces global runState) */
+  runStates: Record<string, QueueRunState>;
   /** Currently sending item ID */
   currentSendingId: string | null;
   /**
@@ -296,7 +294,6 @@ interface MessageQueueStore {
   lastMigratedTo: string | null;
 
   // Actions
-  setActiveSessionId: (sessionId: string | null) => void;
   enqueue: (sessionId: string, input: QueueItemInput) => void;
   remove: (sessionId: string, id: string) => void;
   edit: (sessionId: string, id: string, text: string) => void;
@@ -310,7 +307,10 @@ interface MessageQueueStore {
     status: QueueItemStatus,
     errorMessage?: string,
   ) => void;
-  setRunState: (state: QueueRunState) => void;
+  /** Set run state for a specific session (persists to localStorage). */
+  setRunState: (sessionId: string, state: QueueRunState) => void;
+  /** Get run state for a specific session (defaults to "idle"). */
+  getRunState: (sessionId: string) => QueueRunState;
   setCurrentSendingId: (id: string | null) => void;
   consumeMigratedTo: () => string | null;
   /** Get queue for a session (read-only) */
@@ -321,6 +321,8 @@ interface MessageQueueStore {
   loadFromStorage: (sessionId: string) => void;
   /** Internal: apply a remote (cross-tab) update without re-broadcasting. */
   applyRemoteItems: (sessionId: string, items: QueueItem[]) => void;
+  /** Internal: apply a remote run-state update without re-broadcasting. */
+  applyRemoteRunState: (sessionId: string, runState: QueueRunState) => void;
 }
 
 /** Maximum number of items allowed in a single session queue */
@@ -328,14 +330,9 @@ export const MAX_QUEUE_SIZE = 50;
 
 export const useMessageQueueStore = create<MessageQueueStore>((set, get) => ({
   queues: {},
-  activeSessionId: null,
-  runState: "idle",
+  runStates: {},
   currentSendingId: null,
   lastMigratedTo: null,
-
-  setActiveSessionId: (sessionId: string | null) => {
-    set({ activeSessionId: sessionId });
-  },
 
   enqueue: (sessionId: string, input: QueueItemInput) => {
     const current = get().queues[sessionId] ?? [];
@@ -357,7 +354,11 @@ export const useMessageQueueStore = create<MessageQueueStore>((set, get) => ({
     set((state) => {
       const nextItems = [...current, item];
       const next = { ...state.queues, [sessionId]: nextItems };
-      writeQueueToStorage(sessionId, nextItems, get().runState);
+      writeQueueToStorage(
+        sessionId,
+        nextItems,
+        get().runStates[sessionId] ?? "idle",
+      );
       broadcast({ type: "enqueue", sessionId, items: nextItems });
       return { queues: next };
     });
@@ -368,7 +369,11 @@ export const useMessageQueueStore = create<MessageQueueStore>((set, get) => ({
       const current = state.queues[sessionId] ?? [];
       const nextItems = current.filter((it) => it.id !== id);
       const next = { ...state.queues, [sessionId]: nextItems };
-      writeQueueToStorage(sessionId, nextItems, get().runState);
+      writeQueueToStorage(
+        sessionId,
+        nextItems,
+        get().runStates[sessionId] ?? "idle",
+      );
       broadcast({ type: "remove", sessionId, items: nextItems });
       return { queues: next };
     });
@@ -381,7 +386,11 @@ export const useMessageQueueStore = create<MessageQueueStore>((set, get) => ({
         it.id === id ? { ...it, text } : it,
       );
       const next = { ...state.queues, [sessionId]: nextItems };
-      writeQueueToStorage(sessionId, nextItems, get().runState);
+      writeQueueToStorage(
+        sessionId,
+        nextItems,
+        get().runStates[sessionId] ?? "idle",
+      );
       broadcast({ type: "edit", sessionId, items: nextItems });
       return { queues: next };
     });
@@ -390,7 +399,11 @@ export const useMessageQueueStore = create<MessageQueueStore>((set, get) => ({
   reorder: (sessionId: string, items: QueueItem[]) => {
     set((state) => {
       const next = { ...state.queues, [sessionId]: items };
-      writeQueueToStorage(sessionId, items, get().runState);
+      writeQueueToStorage(
+        sessionId,
+        items,
+        get().runStates[sessionId] ?? "idle",
+      );
       broadcast({ type: "reorder", sessionId, items });
       return { queues: next };
     });
@@ -398,11 +411,13 @@ export const useMessageQueueStore = create<MessageQueueStore>((set, get) => ({
 
   clear: (sessionId: string) => {
     set((state) => {
-      const next = { ...state.queues };
-      delete next[sessionId];
-      writeQueueToStorage(sessionId, [], get().runState);
+      const queues = { ...state.queues };
+      delete queues[sessionId];
+      const runStates = { ...state.runStates };
+      delete runStates[sessionId];
+      writeQueueToStorage(sessionId, [], "idle");
       broadcast({ type: "clear", sessionId, items: [] });
-      return { queues: next };
+      return { queues, runStates };
     });
   },
 
@@ -415,15 +430,22 @@ export const useMessageQueueStore = create<MessageQueueStore>((set, get) => ({
       const merged = [...toItems, ...fromItems];
       const queues = { ...state.queues, [toSessionId]: merged };
       delete queues[fromSessionId];
-      writeQueueToStorage(toSessionId, merged, get().runState);
-      writeQueueToStorage(fromSessionId, [], get().runState);
+      // Carry over the from-session's runState to the destination if not already set.
+      const runStates = { ...state.runStates };
+      if (!runStates[toSessionId] && runStates[fromSessionId]) {
+        runStates[toSessionId] = runStates[fromSessionId];
+      }
+      delete runStates[fromSessionId];
+      const destRunState = runStates[toSessionId] ?? "idle";
+      writeQueueToStorage(toSessionId, merged, destRunState);
+      writeQueueToStorage(fromSessionId, [], "idle");
       broadcast({
         type: "migrate",
         sessionId: fromSessionId,
         toSessionId,
         items: merged,
       });
-      return { queues, lastMigratedTo: toSessionId };
+      return { queues, runStates, lastMigratedTo: toSessionId };
     });
   },
 
@@ -446,25 +468,32 @@ export const useMessageQueueStore = create<MessageQueueStore>((set, get) => ({
           : it,
       );
       const next = { ...state.queues, [sessionId]: nextItems };
-      writeQueueToStorage(sessionId, nextItems, get().runState);
+      writeQueueToStorage(
+        sessionId,
+        nextItems,
+        get().runStates[sessionId] ?? "idle",
+      );
       broadcast({ type: "setItemStatus", sessionId, items: nextItems });
       return { queues: next };
     });
   },
 
-  setRunState: (runState: QueueRunState) => {
-    set({ runState });
-    // Persist runState together with the active session queue
-    const sid = get().activeSessionId;
-    if (sid) {
-      const items = get().queues[sid] ?? [];
-      writeQueueToStorage(sid, items, runState);
-    }
+  setRunState: (sessionId: string, runState: QueueRunState) => {
+    set((state) => ({
+      runStates: { ...state.runStates, [sessionId]: runState },
+    }));
+    // Always persist with the correct session key.
+    const items = get().queues[sessionId] ?? [];
+    writeQueueToStorage(sessionId, items, runState);
     broadcast({
       type: "runState",
-      sessionId: sid ?? "",
+      sessionId,
       runState,
     });
+  },
+
+  getRunState: (sessionId: string): QueueRunState => {
+    return get().runStates[sessionId] ?? "idle";
   },
 
   setCurrentSendingId: (currentSendingId: string | null) => {
@@ -483,7 +512,7 @@ export const useMessageQueueStore = create<MessageQueueStore>((set, get) => ({
 
   persistToStorage: (sessionId: string) => {
     const items = get().queues[sessionId] ?? [];
-    writeQueueToStorage(sessionId, items, get().runState);
+    writeQueueToStorage(sessionId, items, get().runStates[sessionId] ?? "idle");
   },
 
   loadFromStorage: (sessionId: string) => {
@@ -491,11 +520,13 @@ export const useMessageQueueStore = create<MessageQueueStore>((set, get) => ({
     if (saved) {
       set((state) => ({
         queues: { ...state.queues, [sessionId]: saved.items },
+        // Restore persisted runState per-session (avoids auto-send after refresh
+        // when the queue was paused). Default to "idle" if not paused.
+        runStates: {
+          ...state.runStates,
+          [sessionId]: saved.runState === "paused" ? "paused" : "idle",
+        },
       }));
-      // Restore runState only if it was paused (avoid auto-send after refresh)
-      if (saved.runState === "paused") {
-        set({ runState: "paused" });
-      }
     } else {
       // Ensure stale in-memory state is cleared so callers see an empty queue.
       set((state) => {
@@ -517,6 +548,12 @@ export const useMessageQueueStore = create<MessageQueueStore>((set, get) => ({
       }
       return { queues };
     });
+  },
+
+  applyRemoteRunState: (sessionId: string, runState: QueueRunState) => {
+    set((state) => ({
+      runStates: { ...state.runStates, [sessionId]: runState },
+    }));
   },
 }));
 
@@ -542,7 +579,9 @@ if (typeof window !== "undefined") {
         return;
       }
       if (data.type === "runState" && data.runState) {
-        useMessageQueueStore.setState({ runState: data.runState });
+        useMessageQueueStore
+          .getState()
+          .applyRemoteRunState(data.sessionId, data.runState);
         return;
       }
       if (data.items) {
@@ -571,7 +610,9 @@ if (typeof window !== "undefined") {
         !Array.isArray(parsed) &&
         (parsed as PersistedQueue).runState === "paused"
       ) {
-        useMessageQueueStore.setState({ runState: "paused" });
+        useMessageQueueStore
+          .getState()
+          .applyRemoteRunState(sessionId, "paused");
       }
     } catch {
       // ignore

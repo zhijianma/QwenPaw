@@ -226,7 +226,7 @@ async function startBackgroundQueue(
       if (current.length === 0) break;
 
       // Respect pause/error state.
-      const rs = useMessageQueueStore.getState().runState;
+      const rs = useMessageQueueStore.getState().getRunState(queueKey);
       if (rs === "paused" || rs === "error") break;
 
       const item = current[0];
@@ -1131,7 +1131,9 @@ export default function ChatPage() {
     [],
   );
 
-  const runState = useMessageQueueStore((s) => s.runState);
+  const runState = useMessageQueueStore(
+    (s) => s.runStates[queueSessionId] ?? "idle",
+  );
 
   // Single-tab ownership: only one tab per conversation may send. Other tabs
   // are queue-only (input is enqueued instead of submitted). The owner is
@@ -1157,7 +1159,7 @@ export default function ChatPage() {
       // Only the owner tab is allowed to actually send.
       if (!isOwnerRef.current) return;
       // Respect pause/error state — read fresh from store
-      const state = useMessageQueueStore.getState().runState;
+      const state = useMessageQueueStore.getState().getRunState(queueSessionId);
       if (state === "paused" || state === "error") return;
       const q = messageQueueRef.current;
       if (q.length === 0) return;
@@ -1682,9 +1684,9 @@ export default function ChatPage() {
   }, [queueSessionId]);
 
   const handleQueuePauseResume = useCallback(() => {
-    const current = useMessageQueueStore.getState().runState;
+    const current = useMessageQueueStore.getState().getRunState(queueSessionId);
     if (current === "paused") {
-      useMessageQueueStore.getState().setRunState("running");
+      useMessageQueueStore.getState().setRunState(queueSessionId, "running");
       // Try to resume sending immediately
       if (!chatLoadingRef.current && isOwnerRef.current) {
         void withSendLock(queueSessionId, () => {
@@ -1700,7 +1702,7 @@ export default function ChatPage() {
         });
       }
     } else {
-      useMessageQueueStore.getState().setRunState("paused");
+      useMessageQueueStore.getState().setRunState(queueSessionId, "paused");
     }
   }, [queueSessionId, buildFileList]);
 
@@ -1709,7 +1711,7 @@ export default function ChatPage() {
       useMessageQueueStore
         .getState()
         .setItemStatus(queueSessionId, id, "pending");
-      useMessageQueueStore.getState().setRunState("running");
+      useMessageQueueStore.getState().setRunState(queueSessionId, "running");
       // Trigger send if idle
       if (!chatLoadingRef.current && isOwnerRef.current) {
         void withSendLock(queueSessionId, () => {
