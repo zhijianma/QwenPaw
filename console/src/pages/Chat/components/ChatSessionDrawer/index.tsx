@@ -8,14 +8,13 @@ import {
   SparkLockLine,
   SparkLockFill,
 } from "@agentscope-ai/icons";
-import {
-  useChatAnywhereSessionsState,
-  useChatAnywhereSessions,
-} from "@agentscope-ai/chat";
+import { useChatAnywhereSessionsState } from "@agentscope-ai/chat";
 import { useTranslation } from "react-i18next";
 import sessionApi from "../../sessionApi";
 import { buildSessionPath } from "../../../../utils/sessionRoute";
+import { useCreateNewSession } from "../../hooks/useCreateNewSession";
 import { useCodingMode } from "../../../../stores/codingModeStore";
+import { useAgentStore } from "../../../../stores/agentStore";
 import ChatSessionItem from "../ChatSessionItem";
 import { getChannelLabel } from "../../../Control/Channels/components";
 import { ContextMenu } from "../../../../components/ContextMenu";
@@ -107,15 +106,16 @@ const ChatSessionDrawer: React.FC<ChatSessionDrawerProps> = (props) => {
   const { sessions, currentSessionId, setCurrentSessionId, setSessions } =
     useChatAnywhereSessionsState();
   const { codingMode } = useCodingMode();
-  const { createSession } = useChatAnywhereSessions();
+  const { selectedAgent, setLastChatId } = useAgentStore();
+  const createNewSession = useCreateNewSession();
 
   /** Create a new session; close the drawer only when not pinned */
   const handleCreateSession = useCallback(async () => {
-    await createSession();
+    await createNewSession();
     if (!props.pinned) {
       props.onClose();
     }
-  }, [createSession, props.onClose, props.pinned]);
+  }, [createNewSession, props.onClose, props.pinned]);
 
   /** Height of the virtual list container, measured via ResizeObserver */
   const [listHeight, setListHeight] = useState(0);
@@ -157,6 +157,8 @@ const ChatSessionDrawer: React.FC<ChatSessionDrawerProps> = (props) => {
           );
           sessionApi.lastNavigatedChatId = effectiveId;
           navigate(targetUrl, { replace: true });
+          sessionApi.lastActiveChatId = effectiveId;
+          setLastChatId(selectedAgent, effectiveId);
           setCurrentSessionId(sessionId);
         })
         .catch(() => {
@@ -170,7 +172,7 @@ const ChatSessionDrawer: React.FC<ChatSessionDrawerProps> = (props) => {
           });
         });
     },
-    [codingMode, navigate, setCurrentSessionId],
+    [codingMode, navigate, setCurrentSessionId, selectedAgent, setLastChatId],
   );
 
   const extSessions = sessions as ExtendedChatSession[];

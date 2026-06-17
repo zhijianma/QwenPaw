@@ -6,12 +6,12 @@ import {
   SparkSearchLine,
 } from "@agentscope-ai/icons";
 import { ExpandAltOutlined, CompressOutlined } from "@ant-design/icons";
-import { useChatAnywhereSessions } from "@agentscope-ai/chat";
 import { useTranslation } from "react-i18next";
 import { Flex, Tooltip } from "antd";
 import ChatSessionDrawer from "../ChatSessionDrawer";
 import ChatSearchPanel from "../ChatSearchPanel";
 import PlanPanel from "../../../../components/PlanPanel";
+import { useCreateNewSession } from "../../hooks/useCreateNewSession";
 
 const PlanIcon = () => (
   <svg
@@ -70,7 +70,7 @@ const ChatActionGroup: React.FC<ChatActionGroupProps> = ({
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
-  const { createSession } = useChatAnywhereSessions();
+  const createNewSession = useCreateNewSession();
 
   return (
     <Flex gap={8} align="center">
@@ -87,7 +87,7 @@ const ChatActionGroup: React.FC<ChatActionGroupProps> = ({
         <IconButton
           bordered={false}
           icon={<SparkNewChatFill />}
-          onClick={() => createSession()}
+          onClick={createNewSession}
         />
       </Tooltip>
       <Tooltip title={t("chat.searchTooltip")} mouseEnterDelay={0.5}>

@@ -163,16 +163,18 @@ export function useSessionListData(
   }, [active, setSessions]);
 
   const sortedSessions = useMemo(() => {
-    return [...sessions].sort((a, b) => {
-      if (a.pinned && !b.pinned) return -1;
-      if (!a.pinned && b.pinned) return 1;
-      const aTime = a.updatedAt ?? a.createdAt;
-      const bTime = b.updatedAt ?? b.createdAt;
-      if (!aTime && !bTime) return 0;
-      if (!aTime) return 1;
-      if (!bTime) return -1;
-      return new Date(bTime).getTime() - new Date(aTime).getTime();
-    });
+    return [...sessions]
+      .filter((s) => !sessionApi.isUnresolvedLocalSession(s.id ?? ""))
+      .sort((a, b) => {
+        if (a.pinned && !b.pinned) return -1;
+        if (!a.pinned && b.pinned) return 1;
+        const aTime = a.updatedAt ?? a.createdAt;
+        const bTime = b.updatedAt ?? b.createdAt;
+        if (!aTime && !bTime) return 0;
+        if (!aTime) return 1;
+        if (!bTime) return -1;
+        return new Date(bTime).getTime() - new Date(aTime).getTime();
+      });
   }, [sessions]);
 
   const handleSessionClick = useCallback(

@@ -101,7 +101,22 @@ const ChatSessionInitializer: React.FC = () => {
       return;
     }
 
-    const matching = sessions.find((s) => s.id === chatId);
+    // Match by multiple criteria in order of specificity:
+    // 1) Library id (localId or UUID)
+    let matching = sessions.find((s) => s.id === chatId);
+
+    // 2) realId: URL contains a UUID but the session's library id is still a
+    //    local timestamp (e.g. during SSE before onSessionIdResolved fires).
+    if (!matching) {
+      matching = sessions.find((s) => (s as any).realId === chatId);
+    }
+
+    // 3) sessionId field: URL contains the backend session_id format
+    //    (e.g. 'default:to:x5VgSz:1781061443957:3a4141a3')
+    if (!matching) {
+      matching = sessions.find((s) => (s as any).sessionId === chatId);
+    }
+
     if (matching && currentSessionIdRef.current !== matching.id) {
       lastAppliedChatIdRef.current = chatId;
       setCurrentSessionId(matching.id);

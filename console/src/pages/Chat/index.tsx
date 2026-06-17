@@ -1455,6 +1455,12 @@ export default function ChatPage() {
     selectedAgent,
   );
 
+  const { setLastChatId, getLastChatId } = useAgentStore();
+  const setLastChatIdRef = useRef(setLastChatId);
+  setLastChatIdRef.current = setLastChatId;
+  const selectedAgentRef = useRef(selectedAgent);
+  selectedAgentRef.current = selectedAgent;
+
   const lastSessionIdRef = useRef<string | null>(null);
   /** Tracks the stale auto-selected session ID that was skipped on init, so we can suppress its late-arriving onSessionSelected callback. */
   const staleAutoSelectedIdRef = useRef<string | null>(null);
@@ -1793,8 +1799,12 @@ export default function ChatPage() {
 
   // Tell sessionApi which session to put first in getSessionList, so the library's
   // useMount auto-selects the correct session without an extra getSession round-trip.
-  if (chatId && sessionApi.preferredChatId !== chatId) {
-    sessionApi.preferredChatId = chatId;
+  // When URL has no chatId (e.g. navigating back from /settings), fall back to the
+  // last actively selected session to avoid jumping to the first session on re-mount.
+  const effectiveChatId =
+    chatId || sessionApi.lastActiveChatId || getLastChatId(selectedAgent);
+  if (effectiveChatId && sessionApi.preferredChatId !== effectiveChatId) {
+    sessionApi.preferredChatId = effectiveChatId;
   }
 
   // Register session API event callbacks for URL synchronization
@@ -1810,19 +1820,15 @@ export default function ChatPage() {
 
     sessionApi.onSessionIdResolved = (_tempId, realId) => {
       if (!isChatActiveRef.current) return;
-      // Migrate any items still queued under the temporary "new" key over to
-      // the resolved real session id BEFORE the URL changes, so the same
-      // queueSessionId effect (which now reads `realId`) sees the items
-      // already in the store and won't re-send them as part of a fresh
-      // "new" conversation later.
       try {
         useMessageQueueStore.getState().migrateQueue("new", realId);
       } catch {
         // ignore migration errors
       }
-      // Update URL when realId is resolved, regardless of current chatId
-      // (chatId may be undefined if URL was cleared in onSessionCreated)
       lastSessionIdRef.current = realId;
+      sessionApi.lastActiveChatId = realId;
+      sessionApi.lastNavigatedChatId = realId;
+      setLastChatIdRef.current(selectedAgentRef.current, realId);
       navigateRef.current(buildCurrentSessionPath(realId), { replace: true });
     };
 
@@ -1849,6 +1855,17 @@ export default function ChatPage() {
       // handleSessionClick owns the navigate call. Do NOT navigate here
       // to avoid race conditions and infinite loops.
       if (sessionApi.isSessionSwitching) return;
+
+      // If the user just created a new chat that hasn't sent its first message
+      // yet, suppress the library's auto-selection of another session.
+      // The pending session will enter the drawer (and become the selected
+      // session) only after triggerResolve fires onSessionIdResolved.
+      if (
+        sessionApi.lastActiveChatId &&
+        sessionApi.isUnresolvedLocalSession(sessionApi.lastActiveChatId)
+      ) {
+        return;
+      }
 
       // Update URL when session is selected and different from current
       const targetId = realId || sessionId;
@@ -1877,28 +1894,33 @@ export default function ChatPage() {
         return;
       }
 
-      if (targetId !== lastSessionIdRef.current) {
-        lastSessionIdRef.current = targetId;
-        sessionApi.lastNavigatedChatId = targetId;
-        navigateRef.current(buildCurrentSessionPath(targetId), {
+      const resolvedTarget =
+        sessionApi.getRealIdForSession(targetId) ?? targetId;
+
+      if (
+        resolvedTarget !== lastSessionIdRef.current &&
+        targetId !== lastSessionIdRef.current
+      ) {
+        lastSessionIdRef.current = resolvedTarget;
+        sessionApi.lastActiveChatId = resolvedTarget;
+        sessionApi.lastNavigatedChatId = resolvedTarget;
+        setLastChatIdRef.current(selectedAgentRef.current, resolvedTarget);
+        navigateRef.current(buildCurrentSessionPath(resolvedTarget), {
           replace: true,
         });
       }
     };
 
-    sessionApi.onSessionCreated = () => {
+    sessionApi.onSessionCreated = (sessionId) => {
       if (!isChatActiveRef.current) return;
-      // The user is starting a brand new conversation. Drop any leftover items
-      // sitting under the temporary "new" key so they don't get auto-sent into
-      // the freshly-created chat. Items belonging to a previously-resolved
-      // chat have already been migrated to their real session id.
       try {
         useMessageQueueStore.getState().clear("new");
       } catch {
         // ignore
       }
-      // Clear URL when creating new session, wait for realId resolution to update
-      lastSessionIdRef.current = null;
+      lastSessionIdRef.current = sessionId;
+      sessionApi.lastActiveChatId = sessionId;
+      setLastChatIdRef.current(selectedAgentRef.current, sessionId);
       navigateRef.current(buildCurrentBasePath(), { replace: true });
     };
 
@@ -1913,7 +1935,6 @@ export default function ChatPage() {
   // Setup multimodal capabilities tracking via custom hook
 
   // Refresh chat when selectedAgent changes, preserving last active chat per agent
-  const { setLastChatId, getLastChatId } = useAgentStore();
   const prevSelectedAgentRef = useRef(selectedAgent);
   useEffect(() => {
     const prevAgent = prevSelectedAgentRef.current;
@@ -1932,9 +1953,17 @@ export default function ChatPage() {
           replace: true,
         });
         sessionApi.preferredChatId = restored;
+        sessionApi.lastActiveChatId = restored;
       } else {
         navigateRef.current("/chat", { replace: true });
+        sessionApi.lastActiveChatId = null;
       }
+      // Mark the current session as stale so late-arriving onSessionSelected
+      // callbacks from the OLD library instance are suppressed (Bug: after
+      // agent switch, old library's in-flight getSession may complete and
+      // trigger onSessionSelected for the wrong session).
+      staleAutoSelectedIdRef.current =
+        lastSessionIdRef.current || chatIdRef.current || null;
       lastSessionIdRef.current = null;
 
       setRefreshKey((prev) => prev + 1);
@@ -1996,11 +2025,12 @@ export default function ChatPage() {
             ]
           : lastInput;
 
+      const identity = sessionApi.getSessionIdentity();
       let requestBody: Record<string, unknown> = {
         input: rewrittenInput,
-        session_id: window.currentSessionId || session?.session_id || "",
-        user_id: window.currentUserId || session?.user_id || DEFAULT_USER_ID,
-        channel: window.currentChannel || session?.channel || DEFAULT_CHANNEL,
+        session_id: identity.sessionId || session?.session_id || "",
+        user_id: identity.userId || session?.user_id || DEFAULT_USER_ID,
+        channel: identity.channel || session?.channel || DEFAULT_CHANNEL,
         stream: true,
         ...biz_params,
       };
@@ -2050,6 +2080,11 @@ export default function ChatPage() {
         body: JSON.stringify(requestBody),
         signal: data.signal,
       });
+
+      const localIdToResolve = sessionApi.lastActiveChatId ?? chatIdRef.current;
+      if (response.ok && localIdToResolve) {
+        sessionApi.triggerResolve(localIdToResolve);
+      }
 
       return wrapChatResponseUsageStream(response, chatRef);
     },
@@ -2555,15 +2590,15 @@ export default function ChatPage() {
             ...buildAuthHeaders(),
           };
 
-          const sessionId = window.currentSessionId || data.session_id;
+          const reconnectIdentity = sessionApi.getSessionIdentity();
           const response = await fetch(getApiUrl("/console/chat"), {
             method: "POST",
             headers,
             body: JSON.stringify({
               reconnect: true,
-              session_id: sessionId,
-              user_id: window.currentUserId || DEFAULT_USER_ID,
-              channel: window.currentChannel || DEFAULT_CHANNEL,
+              session_id: sessionApi.getBackendSessionId(data.session_id),
+              user_id: reconnectIdentity.userId,
+              channel: reconnectIdentity.channel,
             }),
             signal: data.signal,
           });
