@@ -32,8 +32,8 @@ export interface ExtendedChatSession extends IAgentScopeRuntimeWebUISession {
 export const getBackendId = (session: ExtendedChatSession): string | null => {
   if (session.realId) return session.realId;
   const id = session.id;
-  if (!/^\d+$/.test(id)) return id;
-  return null;
+  if (/^\d+-[a-z0-9]+$/.test(id)) return null;
+  return id;
 };
 
 /** Format an ISO 8601 timestamp to YYYY-MM-DD HH:mm:ss */
@@ -164,7 +164,11 @@ export function useSessionListData(
 
   const sortedSessions = useMemo(() => {
     return [...sessions]
-      .filter((s) => !sessionApi.isUnresolvedLocalSession(s.id ?? ""))
+      .filter((s) => {
+        const id = s.id ?? "";
+        // Inline check: local timestamp format without realId = unresolved
+        return !(/^\d+-[a-z0-9]+$/.test(id) && !s.realId);
+      })
       .sort((a, b) => {
         if (a.pinned && !b.pinned) return -1;
         if (!a.pinned && b.pinned) return 1;

@@ -197,7 +197,8 @@ export default function SidebarSessionList({
         generating={session.generating}
         pinned={session.pinned}
         active={
-          session.id === currentSessionId || session.realId === currentSessionId
+          session.id === currentSessionId ||
+          (!!currentSessionId && session.realId === currentSessionId)
         }
         disabled={isDisabled}
         editing={isEditing}

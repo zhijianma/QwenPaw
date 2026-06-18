@@ -644,6 +644,31 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     return this.findSession(sessionId)?.realId ?? null;
   }
 
+  /** Resolves the effective ID for URL navigation (prefers backend UUID). */
+  getEffectiveSessionId(
+    sessionId: string,
+    resolvedRealId?: string | null,
+  ): string {
+    return resolvedRealId ?? this.getRealIdForSession(sessionId) ?? sessionId;
+  }
+
+  /**
+   * Centralizes state tracking after navigating to a session.
+   * Reduces repeated `lastActiveChatId + lastNavigatedChatId + persist` scattered
+   * across onSessionIdResolved, onSessionSelected, drawer, and initializer.
+   */
+  trackNavigatedSession(
+    effectiveId: string,
+    persistFn?: (agentId: string, id: string) => void,
+    agentId?: string,
+  ): void {
+    this.lastActiveChatId = effectiveId;
+    this.lastNavigatedChatId = effectiveId;
+    if (persistFn && agentId) {
+      persistFn(agentId, effectiveId);
+    }
+  }
+
   /**
    * Returns true if id is a newly-created local-timestamp session that hasn't
    * yet sent its first message (i.e. it's in sessionList but has no realId).

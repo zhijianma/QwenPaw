@@ -1,12 +1,8 @@
 import React, { useEffect, useMemo, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import {
-  useChatAnywhereSessionsState,
-  useChatAnywhereSessions,
-} from "@agentscope-ai/chat";
+import { useChatAnywhereSessionsState } from "@agentscope-ai/chat";
 import sessionApi from "../../sessionApi";
 import {
-  buildBasePath,
   buildSessionPath,
   getSessionIdFromPath,
 } from "../../../../utils/sessionRoute";
@@ -15,6 +11,7 @@ import {
   useSessionListStore,
   type ExtendedSession,
 } from "../../../../stores/sessionListStore";
+import { useCreateNewSession } from "../../hooks/useCreateNewSession";
 
 /**
  * URL chatId → context currentSessionId (one direction of bidirectional sync).
@@ -48,7 +45,7 @@ const ChatSessionInitializer: React.FC = () => {
 
   const { sessions, currentSessionId, setCurrentSessionId, setSessions } =
     useChatAnywhereSessionsState();
-  const { createSession } = useChatAnywhereSessions();
+  const createNewSession = useCreateNewSession();
   const { syncFromLibrary } = useSessionListStore();
 
   // Sync library sessions → shared Zustand store whenever they change.
@@ -70,6 +67,9 @@ const ChatSessionInitializer: React.FC = () => {
 
   const codingModeRef = useRef(codingMode);
   codingModeRef.current = codingMode;
+
+  const createNewSessionRef = useRef(createNewSession);
+  createNewSessionRef.current = createNewSession;
 
   /** Track the last chatId for which we called setCurrentSessionId, so that
    *  subsequent sessions array reference changes (from polling in pinned drawer)
@@ -109,13 +109,14 @@ const ChatSessionInitializer: React.FC = () => {
     // 2) realId: URL contains a UUID but the session's library id is still a
     //    local timestamp (e.g. during SSE before onSessionIdResolved fires).
     if (!matching) {
-      matching = sessions.find((s) => (s as any).realId === chatId);
+      matching = sessions.find((s) => (s as ExtendedSession).realId === chatId);
     }
 
     // 3) sessionId field: URL contains the backend session_id format
-    //    (e.g. 'default:to:x5VgSz:1781061443957:3a4141a3')
     if (!matching) {
-      matching = sessions.find((s) => (s as any).sessionId === chatId);
+      matching = sessions.find(
+        (s) => (s as ExtendedSession).sessionId === chatId,
+      );
     }
 
     if (matching && currentSessionIdRef.current !== matching.id) {
@@ -149,16 +150,17 @@ const ChatSessionInitializer: React.FC = () => {
       const matching = currentSessions.find((s) => s.id === sessionId);
 
       if (matching) {
-        // Preload then navigate + sync, mirroring ChatSessionDrawer behaviour.
         sessionApi.isSessionSwitching = true;
         sessionApi
           .preloadSession(sessionId)
           .then(({ realId }) => {
-            const effectiveId = realId || sessionId;
+            const effectiveId = sessionApi.getEffectiveSessionId(
+              sessionId,
+              realId,
+            );
             const targetUrl = buildSessionPath(mode, effectiveId);
-            sessionApi.lastNavigatedChatId = effectiveId;
+            sessionApi.trackNavigatedSession(effectiveId);
             navigate(targetUrl, { replace: true });
-            sessionApi.lastActiveChatId = effectiveId;
             setCurrentSessionId(sessionId);
           })
           .catch(() => {
@@ -174,16 +176,8 @@ const ChatSessionInitializer: React.FC = () => {
       }
     };
 
-    /**
-     * Handle new-chat request from sidebar.
-     * Mirrors useCreateNewSession: navigate to base path first, then
-     * set userInitiatedCreate so the adapter fires onSessionCreated.
-     */
     const handleNewChat = () => {
-      const mode = codingModeRef.current ? "coding" : "chat";
-      navigate(buildBasePath(mode), { replace: true });
-      sessionApi.userInitiatedCreate = true;
-      void createSession();
+      void createNewSessionRef.current();
     };
 
     window.addEventListener(
@@ -208,7 +202,7 @@ const ChatSessionInitializer: React.FC = () => {
       window.removeEventListener("qwenpaw:sidebar-new-chat", handleNewChat);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [navigate, setCurrentSessionId, createSession]);
+  }, [navigate, setCurrentSessionId]);
 
   return null;
 };

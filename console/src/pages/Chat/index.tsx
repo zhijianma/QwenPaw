@@ -1826,9 +1826,11 @@ export default function ChatPage() {
         // ignore migration errors
       }
       lastSessionIdRef.current = realId;
-      sessionApi.lastActiveChatId = realId;
-      sessionApi.lastNavigatedChatId = realId;
-      setLastChatIdRef.current(selectedAgentRef.current, realId);
+      sessionApi.trackNavigatedSession(
+        realId,
+        setLastChatIdRef.current,
+        selectedAgentRef.current,
+      );
       navigateRef.current(buildCurrentSessionPath(realId), { replace: true });
     };
 
@@ -1894,17 +1896,18 @@ export default function ChatPage() {
         return;
       }
 
-      const resolvedTarget =
-        sessionApi.getRealIdForSession(targetId) ?? targetId;
+      const resolvedTarget = sessionApi.getEffectiveSessionId(targetId, null);
 
       if (
         resolvedTarget !== lastSessionIdRef.current &&
         targetId !== lastSessionIdRef.current
       ) {
         lastSessionIdRef.current = resolvedTarget;
-        sessionApi.lastActiveChatId = resolvedTarget;
-        sessionApi.lastNavigatedChatId = resolvedTarget;
-        setLastChatIdRef.current(selectedAgentRef.current, resolvedTarget);
+        sessionApi.trackNavigatedSession(
+          resolvedTarget,
+          setLastChatIdRef.current,
+          selectedAgentRef.current,
+        );
         navigateRef.current(buildCurrentSessionPath(resolvedTarget), {
           replace: true,
         });

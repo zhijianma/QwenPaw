@@ -150,15 +150,20 @@ const ChatSessionDrawer: React.FC<ChatSessionDrawerProps> = (props) => {
       sessionApi
         .preloadSession(sessionId)
         .then(({ realId }) => {
-          const effectiveId = realId || sessionId;
+          const effectiveId = sessionApi.getEffectiveSessionId(
+            sessionId,
+            realId,
+          );
           const targetUrl = buildSessionPath(
             codingMode ? "coding" : "chat",
             effectiveId,
           );
-          sessionApi.lastNavigatedChatId = effectiveId;
+          sessionApi.trackNavigatedSession(
+            effectiveId,
+            setLastChatId,
+            selectedAgent,
+          );
           navigate(targetUrl, { replace: true });
-          sessionApi.lastActiveChatId = effectiveId;
-          setLastChatId(selectedAgent, effectiveId);
           setCurrentSessionId(sessionId);
         })
         .catch(() => {
