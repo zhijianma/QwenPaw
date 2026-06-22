@@ -20,7 +20,6 @@ import {
 } from "@agentscope-ai/icons";
 import {
   useChatAnywhereSessionsState,
-  useChatAnywhereSessions,
   type IAgentScopeRuntimeWebUISession,
 } from "@agentscope-ai/chat";
 import { useTranslation } from "react-i18next";
@@ -168,7 +167,6 @@ const ChatSessionDrawer: React.FC<ChatSessionDrawerProps> = (props) => {
   const { codingMode } = useCodingMode();
   const { selectedAgent, setLastChatId } = useAgentStore();
 
-  const sdkActions = useChatAnywhereSessions();
   const createNewSession = useCreateNewSession();
 
   // In embedded mode, maintain a local session list fetched directly from the
