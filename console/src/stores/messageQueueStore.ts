@@ -47,6 +47,8 @@ export interface QueueItem {
   /** Backend session_id captured at enqueue time so background sender uses
    *  the correct session even after agent switch clears the session list. */
   backendSessionId?: string;
+  userId?: string;
+  channel?: string;
   status: QueueItemStatus;
   retryCount: number;
   errorMessage?: string;
@@ -60,6 +62,8 @@ export interface QueueItemInput {
   images?: QueueImage[];
   mentions?: QueueMention[];
   quote?: QueueQuote;
+  userId?: string;
+  channel?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -373,6 +377,8 @@ export const useMessageQueueStore = create<MessageQueueStore>((set, get) => ({
       quote: input.quote,
       agentId,
       backendSessionId,
+      userId: input.userId,
+      channel: input.channel,
       status: "pending",
       retryCount: 0,
       createdAt: Date.now(),
