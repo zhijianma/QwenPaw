@@ -1600,9 +1600,10 @@ export default function ChatPage() {
   // takes over); start background senders for all OTHER sessions with pending
   // items. On unmount (or session switch), start bg sender for THIS session.
   useEffect(() => {
-    stopBackgroundQueue(queueSessionId);
+    const currentQueueSessionId = queueSessionId;
+    stopBackgroundQueue(currentQueueSessionId);
     // Kick off background senders for other sessions that have pending items
-    startAllBackgroundQueues(queueSessionId);
+    startAllBackgroundQueues(currentQueueSessionId);
     return () => {
       if (autoSendTimerRef.current) {
         clearTimeout(autoSendTimerRef.current);
@@ -1613,11 +1614,11 @@ export default function ChatPage() {
       if (!isOwnerRef.current) return;
       const remaining = messageQueueRef.current;
       if (remaining.length > 0) {
-        // queueKey is what the queue is stored under (may be "new");
-        // backendSessionId is the resolved id sent to /console/chat.
-        const queueKey = queueSessionIdRef.current;
+        // Use captured queueSessionId from this effect instance, not the
+        // ref (which may already point to the next session after re-render).
+        const queueKey = currentQueueSessionId;
         const backendSessionId =
-          window.currentSessionId || chatIdRef.current || "";
+          sessionApi.getBackendSessionId(queueKey) || queueKey;
         // Skip if no real backend session yet (e.g. "new" chat that never
         // resolved an id) — the items remain in storage to be picked up by
         // the next foreground load.
@@ -3001,13 +3002,19 @@ export default function ChatPage() {
 
       {/* Right-side history panel (full mode only) */}
       {isFullMode && historyPanelOpen && (
-        <div className={styles.historyPanel}>
-          <ChatSessionDrawer
-            open={historyPanelOpen}
-            onClose={toggleHistoryPanel}
-            embedded
+        <>
+          <div
+            className={styles.historyPanelMask}
+            onClick={toggleHistoryPanel}
           />
-        </div>
+          <div className={styles.historyPanel}>
+            <ChatSessionDrawer
+              open={historyPanelOpen}
+              onClose={toggleHistoryPanel}
+              embedded
+            />
+          </div>
+        </>
       )}
     </div>
   );

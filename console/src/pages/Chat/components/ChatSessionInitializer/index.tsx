@@ -128,7 +128,6 @@ const ChatSessionInitializer: React.FC = () => {
     }
     // Intentionally exclude currentSessionId from deps: only react to URL / session list changes.
     // currentSessionId is read via ref to avoid circular triggers.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatId, sessions, setCurrentSessionId]);
 
   // ── Sidebar event handlers ────────────────────────────────────────────────
@@ -167,16 +166,30 @@ const ChatSessionInitializer: React.FC = () => {
             setCurrentSessionId(sessionId);
           })
           .finally(() => {
-            requestAnimationFrame(() => {
+            sessionApi.finishSessionSwitch();
+            window.dispatchEvent(
+              new CustomEvent("qwenpaw:sidebar-switch-done"),
+            );
+            // Fallback: resolve after 2000ms to ensure finally() always runs
+            // even if rAF is dropped (background tab, fast re-clicks, etc.).
+            return new Promise<void>(() => {
               requestAnimationFrame(() => {
-                sessionApi.finishSessionSwitch();
+                requestAnimationFrame(() => {
+                  sessionApi.finishSessionSwitch();
+                });
               });
+              setTimeout(() => {
+                sessionApi.finishSessionSwitch();
+              }, 2000);
             });
           });
       }
     };
 
     const handleNewChat = () => {
+      if (sessionApi.isSessionSwitching) {
+        sessionApi.finishSessionSwitch();
+      }
       void createNewSessionRef.current();
     };
 

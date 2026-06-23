@@ -179,18 +179,22 @@ const ChatSessionDrawer: React.FC<ChatSessionDrawerProps> = (props) => {
   const sessions = props.embedded ? localSessions : sdkState.sessions;
   const { currentSessionId, setCurrentSessionId } = sdkState;
   const setSessions = props.embedded ? setLocalSessions : sdkState.setSessions;
+  const { embedded, pinned, onClose } = props;
 
   /** Create a new session; close the drawer only when not pinned */
   const handleCreateSession = useCallback(async () => {
-    if (props.embedded) {
+    if (sessionApi.isSessionSwitching) {
+      sessionApi.finishSessionSwitch();
+    }
+    if (embedded) {
       window.dispatchEvent(new CustomEvent("qwenpaw:sidebar-new-chat"));
     } else {
       await createNewSession();
-      if (!props.pinned) {
-        props.onClose();
+      if (!pinned) {
+        onClose();
       }
     }
-  }, [createNewSession, props.onClose, props.pinned, props.embedded]);
+  }, [createNewSession, onClose, pinned, embedded]);
 
   /** ID of the session currently being renamed */
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
@@ -311,13 +315,14 @@ const ChatSessionDrawer: React.FC<ChatSessionDrawerProps> = (props) => {
 
   const handleSessionClick = useCallback(
     (sessionId: string) => {
-      // Block clicks while a switch is in progress.
-      if (sessionApi.isSessionSwitching) return;
-      if (sessionId === currentSessionId) return;
+      if (sessionApi.isSessionSwitching) {
+        return;
+      }
+      if (sessionId === currentSessionId) {
+        return;
+      }
 
       if (props.embedded) {
-        // In embedded mode, we're outside the SDK context tree.
-        // Dispatch a DOM event so ChatSessionInitializer (inside the tree) handles it.
         setSwitchingSessionId(sessionId);
         window.dispatchEvent(
           new CustomEvent("qwenpaw:sidebar-select-session", {
@@ -327,15 +332,9 @@ const ChatSessionDrawer: React.FC<ChatSessionDrawerProps> = (props) => {
         return;
       }
 
-      // Lock immediately (synchronous) before any async work.
       sessionApi.isSessionSwitching = true;
       setSwitchingSessionId(sessionId);
 
-      // 1) Pre-load session data (network request happens here).
-      // 2) Navigate to the correct URL (using realId if available).
-      // 3) Only THEN set currentSessionId so the library's useAsyncEffect
-      //    hits the result cache instead of making another request.
-      // 4) Keep lock held until the next React render cycle completes.
       sessionApi
         .preloadSession(sessionId)
         .then(({ realId }) => {
@@ -368,6 +367,9 @@ const ChatSessionDrawer: React.FC<ChatSessionDrawerProps> = (props) => {
             requestAnimationFrame(() => {
               requestAnimationFrame(() => resolve());
             });
+            // Fallback: resolve after 2000ms to ensure finally() always runs
+            // even if rAF is dropped (background tab, fast re-clicks, etc.).
+            setTimeout(() => resolve(), 2000);
           });
         })
         .finally(() => {
@@ -385,6 +387,29 @@ const ChatSessionDrawer: React.FC<ChatSessionDrawerProps> = (props) => {
       props.embedded,
     ],
   );
+
+  // Listen for embedded switch completion so we can clear switchingSessionId.
+  useEffect(() => {
+    const onDone = () => {
+      setSwitchingSessionId(null);
+    };
+    window.addEventListener("qwenpaw:sidebar-switch-done", onDone);
+    return () =>
+      window.removeEventListener("qwenpaw:sidebar-switch-done", onDone);
+  }, []);
+
+  // Fallback: if the global switching lock is released but switchingSessionId
+  // is still stuck (e.g. event missed, component re-mounted, race condition),
+  // clear it so the UI doesn't remain greyed out.
+  useEffect(() => {
+    if (!switchingSessionId) return;
+    const id = setInterval(() => {
+      if (!sessionApi.isSessionSwitching) {
+        setSwitchingSessionId(null);
+      }
+    }, 500);
+    return () => clearInterval(id);
+  }, [switchingSessionId]);
 
   // In embedded mode, clear switchingSessionId when the URL changes
   // (signals that the session switch initiated via DOM event has completed).
