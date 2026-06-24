@@ -390,7 +390,7 @@ async def view_image(image_path: str) -> ToolChunk:
         is_last=True,
         state=ToolResultState.SUCCESS,
         content=[
-            _media_data_block("file://" + str(file_url), "image"),
+            _media_data_block(file_url, "image"),
             TextBlock(type="text", text=text_msg),
         ],
     )
@@ -460,7 +460,7 @@ async def view_video(video_path: str) -> ToolChunk:
         is_last=True,
         state=ToolResultState.SUCCESS,
         content=[
-            _media_data_block("file://" + str(file_url), "video"),
+            _media_data_block(file_url, "video"),
             TextBlock(type="text", text=text_msg),
         ],
     )
