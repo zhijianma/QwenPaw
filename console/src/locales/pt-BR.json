@@ -634,7 +634,7 @@
     "deleteSuccess": "MCP client deleted successfully",
     "deleteError": "Falha ao Excluir MCP client",
     "maskedFieldHint": "Sensitive fields are masked with ***. In-place edits on masked values are not supported — replace with the full new value to modify.",
-    "tools": "Ferramentas",
+    "tools": "Ferramentas e Permissões",
     "noTools": "No tools available from this MCP server",
     "toolsLoadError": "Failed to load tools from MCP server",
     "toolsConnecting": "MCP server is still connecting, please try again in a moment",

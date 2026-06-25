@@ -489,7 +489,12 @@
     "deleteConfirm": "Bạn có chắc muốn xóa MCP client này không?",
     "deleteSuccess": "Xóa MCP client thành công",
     "deleteError": "Xóa MCP client thất bại",
-    "maskedFieldHint": "Các trường nhạy cảm được ẩn bằng ***. Chỉnh sửa trực tiếp không được hỗ trợ — thay thế bằng giá trị mới."
+    "maskedFieldHint": "Các trường nhạy cảm được ẩn bằng ***. Chỉnh sửa trực tiếp không được hỗ trợ — thay thế bằng giá trị mới.",
+    "tools": "Công cụ & Quyền",
+    "noTools": "Không có công cụ nào từ máy chủ MCP này",
+    "toolsLoadError": "Tải danh sách công cụ từ máy chủ MCP thất bại",
+    "toolsConnecting": "Máy chủ MCP đang kết nối, vui lòng thử lại sau",
+    "toolSchema": "Mô tả & Tham số"
   },
   "market": {
     "searchPlaceholder": "Tìm kiếm kỹ năng trên các nền tảng",

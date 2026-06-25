@@ -692,7 +692,7 @@
     "deleteConfirm": "Yakin ingin menghapus klien MCP ini?",
     "deleteSuccess": "Klien MCP berhasil dihapus",
     "deleteError": "Gagal menghapus klien MCP",
-    "tools": "Tool",
+    "tools": "Tool & Izin",
     "noTools": "Tidak ada tool tersedia dari server MCP ini",
     "toolSchema": "Skema Input",
     "oauth": {
