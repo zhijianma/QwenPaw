@@ -741,27 +741,44 @@ class PluginLoader:
             )
 
         # Copy files when source is not already the target
+        copied = False
         if source_path != target_dir:
             if target_dir.exists():
                 shutil.rmtree(target_dir)
             shutil.copytree(source_path, target_dir)
+            copied = True
             logger.info(
                 f"Copied plugin '{plugin_id}' to {target_dir}",
             )
 
-        # Install Python dependencies (off the event loop)
-        requirements_file = target_dir / "requirements.txt"
-        if requirements_file.exists():
-            await asyncio.to_thread(
-                self._install_requirements,
-                requirements_file,
-                plugin_id,
-            )
+        try:
+            # Install Python dependencies (off the event loop)
+            requirements_file = target_dir / "requirements.txt"
+            if requirements_file.exists():
+                await asyncio.to_thread(
+                    self._install_requirements,
+                    requirements_file,
+                    plugin_id,
+                )
 
-        # Re-read manifest from the installed location so that
-        # source_path in the record points to the correct directory
-        installed_manifest = self._load_manifest(target_dir / "plugin.json")
-        return await self.load_plugin(installed_manifest, target_dir, config)
+            # Re-read manifest from the installed location so that
+            # source_path in the record points to the correct directory
+            installed_manifest = self._load_manifest(
+                target_dir / "plugin.json",
+            )
+            return await self.load_plugin(
+                installed_manifest,
+                target_dir,
+                config,
+            )
+        except Exception:
+            if copied and target_dir.exists():
+                shutil.rmtree(target_dir, ignore_errors=True)
+                logger.info(
+                    f"Cleaned up failed install for '{plugin_id}' "
+                    f"at {target_dir}",
+                )
+            raise
 
     async def unload_plugin(
         self,
