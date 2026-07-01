@@ -32,13 +32,11 @@ function storageKey(chatId: string): string {
 
 interface ApprovalLevelToggleProps {
   chatId: string | undefined;
-  agentDefaultLevel?: ToolExecutionLevel;
   onChange?: (level: SessionApprovalLevel) => void;
 }
 
 const ApprovalLevelToggle: React.FC<ApprovalLevelToggleProps> = ({
   chatId,
-  agentDefaultLevel = "AUTO",
   onChange,
 }) => {
   const { t } = useTranslation();
@@ -72,8 +70,7 @@ const ApprovalLevelToggle: React.FC<ApprovalLevelToggleProps> = ({
   );
 
   const isOverridden = sessionLevel !== null;
-  const displayLevel = sessionLevel ?? agentDefaultLevel;
-  const meta = LEVEL_META[displayLevel];
+  const meta = isOverridden ? LEVEL_META[sessionLevel] : null;
 
   const menuItems: MenuProps["items"] = useMemo(() => {
     const items: MenuProps["items"] = [
@@ -134,8 +131,8 @@ const ApprovalLevelToggle: React.FC<ApprovalLevelToggleProps> = ({
           style={{
             cursor: "pointer",
             userSelect: "none",
-            borderColor: isOverridden ? meta.color : undefined,
-            color: isOverridden ? meta.color : undefined,
+            borderColor: meta?.color,
+            color: meta?.color,
             opacity: isOverridden ? 1 : 0.6,
             transition: "all 0.2s",
             display: "inline-flex",
@@ -144,11 +141,11 @@ const ApprovalLevelToggle: React.FC<ApprovalLevelToggleProps> = ({
             lineHeight: "22px",
           }}
         >
-          {meta.icon}
+          {meta?.icon ?? <Shield size={12} />}
           {isOverridden
             ? t(
-                `agentConfig.toolExecutionLevel.${displayLevel.toLowerCase()}`,
-                displayLevel,
+                `agentConfig.toolExecutionLevel.${sessionLevel.toLowerCase()}`,
+                sessionLevel,
               )
             : t("agentConfig.toolExecutionLevel.inherit", "Default Mode")}
           <DownOutlined style={{ fontSize: 10 }} />

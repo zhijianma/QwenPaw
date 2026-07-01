@@ -1142,9 +1142,6 @@ export default function ChatPage() {
   const autoSendTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevQueueLenRef = useRef(messageQueue.length);
 
-  // Session-level approval_level (overrides agent default per chat)
-  const [agentApprovalLevel, setAgentApprovalLevel] =
-    useState<ToolExecutionLevel>("AUTO");
   const sessionApprovalLevelRef = useRef<ToolExecutionLevel | null>(null);
 
   // Track pending attachments for queue support
@@ -1588,18 +1585,6 @@ export default function ChatPage() {
       textarea.focus();
     }
   }, []);
-
-  useEffect(() => {
-    agentApi
-      .getAgentRunningConfig()
-      .then((cfg) => {
-        const raw = (cfg?.approval_level || "AUTO").toUpperCase();
-        if (["STRICT", "SMART", "AUTO", "OFF"].includes(raw)) {
-          setAgentApprovalLevel(raw as ToolExecutionLevel);
-        }
-      })
-      .catch(() => {});
-  }, [selectedAgent]);
 
   useMessageHistoryNavigation(chatRef, isChatActive, isComposingRef);
   useChatInputDraft(isChatActive, selectedAgent);
@@ -2629,7 +2614,6 @@ export default function ChatPage() {
         actionAffix: (
           <ApprovalLevelToggle
             chatId={chatId}
-            agentDefaultLevel={agentApprovalLevel}
             onChange={(level) => {
               sessionApprovalLevelRef.current = level;
             }}
