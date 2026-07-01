@@ -494,6 +494,8 @@ const ChatSessionDrawer: React.FC<ChatSessionDrawerProps> = (props) => {
         await chatApi.deleteChat(backendId);
       }
 
+      localStorage.removeItem(`approval_level-${sessionId}`);
+
       // Fetch the updated session list after deletion
       const freshList =
         (await sessionApi.getSessionList()) as ExtendedChatSession[];

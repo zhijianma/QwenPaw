@@ -97,6 +97,9 @@ import { openExternalLink } from "../../utils/openExternalLink";
 import { getLastEditorCopy } from "../Coding/lastEditorCopy";
 import { useUploadLimitStore } from "../../stores/uploadLimitStore";
 import MessageQueuePanel from "./components/MessageQueuePanel";
+import ApprovalLevelToggle, {
+  type ToolExecutionLevel,
+} from "./components/ApprovalLevelToggle";
 import {
   useMessageQueueStore,
   type QueueItem,
@@ -1139,6 +1142,11 @@ export default function ChatPage() {
   const autoSendTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevQueueLenRef = useRef(messageQueue.length);
 
+  // Session-level approval_level (overrides agent default per chat)
+  const [agentApprovalLevel, setAgentApprovalLevel] =
+    useState<ToolExecutionLevel>("AUTO");
+  const sessionApprovalLevelRef = useRef<ToolExecutionLevel | null>(null);
+
   // Track pending attachments for queue support
   const pendingFileListRef = useRef<
     {
@@ -1580,6 +1588,18 @@ export default function ChatPage() {
       textarea.focus();
     }
   }, []);
+
+  useEffect(() => {
+    agentApi
+      .getAgentRunningConfig()
+      .then((cfg) => {
+        const raw = (cfg?.approval_level || "AUTO").toUpperCase();
+        if (["STRICT", "SMART", "AUTO", "OFF"].includes(raw)) {
+          setAgentApprovalLevel(raw as ToolExecutionLevel);
+        }
+      })
+      .catch(() => {});
+  }, [selectedAgent]);
 
   useMessageHistoryNavigation(chatRef, isChatActive, isComposingRef);
   useChatInputDraft(isChatActive, selectedAgent);
@@ -2146,6 +2166,15 @@ export default function ChatPage() {
         }
       }
 
+      // Inject session-level approval_level into request_context
+      const sessionLevel = sessionApprovalLevelRef.current;
+      if (sessionLevel) {
+        const rc =
+          (requestBody.request_context as Record<string, unknown>) || {};
+        rc.approval_level = sessionLevel;
+        requestBody.request_context = rc;
+      }
+
       const backendChatId =
         sessionApi.getRealIdForSession(String(requestBody.session_id || "")) ??
         chatIdRef.current ??
@@ -2585,18 +2614,26 @@ export default function ChatPage() {
               ) : null}
             </>
           ) : undefined,
-        prefix:
-          whisperEnabled || pluginSenderPrefix.length > 0 ? (
-            <>
-              {whisperEnabled ? (
-                <WhisperSpeechButton
-                  ref={whisperSpeechRef}
-                  onTranscription={handleWhisperTranscription}
-                />
-              ) : null}
-              {pluginSenderPrefix}
-            </>
-          ) : undefined,
+        prefix: (
+          <>
+            {whisperEnabled ? (
+              <WhisperSpeechButton
+                ref={whisperSpeechRef}
+                onTranscription={handleWhisperTranscription}
+              />
+            ) : null}
+            {pluginSenderPrefix}
+          </>
+        ),
+        actionAffix: (
+          <ApprovalLevelToggle
+            chatId={chatId}
+            agentDefaultLevel={agentApprovalLevel}
+            onChange={(level) => {
+              sessionApprovalLevelRef.current = level;
+            }}
+          />
+        ),
         attachments: {
           multiple: true,
           trigger: function (props: any) {

@@ -664,7 +664,7 @@
       "deleteRule": "删除规则",
       "noClientRules": "暂无规则",
       "noRules": "暂无规则，使用默认策略",
-      "inherit": "继承（{{effect}}）",
+      "inherit": "继承Agent",
       "stale": "当前不存在",
       "disabledTools": "该 MCP 客户端已禁用，仍可编辑已保存的访问规则。",
       "discardTitle": "放弃未保存的改动？",
@@ -1840,7 +1840,9 @@
       "auto": "自动模式",
       "autoDesc": "仅被明确标记为需要审批的工具才会要求审批（默认）",
       "off": "关闭模式",
-      "offDesc": "关闭所有工具审批，所有工具自动执行"
+      "offDesc": "关闭所有工具审批，所有工具自动执行",
+      "inherit": "默认模式",
+      "inheritDesc": "默认使用Agent的工具执行安全级别"
     },
     "saveLevelSuccess": "工具执行安全级别已保存",
     "saveLevelFailed": "保存工具执行安全级别失败",

@@ -1982,7 +1982,9 @@
       "auto": "Auto Mode",
       "autoDesc": "Only tools explicitly marked for approval require approval (default)",
       "off": "Off Mode",
-      "offDesc": "Disable all tool approvals, all tools execute automatically"
+      "offDesc": "Disable all tool approvals, all tools execute automatically",
+      "inherit": "Default Mode",
+      "inheritDesc": "Use the agent's tool execution security level as default"
     },
     "saveLevelSuccess": "Tool execution security level saved",
     "saveLevelFailed": "Failed to save tool execution security level",
