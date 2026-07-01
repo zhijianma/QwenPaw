@@ -2614,17 +2614,18 @@ export default function ChatPage() {
               ) : null}
             </>
           ) : undefined,
-        prefix: (
-          <>
-            {whisperEnabled ? (
-              <WhisperSpeechButton
-                ref={whisperSpeechRef}
-                onTranscription={handleWhisperTranscription}
-              />
-            ) : null}
-            {pluginSenderPrefix}
-          </>
-        ),
+        prefix:
+          whisperEnabled || pluginSenderPrefix.length > 0 ? (
+            <>
+              {whisperEnabled ? (
+                <WhisperSpeechButton
+                  ref={whisperSpeechRef}
+                  onTranscription={handleWhisperTranscription}
+                />
+              ) : null}
+              {pluginSenderPrefix}
+            </>
+          ) : undefined,
         actionAffix: (
           <ApprovalLevelToggle
             chatId={chatId}

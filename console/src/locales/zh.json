@@ -664,7 +664,7 @@
       "deleteRule": "删除规则",
       "noClientRules": "暂无规则",
       "noRules": "暂无规则，使用默认策略",
-      "inherit": "继承Agent",
+      "inherit": "继承（{{effect}}）",
       "stale": "当前不存在",
       "disabledTools": "该 MCP 客户端已禁用，仍可编辑已保存的访问规则。",
       "discardTitle": "放弃未保存的改动？",
