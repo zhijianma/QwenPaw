@@ -67,20 +67,20 @@ async def login(request: Request, req: LoginRequest):
     if rate_limiter.is_user_locked(req.username):
         raise HTTPException(
             status_code=423,
-            detail="账号异常，请15分钟后重试",
+            detail="Account temporarily locked. Please try again later",
         )
 
     # Check if IP is locked or rate-limited
     if rate_limiter.is_ip_locked(client_ip):
         raise HTTPException(
             status_code=423,
-            detail="访问过快或登录异常，请稍后重试",
+            detail="Too many login attempts. Please try again later",
         )
 
     if rate_limiter.is_ip_rate_limited(client_ip):
         raise HTTPException(
             status_code=429,
-            detail="访问过快，请稍后重试",
+            detail="Too many requests. Please slow down",
         )
 
     # Attempt authentication
@@ -94,7 +94,7 @@ async def login(request: Request, req: LoginRequest):
         )
         raise HTTPException(
             status_code=401,
-            detail="账号或密码错误",
+            detail="Invalid username or password",
         )
 
     # Record successful attempt
