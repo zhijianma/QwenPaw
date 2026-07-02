@@ -1329,7 +1329,18 @@
     "oauthWaitingDescription": "请在浏览器窗口中完成授权。",
     "oauthConnected": "已成功连接 {{provider}}",
     "oauthFailed": "授权失败，请重试",
-    "viewMore": "显示更多 ({{count}})"
+    "viewMore": "显示更多 ({{count}})",
+    "params": {
+      "title": "{{model}} 参数配置",
+      "maxTokens": "最大输出 Tokens",
+      "maxTokensTooltip": "模型单次回复可生成的最大 Token 数",
+      "maxInputLength": "最大上下文长度",
+      "maxInputLengthTooltip": "模型上下文窗口支持的最大输入 Token 数",
+      "advanced": "高级参数 (generate_kwargs)",
+      "saved": "模型参数已保存",
+      "saveFailed": "保存模型参数失败",
+      "invalidJson": "JSON 格式无效"
+    }
   },
   "models": {
     "llmConfiguration": "LLM 配置",
@@ -2013,7 +2024,15 @@
       "turnEstimated": "本轮约",
       "tok": "tok",
       "inOut": "in {{inTok}} · out {{outTok}}",
+      "input": "输入",
+      "output": "输出",
+      "total": "总计",
       "contextLabel": "上下文窗口："
+    },
+    "contextIndicator": {
+      "title": "上下文窗口",
+      "newChat": "新建对话",
+      "compact": "压缩上下文"
     },
     "rateLimitMessage": "已触发限流，切换其他免费模型：",
     "rateLimitSwitched": "已切换至 {{model}}",

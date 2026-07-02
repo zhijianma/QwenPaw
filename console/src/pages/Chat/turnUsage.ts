@@ -7,6 +7,8 @@ import type {
 export const TURN_USAGE_META_KEY = "qwenpaw_turn_usage";
 
 export interface TurnUsage {
+  provider_id?: string;
+  model_name?: string;
   prompt_tokens?: number;
   completion_tokens?: number;
   total_tokens?: number;
@@ -194,6 +196,25 @@ export function schedulePatchLastResponseCardUsage(
   window.setTimeout(retry, 0);
 }
 
+/**
+ * Scan existing assistant messages (newest-first) and return the latest
+ * context_usage snapshot, or null if none found.
+ */
+export function getLatestContextUsage(
+  chatRef: React.RefObject<IAgentScopeRuntimeWebUIRef | null>,
+): ContextUsage | null {
+  const messages = chatRef.current?.messages?.getMessages() ?? [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role !== "assistant") continue;
+    const data = getResponseCardData(msg.cards);
+    if (!data) continue;
+    const snap = readTurnUsageFromResponseCardData(data);
+    if (snap?.context_usage) return snap.context_usage;
+  }
+  return null;
+}
+
 /** Re-calculate context ring denominator after model switch. */
 export function patchContextMaxInputLength(
   chatRef: React.RefObject<IAgentScopeRuntimeWebUIRef | null>,
@@ -274,6 +295,7 @@ function snapshotFromSsePayload(raw: string): TurnUsageSnapshot | null {
 export function wrapChatResponseUsageStream(
   response: Response,
   chatRef: React.RefObject<IAgentScopeRuntimeWebUIRef | null>,
+  onContextUsage?: (ctx: ContextUsage) => void,
 ): Response {
   if (!response.body) return response;
 
@@ -302,6 +324,9 @@ export function wrapChatResponseUsageStream(
         }
         if (pendingUsage) {
           schedulePatchLastResponseCardUsage(chatRef, pendingUsage);
+          if (pendingUsage.context_usage && onContextUsage) {
+            onContextUsage(pendingUsage.context_usage);
+          }
         }
       },
     }),

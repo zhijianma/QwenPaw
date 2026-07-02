@@ -310,6 +310,22 @@
   color: #ff7f16;
 }
 
+.settingsIcon {
+  flex-shrink: 0;
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.2s;
+
+  .modelItem:hover &,
+  .modelItemActive & {
+    opacity: 0.45;
+  }
+
+  &:hover {
+    opacity: 0.85 !important;
+  }
+}
+
 .emptyTip {
   padding: 20px 16px;
   text-align: center;

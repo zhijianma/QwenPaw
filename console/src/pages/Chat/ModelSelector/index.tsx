@@ -18,6 +18,7 @@ import { useAgentStore } from "../../../stores/agentStore";
 import { confirmFreeModelSwitch } from "@/utils/freeModelSwitchWarning";
 import { ProviderIcon } from "../../Settings/Models/components/ProviderIconComponent";
 import { OAuthConfirmModal } from "./OAuthConfirmModal";
+import { ModelParamsModal } from "./ModelParamsModal";
 import styles from "./index.module.less";
 
 interface EligibleProvider {
@@ -91,6 +92,13 @@ export default function ModelSelector() {
     providerName: string;
     pendingModelId: string;
   }>({ open: false, providerId: "", providerName: "", pendingModelId: "" });
+
+  // Model params modal state
+  const [paramsModal, setParamsModal] = useState<{
+    open: boolean;
+    providerId: string;
+    model: import("../../../api/types").ModelInfo | null;
+  }>({ open: false, providerId: "", model: null });
 
   // Navigate-to-config confirmation state
   const [configNavModal, setConfigNavModal] = useState<{
@@ -484,6 +492,18 @@ export default function ModelSelector() {
                         {t("modelSelector.vision")}
                       </span>
                     )}
+                    <Settings
+                      size={13}
+                      className={styles.settingsIcon}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setParamsModal({
+                          open: true,
+                          providerId: provider.id,
+                          model,
+                        });
+                      }}
+                    />
                     {isActive && <CheckOutlined className={styles.checkIcon} />}
                   </div>
                 </div>
@@ -803,6 +823,20 @@ export default function ModelSelector() {
         providerName={oauthModal.providerName}
         onSuccess={handleOAuthSuccess}
         onCancel={() => setOauthModal((prev) => ({ ...prev, open: false }))}
+      />
+
+      <ModelParamsModal
+        open={paramsModal.open}
+        providerId={paramsModal.providerId}
+        model={paramsModal.model}
+        onClose={() => setParamsModal((prev) => ({ ...prev, open: false }))}
+        onSaved={(updatedProvider) => {
+          setProviders((prev) =>
+            prev.map((p) =>
+              p.id === updatedProvider.id ? updatedProvider : p,
+            ),
+          );
+        }}
       />
     </>
   );

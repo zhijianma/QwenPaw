@@ -36,6 +36,8 @@ import TurnUsageAction from "./components/TurnUsageAction";
 import {
   patchContextMaxInputLength,
   wrapChatResponseUsageStream,
+  getLatestContextUsage,
+  type ContextUsage,
 } from "./turnUsage";
 import ChatHeaderTitle from "./components/ChatHeaderTitle";
 import ChatSessionInitializer from "./components/ChatSessionInitializer";
@@ -100,6 +102,7 @@ import MessageQueuePanel from "./components/MessageQueuePanel";
 import ApprovalLevelToggle, {
   type ToolExecutionLevel,
 } from "./components/ApprovalLevelToggle";
+import ContextUsageIndicator from "./components/ContextUsageIndicator";
 import {
   useMessageQueueStore,
   type QueueItem,
@@ -658,14 +661,14 @@ function useMultimodalCapabilities(
       const activeModelId = activeModels?.active_llm?.model;
       if (!activeProviderId || !activeModelId) {
         updateCapsIfChanged(noCaps);
-        return;
+        return null;
       }
       const provider = (providers as ProviderInfo[]).find(
         (p) => p.id === activeProviderId,
       );
       if (!provider) {
         updateCapsIfChanged(noCaps);
-        return;
+        return null;
       }
       const allModels: ModelInfo[] = [
         ...(provider.models ?? []),
@@ -677,14 +680,16 @@ function useMultimodalCapabilities(
         supportsImage: model?.supports_image ?? false,
         supportsVideo: model?.supports_video ?? false,
       });
+      return model || null;
     } catch {
       updateCapsIfChanged(noCaps);
+      return null;
     }
   }, [selectedAgent, updateCapsIfChanged]);
 
   // Fetch caps on mount and whenever refreshKey changes
   useEffect(() => {
-    fetchMultimodalCaps();
+    void fetchMultimodalCaps();
   }, [fetchMultimodalCaps, refreshKey]);
 
   // Re-sync caps only when navigating FROM a non-chat page back to chat.
@@ -698,7 +703,7 @@ function useMultimodalCapabilities(
     const wasOutsideChat = !prev.startsWith("/chat");
     const isNowInChat = locationPathname.startsWith("/chat");
     if (wasOutsideChat && isNowInChat) {
-      fetchMultimodalCaps();
+      void fetchMultimodalCaps();
     }
   }, [locationPathname, fetchMultimodalCaps]);
 
@@ -1144,6 +1149,31 @@ export default function ChatPage() {
 
   const sessionApprovalLevelRef = useRef<ToolExecutionLevel | null>(null);
 
+  const [latestContextUsage, setLatestContextUsage] =
+    useState<ContextUsage | null>(null);
+  const latestContextUsageCallbackRef = useRef((ctx: ContextUsage) => {
+    setLatestContextUsage(ctx);
+  });
+
+  // Initialize context usage from existing messages when session changes
+  useEffect(() => {
+    const tryInit = () => {
+      const ctx = getLatestContextUsage(chatRef);
+      if (ctx) {
+        setLatestContextUsage(ctx);
+        return true;
+      }
+      return false;
+    };
+    if (tryInit()) return;
+    // Messages may not be loaded yet; retry a few times
+    let attempt = 0;
+    const timer = setInterval(() => {
+      if (tryInit() || ++attempt >= 20) clearInterval(timer);
+    }, 200);
+    return () => clearInterval(timer);
+  }, [chatId]);
+
   // Track pending attachments for queue support
   const pendingFileListRef = useRef<
     {
@@ -1566,18 +1596,50 @@ export default function ChatPage() {
   const navigateRef = useRef(navigate);
   const chatRef = useRef<IAgentScopeRuntimeWebUIRef>(null);
 
+  const [currentMaxInputLength, setCurrentMaxInputLength] = useState<
+    number | null
+  >(null);
+
+  const updateMaxInputLength = useCallback((length: number) => {
+    if (chatRef.current) {
+      patchContextMaxInputLength(chatRef, length);
+      setCurrentMaxInputLength(length);
+    }
+  }, []);
+
   useEffect(() => {
     const handler = (e: Event) => {
-      void fetchMultimodalCaps();
       const maxInputLength = (e as CustomEvent<{ maxInputLength?: number }>)
         .detail?.maxInputLength;
+
       if (typeof maxInputLength === "number") {
-        patchContextMaxInputLength(chatRef, maxInputLength);
+        updateMaxInputLength(maxInputLength);
+      } else {
+        void (async () => {
+          try {
+            const model = await fetchMultimodalCaps();
+            if (model?.max_input_length) {
+              updateMaxInputLength(model.max_input_length);
+            }
+          } catch (error) {
+            console.error("Failed to fetch multimodal capabilities:", error);
+          }
+        })();
       }
     };
     window.addEventListener("model-switched", handler);
     return () => window.removeEventListener("model-switched", handler);
-  }, [fetchMultimodalCaps]);
+  }, [fetchMultimodalCaps, updateMaxInputLength]);
+
+  useEffect(() => {
+    const initMaxInputLength = async () => {
+      const model = await fetchMultimodalCaps();
+      if (model?.max_input_length) {
+        updateMaxInputLength(model.max_input_length);
+      }
+    };
+    void initMaxInputLength();
+  }, [selectedAgent, updateMaxInputLength]);
 
   const pendingClearHistoryRef = useRef(false);
   const whisperSpeechRef = useRef<WhisperSpeechButtonRef>(null);
@@ -2220,7 +2282,11 @@ export default function ChatPage() {
         sessionApi.triggerResolve(localIdToResolve);
       }
 
-      return wrapChatResponseUsageStream(response, chatRef);
+      return wrapChatResponseUsageStream(
+        response,
+        chatRef,
+        latestContextUsageCallbackRef.current,
+      );
     },
     [extLists, selectedAgent],
   );
@@ -2640,12 +2706,26 @@ export default function ChatPage() {
             </>
           ) : undefined,
         actionAffix: (
-          <ApprovalLevelToggle
-            chatId={chatId}
-            onChange={(level) => {
-              sessionApprovalLevelRef.current = level;
-            }}
-          />
+          <>
+            <ContextUsageIndicator
+              context={latestContextUsage}
+              currentMaxInputLength={currentMaxInputLength}
+              onNewChat={() => {
+                window.dispatchEvent(
+                  new CustomEvent("qwenpaw:sidebar-new-chat"),
+                );
+              }}
+              onCompact={() => {
+                chatRef.current?.input.submit({ query: "/compact" });
+              }}
+            />
+            <ApprovalLevelToggle
+              chatId={chatId}
+              onChange={(level) => {
+                sessionApprovalLevelRef.current = level;
+              }}
+            />
+          </>
         ),
         attachments: {
           multiple: true,
@@ -2757,7 +2837,11 @@ export default function ChatPage() {
             signal: data.signal,
           });
 
-          return wrapChatResponseUsageStream(response, chatRef);
+          return wrapChatResponseUsageStream(
+            response,
+            chatRef,
+            latestContextUsageCallbackRef.current,
+          );
         },
       },
       customToolRenderConfig: withGenericFallback(mergedToolRenderers),
@@ -2776,14 +2860,12 @@ export default function ChatPage() {
               data,
             }: {
               data: { data?: Record<string, unknown> };
-            }) => <TurnUsageAction data={data} />,
+            }) => {
+              return <TurnUsageAction data={data} />;
+            },
           },
           {
-            icon: (
-              <span title={t("common.copy")}>
-                <SparkCopyLine />
-              </span>
-            ),
+            icon: <SparkCopyLine />,
             onClick: ({ data }: { data: CopyableResponse }) => {
               void copyResponse(data);
             },

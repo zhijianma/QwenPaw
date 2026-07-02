@@ -1412,7 +1412,18 @@
     "oauthWaitingDescription": "Please complete the authorization in the browser window.",
     "oauthConnected": "Successfully connected to {{provider}}",
     "oauthFailed": "Authorization failed, please try again",
-    "viewMore": "View more ({{count}})"
+    "viewMore": "View more ({{count}})",
+    "params": {
+      "title": "{{model}} Parameters",
+      "maxTokens": "Max Tokens",
+      "maxTokensTooltip": "Maximum number of tokens the model can generate in a single response.",
+      "maxInputLength": "Max Context Length",
+      "maxInputLengthTooltip": "Maximum number of input tokens the model context window supports.",
+      "advanced": "Advanced (generate_kwargs)",
+      "saved": "Model parameters saved",
+      "saveFailed": "Failed to save parameters",
+      "invalidJson": "Invalid JSON format"
+    }
   },
   "tokenUsage": {
     "title": "Token Usage",
@@ -2155,7 +2166,15 @@
       "turnEstimated": "This turn ~",
       "tok": "tok",
       "inOut": "in {{inTok}} · out {{outTok}}",
+      "input": "Input",
+      "output": "Output",
+      "total": "Total",
       "contextLabel": "Context window:"
+    },
+    "contextIndicator": {
+      "title": "Context",
+      "newChat": "New Chat",
+      "compact": "Compact"
     },
     "rateLimitMessage": "Rate limit reached. Switch to another free model:",
     "rateLimitSwitched": "Switched to {{model}}",
