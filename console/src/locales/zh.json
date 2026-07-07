@@ -1900,9 +1900,7 @@
       "auto": "自动模式",
       "autoDesc": "仅被明确标记为需要审批的工具才会要求审批（默认）",
       "off": "关闭模式",
-      "offDesc": "关闭所有工具审批，所有工具自动执行",
-      "inherit": "默认模式",
-      "inheritDesc": "默认使用Agent的工具执行安全级别"
+      "offDesc": "关闭所有工具审批，所有工具自动执行"
     },
     "saveLevelSuccess": "工具执行安全级别已保存",
     "saveLevelFailed": "保存工具执行安全级别失败",
