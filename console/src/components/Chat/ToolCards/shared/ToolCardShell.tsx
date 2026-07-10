@@ -72,7 +72,16 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
         )}
       </summary>
       {isError ? (
-        <DefaultBlock title="Error" content={stringifyResult(content.result)} />
+        <>
+          <DefaultBlock
+            title="Input"
+            content={JSON.stringify(content.params, null, 2)}
+          />
+          <DefaultBlock
+            title="Error"
+            content={stringifyResult(content.result)}
+          />
+        </>
       ) : (
         children
       )}
