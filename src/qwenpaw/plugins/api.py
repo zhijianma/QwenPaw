@@ -683,7 +683,7 @@ class PluginApi:  # pylint: disable=too-many-public-methods
 
             except Exception as exc:
                 logger.error(
-                    f"Failed to register tool '{tool_name}': " f"{exc}",
+                    f"Failed to register tool '{tool_name}': {exc}",
                     exc_info=True,
                 )
 
