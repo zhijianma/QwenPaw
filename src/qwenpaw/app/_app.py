@@ -33,7 +33,11 @@ from ..utils.logging import (
     LOG_FILE_PATH,
 )
 from ..utils.system_info import summarize_python_environment
-from .auth import AuthMiddleware, auto_register_from_env
+from .auth import (
+    AuthMiddleware,
+    auto_register_from_env,
+    check_proxy_config_sanity,
+)
 from .routers import router as api_router, create_agent_scoped_router
 from .routers.agent_scoped import AgentContextMiddleware
 from .routers.approval import router as approval_router
@@ -179,6 +183,7 @@ async def lifespan(  # pylint: disable=too-many-statements,too-many-branches
         raise RuntimeError(f"{message} Original error: {exc}") from exc
 
     auto_register_from_env()
+    check_proxy_config_sanity()
 
     try:
         from ..utils.telemetry import (
