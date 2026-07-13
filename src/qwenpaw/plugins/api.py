@@ -61,11 +61,7 @@ def _bridge_to_runtime(
     """Attach ToolDescriptor and inject into runtime ToolRegistries."""
     import inspect
 
-    from ..runtime.tool_registry import (
-        ToolDescriptor,
-        _REGISTERED_IDS,
-        _REGISTERED_TOOL_FUNCS,
-    )
+    from ..runtime.tool_registry import ToolDescriptor
 
     desc = getattr(tool_func, "_tool_descriptor", None)
     if desc is None:
@@ -83,10 +79,6 @@ def _bridge_to_runtime(
             "Attached ToolDescriptor to '%s'",
             tool_name,
         )
-
-    if id(tool_func) not in _REGISTERED_IDS:
-        _REGISTERED_IDS.add(id(tool_func))
-        _REGISTERED_TOOL_FUNCS.append(tool_func)
 
     if registry is None:
         return
