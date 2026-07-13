@@ -573,7 +573,7 @@ _LOOPBACK = frozenset({"127.0.0.1", "::1"})
 _BRACKETED = re.compile(r"^\[([^\]]+)\](?::\d+)?$")
 _V4_PORT = re.compile(r"^(\d{1,3}(?:\.\d{1,3}){3}):\d+$")
 
-# Rate-limit the untrusted-proxy-header warning (once per IP)
+_MAX_WARN_IPS = 1024
 _warned_untrusted_ips: set[str] = set()
 
 
@@ -621,7 +621,7 @@ _auth_config_cache: tuple = (0, None, [])
 
 
 def _get_config_cached():
-    """Return config with mtime-based cache (~1µs stat vs ~1ms read)."""
+    """Return (config, trusted_networks) with mtime-based cache."""
     global _auth_config_cache  # noqa: PLW0603
     from ..config import load_config
     from ..config.utils import get_config_path
@@ -654,7 +654,11 @@ def _resolve_client_ip(request: Request) -> str:
         has_proxy_hdr = request.headers.get(
             "x-forwarded-for",
         ) or request.headers.get("x-real-ip")
-        if has_proxy_hdr and direct_ip not in _warned_untrusted_ips:
+        if (
+            has_proxy_hdr
+            and direct_ip not in _warned_untrusted_ips
+            and len(_warned_untrusted_ips) < _MAX_WARN_IPS
+        ):
             _warned_untrusted_ips.add(direct_ip)
             logger.warning(
                 "Ignoring proxy headers from untrusted source"
@@ -765,9 +769,11 @@ def check_proxy_config_sanity() -> None:
     except (OSError, ValueError):
         return
     sec = cfg.security
-    if sec.allow_no_auth_hosts and not sec.trusted_proxies:
+    has_non_loopback = any(h not in _LOOPBACK for h in sec.allow_no_auth_hosts)
+    if has_non_loopback and not sec.trusted_proxies:
         logger.warning(
-            "allow_no_auth_hosts is set but trusted_proxies is"
-            " empty. If behind a reverse proxy, add proxy IPs"
-            " to security.trusted_proxies.",
+            "allow_no_auth_hosts contains non-loopback entries"
+            " but trusted_proxies is empty. If behind a reverse"
+            " proxy, add proxy IPs to"
+            " security.trusted_proxies.",
         )

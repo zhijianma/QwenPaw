@@ -2110,14 +2110,18 @@ class SecurityConfig(BaseModel):
         import ipaddress as _ipaddress
 
         _DENY = {"0.0.0.0/0", "::/0", "0.0.0.0", "::"}
+        cleaned = []
         for entry in v:
+            entry = entry.strip()
             if entry in _DENY:
                 raise ValueError(
-                    f"trusted_proxies must not contain '{entry}' "
-                    f"(equivalent to disabling the security fix)",
+                    f"trusted_proxies must not contain"
+                    f" '{entry}' (equivalent to disabling"
+                    f" the security fix)",
                 )
-            _ipaddress.ip_network(entry, strict=False)
-        return v
+            net = _ipaddress.ip_network(entry, strict=False)
+            cleaned.append(str(net))
+        return cleaned
 
 
 class Config(BaseModel):
