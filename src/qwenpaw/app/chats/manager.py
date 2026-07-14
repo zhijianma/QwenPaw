@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
+from collections.abc import Awaitable, Callable
 from typing import Optional
 
 from .models import (
@@ -303,11 +304,15 @@ class ChatManager:
     async def batch_archive(
         self,
         chat_ids: list[str],
+        *,
+        get_status: Optional[Callable[[str], Awaitable[Optional[str]]]] = None,
     ) -> BatchArchiveResult:
         """Archive multiple chats. Partial failures do not roll back.
 
         Args:
             chat_ids: List of chat IDs (max MAX_BATCH_SIZE)
+            get_status: Optional async callable that returns chat status.
+                If provided, running chats are skipped.
 
         Returns:
             BatchArchiveResult with succeeded and failed lists
@@ -325,6 +330,17 @@ class ChatManager:
                         ),
                     )
                     continue
+                if get_status is not None:
+                    status = await get_status(chat_id)
+                    if status == "running":
+                        result.failed.append(
+                            BatchFailure(
+                                chat_id=chat_id,
+                                reason="in_progress",
+                                message="Chat is running",
+                            ),
+                        )
+                        continue
                 if not existing.archived:
                     merged = existing.model_copy(
                         update={"archived_at": datetime.now(timezone.utc)},

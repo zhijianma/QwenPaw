@@ -558,8 +558,9 @@ const ChatSessionDrawer: React.FC<ChatSessionDrawerProps> = (props) => {
         | undefined;
       const backendId = session ? getBackendId(session) : null;
       if (!backendId) return;
+      const wasArchived = !!session?.archived;
       try {
-        if (session?.archived) {
+        if (wasArchived) {
           await chatApi.unarchiveChat(backendId);
           message.success(
             t("sessions.archive.unarchiveSuccess", "Chat unarchived"),
@@ -570,7 +571,7 @@ const ChatSessionDrawer: React.FC<ChatSessionDrawerProps> = (props) => {
         }
         await refreshSessions();
 
-        if (!session?.archived) {
+        if (!wasArchived) {
           const urlChatId = getSessionIdFromPath(location.pathname);
           if (
             urlChatId &&

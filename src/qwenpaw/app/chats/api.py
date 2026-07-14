@@ -166,9 +166,14 @@ class BatchChatIds(BaseModel):
 async def batch_archive_chats(
     payload: BatchChatIds,
     mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
 ):
-    """Batch archive chats."""
-    return await mgr.batch_archive(chat_ids=payload.chat_ids)
+    """Batch archive chats. Running chats are skipped."""
+    tracker = workspace.task_tracker
+    return await mgr.batch_archive(
+        chat_ids=payload.chat_ids,
+        get_status=tracker.get_status,
+    )
 
 
 @router.post("/actions/batch-unarchive", response_model=BatchArchiveResult)

@@ -345,8 +345,9 @@ export function useSessionListData(
       const session = sessions.find((s) => s.id === sessionId);
       const backendId = session ? getBackendId(session) : null;
       if (!backendId) return;
+      const wasArchived = !!session?.archived;
       try {
-        if (session?.archived) {
+        if (wasArchived) {
           await chatApi.unarchiveChat(backendId);
           message.success(
             t("sessions.archive.unarchiveSuccess", "Chat unarchived"),
@@ -357,7 +358,7 @@ export function useSessionListData(
         }
         await refreshSessions();
 
-        if (!session?.archived && currentSessionId) {
+        if (!wasArchived && currentSessionId) {
           const isCurrentSession =
             sessionId === currentSessionId || backendId === currentSessionId;
           if (isCurrentSession) {
