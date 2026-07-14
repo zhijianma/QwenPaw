@@ -1235,7 +1235,29 @@
     "selectedItems": "Selecionado {{count}} items",
     "editSession": "Editar Session",
     "pleaseInputName": "Please input session Nome",
-    "sessionNamePlaceholder": "Session Nome"
+    "sessionNamePlaceholder": "Session Nome",
+    "activeTab": "Ativas",
+    "archivedTab": "Arquivadas",
+    "archivedAtColumn": "Arquivado em",
+    "archive": {
+      "action": "Arquivar",
+      "unaction": "Desarquivar",
+      "batchAction": "Arquivar em lote",
+      "batchUnaction": "Desarquivar em lote",
+      "success": "Conversa arquivada",
+      "successHint": "Conversa arquivada. Veja em Controle > Sessões > Arquivadas.",
+      "failed": "Falha ao arquivar",
+      "unarchiveSuccess": "Conversa desarquivada",
+      "unarchiveFailed": "Falha ao desarquivar",
+      "batchSuccess": "{{count}} conversa(s) arquivada(s)",
+      "batchFailed": "Falha ao arquivar em lote",
+      "batchUnarchiveSuccess": "{{count}} conversa(s) desarquivada(s)",
+      "batchUnarchiveFailed": "Falha ao desarquivar em lote",
+      "groupLabel": "Arquivadas ({{count}})",
+      "modalTitle": "Conversas Arquivadas",
+      "unarchiveAll": "Desarquivar Todas",
+      "noArchived": "Nenhuma conversa arquivada"
+    }
   },
   "environments": {
     "parent": "Configuracoes",

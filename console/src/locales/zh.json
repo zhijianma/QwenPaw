@@ -1225,7 +1225,29 @@
     "selectedItems": "已选 {{count}} 项",
     "editSession": "编辑会话",
     "pleaseInputName": "请输入会话名称",
-    "sessionNamePlaceholder": "会话名称"
+    "sessionNamePlaceholder": "会话名称",
+    "activeTab": "活跃",
+    "archivedTab": "已归档",
+    "archivedAtColumn": "归档时间",
+    "archive": {
+      "action": "归档",
+      "unaction": "取消归档",
+      "batchAction": "批量归档",
+      "success": "会话已归档",
+      "successHint": "会话已归档，可在「控制-会话-已归档」查看",
+      "failed": "归档失败",
+      "unarchiveSuccess": "已取消归档",
+      "unarchiveFailed": "取消归档失败",
+      "batchSuccess": "已归档 {{count}} 个会话",
+      "batchFailed": "批量归档失败",
+      "batchUnaction": "批量取消归档",
+      "batchUnarchiveSuccess": "已取消归档 {{count}} 个会话",
+      "batchUnarchiveFailed": "批量取消归档失败",
+      "groupLabel": "已归档 ({{count}})",
+      "modalTitle": "已归档的聊天记录",
+      "unarchiveAll": "全部取消归档",
+      "noArchived": "暂无已归档的会话"
+    }
   },
   "environments": {
     "parent": "设置",

@@ -1366,7 +1366,29 @@
     "selectedItems": "Selected {{count}} items",
     "editSession": "Edit Session",
     "pleaseInputName": "Please input session name",
-    "sessionNamePlaceholder": "Session name"
+    "sessionNamePlaceholder": "Session name",
+    "activeTab": "Active",
+    "archivedTab": "Archived",
+    "archivedAtColumn": "Archived At",
+    "archive": {
+      "action": "Archive",
+      "unaction": "Unarchive",
+      "batchAction": "Batch Archive",
+      "success": "Chat archived",
+      "successHint": "Chat archived. View in Control > Sessions > Archived.",
+      "failed": "Failed to archive",
+      "unarchiveSuccess": "Chat unarchived",
+      "unarchiveFailed": "Failed to unarchive",
+      "batchSuccess": "{{count}} chat(s) archived",
+      "batchFailed": "Failed to batch archive",
+      "batchUnaction": "Batch Unarchive",
+      "batchUnarchiveSuccess": "{{count}} chat(s) unarchived",
+      "batchUnarchiveFailed": "Failed to batch unarchive",
+      "groupLabel": "Archived ({{count}})",
+      "modalTitle": "Archived Chats",
+      "unarchiveAll": "Unarchive All",
+      "noArchived": "No archived chats"
+    }
   },
   "environments": {
     "parent": "Settings",
