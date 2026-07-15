@@ -1,0 +1,1043 @@
+/**
+ * Agent Kanban — frontend (runtime-loaded plugin module).
+ *
+ * Loaded by the host via usePluginLoader (same-origin Blob URL + dynamic
+ * import). Self-registers a React route at /apps/agent-kanban. React and
+ * antd come from window.QwenPaw.host (no bundler in this context).
+ *
+ * Light, Linear-style board:
+ * - 5 columns with soft per-status vertical gradient tints
+ * - clean white cards: status dot + key, title, description,
+ *   assignee avatar + name, updated time
+ * - drag by the card header to move between columns
+ * - assign an agent, "运行" dispatches to the assignee, 4s polling
+ */
+(function () {
+  var QwenPaw = window.QwenPaw;
+  if (!QwenPaw || !QwenPaw.host || !QwenPaw.registerRoutes) {
+    console.error("[agent-kanban] window.QwenPaw not ready — cannot register.");
+    return;
+  }
+
+  var host = QwenPaw.host;
+  var React = host.React;
+  var antd = host.antd;
+  var h = React.createElement;
+
+  var Button = antd.Button;
+  var Select = antd.Select;
+  var Modal = antd.Modal;
+  var Input = antd.Input;
+  var Empty = antd.Empty;
+  var message = antd.message;
+
+  // Light palette
+  var C = {
+    text: "#1f2937",
+    sub: "#6b7280",
+    muted: "#9ca3af",
+    cardBg: "#ffffff",
+    cardBorder: "rgba(15,23,42,0.08)",
+    boardBg: "#fafafb",
+  };
+
+  var COLUMNS = [
+    { key: "backlog", label: "待规划", dot: "#9ca3af", tint: "rgba(148,163,184,0.20)" },
+    { key: "todo", label: "待办", dot: "#94a3b8", tint: "rgba(148,163,184,0.12)" },
+    { key: "in_progress", label: "进行中", dot: "#f59e0b", tint: "rgba(245,158,11,0.18)" },
+    { key: "review", label: "审核中", dot: "#22c55e", tint: "rgba(34,197,94,0.16)" },
+    { key: "done", label: "已完成", dot: "#3b82f6", tint: "rgba(59,130,246,0.16)" },
+  ];
+  var COLUMN_LABEL = {};
+  var COLUMN_DOT = {};
+  COLUMNS.forEach(function (c) {
+    COLUMN_LABEL[c.key] = c.label;
+    COLUMN_DOT[c.key] = c.dot;
+  });
+
+  // ── API helpers ────────────────────────────────────────────────────────
+  function apiFetch(path, opts) {
+    opts = opts || {};
+    var url = host.getApiUrl(path);
+    var token = host.getApiToken ? host.getApiToken() : "";
+    var headers = opts.headers || {};
+    headers["Content-Type"] = "application/json";
+    if (token) headers["Authorization"] = "Bearer " + token;
+    return fetch(url, {
+      method: opts.method || "GET",
+      headers: headers,
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+    }).then(function (res) {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return res.status === 204 ? null : res.json();
+    });
+  }
+
+  // Build a same-origin EventSource URL with the auth token as a query param
+  // (EventSource cannot set an Authorization header; backend accepts ?token=).
+  function apiStreamUrl(path) {
+    var url = host.getApiUrl(path);
+    var token = host.getApiToken ? host.getApiToken() : "";
+    if (token) {
+      url += (url.indexOf("?") >= 0 ? "&" : "?") + "token=" + encodeURIComponent(token);
+    }
+    return url;
+  }
+
+  var api = {
+    listIssues: function () {
+      return apiFetch("/agent-kanban/issues");
+    },
+    createIssue: function (data) {
+      return apiFetch("/agent-kanban/issues", { method: "POST", body: data });
+    },
+    patchIssue: function (id, data) {
+      return apiFetch("/agent-kanban/issues/" + id, { method: "PATCH", body: data });
+    },
+    deleteIssue: function (id) {
+      return apiFetch("/agent-kanban/issues/" + id, { method: "DELETE" });
+    },
+    runIssue: function (id, assignee) {
+      var q = assignee ? "?agent_id=" + encodeURIComponent(assignee) : "";
+      return apiFetch("/agent-kanban/issues/" + id + "/run" + q, { method: "POST" });
+    },
+    stopIssue: function (id) {
+      return apiFetch("/agent-kanban/issues/" + id + "/stop", { method: "POST" });
+    },
+    listAgents: function () {
+      return apiFetch("/agents");
+    },
+  };
+
+  function relTime(ts) {
+    if (!ts) return "";
+    var diff = Date.now() / 1000 - ts;
+    if (diff < 60) return "刚刚";
+    if (diff < 3600) return Math.floor(diff / 60) + " 分钟前";
+    if (diff < 86400) return Math.floor(diff / 3600) + " 小时前";
+    return Math.floor(diff / 86400) + " 天前";
+  }
+
+  function agentName(agents, id) {
+    if (!id) return "";
+    for (var i = 0; i < agents.length; i++) {
+      if (agents[i].id === id) return agents[i].name || id;
+    }
+    return id;
+  }
+
+  // ── Issue card ──────────────────────────────────────────────────────────
+  function IssueCard(props) {
+    var issue = props.issue;
+    var agents = props.agents;
+    var running = issue.status === "in_progress";
+    var expandState = React.useState(false);
+    var expanded = expandState[0];
+    var setExpanded = expandState[1];
+
+    // Live streamed text (agent output) while the issue is running.
+    var liveText = props.streamText;
+    var hasLive = running && typeof liveText === "string" && liveText.length > 0;
+    var displayResult = hasLive ? liveText : issue.result;
+    var showBody = hasLive || expanded;
+
+    var agentOptions = [{ label: "未指派", value: "" }].concat(
+      agents.map(function (a) {
+        return { label: a.name || a.id, value: a.id };
+      }),
+    );
+    var assignedName = agentName(agents, issue.assignee);
+    var reviewing = issue.status === "review";
+    var done = issue.status === "done";
+    // Agent can only be (re)assigned while the issue is still 待办/待规划.
+    var canAssign = issue.status === "todo" || issue.status === "backlog";
+    var lockAssignee = !canAssign;
+    var descExpandState = React.useState(false);
+    var descExpanded = descExpandState[0];
+    var setDescExpanded = descExpandState[1];
+    var longDesc = (issue.description || "").length > 100;
+
+    return h(
+      "div",
+      {
+        style: {
+          background: C.cardBg,
+          border: "1px solid " + C.cardBorder,
+          borderRadius: 10,
+          padding: "10px 12px",
+          marginBottom: 10,
+          boxShadow: "0 1px 2px rgba(15,23,42,0.05)",
+        },
+      },
+      // Header: drag handle (status dot + key). Only this row is draggable so
+      // the Select / buttons below stay fully interactive.
+      h(
+        "div",
+        {
+          draggable: true,
+          onDragStart: function (e) {
+            e.dataTransfer.setData("text/plain", issue.id);
+            e.dataTransfer.effectAllowed = "move";
+          },
+          title: "拖动此处移动到其他列",
+          style: {
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: 6,
+            cursor: "grab",
+          },
+        },
+        h(
+          "span",
+          { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: C.muted } },
+          h("span", {
+            style: {
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background: COLUMN_DOT[issue.status] || C.muted,
+              display: "inline-block",
+            },
+          }),
+          "PAW-" + issue.id,
+        ),
+        running
+          ? h("span", { style: { fontSize: 12, color: "#d97706" } }, "运行中…")
+          : null,
+      ),
+      // Title + description
+      h(
+        "div",
+        { style: { fontWeight: 600, color: C.text, fontSize: 14, marginBottom: 2 } },
+        issue.title,
+      ),
+      issue.description
+        ? h(
+            "div",
+            { style: { marginBottom: 8 } },
+            h(
+              "div",
+              {
+                style: Object.assign(
+                  {
+                    fontSize: 12,
+                    color: C.sub,
+                    lineHeight: 1.5,
+                    whiteSpace: "pre-wrap",
+                    overflow: "hidden",
+                  },
+                  descExpanded
+                    ? { maxHeight: 220, overflowY: "auto" }
+                    : {
+                        display: "-webkit-box",
+                        WebkitLineClamp: 3,
+                        WebkitBoxOrient: "vertical",
+                      },
+                ),
+              },
+              issue.description,
+            ),
+            longDesc
+              ? h(
+                  "a",
+                  {
+                    style: { fontSize: 12, color: "#4f46e5", cursor: "pointer" },
+                    onClick: function () {
+                      setDescExpanded(!descExpanded);
+                    },
+                  },
+                  descExpanded ? "收起" : "展开全部",
+                )
+              : null,
+          )
+        : h("div", { style: { height: 6 } }),
+      // Footer: assignee (avatar + select) | updated time
+      h(
+        "div",
+        {
+          style: {
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+          },
+        },
+        h(
+          "div",
+          { style: { display: "flex", alignItems: "center", gap: 6, minWidth: 0, flex: 1 } },
+          h(
+            "span",
+            {
+              style: {
+                width: 20,
+                height: 20,
+                borderRadius: "50%",
+                background: issue.assignee ? "#eef2ff" : "#f1f5f9",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 11,
+                flexShrink: 0,
+              },
+            },
+            issue.assignee ? "🤖" : "○",
+          ),
+          h(Select, {
+            size: "small",
+            variant: "borderless",
+            bordered: false,
+            disabled: lockAssignee,
+            title: lockAssignee ? "仅待办/待规划状态可切换智能体" : undefined,
+            value: issue.assignee || "",
+            style: { flex: 1, minWidth: 0, marginLeft: -4 },
+            options: agentOptions,
+            onChange: function (val) {
+              props.onAssign(issue, val);
+            },
+          }),
+        ),
+        h(
+          "span",
+          { style: { fontSize: 11, color: C.muted, whiteSpace: "nowrap" } },
+          "更新于 " + relTime(issue.updated_at),
+        ),
+      ),
+      // Result (agent output) — live stream while running, else persisted.
+      displayResult
+        ? h(
+            "div",
+            { style: { marginTop: 6 } },
+            h(
+              "a",
+              {
+                style: { fontSize: 12, color: "#4f46e5" },
+                onClick: function () {
+                  setExpanded(!expanded);
+                },
+              },
+              showBody
+                ? (hasLive ? "▾ 实时结果" : "▾ 隐藏结果")
+                : "▸ 查看 agent 结果",
+            ),
+            showBody
+              ? h(
+                  "div",
+                  {
+                    style: {
+                      whiteSpace: "pre-wrap",
+                      fontSize: 12,
+                      color: C.sub,
+                      background: "#f8fafc",
+                      border: "1px solid " + C.cardBorder,
+                      borderRadius: 6,
+                      padding: 8,
+                      marginTop: 4,
+                    },
+                  },
+                  displayResult,
+                  hasLive
+                    ? h(
+                        "span",
+                        {
+                          className: "ak-pulse",
+                          style: { marginLeft: 2, color: "#f59e0b", fontWeight: 700 },
+                        },
+                        "▋",
+                      )
+                    : null,
+                )
+              : null,
+          )
+        : null,
+      // Actions
+      h(
+        "div",
+        {
+          style: {
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            marginTop: 8,
+            paddingTop: 8,
+            borderTop: "1px solid #f1f5f9",
+          },
+        },
+        h(
+          Button,
+          {
+            size: "small",
+            type: "primary",
+            loading: running,
+            disabled: running || done,
+            onClick: function () {
+              props.onRun(issue);
+            },
+          },
+          running ? "运行中" : reviewing ? "重新运行" : "运行",
+        ),
+        running
+          ? h(
+              Button,
+              {
+                size: "small",
+                danger: true,
+                onClick: function () {
+                  props.onStop(issue);
+                },
+              },
+              "停止",
+            )
+          : null,
+        h(
+          Button,
+          {
+            size: "small",
+            type: "text",
+            danger: true,
+            style: { marginLeft: "auto" },
+            onClick: function () {
+              props.onDelete(issue);
+            },
+          },
+          "删除",
+        ),
+      ),
+    );
+  }
+
+  // ── View toggle + Agent office view ───────────────────────────────────
+  function ViewToggle(props) {
+    var opts = [
+      { key: "issues", label: "🗂 Issue 看板" },
+      { key: "agents", label: "🤖 智能体视角" },
+    ];
+    return h(
+      "div",
+      { style: { display: "inline-flex", background: "#eef2f7", borderRadius: 10, padding: 3, gap: 2 } },
+      opts.map(function (o) {
+        var active = props.view === o.key;
+        return h(
+          "div",
+          {
+            key: o.key,
+            onClick: function () { props.onChange(o.key); },
+            style: {
+              cursor: "pointer",
+              fontSize: 13,
+              fontWeight: active ? 600 : 500,
+              padding: "4px 12px",
+              borderRadius: 8,
+              background: active ? "#ffffff" : "transparent",
+              color: active ? C.text : C.sub,
+              boxShadow: active ? "0 1px 2px rgba(15,23,42,0.12)" : "none",
+              transition: "all .15s ease",
+            },
+          },
+          o.label,
+        );
+      }),
+    );
+  }
+
+  var AGENT_BUCKETS = [
+    { key: "todo", label: "待办", statuses: ["backlog", "todo"], dot: "#94a3b8" },
+    { key: "running", label: "运行中", statuses: ["in_progress"], dot: "#f59e0b" },
+    { key: "review", label: "审核中", statuses: ["review"], dot: "#22c55e" },
+    { key: "done", label: "完成", statuses: ["done"], dot: "#3b82f6" },
+  ];
+
+  function agentColor(id) {
+    var palette = ["#6366f1", "#22c55e", "#f59e0b", "#3b82f6", "#ec4899", "#14b8a6", "#8b5cf6", "#ef4444"];
+    var s = 0;
+    var key = id || "x";
+    for (var i = 0; i < key.length; i++) s = (s * 31 + key.charCodeAt(i)) >>> 0;
+    return palette[s % palette.length];
+  }
+
+  function AgentLane(props) {
+    var agent = props.agent;
+    var items = props.items || [];
+    var col = agentColor(agent.id);
+    var busy = items.some(function (i) { return i.status === "in_progress"; });
+    var initial = (agent.name || agent.id || "?").slice(0, 1).toUpperCase();
+    return h(
+      "div",
+      {
+        className: "ak-lane",
+        style: {
+          background: "#ffffff",
+          border: "1px solid " + C.cardBorder, borderRadius: 16, padding: 14,
+          display: "flex", flexDirection: "column", gap: 12,
+        },
+      },
+      h(
+        "div",
+        { style: { display: "flex", alignItems: "center", gap: 10 } },
+        h(
+          "span",
+          {
+            style: {
+              width: 38, height: 38, borderRadius: "50%",
+              background: "linear-gradient(135deg, " + col + ", " + col + "cc)",
+              color: "#fff", fontWeight: 700, fontSize: 15,
+              display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+            },
+          },
+          initial,
+        ),
+        h(
+          "div",
+          { style: { minWidth: 0, flex: 1 } },
+          h("div", { style: { fontWeight: 600, color: C.text, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, agent.name || agent.id),
+          h("div", { style: { fontSize: 11, color: C.muted } }, items.length + " 个任务"),
+        ),
+        h(
+          "span",
+          {
+            className: busy ? "ak-pulse" : null,
+            style: {
+              display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 500,
+              color: busy ? "#15803d" : C.sub, background: busy ? "rgba(34,197,94,0.12)" : "#f1f5f9",
+              borderRadius: 999, padding: "3px 9px",
+            },
+          },
+          h("span", { style: { width: 7, height: 7, borderRadius: "50%", background: busy ? "#22c55e" : "#cbd5e1", display: "inline-block" } }),
+          busy ? "忙碌" : "空闲",
+        ),
+      ),
+      h(
+        "div",
+        { style: { display: "flex", flexDirection: "column", gap: 8 } },
+        AGENT_BUCKETS.map(function (b) {
+          var list = items.filter(function (i) { return b.statuses.indexOf(i.status) >= 0; });
+          return h(
+            "div",
+            { key: b.key, style: { background: "#f8fafc", border: "1px solid #eef2f7", borderRadius: 10, padding: "8px 10px" } },
+            h(
+              "div",
+              { style: { display: "flex", alignItems: "center", gap: 7, marginBottom: list.length ? 6 : 0 } },
+              h("span", { style: { width: 8, height: 8, borderRadius: "50%", background: b.dot, display: "inline-block" } }),
+              h("span", { style: { fontSize: 12, fontWeight: 600, color: C.text } }, b.label),
+              h("span", { style: { marginLeft: "auto", fontSize: 11, color: C.sub, background: "#eef2f7", borderRadius: 999, padding: "1px 8px", fontWeight: 600 } }, list.length),
+            ),
+            list.length
+              ? h(
+                  "div",
+                  { style: { display: "flex", flexDirection: "column", gap: 4 } },
+                  list.slice(0, 5).map(function (it) {
+                    return h(
+                      "div",
+                      { key: it.id, style: { fontSize: 12, color: C.sub, display: "flex", alignItems: "center", gap: 6, minWidth: 0 } },
+                      it.status === "in_progress"
+                        ? h("span", { className: "ak-spin", style: { width: 9, height: 9, borderRadius: "50%", border: "2px solid #f59e0b", borderTopColor: "transparent", display: "inline-block", flexShrink: 0 } })
+                        : h("span", { style: { width: 5, height: 5, borderRadius: "50%", background: b.dot, display: "inline-block", flexShrink: 0 } }),
+                      h("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, it.title),
+                    );
+                  }),
+                  list.length > 5
+                    ? h("div", { style: { fontSize: 11, color: C.muted } }, "+" + (list.length - 5) + " 更多")
+                    : null,
+                )
+              : null,
+          );
+        }),
+      ),
+    );
+  }
+
+  function AgentBoard(props) {
+    var agents = props.agents || [];
+    var issues = props.issues || [];
+    var byAgent = {};
+    agents.forEach(function (a) { byAgent[a.id] = []; });
+    var unassigned = [];
+    issues.forEach(function (i) {
+      if (i.assignee) {
+        if (!byAgent[i.assignee]) byAgent[i.assignee] = [];
+        byAgent[i.assignee].push(i);
+      } else {
+        unassigned.push(i);
+      }
+    });
+    var busyCount = 0;
+    agents.forEach(function (a) {
+      if ((byAgent[a.id] || []).some(function (i) { return i.status === "in_progress"; })) busyCount++;
+    });
+    var idleCount = agents.length - busyCount;
+    var lanes = agents.map(function (a) {
+      return h(AgentLane, { key: a.id, agent: a, items: byAgent[a.id] || [] });
+    });
+    if (unassigned.length) {
+      lanes.push(h(AgentLane, { key: "__unassigned__", agent: { id: "", name: "未指派" }, items: unassigned }));
+    }
+    var css =
+      ".ak-lane{transition:transform .15s ease,box-shadow .15s ease}" +
+      ".ak-lane:hover{transform:translateY(-2px);box-shadow:0 10px 26px rgba(15,23,42,0.10)}" +
+      "@keyframes akPulse{0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,0.45)}50%{box-shadow:0 0 0 6px rgba(34,197,94,0)}}" +
+      ".ak-pulse{animation:akPulse 1.5s ease-in-out infinite}" +
+      "@keyframes akSpin{to{transform:rotate(360deg)}}" +
+      ".ak-spin{animation:akSpin .8s linear infinite}";
+    return h(
+      "div",
+      { style: { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" } },
+      h("style", { dangerouslySetInnerHTML: { __html: css } }),
+      h(
+        "div",
+        {
+          style: {
+            background: "linear-gradient(120deg,#eef2ff 0%,#ecfdf5 100%)",
+            border: "1px solid rgba(99,102,241,0.15)", borderRadius: 16,
+            padding: "16px 18px", marginBottom: 14, display: "flex",
+            alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12,
+          },
+        },
+        h(
+          "div", { style: { display: "flex", gap: 10 } },
+          h(
+            "div", { style: { display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(34,197,94,0.12)", borderRadius: 999, padding: "6px 12px" } },
+            h("span", { className: busyCount ? "ak-pulse" : null, style: { width: 8, height: 8, borderRadius: "50%", background: "#22c55e", display: "inline-block" } }),
+            h("span", { style: { fontSize: 13, fontWeight: 600, color: "#15803d" } }, "忙碌 " + busyCount),
+          ),
+          h(
+            "div", { style: { display: "inline-flex", alignItems: "center", gap: 6, background: "#f1f5f9", borderRadius: 999, padding: "6px 12px" } },
+            h("span", { style: { width: 8, height: 8, borderRadius: "50%", background: "#cbd5e1", display: "inline-block" } }),
+            h("span", { style: { fontSize: 13, fontWeight: 600, color: C.sub } }, "空闲 " + idleCount),
+          ),
+        ),
+      ),
+      lanes.length === 0
+        ? h(Empty, { description: h("span", { style: { color: C.muted } }, "暂无智能体") })
+        : h(
+            "div",
+            { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 14, overflowY: "auto", alignContent: "flex-start", alignItems: "start", flex: 1, paddingBottom: 4 } },
+            lanes,
+          ),
+    );
+  }
+
+  // ── Main board ───────────────────────────────────────
+  function KanbanBoard() {
+    var issuesState = React.useState([]);
+    var issues = issuesState[0];
+    var setIssues = issuesState[1];
+    var agentsState = React.useState([]);
+    var agents = agentsState[0];
+    var setAgents = agentsState[1];
+    var modalState = React.useState(null); // {status} or null
+    var modal = modalState[0];
+    var setModal = modalState[1];
+    var formState = React.useState({ title: "", description: "", assignee: "" });
+    var form = formState[0];
+    var setForm = formState[1];
+    var viewState = React.useState("issues");
+    var view = viewState[0];
+    var setView = viewState[1];
+
+    // Realtime agent output per issue: { issueId: partialText }.
+    var streamState = React.useState({});
+    var streams = streamState[0];
+    var setStreams = streamState[1];
+    var esRef = React.useRef({});
+
+    function load() {
+      api
+        .listIssues()
+        .then(function (data) {
+          setIssues((data && data.issues) || []);
+        })
+        .catch(function () {});
+    }
+
+    React.useEffect(function () {
+      load();
+      api
+        .listAgents()
+        .then(function (data) {
+          setAgents((data && data.agents) || []);
+        })
+        .catch(function () {});
+      var timer = setInterval(load, 4000);
+      return function () {
+        clearInterval(timer);
+        Object.keys(esRef.current).forEach(function (k) {
+          try { esRef.current[k].close(); } catch (e) {}
+        });
+        esRef.current = {};
+      };
+    }, []);
+
+    function moveIssue(id, status) {
+      setIssues(function (prev) {
+        return prev.map(function (i) {
+          return i.id === id ? Object.assign({}, i, { status: status }) : i;
+        });
+      });
+      api.patchIssue(id, { status: status }).then(load).catch(load);
+    }
+
+    function onAssign(issue, assignee) {
+      setIssues(function (prev) {
+        return prev.map(function (i) {
+          return i.id === issue.id ? Object.assign({}, i, { assignee: assignee }) : i;
+        });
+      });
+      api.patchIssue(issue.id, { assignee: assignee }).then(load).catch(load);
+    }
+
+    function closeStream(id) {
+      var es = esRef.current[id];
+      if (es) {
+        try { es.close(); } catch (e) {}
+        delete esRef.current[id];
+      }
+      setStreams(function (prev) {
+        if (!(id in prev)) return prev;
+        var n = Object.assign({}, prev);
+        delete n[id];
+        return n;
+      });
+    }
+
+    function subscribeStream(id) {
+      if (typeof window.EventSource === "undefined") return;
+      try {
+        closeStream(id);
+        setStreams(function (prev) {
+          var n = Object.assign({}, prev);
+          n[id] = "";
+          return n;
+        });
+        var es = new EventSource(
+          apiStreamUrl("/agent-kanban/issues/" + id + "/stream"),
+        );
+        esRef.current[id] = es;
+        es.onmessage = function (e) {
+          var msg;
+          try { msg = JSON.parse(e.data); } catch (err) { return; }
+          if (msg.type === "delta") {
+            setStreams(function (prev) {
+              var n = Object.assign({}, prev);
+              n[id] = (n[id] || "") + (msg.text || "");
+              return n;
+            });
+          } else if (msg.type === "done" || msg.type === "error") {
+            closeStream(id);
+            load();
+          }
+        };
+        es.onerror = function () {
+          // Stream ended or errored; drop live view, polling refreshes result.
+          closeStream(id);
+        };
+      } catch (e) {}
+    }
+
+    function onRun(issue) {
+      if (!issue.assignee) {
+        if (message) message.warning("请先为该 issue 指派一个 agent");
+        return;
+      }
+      setIssues(function (prev) {
+        return prev.map(function (i) {
+          return i.id === issue.id ? Object.assign({}, i, { status: "in_progress" }) : i;
+        });
+      });
+      api
+        .runIssue(issue.id, issue.assignee)
+        .then(function () {
+          if (message) message.info("已开始运行");
+          subscribeStream(issue.id);
+          load();
+        })
+        .catch(function (err) {
+          if (message) message.error("运行失败: " + err.message);
+          load();
+        });
+    }
+
+    function onStop(issue) {
+      closeStream(issue.id);
+      api
+        .stopIssue(issue.id)
+        .then(function () {
+          if (message) message.info("已停止运行");
+          load();
+        })
+        .catch(function () {
+          load();
+        });
+    }
+
+    function onDelete(issue) {
+      setIssues(function (prev) {
+        return prev.filter(function (i) {
+          return i.id !== issue.id;
+        });
+      });
+      api.deleteIssue(issue.id).then(load).catch(load);
+    }
+
+    function submitCreate() {
+      if (!form.title.trim()) {
+        if (message) message.warning("请填写标题");
+        return;
+      }
+      api
+        .createIssue({
+          title: form.title,
+          description: form.description,
+          assignee: form.assignee,
+          status: modal.status,
+        })
+        .then(function () {
+          setModal(null);
+          setForm({ title: "", description: "", assignee: "" });
+          load();
+        })
+        .catch(function (err) {
+          if (message) message.error("创建失败: " + err.message);
+        });
+    }
+
+    var working = issues.filter(function (i) {
+      return i.status === "in_progress";
+    }).length;
+
+    var agentOptions = [{ label: "未指派", value: "" }].concat(
+      agents.map(function (a) {
+        return { label: a.name || a.id, value: a.id };
+      }),
+    );
+
+    return h(
+      "div",
+      {
+        style: {
+          padding: 16,
+          height: "100%",
+          display: "flex",
+          flexDirection: "column",
+          background: C.boardBg,
+          color: C.text,
+        },
+      },
+      // Header
+      h(
+        "div",
+        {
+          style: {
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 14,
+          },
+        },
+        h(
+          "div",
+          { style: { display: "flex", alignItems: "center", gap: 14 } },
+          h("div", { style: { fontSize: 18, fontWeight: 700, color: C.text } }, "📋 Agent Kanban"),
+          h(ViewToggle, { view: view, onChange: setView }),
+        ),
+        h(
+          "div",
+          { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } },
+          h(
+            "span",
+            {
+              style: {
+                fontSize: 13,
+                color: working ? "#d97706" : C.muted,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+              },
+            },
+            h("span", {
+              style: {
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                background: working ? "#f59e0b" : "#d1d5db",
+                display: "inline-block",
+              },
+            }),
+            working + " 运行中",
+          ),
+          h(Button, { size: "small", onClick: load }, "刷新"),
+        ),
+      ),
+      // Board area: issue columns or agent office
+      view === "agents"
+        ? h(AgentBoard, { agents: agents, issues: issues })
+        : h(
+        "div",
+        {
+          style: {
+            display: "flex",
+            gap: 14,
+            flex: 1,
+            overflowX: "auto",
+            alignItems: "stretch",
+            paddingBottom: 4,
+          },
+        },
+        COLUMNS.map(function (col) {
+          var colIssues = issues.filter(function (i) {
+            return i.status === col.key;
+          });
+          return h(
+            "div",
+            {
+              key: col.key,
+              onDragOver: function (e) {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+              },
+              onDrop: function (e) {
+                e.preventDefault();
+                var id = e.dataTransfer.getData("text/plain");
+                if (id) moveIssue(id, col.key);
+              },
+              style: {
+                flex: "1 1 260px",
+                minWidth: 240,
+                maxWidth: 420,
+                background:
+                  "linear-gradient(180deg, " + col.tint + " 0%, rgba(255,255,255,0) 42%), #ffffff",
+                border: "1px solid rgba(15,23,42,0.05)",
+                borderRadius: 14,
+                padding: "12px 10px",
+                maxHeight: "100%",
+                display: "flex",
+                flexDirection: "column",
+              },
+            },
+            // Column header
+            h(
+              "div",
+              {
+                style: {
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: 12,
+                  padding: "0 4px",
+                },
+              },
+              h(
+                "span",
+                { style: { fontWeight: 600, color: C.text, display: "inline-flex", alignItems: "center", gap: 7 } },
+                h("span", {
+                  style: {
+                    width: 9,
+                    height: 9,
+                    borderRadius: "50%",
+                    background: col.dot,
+                    display: "inline-block",
+                  },
+                }),
+                col.label,
+                h("span", { style: { color: C.muted, marginLeft: 4, fontWeight: 400 } }, colIssues.length),
+              ),
+              col.key === "backlog" || col.key === "todo"
+                ? h(
+                    Button,
+                    {
+                      type: "text",
+                      size: "small",
+                      style: { color: C.muted },
+                      onClick: function () {
+                        setForm({ title: "", description: "", assignee: "" });
+                        setModal({ status: col.key });
+                      },
+                    },
+                    "+",
+                  )
+                : null,
+            ),
+            // Column body
+            h(
+              "div",
+              { style: { overflowY: "auto", flex: 1, minHeight: 80 } },
+              colIssues.length === 0
+                ? h(Empty, {
+                    image: Empty.PRESENTED_IMAGE_SIMPLE,
+                    description: h("span", { style: { color: C.muted } }, "无 issue"),
+                    style: { margin: "40px 0", opacity: 0.6 },
+                  })
+                : colIssues.map(function (issue) {
+                    return h(IssueCard, {
+                      key: issue.id,
+                      issue: issue,
+                      agents: agents,
+                      onAssign: onAssign,
+                      onRun: onRun,
+                      onStop: onStop,
+                      onDelete: onDelete,
+                      streamText: streams[issue.id],
+                    });
+                  }),
+            ),
+          );
+        }),
+      ),
+      // Create modal
+      modal
+        ? h(
+            Modal,
+            {
+              open: true,
+              title: "新建 issue · " + (COLUMN_LABEL[modal.status] || ""),
+              okText: "创建",
+              cancelText: "取消",
+              onOk: submitCreate,
+              onCancel: function () {
+                setModal(null);
+              },
+            },
+            h(
+              "div",
+              { style: { display: "flex", flexDirection: "column", gap: 12, paddingTop: 8 } },
+              h(Input, {
+                placeholder: "标题",
+                value: form.title,
+                onChange: function (e) {
+                  setForm(Object.assign({}, form, { title: e.target.value }));
+                },
+              }),
+              h(Input.TextArea, {
+                placeholder: "描述（可选）",
+                rows: 3,
+                value: form.description,
+                onChange: function (e) {
+                  setForm(Object.assign({}, form, { description: e.target.value }));
+                },
+              }),
+              h(Select, {
+                placeholder: "指派 agent（可选）",
+                style: { width: "100%" },
+                value: form.assignee || "",
+                options: agentOptions,
+                onChange: function (val) {
+                  setForm(Object.assign({}, form, { assignee: val }));
+                },
+              }),
+            ),
+          )
+        : null,
+    );
+  }
+
+  // ── Self-register route ─────────────────────────────────────────────────
+  QwenPaw.registerRoutes("agent-kanban", [
+    {
+      path: "/apps/agent-kanban",
+      component: KanbanBoard,
+      label: "Agent Kanban",
+      icon: "📋",
+    },
+  ]);
+
+  console.info("[agent-kanban] registered route /apps/agent-kanban");
+})();
