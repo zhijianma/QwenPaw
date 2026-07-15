@@ -26,37 +26,15 @@ from .context import PawAppContext
 
 logger = logging.getLogger(__name__)
 
-# Pattern to extract app_id from URL paths like /api/{app_id}/...
-# or /api/pawapp/{app_id}/...
-_APP_ID_PATTERNS = [
-    re.compile(r"/api/pawapp/([^/]+)"),
-    re.compile(r"/api/([^/]+)"),
-]
+_APP_ID_RE = re.compile(r"/(?:api/)?pawapp(?:s)?/([^/]+)")
 
 
 def _extract_app_id_from_request(request: Request) -> str:
     """Extract PawApp ID from the request path."""
-    path = request.url.path
+    match = _APP_ID_RE.search(request.url.path)
+    if match:
+        return match.group(1)
 
-    for pattern in _APP_ID_PATTERNS:
-        match = pattern.search(path)
-        if match:
-            candidate = match.group(1)
-            # Skip known non-app prefixes
-            if candidate not in (
-                "pawapps",
-                "frontend_plugin",
-                "agents",
-                "version",
-                "doctor",
-                "approval",
-                "coding-mode",
-                "tool-calls",
-                "voice",
-            ):
-                return candidate
-
-    # Fallback: check request state or header
     app_id = request.headers.get("X-PawApp-Id", "")
     if app_id:
         return app_id

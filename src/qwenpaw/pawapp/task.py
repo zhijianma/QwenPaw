@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import uuid
 from typing import Any, AsyncIterator, Callable, Dict, Optional
 
@@ -85,13 +86,19 @@ class SSEChannel:
 class TaskRecord:
     """Internal record for a running task."""
 
-    def __init__(self, task_id: str, app_id: str, channel: SSEChannel):
+    def __init__(
+        self,
+        task_id: str,
+        app_id: str,
+        channel: SSEChannel,
+    ):
         self.task_id = task_id
         self.app_id = app_id
         self.channel = channel
         self.result: Any = None
         self.error: Optional[str] = None
         self.done = False
+        self.created_at: float = time.monotonic()
 
 
 class TaskManager:
@@ -169,10 +176,17 @@ class TaskManager:
         """Remove a completed task from memory."""
         self._tasks.pop(task_id, None)
 
-    def cleanup_old_tasks(self, max_age_seconds: int = 3600) -> None:
-        """Remove all completed tasks (garbage collection)."""
-        # pylint: disable=unused-argument
-        to_remove = [tid for tid, rec in self._tasks.items() if rec.done]
+    def cleanup_old_tasks(
+        self,
+        max_age_seconds: int = 3600,
+    ) -> None:
+        """Remove completed tasks older than *max_age_seconds*."""
+        now = time.monotonic()
+        to_remove = [
+            tid
+            for tid, rec in self._tasks.items()
+            if rec.done and (now - rec.created_at) > max_age_seconds
+        ]
         for tid in to_remove:
             del self._tasks[tid]
 

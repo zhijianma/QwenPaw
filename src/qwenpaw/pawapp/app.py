@@ -34,10 +34,14 @@ Example (router mode):
 
 from __future__ import annotations
 
+import inspect
 import logging
+from functools import wraps
 from typing import Any, Callable, List, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from .deps import get_ctx
 
 logger = logging.getLogger(__name__)
 
@@ -77,29 +81,34 @@ class PawApp:
             methods = ["POST"]
 
         def decorator(func: Callable) -> Callable:
-            # Wrap to inject ctx dependency
-            from .deps import get_ctx
-            from fastapi import Depends
-
-            import inspect
-
             sig = inspect.signature(func)
             params = list(sig.parameters.keys())
 
             if params and params[0] == "ctx":
-                # Rewrite function to use Depends(get_ctx) for ctx param
-                from functools import wraps
 
                 @wraps(func)
-                async def wrapper(*args, ctx=Depends(get_ctx), **kwargs):
+                async def wrapper(
+                    *args,
+                    ctx=Depends(get_ctx),
+                    **kwargs,
+                ):
                     return await func(ctx, *args, **kwargs)
 
-                # Register the wrapper on the internal router
                 for method in methods:
-                    getattr(self._router, method.lower())(path)(wrapper)
+                    getattr(
+                        self._router,
+                        method.lower(),
+                    )(
+                        path,
+                    )(wrapper)
             else:
                 for method in methods:
-                    getattr(self._router, method.lower())(path)(func)
+                    getattr(
+                        self._router,
+                        method.lower(),
+                    )(
+                        path,
+                    )(func)
 
             return func
 

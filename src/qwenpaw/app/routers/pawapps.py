@@ -32,41 +32,57 @@ def _get_apps_dir() -> Path:
     return get_plugins_dir()
 
 
+# ─── Shared helpers ────────────────────────────────────────────────────
+
+
+def _build_app_info(
+    manifest: Dict[str, Any],
+    fallback_id: str = "",
+) -> Dict[str, Any]:
+    """Build a normalised app-info dict from a manifest."""
+    meta = manifest.get("meta", {}) or {}
+    pawapp_meta = meta.get("pawapp", {})
+    return {
+        "id": manifest.get("id", fallback_id),
+        "name": manifest.get("name", fallback_id),
+        "version": manifest.get("version", "0.0.0"),
+        "description": manifest.get("description", ""),
+        "author": manifest.get("author", ""),
+        "category": pawapp_meta.get("category", ""),
+        "icon": pawapp_meta.get("icon", ""),
+        "entry_page": pawapp_meta.get("entry_page", ""),
+        "launch_scope": pawapp_meta.get(
+            "launch_scope",
+            "page",
+        ),
+        "status": "installed",
+        "settings": meta.get("settings", []),
+    }
+
+
 # ─── Registry-based listing (preferred) ───────────────────────────────
 
 
-def _get_pawapps_from_registry(request: Request) -> List[Dict[str, Any]]:
+def _get_pawapps_from_registry(
+    request: Request,
+) -> List[Dict[str, Any]]:
     """Query PluginRegistry for all loaded PawApp plugins."""
-    plugin_registry = getattr(request.app.state, "plugin_registry", None)
-    if plugin_registry is None:
+    registry = getattr(
+        request.app.state,
+        "plugin_registry",
+        None,
+    )
+    if registry is None:
         return []
 
     apps: List[Dict[str, Any]] = []
-    all_manifests = plugin_registry.get_all_plugin_manifests()
-    for plugin_id, manifest in all_manifests.items():
+    for plugin_id, manifest in registry.get_all_plugin_manifests().items():
         if not isinstance(manifest, dict):
             continue
-
-        # Check if this plugin has meta.pawapp
         meta = manifest.get("meta", {})
-        pawapp_meta = meta.get("pawapp")
-        if not pawapp_meta:
+        if not meta.get("pawapp"):
             continue
-
-        apps.append(
-            {
-                "id": manifest.get("id", plugin_id),
-                "name": manifest.get("name", plugin_id),
-                "version": manifest.get("version", "0.0.0"),
-                "description": manifest.get("description", ""),
-                "author": manifest.get("author", ""),
-                "category": pawapp_meta.get("category", ""),
-                "icon": pawapp_meta.get("icon", ""),
-                "entry_page": pawapp_meta.get("entry_page", ""),
-                "launch_scope": pawapp_meta.get("launch_scope", "page"),
-                "status": "installed",
-            },
-        )
+        apps.append(_build_app_info(manifest, plugin_id))
 
     return apps
 
@@ -74,7 +90,9 @@ def _get_pawapps_from_registry(request: Request) -> List[Dict[str, Any]]:
 # ─── Fallback: directory scanning ─────────────────────────────────────
 
 
-def _load_plugin_json(plugin_dir: Path) -> Optional[Dict[str, Any]]:
+def _load_plugin_json(
+    plugin_dir: Path,
+) -> Optional[Dict[str, Any]]:
     """Load ``plugin.json`` from a plugin directory."""
     manifest_path = plugin_dir / "plugin.json"
     if not manifest_path.exists():
@@ -92,10 +110,9 @@ def _load_plugin_json(plugin_dir: Path) -> Optional[Dict[str, Any]]:
 
 
 def _scan_installed_apps_fallback() -> List[Dict[str, Any]]:
-    """Scan the plugins dir for 'app'-type plugins (startup fallback).
+    """Scan plugins dir for app-type plugins (startup fallback).
 
-    Used only before the PluginRegistry is populated. Recognises an app
-    by the presence of ``meta.pawapp`` in its ``plugin.json``.
+    Used only before the PluginRegistry is populated.
     """
     apps_dir = _get_apps_dir()
     if not apps_dir.exists():
@@ -105,31 +122,13 @@ def _scan_installed_apps_fallback() -> List[Dict[str, Any]]:
     for item in apps_dir.iterdir():
         if not item.is_dir():
             continue
-
         manifest = _load_plugin_json(item)
         if not manifest:
             continue
-
         meta = manifest.get("meta", {}) or {}
-        pawapp_meta = meta.get("pawapp")
-        if not pawapp_meta:
+        if not meta.get("pawapp"):
             continue
-
-        apps.append(
-            {
-                "id": manifest.get("id", item.name),
-                "name": manifest.get("name", item.name),
-                "version": manifest.get("version", "0.0.0"),
-                "description": manifest.get("description", ""),
-                "author": manifest.get("author", ""),
-                "category": pawapp_meta.get("category", ""),
-                "icon": pawapp_meta.get("icon", ""),
-                "entry_page": pawapp_meta.get("entry_page", ""),
-                "launch_scope": pawapp_meta.get("launch_scope", "page"),
-                "status": "installed",
-                "settings": meta.get("settings", []),
-            },
-        )
+        apps.append(_build_app_info(manifest, item.name))
 
     return apps
 

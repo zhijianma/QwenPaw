@@ -52,13 +52,18 @@ STATUS_LABEL = {
 
 
 def _read_all() -> List[Dict[str, Any]]:
-    """Load the board.
+    """Load the board (synchronous).
 
-    Returns ``[]`` only when the file genuinely does not exist. If the file
-    exists but cannot be parsed (e.g. a partial read racing another
-    process' write), retry briefly and then raise — never silently return
-    ``[]``, because callers append to the result and would otherwise
-    overwrite the whole board with a single issue.
+    Returns ``[]`` only when the file genuinely does not exist. If the
+    file exists but cannot be parsed (e.g. a partial read racing
+    another process' write), retry briefly and then raise -- never
+    silently return ``[]``, because callers append to the result and
+    would otherwise overwrite the whole board with a single issue.
+
+    NOTE: ``time.sleep`` blocks the event loop. The total worst-case
+    block is 5 * 0.05 = 0.25 s, acceptable for a single-user local
+    app.  If this becomes a bottleneck, wrap in
+    ``asyncio.to_thread``.
     """
     if not _DATA_FILE.exists():
         return []
@@ -74,7 +79,9 @@ def _read_all() -> List[Dict[str, Any]]:
         except (json.JSONDecodeError, ValueError) as e:  # noqa: PERF203
             last_err = e
             time.sleep(0.05)
-    raise RuntimeError(f"issues.json unreadable: {last_err}")
+    raise RuntimeError(
+        f"issues.json unreadable: {last_err}",
+    )
 
 
 def _write_all(issues: List[Dict[str, Any]]) -> None:

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -97,24 +98,21 @@ class ToolProxy:
 
 
 class FileProxy:
-    """Proxy for file operations (respects FileGuard)."""
+    """Proxy for file operations.
 
-    def __init__(self, workspace: Any):
-        self._workspace = workspace
+    TODO: integrate with FileGuard for sandboxed access control.
+    Currently performs raw filesystem I/O without permission checks.
+    """
 
     async def read(self, path: str) -> str:
-        """Read a file's content."""
-        from pathlib import Path
-
+        """Read a file's content (no sandbox check yet)."""
         p = Path(path)
         if not p.exists():
             raise FileNotFoundError(f"File not found: {path}")
         return p.read_text(encoding="utf-8")
 
     async def write(self, path: str, data: str) -> None:
-        """Write content to a file."""
-        from pathlib import Path
-
+        """Write content to a file (no sandbox check yet)."""
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(data, encoding="utf-8")
@@ -304,45 +302,53 @@ class PawAppContext:
                 "content": f"[PawApp ctx.chat fallback] {message}",
             }
 
-    # ─── Storage ────────────────────────────────────────────────────
+    # ─── Cached sub-objects ────────────────────────────────────────
+
+    def __post_init__(self) -> None:
+        coordinator = None
+        if self._app_services:
+            coordinator = self._app_services.tool_coordinator
+        approval = None
+        if self._app_services:
+            approval = self._app_services.approval_coordinator
+
+        self._storage = AppStorage(
+            session=self._session,
+            namespace=f"pawapp:{self.app_id}",
+        )
+        self._tools = ToolProxy(
+            tool_coordinator=coordinator,
+        )
+        self._file = FileProxy()
+        self._ui = UIBridge(
+            sse_channel=self._sse_channel,
+            approval_coordinator=approval,
+        )
+        self._settings = AppSettings(
+            plugin_registry=self._plugin_registry,
+            app_id=self.app_id,
+            agent_id=self.agent_id,
+        )
 
     @property
     def storage(self) -> AppStorage:
         """App-namespaced KV storage."""
-        return AppStorage(
-            session=self._session,
-            namespace=f"pawapp:{self.app_id}",
-        )
-
-    # ─── Tools ──────────────────────────────────────────────────────
+        return self._storage
 
     @property
     def tools(self) -> ToolProxy:
         """Invoke registered tools."""
-        coordinator = None
-        if self._app_services:
-            coordinator = self._app_services.tool_coordinator
-        return ToolProxy(tool_coordinator=coordinator)
-
-    # ─── File ───────────────────────────────────────────────────────
+        return self._tools
 
     @property
     def file(self) -> FileProxy:
         """File read/write operations."""
-        return FileProxy(workspace=self._workspace_registry)
-
-    # ─── UI (realtime push) ─────────────────────────────────────────
+        return self._file
 
     @property
     def ui(self) -> UIBridge:
-        """Agent→UI realtime communication."""
-        approval = None
-        if self._app_services:
-            approval = self._app_services.approval_coordinator
-        return UIBridge(
-            sse_channel=self._sse_channel,
-            approval_coordinator=approval,
-        )
+        """Agent-to-UI realtime communication."""
+        return self._ui
 
     # ─── Notify ─────────────────────────────────────────────────────
 
@@ -375,29 +381,30 @@ class PawAppContext:
                 },
             )
 
-    # ─── Settings ───────────────────────────────────────────────────
-
     @property
     def settings(self) -> AppSettings:
         """App configuration (from manifest settings)."""
-        return AppSettings(
-            plugin_registry=self._plugin_registry,
-            app_id=self.app_id,
-            agent_id=self.agent_id,
-        )
-
-    # ─── User ───────────────────────────────────────────────────────
+        return self._settings
 
     @property
     def user(self) -> Dict[str, Any]:
-        """Current user information."""
-        return {"id": "default", "timezone": "UTC", "locale": "en-US"}
+        """Current user information.
 
-    # ─── Config ─────────────────────────────────────────────────────
+        TODO: populate from auth / session once user identity is
+        available in the request pipeline.
+        """
+        return {
+            "id": self.agent_id or "default",
+            "timezone": "UTC",
+            "locale": "en-US",
+        }
 
     @property
     def config(self) -> Dict[str, Any]:
-        """Current configuration (active model, etc.)."""
+        """Current configuration (active model, etc.).
+
+        TODO: read active model from workspace / plugin registry.
+        """
         return {"active_model": "qwen-max"}
 
 
@@ -430,7 +437,7 @@ class ChatReply:
                     parts.append(str(t))
             return "".join(parts)
 
-        # 1) Prefer the last AgentResponse (carries .output list of messages)
+        # 1) Last AgentResponse (.output list of messages)
         final_response = None
         for chunk in self._chunks:
             out = getattr(chunk, "output", None)
@@ -442,12 +449,14 @@ class ChatReply:
                 for msg in final_response.output
             ).strip()
             if joined:
+                logger.debug("ChatReply: resolved via AgentResponse.output")
                 return joined
             err = getattr(final_response, "error", None)
             if err:
+                logger.debug("ChatReply: resolved via AgentResponse.error")
                 return str(err)
 
-        # 2) Completed Message objects (non-delta content blocks)
+        # 2) Completed Message objects (non-delta)
         msg_texts = []
         for chunk in self._chunks:
             if getattr(chunk, "output", None) is not None:
@@ -457,6 +466,7 @@ class ChatReply:
                 msg_texts.append(_content_text(content))
         joined = "".join(msg_texts).strip()
         if joined:
+            logger.debug("ChatReply: resolved via Message objects")
             return joined
 
         # 3) Streaming text deltas
@@ -466,13 +476,18 @@ class ChatReply:
             if getattr(chunk, "delta", False) and getattr(chunk, "text", None)
         ]
         if delta_texts:
+            logger.debug("ChatReply: resolved via streaming deltas")
             return "".join(delta_texts).strip()
 
         # 4) Legacy dict/str chunks
+        logger.debug("ChatReply: falling back to legacy dict/str")
         texts = []
         for chunk in self._chunks:
             if isinstance(chunk, dict):
-                content = chunk.get("content", chunk.get("text", ""))
+                content = chunk.get(
+                    "content",
+                    chunk.get("text", ""),
+                )
                 if content:
                     texts.append(str(content))
             elif isinstance(chunk, str):
