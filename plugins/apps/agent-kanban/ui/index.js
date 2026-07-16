@@ -389,8 +389,40 @@
       // Title + description
       h(
         "div",
-        { style: { fontWeight: 600, color: C.text, fontSize: 14, marginBottom: 2 } },
-        issue.title,
+        {
+          style: {
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 2,
+          },
+        },
+        h(
+          "div",
+          { style: { fontWeight: 600, color: C.text, fontSize: 14, flex: 1 } },
+          issue.title,
+        ),
+        // Edit button (only show for backlog status)
+        issue.status === "backlog"
+          ? h(
+              "a",
+              {
+                style: {
+                  fontSize: 12,
+                  color: "#4f46e5",
+                  cursor: "pointer",
+                  marginLeft: 8,
+                  flexShrink: 0,
+                },
+                onClick: function (e) {
+                  e.stopPropagation();
+                  if (props.onEdit) props.onEdit(issue);
+                },
+                title: "编辑",
+              },
+              "✏️",
+            )
+          : null,
       ),
       issue.description
         ? h(
@@ -932,7 +964,7 @@
     var agentsState = React.useState([]);
     var agents = agentsState[0];
     var setAgents = agentsState[1];
-    var modalState = React.useState(null); // {status} or null
+    var modalState = React.useState(null); // {status, editIssueId} or null
     var modal = modalState[0];
     var setModal = modalState[1];
     var formState = React.useState({ title: "", description: "", assignee: "" });
@@ -1157,6 +1189,35 @@
         });
     }
 
+    function submitEdit() {
+      if (!form.title.trim()) {
+        if (message) message.warning("请填写标题");
+        return;
+      }
+      api
+        .patchIssue(modal.editIssueId, {
+          title: form.title,
+          description: form.description,
+        })
+        .then(function () {
+          setModal(null);
+          setForm({ title: "", description: "", assignee: "" });
+          load();
+        })
+        .catch(function (err) {
+          if (message) message.error("编辑失败: " + err.message);
+        });
+    }
+
+    function onEdit(issue) {
+      setForm({
+        title: issue.title,
+        description: issue.description || "",
+        assignee: issue.assignee || "",
+      });
+      setModal({ editIssueId: issue.id });
+    }
+
     var working = issues.filter(function (i) {
       return i.status === "in_progress";
     }).length;
@@ -1348,6 +1409,7 @@
                       onRun: onRun,
                       onStop: onStop,
                       onDelete: onDelete,
+                      onEdit: onEdit,
                       onSubscribe: subscribeStream,
                       streamText: streams[issue.id],
                       queuePosition: queuePos[issue.id] || 0,
@@ -1381,12 +1443,15 @@
             Modal,
             {
               open: true,
-              title: "新建 issue · " + (COLUMN_LABEL[modal.status] || ""),
-              okText: "创建",
+              title: modal.editIssueId
+                ? "编辑 issue"
+                : "新建 issue · " + (COLUMN_LABEL[modal.status] || ""),
+              okText: modal.editIssueId ? "保存" : "创建",
               cancelText: "取消",
-              onOk: submitCreate,
+              onOk: modal.editIssueId ? submitEdit : submitCreate,
               onCancel: function () {
                 setModal(null);
+                setForm({ title: "", description: "", assignee: "" });
               },
             },
             h(
@@ -1407,15 +1472,18 @@
                   setForm(Object.assign({}, form, { description: e.target.value }));
                 },
               }),
-              h(Select, {
-                placeholder: "指派 agent（可选）",
-                style: { width: "100%" },
-                value: form.assignee || "",
-                options: agentOptions,
-                onChange: function (val) {
-                  setForm(Object.assign({}, form, { assignee: val }));
-                },
-              }),
+              // Only show assignee selector when creating (not editing)
+              modal.editIssueId
+                ? null
+                : h(Select, {
+                    placeholder: "指派 agent（可选）",
+                    style: { width: "100%" },
+                    value: form.assignee || "",
+                    options: agentOptions,
+                    onChange: function (val) {
+                      setForm(Object.assign({}, form, { assignee: val }));
+                    },
+                  }),
             ),
           )
         : null,
