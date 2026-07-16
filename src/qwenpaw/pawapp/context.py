@@ -278,6 +278,93 @@ class PawAppContext:
         ):
             yield event
 
+    async def get_session_history(
+        self,
+        session_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get conversation history from a session.
+
+        Args:
+            session_id: Session ID to retrieve. Defaults to
+                ``pawapp:{app_id}`` if omitted.
+
+        Returns:
+            List of message dictionaries from the session.
+            Returns empty list if session does not exist.
+        """
+        workspace = await self._get_workspace()
+        if workspace is None:
+            return []
+
+        sid = session_id or f"pawapp:{self.app_id}"
+        try:
+            # Access session via workspace.session (standard way)
+            session = getattr(workspace, "session", None)
+            if session is None:
+                return []
+
+            state_dict = await session.get_session_state_dict(
+                session_id=sid,
+                user_id=self.agent_id or "default",
+                channel="",
+                allow_not_exist=True,
+            )
+
+            agent = state_dict.get("agent", {})
+
+            # Try agent.state.context first (2.x format)
+            agent_state = agent.get("state", {})
+            raw_messages = agent_state.get("context") if agent_state else None
+
+            # Fallback to agent.memory.content (1.x format)
+            if raw_messages is None:
+                memory = agent.get("memory", {})
+                raw_messages = memory.get("content")
+
+            if not raw_messages:
+                return []
+
+            # Convert AgentScope Msg to standard Message
+            from ..app.chats.utils import agentscope_msg_to_message
+            from agentscope.message import Msg
+
+            # Reconstruct Msg objects from dicts
+            msg_list = []
+            for item in raw_messages:
+                if isinstance(item, dict):
+                    try:
+                        msg_list.append(Msg(**item))
+                    except Exception:  # noqa: BLE001
+                        pass
+                elif isinstance(item, list) and item:
+                    for subitem in item:
+                        if isinstance(subitem, dict):
+                            try:
+                                msg_list.append(Msg(**subitem))
+                            except Exception:  # noqa: BLE001
+                                pass
+
+            if not msg_list:
+                return []
+
+            # Convert to standard Message objects
+            standard_messages = agentscope_msg_to_message(msg_list)
+
+            # Serialize to dict for JSON response
+            result = []
+            for msg in standard_messages:
+                if hasattr(msg, "model_dump"):
+                    result.append(msg.model_dump())
+                elif hasattr(msg, "dict"):
+                    result.append(msg.dict())
+            return result
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "Failed to get session history for session_id=%s",
+                sid,
+            )
+            return []
+
     async def _get_workspace(self) -> Any:
         """Get the workspace for the current agent."""
         if self._workspace_registry is None:

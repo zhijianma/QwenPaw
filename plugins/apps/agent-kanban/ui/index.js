@@ -135,6 +135,64 @@
     return id;
   }
 
+  // Simple markdown renderer
+  function renderMarkdown(text) {
+    if (!text) return "";
+    
+    // Preserve code blocks and inline code first
+    var codeBlocks = [];
+    var inlineCodes = [];
+    
+    // Extract code blocks
+    var html = text.replace(/```([^`]*?)```/g, function(match, code) {
+      codeBlocks.push(code);
+      return "\x00CODEBLOCK" + (codeBlocks.length - 1) + "\x00";
+    });
+    
+    // Extract inline code
+    html = html.replace(/`([^`]+)`/g, function(match, code) {
+      inlineCodes.push(code);
+      return "\x00INLINECODE" + (inlineCodes.length - 1) + "\x00";
+    });
+    
+    // Escape HTML
+    html = html.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    
+    // Bold (must come before italic)
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/__(.+?)__/g, '<strong>$1</strong>');
+    
+    // Italic
+    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    html = html.replace(/_(.+?)_/g, '<em>$1</em>');
+    
+    // Links
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" style="color:#4f46e5;text-decoration:underline">$1</a>');
+    
+    // Headers
+    html = html.replace(/^### (.+)$/gm, '<div style="font-size:13px;font-weight:600;margin:8px 0 4px 0">$1</div>');
+    html = html.replace(/^## (.+)$/gm, '<div style="font-size:14px;font-weight:600;margin:8px 0 4px 0">$1</div>');
+    html = html.replace(/^# (.+)$/gm, '<div style="font-size:15px;font-weight:600;margin:8px 0 4px 0">$1</div>');
+    
+    // Lists
+    html = html.replace(/^[*-] (.+)$/gm, '<div style="margin-left:16px">• $1</div>');
+    
+    // Line breaks
+    html = html.replace(/\n/g, '<br>');
+    
+    // Restore inline code
+    for (var i = 0; i < inlineCodes.length; i++) {
+      html = html.replace("\x00INLINECODE" + i + "\x00", '<code style="background:#f1f5f9;padding:2px 4px;border-radius:3px;font-family:monospace;font-size:11px">' + inlineCodes[i] + '</code>');
+    }
+    
+    // Restore code blocks
+    for (var i = 0; i < codeBlocks.length; i++) {
+      html = html.replace("\x00CODEBLOCK" + i + "\x00", '<pre style="background:#f1f5f9;padding:8px;border-radius:4px;margin:4px 0;overflow-x:auto"><code>' + codeBlocks[i].trim() + '</code></pre>');
+    }
+    
+    return html;
+  }
+
   // ── Issue card ──────────────────────────────────────────────────────────
   function IssueCard(props) {
     var issue = props.issue;
@@ -146,11 +204,115 @@
     var expanded = expandState[0];
     var setExpanded = expandState[1];
 
+    // State for fetched result from API
+    var resultState = React.useState(null);
+    var fetchedResult = resultState[0];
+    var setFetchedResult = resultState[1];
+
     // Live streamed text (agent output) while the issue is running.
     var liveText = props.streamText;
     var hasLive = running && typeof liveText === "string" && liveText.length > 0;
 
-    var displayResult = hasLive ? liveText : issue.result;
+    // Fetch result from API when expanded and not running
+    React.useEffect(
+      function () {
+        if (expanded && !running && !fetchedResult) {
+          var url = host.getApiUrl("/agent-kanban/issues/" + issue.id + "/result");
+          var token = host.getApiToken ? host.getApiToken() : "";
+          var headers = {};
+          if (token) headers["Authorization"] = "Bearer " + token;
+          fetch(url, { headers: headers })
+            .then(function (res) {
+              if (!res.ok) throw new Error("HTTP " + res.status);
+              return res.json();
+            })
+            .then(function (data) {
+              setFetchedResult(data);
+            })
+            .catch(function () {
+              setFetchedResult({ error: "获取结果失败" });
+            });
+        }
+      },
+      [expanded, running, issue.id, fetchedResult]
+    );
+
+    // Clear fetched result when issue changes status
+    React.useEffect(
+      function () {
+        setFetchedResult(null);
+      },
+      [issue.status, issue.updated_at]
+    );
+
+    // Display priority: live stream > fetched result > error in issue
+    var displayResult = "";
+    if (hasLive) {
+      displayResult = liveText;
+    } else if (fetchedResult) {
+      if (fetchedResult.error) {
+        displayResult = "执行失败: " + fetchedResult.error;
+      } else if (fetchedResult.messages && Array.isArray(fetchedResult.messages)) {
+        // Extract tool calls and text from all messages
+        var summary = [];
+        for (var m = 0; m < fetchedResult.messages.length; m++) {
+          var msg = fetchedResult.messages[m];
+          var msgType = msg.type || "";
+          if (typeof msgType === "object" && msgType.value) {
+            msgType = msgType.value;
+          }
+          msgType = String(msgType);
+          
+          // Skip reasoning messages
+          if (msgType === "reasoning") {
+            continue;
+          }
+          
+          // Tool calls: check message.type, extract name from content[].data
+          if (
+            msgType.indexOf("plugin_call") >= 0 ||
+            msgType.indexOf("function_call") >= 0 ||
+            msgType.indexOf("mcp_tool_call") >= 0
+          ) {
+            var toolName = "";
+            if (msg.content && Array.isArray(msg.content)) {
+              for (var i = 0; i < msg.content.length; i++) {
+                var item = msg.content[i];
+                if (item.data && item.data.name) {
+                  toolName = item.data.name;
+                  break;
+                }
+              }
+            }
+            if (toolName && toolName !== "assistant") {
+              // Check if it's an output (completion) or call (start)
+              if (msgType.indexOf("_output") >= 0) {
+                summary.push("调用 " + toolName + " 工具完成");
+              } else {
+                summary.push("调用 " + toolName + " 工具");
+              }
+            }
+          }
+          // Text messages: extract text from content
+          else if (msgType === "message" && msg.role === "assistant") {
+            if (msg.content && Array.isArray(msg.content)) {
+              for (var i = 0; i < msg.content.length; i++) {
+                var item = msg.content[i];
+                if (item.type === "text" && item.text) {
+                  summary.push(item.text);
+                }
+              }
+            }
+          }
+        }
+        displayResult = summary.join("\n") || "";
+      } else {
+        displayResult = "";
+      }
+    } else if (issue.error) {
+      displayResult = "执行失败: " + issue.error;
+    }
+
     var showBody = expanded;
 
     var agentOptions = [{ label: "未指派", value: "" }].concat(
@@ -320,8 +482,8 @@
           "更新于 " + relTime(issue.updated_at),
         ),
       ),
-      // Result (agent output) — live stream while running, else persisted.
-      (displayResult || running)
+      // Result (agent output) — show for running/review/done states
+      (running || reviewing || done)
         ? h(
             "div",
             { style: { marginTop: 6 } },
@@ -330,12 +492,18 @@
               {
                 style: { fontSize: 12, color: "#4f46e5" },
                 onClick: function () {
-                  setExpanded(!expanded);
+                  var willExpand = !expanded;
+                  setExpanded(willExpand);
+                  if (willExpand && running && props.onSubscribe) {
+                    props.onSubscribe(issue.id);
+                  }
                 },
               },
               showBody
-                ? (hasLive ? "▾ 实时结果" : "▾ 隐藏结果")
-                : (running ? "▸ 查看实时结果" : "▸ 查看 agent 结果"),
+                ? (hasLive ? "▾ 实时结果" : "▾ 隐藏")
+                : running
+                  ? "▸ 查看实时结果"
+                  : "▸ 查看 agent 结果",
             ),
             showBody
               ? h(
@@ -347,7 +515,6 @@
                       }
                     },
                     style: {
-                      whiteSpace: "pre-wrap",
                       fontSize: 12,
                       color: C.sub,
                       background: "#f8fafc",
@@ -357,19 +524,13 @@
                       marginTop: 4,
                       maxHeight: 200,
                       overflowY: "auto",
+                      lineHeight: "1.6",
+                    },
+                    dangerouslySetInnerHTML: {
+                      __html: renderMarkdown(displayResult || (running ? "等待 agent 输出..." : ""))
+                        + (hasLive ? '<span class="ak-pulse" style="margin-left:2px;color:#f59e0b;font-weight:700">▋</span>' : ''),
                     },
                   },
-                  displayResult || (running ? "等待 agent 输出..." : ""),
-                  hasLive
-                    ? h(
-                        "span",
-                        {
-                          className: "ak-pulse",
-                          style: { marginLeft: 2, color: "#f59e0b", fontWeight: 700 },
-                        },
-                        "▋",
-                      )
-                    : null,
                 )
               : null,
           )
@@ -797,13 +958,6 @@
         .then(function (data) {
           var list = (data && data.issues) || [];
           setIssues(list);
-          // Auto-subscribe to SSE for running issues that we
-          // are not yet streaming (e.g. after page refresh).
-          list.forEach(function (iss) {
-            if (iss.status === "in_progress" && !esRef.current[iss.id]) {
-              subscribeStream(iss.id);
-            }
-          });
         })
         .catch(function () {});
     }
@@ -839,13 +993,22 @@
     }, []);
 
     function moveIssue(id, status) {
+      var target = issues.find(function (i) { return i.id === id; });
+      if (!target) return;
+      
       if (status === "todo") {
-        var target = issues.find(function (i) { return i.id === id; });
-        if (target && !target.assignee) {
+        if (!target.assignee) {
           if (message) message.warning("请先为该 issue 指派一个 agent 才能移入待办");
           return;
         }
       }
+      
+      // Only allow moving to review from done status
+      if (status === "review" && target.status !== "done") {
+        if (message) message.warning("只允许从已完成状态拖动到审核中");
+        return;
+      }
+      
       setIssues(function (prev) {
         return prev.map(function (i) {
           return i.id === id ? Object.assign({}, i, { status: status }) : i;
@@ -869,14 +1032,7 @@
             : i;
         });
       });
-      api.patchIssue(issue.id, patch).then(function (updated) {
-        // If the backend auto-dispatched the issue, subscribe to
-        // the realtime stream so the UI shows live output.
-        if (updated && updated.status === "in_progress") {
-          subscribeStream(issue.id);
-        }
-        load();
-      }).catch(load);
+      api.patchIssue(issue.id, patch).then(load).catch(load);
     }
 
     function closeStream(id) {
@@ -909,19 +1065,16 @@
         es.onmessage = function (e) {
           var msg;
           try { msg = JSON.parse(e.data); } catch (err) { return; }
-          if (msg.type === "delta") {
+          if (msg.type === "tool_start") {
             setStreams(function (prev) {
               var n = Object.assign({}, prev);
-              n[id] = (n[id] || "") + (msg.text || "");
+              n[id] = (n[id] || "") + "调用 " + msg.name + " 工具\n";
               return n;
             });
-          } else if (msg.type === "tool") {
-            var label = msg.action === "output"
-              ? "\u2705 " + msg.name
-              : "\u26a1 " + msg.name + "...";
+          } else if (msg.type === "tool_done") {
             setStreams(function (prev) {
               var n = Object.assign({}, prev);
-              n[id] = (n[id] || "") + "\n[" + label + "]\n";
+              n[id] = (n[id] || "") + "调用 " + msg.name + " 工具完成\n";
               return n;
             });
           } else if (msg.type === "done" || msg.type === "error") {
@@ -951,9 +1104,6 @@
           return res.json();
         })
         .then(function (data) {
-          if (data && data.status === "in_progress") {
-            subscribeStream(issue.id);
-          }
           load();
         })
         .catch(function (err) {
@@ -1197,6 +1347,7 @@
                       onRun: onRun,
                       onStop: onStop,
                       onDelete: onDelete,
+                      onSubscribe: subscribeStream,
                       streamText: streams[issue.id],
                       queuePosition: queuePos[issue.id] || 0,
                       agentBusy: !!(issue.assignee && busyAgents[issue.assignee]),

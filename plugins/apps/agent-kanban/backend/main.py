@@ -250,8 +250,7 @@ async def create_issue(
             "description": body.description,
             "status": status,
             "assignee": assignee,
-            "result": "",
-            "log": [],
+            # No result field - results are stored in session
             "created_at": _now(),
             "updated_at": _now(),
         }
@@ -321,10 +320,21 @@ async def patch_issue(
                     status_code=400,
                     detail="Moving to todo requires an assignee",
                 )
+            # Only allow moving to review from done status
+            if body.status == "review" and issue.get("status") != "done":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Only done issues can be moved to review",
+                )
             issue["status"] = body.status
             if body.status == "backlog":
-                issue["result"] = ""
+                # Clear error and trace when moving to backlog
+                issue.pop("error", None)
+                issue.pop("trace", None)
                 _LIVE_TRACE.pop(issue_id, None)
+            elif body.status == "done":
+                # Clear trace for completed issues - use session instead
+                issue.pop("trace", None)
 
         # Auto-promote: assigning an agent to a backlog issue
         # moves it to todo automatically.
@@ -334,12 +344,6 @@ async def patch_issue(
             and issue.get("status") == "backlog"
         ):
             issue["status"] = "todo"
-            issue.setdefault("log", []).append(
-                {
-                    "ts": _now(),
-                    "event": "auto_promoted_to_todo",
-                },
-            )
 
         # If the issue just became todo with an assignee and
         # that agent is idle, schedule auto-dispatch after the
@@ -399,21 +403,18 @@ async def _execute_run(
     if assignee:
         ctx = dataclasses.replace(ctx, agent_id=assignee)
 
-    result_text = ""
-    last_ev: Any = None
     error = ""
     _LIVE_TRACE[issue_id] = []
     trace = _LIVE_TRACE[issue_id]
-    _seen_tool_ids: set = set()
 
     def _ch() -> Any:
         return _CHANNELS.get(issue_id)
 
     try:
-        chunks: List[Any] = []
         logger.info(
             "[kanban] _execute_run started for %s (agent=%s)",
-            issue_id, assignee,
+            issue_id,
+            assignee,
         )
         async for ev in ctx.chat_stream(
             prompt,
@@ -424,77 +425,95 @@ async def _execute_run(
                 getattr(ev, "type", "?"),
                 getattr(ev, "delta", "?"),
             )
-            # 1) Text delta (stream only, not stored in trace)
+            # Skip delta=True events
+            # (no live streaming, only show complete messages)
             if getattr(ev, "delta", False):
-                delta = getattr(ev, "text", None)
-                if delta:
-                    ch = _ch()
-                    if ch is not None:
-                        await ch.send_event(
-                            {"type": "delta", "text": str(delta)},
-                        )
                 continue
-            chunks.append(ev)
-            # 2) Tool call / output (Message with type
-            #    plugin_call / plugin_call_output / function_call
-            #    / function_call_output).
+
+            # Store complete event (delta=False) to trace
+            try:
+                if hasattr(ev, "model_dump"):
+                    ev_dict = ev.model_dump()
+                elif hasattr(ev, "dict"):
+                    ev_dict = ev.dict()
+                elif dataclasses.is_dataclass(ev):
+                    ev_dict = dataclasses.asdict(ev)
+                else:
+                    ev_dict = {"raw": str(ev)}
+                trace.append(ev_dict)
+            except Exception:  # noqa: BLE001
+                pass
+
+            # Send SSE notifications
             raw_type = getattr(ev, "type", None)
             if hasattr(raw_type, "value"):
                 raw_type = raw_type.value
             msg_type = str(raw_type) if raw_type else ""
-            if not any(
+
+            # Tool call start
+            if any(
+                k in msg_type
+                for k in ("plugin_call", "function_call", "mcp_tool_call")
+            ):
+                if "_output" not in msg_type:
+                    name = ""
+                    content = getattr(ev, "content", None)
+                    if isinstance(content, list):
+                        for blk in content:
+                            data = getattr(blk, "data", None)
+                            if isinstance(data, dict):
+                                name = data.get("name", "")
+                            elif data:
+                                name = getattr(data, "name", "")
+                            if name:
+                                break
+                    if not name:
+                        name = getattr(ev, "name", "")
+                    # Skip internal tools like "assistant"
+                    if name and name != "assistant":
+                        ch = _ch()
+                        if ch is not None:
+                            await ch.send_event(
+                                {"type": "tool_start", "name": name},
+                            )
+
+            # Tool call completion
+            elif any(
                 k in msg_type
                 for k in (
-                    "plugin_call",
-                    "function_call",
-                    "mcp_tool",
+                    "plugin_call_output",
+                    "function_call_output",
+                    "mcp_tool_call_output",
                 )
             ):
-                continue
-            action = (
-                "output" if "output" in msg_type else "call"
-            )
-            # Dedup: only record once per message id + action.
-            ev_id = getattr(ev, "id", None) or ""
-            dedup_key = f"{ev_id}:{action}"
-            if dedup_key in _seen_tool_ids:
-                continue
-            _seen_tool_ids.add(dedup_key)
-            # Extract tool name from content[0].data.name
-            name = ""
-            content = getattr(ev, "content", None)
-            if isinstance(content, list):
-                for blk in content:
-                    data = getattr(blk, "data", None)
-                    if data is None:
-                        continue
-                    if isinstance(data, dict):
-                        name = data.get("name", "")
-                    else:
-                        name = getattr(data, "name", "") or ""
-                    if name:
-                        break
-            if not name:
-                name = getattr(ev, "name", "") or ""
-            if name:
-                trace.append(
-                    {"t": "tool", "a": action, "n": name},
-                )
-                ch = _ch()
-                if ch is not None:
-                    await ch.send_event(
-                        {
-                            "type": "tool",
-                            "action": action,
-                            "name": name,
-                        },
-                    )
-        result_text = ChatReply(chunks).text
+                name = ""
+                content = getattr(ev, "content", None)
+                if isinstance(content, list):
+                    for blk in content:
+                        data = getattr(blk, "data", None)
+                        if isinstance(data, dict):
+                            name = data.get("name", "")
+                        elif data:
+                            name = getattr(data, "name", "")
+                        if name:
+                            break
+                if not name:
+                    name = getattr(ev, "name", "")
+                # Skip internal tools
+                if name and name != "assistant":
+                    ch = _ch()
+                    if ch is not None:
+                        await ch.send_event(
+                            {"type": "tool_done", "name": name},
+                        )
+
+            # Text messages (skip for now, only show tool calls)
+            # Final result will be fetched from session via /result API
+
         logger.info(
-            "[kanban] stream done for %s: %d chunks, "
-            "%d trace entries, result=%d chars",
-            issue_id, len(chunks), len(trace),
-            len(result_text),
+            "[kanban] stream done for %s: %d trace entries",
+            issue_id,
+            len(trace),
         )
     except asyncio.CancelledError:  # pylint: disable=try-except-raise
         raise
@@ -513,20 +532,16 @@ async def _execute_run(
         _LIVE_TRACE.pop(issue_id, None)
         if error:
             issue["status"] = "todo"
-            issue["result"] = f"执行失败: {error}"
-            issue.setdefault("log", []).append(
-                {
-                    "ts": _now(),
-                    "event": "run_failed",
-                    "error": error,
-                },
-            )
+            # Only store error in issue (not full result)
+            issue["error"] = error
+            # Keep trace for debugging failed runs
+            issue["trace"] = trace
         else:
             issue["status"] = "review"
-            issue["result"] = result_text or "(agent 未返回文本)"
-            issue.setdefault("log", []).append(
-                {"ts": _now(), "event": "run_completed"},
-            )
+            # Remove error if previous run had one
+            issue.pop("error", None)
+            # Clear trace - result is in session now
+            issue.pop("trace", None)
         issue["updated_at"] = _now()
         _write_all(issues)
 
@@ -538,7 +553,7 @@ async def _execute_run(
             )
         else:
             await ch.send_event(
-                {"type": "done", "text": result_text or ""},
+                {"type": "done"},
             )
         ch.close()
 
@@ -621,15 +636,8 @@ async def _try_dispatch_next(
         if candidate is None:
             return
         candidate["status"] = "in_progress"
-        candidate["result"] = ""
+        candidate["result"] = {}
         candidate["updated_at"] = _now()
-        candidate.setdefault("log", []).append(
-            {
-                "ts": _now(),
-                "event": "auto_dispatched",
-                "agent": agent_id,
-            },
-        )
         _write_all(issues)
         iid = candidate["id"]
         title = candidate["title"]
@@ -668,27 +676,15 @@ async def run_issue(
         if _agent_has_running(assignee, issues):
             issue["status"] = "todo"
             issue["updated_at"] = _now()
-            issue.setdefault("log", []).append(
-                {
-                    "ts": _now(),
-                    "event": "queued",
-                    "agent": assignee,
-                },
-            )
             _write_all(issues)
             _LAST_CTX.setdefault(assignee, ctx)
             return issue
 
         issue["status"] = "in_progress"
-        issue["result"] = ""
+        # Clear error and trace when starting a new run
+        issue.pop("error", None)
+        issue.pop("trace", None)
         issue["updated_at"] = _now()
-        issue.setdefault("log", []).append(
-            {
-                "ts": _now(),
-                "event": "run_started",
-                "agent": assignee,
-            },
-        )
         _write_all(issues)
         title = issue["title"]
         description = issue.get("description") or "(无描述)"
@@ -712,23 +708,71 @@ async def stream_issue(issue_id: str) -> StreamingResponse:
     The channel is created by ``run_issue`` before the background task starts,
     so deltas emitted before the browser connects are buffered and replayed.
     """
-    # Replay in-memory trace so late-joining clients see history.
+    # Replay trace (from memory or persisted issue)
     replay: List[Dict[str, Any]] = []
     live = _LIVE_TRACE.get(issue_id)
+
+    # If not in memory, load from persisted issue trace
+    if not live:
+        issues = await asyncio.to_thread(_read_all)
+        issue = _find(issues, issue_id)
+        if issue and issue.get("trace"):
+            live = issue["trace"]
+
     if live:
-        for entry in list(live):
-            if entry.get("t") == "d":
-                replay.append(
-                    {"type": "delta", "text": entry.get("v", "")},
+        for ev_dict in list(live):
+            ev_type = ev_dict.get("type", "")
+            if isinstance(ev_type, dict):
+                ev_type = ev_type.get("value", "")
+            ev_type = str(ev_type)
+
+            # Tool call start
+            if any(
+                k in ev_type
+                for k in ("plugin_call", "function_call", "mcp_tool_call")
+            ):
+                if "_output" not in ev_type:
+                    name = ""
+                    content = ev_dict.get("content", [])
+                    if isinstance(content, list) and content:
+                        data = (
+                            content[0].get("data", {})
+                            if isinstance(content[0], dict)
+                            else {}
+                        )
+                        name = (
+                            data.get("name", "")
+                            if isinstance(
+                                data,
+                                dict,
+                            )
+                            else ""
+                        )
+                    if name and name != "assistant":
+                        replay.append({"type": "tool_start", "name": name})
+
+            # Tool call completion
+            elif any(
+                k in ev_type
+                for k in (
+                    "plugin_call_output",
+                    "function_call_output",
+                    "mcp_tool_call_output",
                 )
-            elif entry.get("t") == "tool":
-                replay.append(
-                    {
-                        "type": "tool",
-                        "action": entry.get("a", "call"),
-                        "name": entry.get("n", ""),
-                    },
-                )
+            ):
+                name = ""
+                content = ev_dict.get("content", [])
+                if isinstance(content, list) and content:
+                    data = (
+                        content[0].get("data", {})
+                        if isinstance(content[0], dict)
+                        else {}
+                    )
+                    name = (
+                        data.get("name", "") if isinstance(data, dict) else ""
+                    )
+                if name and name != "assistant":
+                    replay.append({"type": "tool_done", "name": name})
 
     ch = _CHANNELS.get(issue_id)
     if ch is None:
@@ -738,10 +782,7 @@ async def stream_issue(issue_id: str) -> StreamingResponse:
     async def _gen():
         try:
             for evt in replay:
-                yield (
-                    f"data: {json.dumps(evt, ensure_ascii=False)}"
-                    "\n\n"
-                )
+                yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
             async for chunk in ch:
                 yield chunk
         finally:
@@ -753,6 +794,105 @@ async def stream_issue(issue_id: str) -> StreamingResponse:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.get("/issues/{issue_id:path}/result")
+async def get_issue_result(
+    issue_id: str,
+    ctx=Depends(get_ctx),
+) -> Dict[str, Any]:
+    """Get the complete history of an issue from session or trace.
+
+    Returns all assistant messages from the session.
+    """
+    issues = await asyncio.to_thread(_read_all)
+    issue = _find(issues, issue_id)
+    if issue is None:
+        raise HTTPException(status_code=404, detail="Issue not found")
+
+    # If there's an error, return it directly
+    if "error" in issue:
+        return {"error": issue["error"]}
+
+    # Try to get from session first
+    try:
+        history = await ctx.get_session_history(session_id=issue_id)
+        if history:
+            # Return all assistant messages
+            assistant_messages = [
+                msg for msg in history if msg.get("role") == "assistant"
+            ]
+            if assistant_messages:
+                return {"messages": assistant_messages}
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "[kanban] Failed to get session history for %s",
+            issue_id,
+        )
+
+    # Fallback to trace if session is empty or failed
+    trace = issue.get("trace", [])
+    if not trace:
+        return {"messages": []}
+
+    # Reconstruct messages from trace events
+    messages = []
+    current_content = []
+
+    for ev_dict in trace:
+        ev_type = ev_dict.get("type", "")
+        if isinstance(ev_type, dict):
+            ev_type = ev_type.get("value", "")
+        ev_type = str(ev_type)
+
+        # Tool call completion - add as content item
+        if any(
+            k in ev_type
+            for k in (
+                "plugin_call_output",
+                "function_call_output",
+                "mcp_tool_call_output",
+            )
+        ):
+            content = ev_dict.get("content", [])
+            if isinstance(content, list) and content:
+                for item in content:
+                    if isinstance(item, dict):
+                        data = item.get("data", {})
+                        name = (
+                            data.get("name", "")
+                            if isinstance(
+                                data,
+                                dict,
+                            )
+                            else ""
+                        )
+                        if name and name != "assistant":
+                            current_content.append(
+                                {
+                                    "type": ev_type,
+                                    "data": {"name": name},
+                                },
+                            )
+
+        # Text message - add text content
+        elif ev_type == "message" and ev_dict.get("role") == "assistant":
+            for c in ev_dict.get("content", []):
+                if isinstance(c, dict) and c.get("type") == "text":
+                    text = c.get("text", "")
+                    if text:
+                        current_content.append({"type": "text", "text": text})
+
+    # Create a single synthetic message from all trace content
+    if current_content:
+        messages.append(
+            {
+                "role": "assistant",
+                "content": current_content,
+            },
+        )
+
+    return {"messages": messages}
 
 
 @router.post("/issues/{issue_id:path}/stop")
@@ -775,11 +915,10 @@ async def stop_issue(issue_id: str) -> Dict[str, Any]:
             )
         if issue.get("status") == "in_progress":
             issue["status"] = "backlog"
-            issue["result"] = ""
+            # Clear error and trace when stopping
+            issue.pop("error", None)
+            issue.pop("trace", None)
             issue["updated_at"] = _now()
-            issue.setdefault("log", []).append(
-                {"ts": _now(), "event": "run_stopped"},
-            )
             _write_all(issues)
             _LIVE_TRACE.pop(issue_id, None)
             agent_id = issue.get("assignee")
@@ -971,10 +1110,9 @@ async def complete_kanban_issue(issue_id: str) -> str:
         if issue is None:
             return f"未找到 issue {issue_id}。"
         issue["status"] = "done"
+        # Clear trace for completed issues - use session instead
+        issue.pop("trace", None)
         issue["updated_at"] = _now()
-        issue.setdefault("log", []).append(
-            {"ts": _now(), "event": "completed_by_agent"},
-        )
         _write_all(issues)
         return f"已将 issue #{issue_id}（{issue['title']}）标记为已完成。"
 
