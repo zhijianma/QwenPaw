@@ -44,15 +44,20 @@ _RUNNING: Dict[str, "asyncio.Task"] = {}
 # Per-issue realtime SSE channels for streaming agent output to the UI.
 _CHANNELS: Dict[str, "SSEChannel"] = {}
 
-# In-memory trace buffer for running issues (written to disk on finish).
+# In-memory trace buffer for running issues.
 _LIVE_TRACE: Dict[str, List[Dict[str, str]]] = {}
+
+# In-memory issues cache (reduces I/O)
+_ISSUES_CACHE: Optional[List[Dict[str, Any]]] = None
+_CACHE_DIRTY = False  # Track if cache needs persisting
 
 # Background dispatcher task (started on launch)
 _DISPATCHER_TASK: Optional["asyncio.Task"] = None
-
-# Background dispatcher task for auto-dispatching todo issues
-_DISPATCHER_TASK: Optional["asyncio.Task"] = None
 _DISPATCHER_RUNNING = False
+
+# Background persistence task (started on launch)
+_PERSIST_TASK: Optional["asyncio.Task"] = None
+_PERSIST_RUNNING = False
 
 VALID_STATUS = ["backlog", "todo", "in_progress", "review", "done"]
 STATUS_LABEL = {
@@ -64,18 +69,11 @@ STATUS_LABEL = {
 }
 
 
-def _read_all() -> List[Dict[str, Any]]:
-    """Load the board (synchronous).
+def _load_from_disk() -> List[Dict[str, Any]]:
+    """Load issues from disk (only called on startup or cache miss).
 
     Returns ``[]`` only when the file genuinely does not exist. If the
-    file exists but cannot be parsed (e.g. a partial read racing
-    another process' write), retry briefly and then raise -- never
-    silently return ``[]``, because callers append to the result and
-    would otherwise overwrite the whole board with a single issue.
-
-    NOTE: This is a synchronous function (uses ``time.sleep``).
-    Async callers must use ``asyncio.to_thread(_read_all)`` to
-    avoid blocking the event loop.
+    file exists but cannot be parsed, retry briefly and then raise.
     """
     if not _DATA_FILE.exists():
         return []
@@ -96,8 +94,21 @@ def _read_all() -> List[Dict[str, Any]]:
     )
 
 
-def _write_all(issues: List[Dict[str, Any]]) -> None:
-    """Persist the board atomically (temp file + ``os.replace``).
+def _read_all() -> List[Dict[str, Any]]:
+    """Read issues from in-memory cache.
+
+    NOTE: This is a synchronous function. The cache is initialized
+    by on_launch and kept in sync by _write_all.
+    """
+    global _ISSUES_CACHE
+    if _ISSUES_CACHE is None:
+        # Cache not initialized yet, load from disk
+        _ISSUES_CACHE = _load_from_disk()
+    return _ISSUES_CACHE
+
+
+def _persist_to_disk(issues: List[Dict[str, Any]]) -> None:
+    """Persist the board atomically to disk (temp file + os.replace).
 
     Atomic replace guarantees every reader sees either the old or the new
     complete file — never a truncated one — even when other backend
@@ -122,6 +133,17 @@ def _write_all(issues: List[Dict[str, Any]]) -> None:
         except OSError:
             pass
         raise
+
+
+def _write_all(issues: List[Dict[str, Any]]) -> None:
+    """Update in-memory cache (no immediate disk I/O).
+
+    The cache is persisted periodically by background task and
+    on shutdown by on_terminate.
+    """
+    global _ISSUES_CACHE, _CACHE_DIRTY
+    _ISSUES_CACHE = issues
+    _CACHE_DIRTY = True
 
 
 class _Txn:
@@ -1003,6 +1025,37 @@ async def get_agent_queue(agent_id: str) -> Dict[str, Any]:
 app = PawApp(name="Agent Kanban", app_id="agent-kanban")
 app.include_router(router)
 
+# ── Background persistence loop ────────────────────────────────────
+
+
+async def _persist_loop() -> None:
+    """Background loop: periodically persist dirty cache to disk.
+
+    Runs every 10 seconds, only writes if cache is dirty.
+    """
+    global _PERSIST_RUNNING, _CACHE_DIRTY
+    _PERSIST_RUNNING = True
+    logger.info("[kanban] Persistence loop started")
+
+    while _PERSIST_RUNNING:
+        try:
+            await asyncio.sleep(10)  # Persist every 10 seconds
+
+            if _CACHE_DIRTY and _ISSUES_CACHE is not None:
+                await asyncio.to_thread(_persist_to_disk, _ISSUES_CACHE[:])
+                _CACHE_DIRTY = False
+                logger.debug("[kanban] Cache persisted to disk")
+
+        except asyncio.CancelledError:
+            logger.info("[kanban] Persistence loop cancelled")
+            break
+        except Exception:  # noqa: BLE001
+            logger.exception("[kanban] Persistence loop error")
+
+    _PERSIST_RUNNING = False
+    logger.info("[kanban] Persistence loop stopped")
+
+
 # ── Background dispatcher loop ────────────────────────────────────
 
 
@@ -1018,7 +1071,7 @@ async def _dispatch_loop() -> None:
 
     while _DISPATCHER_RUNNING:
         try:
-            await asyncio.sleep(2)  # Check every 2 seconds
+            await asyncio.sleep(30)  # Check every 30 seconds
 
             issues = await asyncio.to_thread(_read_all)
             if not issues:
@@ -1117,22 +1170,52 @@ async def _dispatch_loop() -> None:
     logger.info("[kanban] Dispatcher loop stopped")
 
 
-# ── Lifecycle: start dispatcher on launch ──────────────────────────
+# ── Lifecycle: startup and shutdown ────────────────────────────────
 
 
 @app.on_launch
-async def start_dispatcher():
-    """Start the background dispatcher loop on app launch."""
-    global _DISPATCHER_TASK
+async def init_kanban():
+    """Initialize kanban on app launch.
+
+    1. Load issues from disk into memory cache
+    2. Start background dispatcher loop
+    3. Start background persistence loop
+    """
+    global _ISSUES_CACHE, _DISPATCHER_TASK, _PERSIST_TASK
+
+    # Load cache from disk
+    try:
+        _ISSUES_CACHE = await asyncio.to_thread(_load_from_disk)
+        logger.info(
+            "[kanban] Loaded %d issues from disk into cache",
+            len(_ISSUES_CACHE),
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("[kanban] Failed to load issues from disk")
+        _ISSUES_CACHE = []
+
+    # Start dispatcher
     if _DISPATCHER_TASK is None or _DISPATCHER_TASK.done():
         _DISPATCHER_TASK = asyncio.create_task(_dispatch_loop())
         logger.info("[kanban] Dispatcher task started")
 
+    # Start persistence loop
+    if _PERSIST_TASK is None or _PERSIST_TASK.done():
+        _PERSIST_TASK = asyncio.create_task(_persist_loop())
+        logger.info("[kanban] Persistence task started")
+
 
 @app.on_terminate
-async def stop_dispatcher():
-    """Stop the background dispatcher loop on app shutdown."""
-    global _DISPATCHER_RUNNING, _DISPATCHER_TASK
+async def shutdown_kanban():
+    """Shutdown kanban on app terminate.
+
+    1. Stop background loops
+    2. Persist cache to disk (critical - ensure no data loss)
+    """
+    global _DISPATCHER_RUNNING, _PERSIST_RUNNING
+    global _DISPATCHER_TASK, _PERSIST_TASK
+
+    # Stop dispatcher
     _DISPATCHER_RUNNING = False
     if _DISPATCHER_TASK and not _DISPATCHER_TASK.done():
         _DISPATCHER_TASK.cancel()
@@ -1141,6 +1224,24 @@ async def stop_dispatcher():
         except asyncio.CancelledError:
             pass
         logger.info("[kanban] Dispatcher task stopped")
+
+    # Stop persistence loop
+    _PERSIST_RUNNING = False
+    if _PERSIST_TASK and not _PERSIST_TASK.done():
+        _PERSIST_TASK.cancel()
+        try:
+            await _PERSIST_TASK
+        except asyncio.CancelledError:
+            pass
+        logger.info("[kanban] Persistence task stopped")
+
+    # Final persist (critical)
+    if _CACHE_DIRTY and _ISSUES_CACHE is not None:
+        try:
+            await asyncio.to_thread(_persist_to_disk, _ISSUES_CACHE[:])
+            logger.info("[kanban] Final cache persist completed")
+        except Exception:  # noqa: BLE001
+            logger.exception("[kanban] Failed to persist cache on shutdown")
 
 
 # The 'plugin' variable is what PluginLoader looks for.
