@@ -269,6 +269,18 @@ class PawApp:
                 callback=self._lifecycle["install"],
                 priority=90,
             )
+        if "launch" in self._lifecycle:
+            api.register_startup_hook(
+                hook_name=f"pawapp_{self.app_id}_on_launch",
+                callback=self._lifecycle["launch"],
+                priority=100,
+            )
+        if "terminate" in self._lifecycle:
+            api.register_shutdown_hook(
+                hook_name=f"pawapp_{self.app_id}_on_terminate",
+                callback=self._lifecycle["terminate"],
+                priority=100,
+            )
         if "uninstall" in self._lifecycle:
             api.register_uninstall_hook(
                 hook_name=f"pawapp_{self.app_id}_on_uninstall",

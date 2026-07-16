@@ -47,6 +47,13 @@ _CHANNELS: Dict[str, "SSEChannel"] = {}
 # In-memory trace buffer for running issues (written to disk on finish).
 _LIVE_TRACE: Dict[str, List[Dict[str, str]]] = {}
 
+# Background dispatcher task (started on launch)
+_DISPATCHER_TASK: Optional["asyncio.Task"] = None
+
+# Background dispatcher task for auto-dispatching todo issues
+_DISPATCHER_TASK: Optional["asyncio.Task"] = None
+_DISPATCHER_RUNNING = False
+
 VALID_STATUS = ["backlog", "todo", "in_progress", "review", "done"]
 STATUS_LABEL = {
     "backlog": "待规划",
@@ -216,9 +223,15 @@ router = APIRouter()
 
 
 @router.get("/issues")
-async def list_issues() -> Dict[str, Any]:
+async def list_issues(ctx=Depends(get_ctx)) -> Dict[str, Any]:
     """List every issue on the board."""
     issues = await asyncio.to_thread(_read_all)
+
+    # Cache ctx for agents (needed by background dispatcher)
+    for issue in issues:
+        if issue.get("assignee"):
+            _LAST_CTX.setdefault(issue["assignee"], ctx)
+
     return {"issues": issues}
 
 
@@ -266,11 +279,8 @@ async def create_issue(
 
     if trigger_agent:
         _LAST_CTX.setdefault(trigger_agent, ctx)
-        asyncio.get_event_loop().call_soon(
-            lambda aid=trigger_agent: asyncio.ensure_future(
-                _try_dispatch_next(aid),
-            ),
-        )
+        # Background dispatcher will pick up this task automatically
+
     return issue
 
 
@@ -328,13 +338,9 @@ async def patch_issue(
                 )
             issue["status"] = body.status
             if body.status == "backlog":
-                # Clear error and trace when moving to backlog
+                # Clear error and in-memory trace when moving to backlog
                 issue.pop("error", None)
-                issue.pop("trace", None)
                 _LIVE_TRACE.pop(issue_id, None)
-            elif body.status == "done":
-                # Clear trace for completed issues - use session instead
-                issue.pop("trace", None)
 
         # Auto-promote: assigning an agent to a backlog issue
         # moves it to todo automatically.
@@ -360,11 +366,8 @@ async def patch_issue(
 
     if trigger_agent:
         _LAST_CTX.setdefault(trigger_agent, ctx)
-        asyncio.get_event_loop().call_soon(
-            lambda aid=trigger_agent: asyncio.ensure_future(
-                _try_dispatch_next(aid),
-            ),
-        )
+        # Background dispatcher will pick up this task automatically
+
     return issue
 
 
@@ -430,7 +433,7 @@ async def _execute_run(
             if getattr(ev, "delta", False):
                 continue
 
-            # Store complete event (delta=False) to trace
+            # Store complete event (delta=False) to in-memory trace
             try:
                 if hasattr(ev, "model_dump"):
                     ev_dict = ev.model_dump()
@@ -529,19 +532,16 @@ async def _execute_run(
             if ch is not None:
                 ch.close()
             return
+        # Clear in-memory trace (result is in session now)
         _LIVE_TRACE.pop(issue_id, None)
         if error:
             issue["status"] = "todo"
-            # Only store error in issue (not full result)
+            # Only store error in issue
             issue["error"] = error
-            # Keep trace for debugging failed runs
-            issue["trace"] = trace
         else:
             issue["status"] = "review"
             # Remove error if previous run had one
             issue.pop("error", None)
-            # Clear trace - result is in session now
-            issue.pop("trace", None)
         issue["updated_at"] = _now()
         _write_all(issues)
 
@@ -557,9 +557,7 @@ async def _execute_run(
             )
         ch.close()
 
-    # Auto-dispatch the next queued issue for this agent.
-    if assignee:
-        await _try_dispatch_next(assignee)
+    # Background dispatcher will pick up the next task automatically
 
 
 def _launch_run(
@@ -595,62 +593,10 @@ def _launch_run(
 
 
 # Stored reference to ctx from the most recent run so that
-# _try_dispatch_next can create a fresh run without an HTTP
-# request.  Safe because PawAppContext is lightweight and
+# Cached PawAppContext per agent (populated by HTTP requests and
+# used by background dispatcher). PawAppContext is lightweight and
 # the workspace registry it holds is a long-lived singleton.
 _LAST_CTX: Dict[str, Any] = {}
-
-
-async def _try_dispatch_next(
-    agent_id: str,
-    exclude_id: str = "",
-) -> None:
-    """Pick the oldest todo issue for *agent_id* and run it.
-
-    Called after a run finishes or is stopped.  Does nothing if
-    the agent already has an in_progress task or no todo issues.
-    *exclude_id* skips a just-stopped issue so it is not
-    immediately re-dispatched.
-    """
-    ctx = _LAST_CTX.get(agent_id)
-    if ctx is None:
-        logger.debug(
-            "No cached ctx for agent %s; skip auto-dispatch",
-            agent_id,
-        )
-        return
-
-    async with _txn():
-        issues = _read_all()
-        if _agent_has_running(agent_id, issues):
-            return
-        candidate = None
-        for iss in issues:
-            if (
-                iss.get("assignee") == agent_id
-                and iss.get("status") == "todo"
-                and iss.get("id") != exclude_id
-            ):
-                candidate = iss
-                break
-        if candidate is None:
-            return
-        candidate["status"] = "in_progress"
-        candidate["result"] = {}
-        candidate["updated_at"] = _now()
-        _write_all(issues)
-        iid = candidate["id"]
-        title = candidate["title"]
-        desc = candidate.get("description") or "(无描述)"
-
-    prompt = (
-        "你被指派处理以下看板任务(Issue):\n"
-        f"标题: {title}\n"
-        f"描述: {desc}\n\n"
-        "请完成该任务，并用简洁的中文汇报你的处理结果。"
-    )
-    logger.info("Auto-dispatching issue %s to agent %s", iid, agent_id)
-    _launch_run(ctx, iid, prompt, agent_id)
 
 
 @router.post("/issues/{issue_id:path}/run")
@@ -681,9 +627,8 @@ async def run_issue(
             return issue
 
         issue["status"] = "in_progress"
-        # Clear error and trace when starting a new run
+        # Clear error when starting a new run
         issue.pop("error", None)
-        issue.pop("trace", None)
         issue["updated_at"] = _now()
         _write_all(issues)
         title = issue["title"]
@@ -708,16 +653,9 @@ async def stream_issue(issue_id: str) -> StreamingResponse:
     The channel is created by ``run_issue`` before the background task starts,
     so deltas emitted before the browser connects are buffered and replayed.
     """
-    # Replay trace (from memory or persisted issue)
+    # Replay in-memory trace
     replay: List[Dict[str, Any]] = []
     live = _LIVE_TRACE.get(issue_id)
-
-    # If not in memory, load from persisted issue trace
-    if not live:
-        issues = await asyncio.to_thread(_read_all)
-        issue = _find(issues, issue_id)
-        if issue and issue.get("trace"):
-            live = issue["trace"]
 
     if live:
         for ev_dict in list(live):
@@ -830,8 +768,9 @@ async def get_issue_result(
             issue_id,
         )
 
-    # Fallback to trace if session is empty or failed
-    trace = issue.get("trace", [])
+    # Fallback to in-memory trace if session is empty or failed
+    # (only for running tasks)
+    trace = _LIVE_TRACE.get(issue_id, [])
     if not trace:
         return {"messages": []}
 
@@ -904,7 +843,6 @@ async def stop_issue(issue_id: str) -> Dict[str, Any]:
     ch = _CHANNELS.pop(issue_id, None)
     if ch is not None:
         ch.close()
-    agent_id: Optional[str] = None
     async with _txn():
         issues = _read_all()
         issue = _find(issues, issue_id)
@@ -915,16 +853,13 @@ async def stop_issue(issue_id: str) -> Dict[str, Any]:
             )
         if issue.get("status") == "in_progress":
             issue["status"] = "backlog"
-            # Clear error and trace when stopping
+            # Clear error when stopping
             issue.pop("error", None)
-            issue.pop("trace", None)
             issue["updated_at"] = _now()
             _write_all(issues)
             _LIVE_TRACE.pop(issue_id, None)
-            agent_id = issue.get("assignee")
+        # Background dispatcher will pick up next task automatically
 
-    if agent_id:
-        await _try_dispatch_next(agent_id)
     return issue
 
 
@@ -1068,53 +1003,141 @@ async def get_agent_queue(agent_id: str) -> Dict[str, Any]:
 app = PawApp(name="Agent Kanban", app_id="agent-kanban")
 app.include_router(router)
 
-
-@app.tool(
-    "list_my_kanban_issues",
-    description="列出 Agent Kanban 看板中指派给当前 agent 的任务(issues)，含标题、状态与描述。",
-    icon="📋",
-)
-async def list_my_kanban_issues() -> str:
-    """Return the Kanban issues assigned to the calling agent."""
-    try:
-        from qwenpaw.app.agent_context import get_current_agent_id
-
-        agent_id = get_current_agent_id() or "default"
-    except Exception:  # noqa: BLE001
-        agent_id = "default"
-
-    mine = [i for i in _read_all() if i.get("assignee") == agent_id]
-    if not mine:
-        return f"当前没有指派给你(agent={agent_id})的看板任务。"
-
-    lines = [f"指派给你(agent={agent_id})的看板任务共 {len(mine)} 个:"]
-    for i in mine:
-        label = STATUS_LABEL.get(i.get("status"), i.get("status"))
-        lines.append(
-            f"- (#{i.get('id')}) [{label}] {i.get('title')} — "
-            f"{i.get('description') or '无描述'}",
-        )
-    return "\n".join(lines)
+# ── Background dispatcher loop ────────────────────────────────────
 
 
-@app.tool(
-    "complete_kanban_issue",
-    description="将指定的看板 issue 标记为已完成(done)。参数 issue_id 为 issue 的短 id。",
-    icon="✅",
-)
-async def complete_kanban_issue(issue_id: str) -> str:
-    """Mark a Kanban issue as done (callable by the agent)."""
-    async with _txn():
-        issues = _read_all()
-        issue = _find(issues, issue_id)
-        if issue is None:
-            return f"未找到 issue {issue_id}。"
-        issue["status"] = "done"
-        # Clear trace for completed issues - use session instead
-        issue.pop("trace", None)
-        issue["updated_at"] = _now()
-        _write_all(issues)
-        return f"已将 issue #{issue_id}（{issue['title']}）标记为已完成。"
+async def _dispatch_loop(ctx: Any) -> None:
+    """Background loop: auto-dispatch todo/orphaned in_progress tasks.
+
+    Runs continuously after startup. For each agent with queued tasks,
+    if the agent is idle, dispatch the next task.
+    """
+    global _DISPATCHER_RUNNING
+    _DISPATCHER_RUNNING = True
+    logger.info("[kanban] Dispatcher loop started")
+
+    while _DISPATCHER_RUNNING:
+        try:
+            await asyncio.sleep(2)  # Check every 2 seconds
+
+            issues = await asyncio.to_thread(_read_all)
+            if not issues:
+                continue
+
+            # Group issues by agent
+            agent_tasks: Dict[str, List[Dict[str, Any]]] = {}
+            for issue in issues:
+                assignee = issue.get("assignee")
+                if not assignee:
+                    continue
+                status = issue.get("status")
+                # Collect in_progress (orphaned) and todo tasks
+                if status in ("in_progress", "todo"):
+                    agent_tasks.setdefault(assignee, []).append(issue)
+
+            # For each agent with tasks, try to dispatch
+            for agent_id, tasks in agent_tasks.items():
+                # Cache ctx for this agent if not already present
+                _LAST_CTX.setdefault(agent_id, ctx)
+
+                # Check if agent is idle (no running task for this agent)
+                agent_running = any(
+                    iss["id"] in _RUNNING
+                    for iss in issues
+                    if iss.get("assignee") == agent_id
+                    and iss.get("status") == "in_progress"
+                )
+                if agent_running:
+                    continue
+
+                # Find highest priority task:
+                # 1. in_progress (orphaned from restart) - highest priority
+                # 2. todo (queued)
+                candidate = None
+                for task in tasks:
+                    if task.get("status") == "in_progress":
+                        # Orphaned task - check if it's really not running
+                        if task["id"] not in _RUNNING:
+                            candidate = task
+                            break
+                if not candidate:
+                    # No orphaned tasks, pick first todo
+                    for task in tasks:
+                        if task.get("status") == "todo":
+                            candidate = task
+                            break
+
+                if candidate:
+                    # Dispatch the candidate
+                    async with _txn():
+                        issues_fresh = _read_all()
+                        issue_fresh = _find(issues_fresh, candidate["id"])
+                        if issue_fresh and issue_fresh.get(
+                            "status",
+                        ) in (
+                            "in_progress",
+                            "todo",
+                        ):
+                            issue_fresh["status"] = "in_progress"
+                            issue_fresh.pop("error", None)
+                            issue_fresh["updated_at"] = _now()
+                            _write_all(issues_fresh)
+
+                            title = issue_fresh["title"]
+                            desc = issue_fresh.get("description") or "(无描述)"
+                            prompt = (
+                                "你被指派处理以下看板任务(Issue):\n"
+                                f"标题: {title}\n"
+                                f"描述: {desc}\n\n"
+                                "请完成该任务，并用简洁的中文汇报你的处理结果。"
+                            )
+                            logger.info(
+                                "[kanban] Dispatcher: "
+                                "launching %s for agent %s",
+                                candidate["id"],
+                                agent_id,
+                            )
+                            _launch_run(
+                                ctx,
+                                candidate["id"],
+                                prompt,
+                                agent_id,
+                            )
+
+        except asyncio.CancelledError:
+            logger.info("[kanban] Dispatcher loop cancelled")
+            break
+        except Exception:  # noqa: BLE001
+            logger.exception("[kanban] Dispatcher loop error")
+
+    _DISPATCHER_RUNNING = False
+    logger.info("[kanban] Dispatcher loop stopped")
+
+
+# ── Lifecycle: start dispatcher on launch ──────────────────────────
+
+
+@app.on_launch
+async def start_dispatcher(ctx):
+    """Start the background dispatcher loop on app launch."""
+    global _DISPATCHER_TASK
+    if _DISPATCHER_TASK is None or _DISPATCHER_TASK.done():
+        _DISPATCHER_TASK = asyncio.create_task(_dispatch_loop(ctx))
+        logger.info("[kanban] Dispatcher task started")
+
+
+@app.on_terminate
+async def stop_dispatcher():
+    """Stop the background dispatcher loop on app shutdown."""
+    global _DISPATCHER_RUNNING, _DISPATCHER_TASK
+    _DISPATCHER_RUNNING = False
+    if _DISPATCHER_TASK and not _DISPATCHER_TASK.done():
+        _DISPATCHER_TASK.cancel()
+        try:
+            await _DISPATCHER_TASK
+        except asyncio.CancelledError:
+            pass
+        logger.info("[kanban] Dispatcher task stopped")
 
 
 # The 'plugin' variable is what PluginLoader looks for.

@@ -306,7 +306,7 @@ class PawAppContext:
             state_dict = await session.get_session_state_dict(
                 session_id=sid,
                 user_id=self.agent_id or "default",
-                channel="",
+                channel="console",
                 allow_not_exist=True,
             )
 
