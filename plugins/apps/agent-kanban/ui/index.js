@@ -286,10 +286,11 @@
             }
             if (toolName && toolName !== "assistant") {
               // Check if it's an output (completion) or call (start)
+              // Wrap tool name in backticks to preserve underscores in markdown
               if (msgType.indexOf("_output") >= 0) {
-                summary.push("调用 " + toolName + " 工具完成");
+                summary.push("调用 `" + toolName + "` 工具完成");
               } else {
-                summary.push("调用 " + toolName + " 工具");
+                summary.push("调用 `" + toolName + "` 工具");
               }
             }
           }
