@@ -38,6 +38,12 @@ from ..constant import (
 
 logger = logging.getLogger(__name__)
 
+# A legacy field can be present in the root config and in several agent
+# profiles, all of which may be validated repeatedly during one process
+# lifetime.  The migration reminder is useful once, but repeating it for
+# every request obscures real warnings.
+_legacy_scroll_tool_cap_warned = False
+
 
 # ============================================================================
 # Core config models (moved here to avoid circular imports)
@@ -55,6 +61,7 @@ class ActiveModelsInfo(BaseModel):
     """Active models information for provider manager."""
 
     active_llm: ModelSlotConfig | None
+    effective_max_input_length: int | None = None
 
 
 class ACPAgentConfig(BaseModel):
@@ -683,14 +690,17 @@ class ReMeLightMemoryConfig(BaseModel):
         default="digest",
         description="Subdirectory for digest memory",
     )
-    enable_search_raw_log: bool = Field(
-        default=False,
-        description="Whether to enable raw log search",
-    )
-
     summarize_when_compact: bool = Field(
         default=True,
         description="Whether to enable memory summarization during compaction",
+    )
+
+    inbox_push_enabled: bool = Field(
+        default=True,
+        description=(
+            "Whether to push ReMe auto-memory, auto-dream, and "
+            "auto-resource job results to the inbox"
+        ),
     )
 
     auto_memory_interval: int | None = Field(
@@ -771,28 +781,43 @@ class ToolResultPruningConfig(BaseModel):
         default=2,
         ge=1,
         le=10,
-        description="Number of recent messages to use recent_max_bytes for",
+        description=(
+            "Number of recent tool-result-bearing messages to keep at the "
+            "recent preview byte limit. Scroll keeps all live previews at "
+            "this limit until pressure-driven pointer folding is required."
+        ),
     )
 
     pruning_old_msg_max_bytes: int = Field(
         default=3000,
         ge=100,
-        description=("Byte threshold for old messages in tool result pruning"),
+        description=(
+            "Older tool-result preview byte limit for non-Scroll context "
+            "strategies. Scroll does not use a fixed old-result size "
+            "threshold; it folds recoverable results only while the rebuilt "
+            "context remains under pressure."
+        ),
     )
 
     pruning_recent_msg_max_bytes: int = Field(
         default=50000,
         ge=1000,
         description=(
-            "Byte threshold for recent messages in tool result pruning"
+            "Byte threshold for tool result previews before they enter the "
+            "agent context and while they remain recent."
         ),
     )
 
     offload_retention_days: int = Field(
-        default=5,
+        default=30,
         ge=1,
-        le=10,
-        description="Number of days to retain tool result files",
+        le=365,
+        description=(
+            "Number of days to retain complete archived tool result files. "
+            "This lifetime is independent of Scroll history retention; after "
+            "expiry, history may still contain the bounded preview but not "
+            "the complete artifact."
+        ),
     )
 
     tool_results_cache: str = Field(
@@ -839,9 +864,11 @@ class ScrollContextConfig(BaseModel):
     tool_output_token_cap: int = Field(
         default=3000,
         ge=100,
+        exclude=True,
         description=(
-            "In-context cap for a single tool result; the full output is "
-            "written through to history and recalled by tool_call_id."
+            "Deprecated scroll-only tool result cap. Tool output sizing is "
+            "handled by tool_result_pruning_config. Excluded when saving so "
+            "legacy configurations migrate on their next write."
         ),
     )
 
@@ -953,6 +980,22 @@ class LightContextConfig(BaseModel):
         default_factory=ScrollContextConfig,
     )
 
+    @model_validator(mode="after")
+    def warn_deprecated_scroll_tool_cap(self) -> "LightContextConfig":
+        """Warn once when the removed scroll-only tool cap is configured."""
+        global _legacy_scroll_tool_cap_warned
+        configured = (
+            "tool_output_token_cap" in self.scroll_config.model_fields_set
+        )
+        if configured and not _legacy_scroll_tool_cap_warned:
+            _legacy_scroll_tool_cap_warned = True
+            logger.warning(
+                "scroll_config.tool_output_token_cap is deprecated and "
+                "ignored; use tool_result_pruning_config."
+                "pruning_recent_msg_max_bytes instead (bytes, not tokens)",
+            )
+        return self
+
 
 class AutoTitleConfig(BaseModel):
     """Async chat-title generation configuration.
@@ -1037,10 +1080,12 @@ class DoomLoopConfig(BaseModel):
                 ),
             ),
             DoomLoopStageConfig(
-                after=6,
+                after=4,
                 action="stop",
                 prompt=(
-                    "Doom loop: agent stuck after " "6 consecutive repetitions"
+                    "Doom loop: agent stuck "
+                    "after 4 consecutive "
+                    "repetitions"
                 ),
             ),
         ],
@@ -1670,6 +1715,12 @@ class MCPConfig(BaseModel):
             ),
         },
     )
+    # One-shot migration watermark, persisted in agent.json.  Decoupled from
+    # DriverCard existence so that deleting a migrated client no longer lets
+    # startup migration resurrect it (#6130).  0 = not migrated; steps are
+    # defined by CURRENT_MCP_MIGRATION_VERSION in
+    # drivers.adapters.mcp_legacy_config.
+    migration_version: int = 0
 
 
 class BuiltinToolConfig(BaseModel):
