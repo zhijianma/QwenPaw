@@ -60,10 +60,9 @@ def _read_all() -> List[Dict[str, Any]]:
     silently return ``[]``, because callers append to the result and
     would otherwise overwrite the whole board with a single issue.
 
-    NOTE: ``time.sleep`` blocks the event loop. The total worst-case
-    block is 5 * 0.05 = 0.25 s, acceptable for a single-user local
-    app.  If this becomes a bottleneck, wrap in
-    ``asyncio.to_thread``.
+    NOTE: This is a synchronous function (uses ``time.sleep``).
+    Async callers must use ``asyncio.to_thread(_read_all)`` to
+    avoid blocking the event loop.
     """
     if not _DATA_FILE.exists():
         return []
@@ -136,7 +135,7 @@ class _Txn:
                 encoding="utf-8",
             )
             fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX)
-        except Exception:
+        except BaseException:
             if self._fh is not None:
                 self._fh.close()
                 self._fh = None
@@ -196,7 +195,8 @@ router = APIRouter()
 @router.get("/issues")
 async def list_issues() -> Dict[str, Any]:
     """List every issue on the board."""
-    return {"issues": _read_all()}
+    issues = await asyncio.to_thread(_read_all)
+    return {"issues": issues}
 
 
 @router.post("/issues")
@@ -231,20 +231,26 @@ async def patch_issue(
         issues = _read_all()
         issue = _find(issues, issue_id)
         if issue is None:
-            raise HTTPException(status_code=404, detail="Issue not found")
+            raise HTTPException(
+                status_code=404,
+                detail="Issue not found",
+            )
         if body.title is not None:
             issue["title"] = body.title
         if body.description is not None:
             issue["description"] = body.description
         if body.status is not None:
             if body.status not in VALID_STATUS:
-                raise HTTPException(status_code=400, detail="Invalid status")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid status",
+                )
             issue["status"] = body.status
         if body.assignee is not None:
             issue["assignee"] = body.assignee
         issue["updated_at"] = _now()
         _write_all(issues)
-    return _find(_read_all(), issue_id) or {"ok": True}
+    return issue
 
 
 @router.delete("/issues/{issue_id:path}")
@@ -368,10 +374,7 @@ async def run_issue(issue_id: str, ctx=Depends(get_ctx)) -> Dict[str, Any]:
             _RUNNING.pop(_id, None)
 
     task.add_done_callback(_cleanup)
-    return _find(_read_all(), issue_id) or {
-        "ok": True,
-        "status": "in_progress",
-    }
+    return issue
 
 
 @router.get("/issues/{issue_id:path}/stream")
@@ -414,7 +417,10 @@ async def stop_issue(issue_id: str) -> Dict[str, Any]:
         issues = _read_all()
         issue = _find(issues, issue_id)
         if issue is None:
-            raise HTTPException(status_code=404, detail="Issue not found")
+            raise HTTPException(
+                status_code=404,
+                detail="Issue not found",
+            )
         if issue.get("status") == "in_progress":
             issue["status"] = "todo"
             issue["updated_at"] = _now()
@@ -422,7 +428,7 @@ async def stop_issue(issue_id: str) -> Dict[str, Any]:
                 {"ts": _now(), "event": "run_stopped"},
             )
             _write_all(issues)
-    return _find(_read_all(), issue_id) or {"ok": True}
+    return issue
 
 
 # ── PawApp definition + agent-facing tools ───────────────────────────
