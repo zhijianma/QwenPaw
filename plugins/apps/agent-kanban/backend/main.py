@@ -1006,7 +1006,7 @@ app.include_router(router)
 # ── Background dispatcher loop ────────────────────────────────────
 
 
-async def _dispatch_loop(ctx: Any) -> None:
+async def _dispatch_loop() -> None:
     """Background loop: auto-dispatch todo/orphaned in_progress tasks.
 
     Runs continuously after startup. For each agent with queued tasks,
@@ -1037,8 +1037,11 @@ async def _dispatch_loop(ctx: Any) -> None:
 
             # For each agent with tasks, try to dispatch
             for agent_id, tasks in agent_tasks.items():
-                # Cache ctx for this agent if not already present
-                _LAST_CTX.setdefault(agent_id, ctx)
+                # Get cached ctx for this agent (populated by HTTP requests)
+                ctx = _LAST_CTX.get(agent_id)
+                if not ctx:
+                    # Skip if no ctx cached yet (wait for first HTTP request)
+                    continue
 
                 # Check if agent is idle (no running task for this agent)
                 agent_running = any(
@@ -1118,11 +1121,11 @@ async def _dispatch_loop(ctx: Any) -> None:
 
 
 @app.on_launch
-async def start_dispatcher(ctx):
+async def start_dispatcher():
     """Start the background dispatcher loop on app launch."""
     global _DISPATCHER_TASK
     if _DISPATCHER_TASK is None or _DISPATCHER_TASK.done():
-        _DISPATCHER_TASK = asyncio.create_task(_dispatch_loop(ctx))
+        _DISPATCHER_TASK = asyncio.create_task(_dispatch_loop())
         logger.info("[kanban] Dispatcher task started")
 
 
