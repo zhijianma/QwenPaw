@@ -224,21 +224,32 @@ class PawAppContext:
 
     # ─── Chat ───────────────────────────────────────────────────────
 
-    async def chat(self, message: str, *, skill: Optional[str] = None) -> Any:
-        """Send a message to the Agent and get a reply (synchronous).
+    async def chat(
+        self,
+        message: str,
+        *,
+        skill: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> Any:
+        """Send a message to the Agent and get a reply.
 
         Delegates to Workspace.stream_query().
+        ``session_id`` isolates the conversation; defaults to
+        ``pawapp:{app_id}`` when omitted.
         """
         workspace = await self._get_workspace()
         if workspace is None:
             raise RuntimeError("No workspace available for chat")
 
-        # Build a simple request
         chunks: List[Any] = []
-        async for event in self._stream_query(workspace, message, skill):
+        async for event in self._stream_query(
+            workspace,
+            message,
+            skill,
+            session_id=session_id,
+        ):
             chunks.append(event)
 
-        # Return the last text content
         return ChatReply(chunks=chunks)
 
     async def chat_stream(
@@ -246,13 +257,25 @@ class PawAppContext:
         message: str,
         *,
         skill: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> AsyncIterator[Any]:
-        """Stream chat responses (async generator)."""
+        """Stream chat responses (async generator).
+
+        ``session_id`` isolates the conversation; defaults to
+        ``pawapp:{app_id}`` when omitted.
+        """
         workspace = await self._get_workspace()
         if workspace is None:
-            raise RuntimeError("No workspace available for chat_stream")
+            raise RuntimeError(
+                "No workspace available for chat_stream",
+            )
 
-        async for event in self._stream_query(workspace, message, skill):
+        async for event in self._stream_query(
+            workspace,
+            message,
+            skill,
+            session_id=session_id,
+        ):
             yield event
 
     async def _get_workspace(self) -> Any:
@@ -269,26 +292,30 @@ class PawAppContext:
         workspace: Any,
         message: str,
         skill: Optional[str],
+        *,
+        session_id: Optional[str] = None,
     ) -> AsyncIterator[Any]:
         """Internal: delegate to workspace's stream_query.
 
-        The runtime coerces the request and reads ``.session_id`` (see
-        ``Runtime._normalize``); passing a bare string raises
-        ``'str' object has no attribute 'session_id'``. Build a proper
-        ``AgentRequest`` envelope instead.
+        ``session_id`` overrides the default ``pawapp:{app_id}``
+        session key, allowing callers to isolate conversations
+        (e.g. per-issue in Kanban).
         """
         # pylint: disable=unused-argument
         if hasattr(workspace, "stream_query"):
             from ..schemas import AgentRequest
 
+            sid = session_id or f"pawapp:{self.app_id}"
             request = AgentRequest(
                 input=[
                     {
                         "role": "user",
-                        "content": [{"type": "text", "text": message}],
+                        "content": [
+                            {"type": "text", "text": message},
+                        ],
                     },
                 ],
-                session_id=f"pawapp:{self.app_id}",
+                session_id=sid,
                 user_id=self.agent_id or "default",
                 agent_id=self.agent_id or "default",
             )

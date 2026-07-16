@@ -9,7 +9,9 @@ Persistence: a shared JSON file (``<app_dir>/data/issues.json``) so both
 the HTTP API and the agent tool read/write the exact same data.
 """
 import asyncio
+import dataclasses
 import json
+import logging
 import os
 import tempfile
 import time
@@ -27,8 +29,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from qwenpaw.pawapp import PawApp, get_ctx
-from qwenpaw.pawapp.context import ChatReply
 from qwenpaw.pawapp.task import SSEChannel
+
+logger = logging.getLogger(__name__)
 
 # ── Storage (shared by HTTP routes and agent tools) ──────────────────
 _DATA_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -41,10 +44,13 @@ _RUNNING: Dict[str, "asyncio.Task"] = {}
 # Per-issue realtime SSE channels for streaming agent output to the UI.
 _CHANNELS: Dict[str, "SSEChannel"] = {}
 
+# In-memory trace buffer for running issues (written to disk on finish).
+_LIVE_TRACE: Dict[str, List[Dict[str, str]]] = {}
+
 VALID_STATUS = ["backlog", "todo", "in_progress", "review", "done"]
 STATUS_LABEL = {
     "backlog": "待规划",
-    "todo": "待办",
+    "todo": "等待调度",
     "in_progress": "进行中",
     "review": "审核中",
     "done": "已完成",
@@ -173,6 +179,23 @@ def _find(
     return None
 
 
+def _agent_has_running(
+    agent_id: str,
+    issues: List[Dict[str, Any]],
+) -> bool:
+    """Check whether *agent_id* owns an in_progress issue."""
+    for iss in issues:
+        if (
+            iss.get("assignee") == agent_id
+            and iss.get("status") == "in_progress"
+        ):
+            iid = iss.get("id", "")
+            task = _RUNNING.get(iid)
+            if task is not None and not task.done():
+                return True
+    return False
+
+
 # ── Schemas ──────────────────────────────────────────────────────────
 class IssueCreate(BaseModel):
     title: str
@@ -200,9 +223,25 @@ async def list_issues() -> Dict[str, Any]:
 
 
 @router.post("/issues")
-async def create_issue(body: IssueCreate) -> Dict[str, Any]:
-    """Create a new issue in the given (or backlog) column."""
+async def create_issue(
+    body: IssueCreate,
+    ctx=Depends(get_ctx),
+) -> Dict[str, Any]:
+    """Create a new issue.
+
+    Creating directly into ``todo`` requires a non-empty assignee.
+    If the assigned agent is idle, auto-dispatches immediately.
+    """
     status = body.status if body.status in VALID_STATUS else "backlog"
+    assignee = body.assignee or ""
+
+    if status == "todo" and not assignee:
+        raise HTTPException(
+            status_code=400,
+            detail="Creating in todo requires an assignee",
+        )
+
+    trigger_agent: Optional[str] = None
     async with _txn():
         issues = _read_all()
         issue = {
@@ -210,7 +249,7 @@ async def create_issue(body: IssueCreate) -> Dict[str, Any]:
             "title": body.title.strip() or "Untitled",
             "description": body.description,
             "status": status,
-            "assignee": body.assignee,
+            "assignee": assignee,
             "result": "",
             "log": [],
             "created_at": _now(),
@@ -218,6 +257,21 @@ async def create_issue(body: IssueCreate) -> Dict[str, Any]:
         }
         issues.append(issue)
         _write_all(issues)
+
+        if (
+            status == "todo"
+            and assignee
+            and not _agent_has_running(assignee, issues)
+        ):
+            trigger_agent = assignee
+
+    if trigger_agent:
+        _LAST_CTX.setdefault(trigger_agent, ctx)
+        asyncio.get_event_loop().call_soon(
+            lambda aid=trigger_agent: asyncio.ensure_future(
+                _try_dispatch_next(aid),
+            ),
+        )
     return issue
 
 
@@ -225,8 +279,17 @@ async def create_issue(body: IssueCreate) -> Dict[str, Any]:
 async def patch_issue(
     issue_id: str,
     body: IssuePatch,
+    ctx=Depends(get_ctx),
 ) -> Dict[str, Any]:
-    """Update an issue's title/description/status/assignee."""
+    """Update an issue's title/description/status/assignee.
+
+    Rules enforced:
+    - Moving to ``todo`` requires a non-empty assignee.
+    - Setting an assignee on a ``backlog`` issue auto-promotes
+      it to ``todo``; if that agent is idle the issue is
+      auto-dispatched to ``in_progress``.
+    """
+    trigger_agent: Optional[str] = None
     async with _txn():
         issues = _read_all()
         issue = _find(issues, issue_id)
@@ -239,17 +302,65 @@ async def patch_issue(
             issue["title"] = body.title
         if body.description is not None:
             issue["description"] = body.description
+
+        # Apply assignee first so the status check below sees it.
+        old_assignee = issue.get("assignee") or ""
+        if body.assignee is not None:
+            issue["assignee"] = body.assignee
+
+        new_assignee = issue.get("assignee") or ""
+
         if body.status is not None:
             if body.status not in VALID_STATUS:
                 raise HTTPException(
                     status_code=400,
                     detail="Invalid status",
                 )
+            if body.status == "todo" and not new_assignee:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Moving to todo requires an assignee",
+                )
             issue["status"] = body.status
-        if body.assignee is not None:
-            issue["assignee"] = body.assignee
+            if body.status == "backlog":
+                issue["result"] = ""
+                _LIVE_TRACE.pop(issue_id, None)
+
+        # Auto-promote: assigning an agent to a backlog issue
+        # moves it to todo automatically.
+        if (
+            not old_assignee
+            and new_assignee
+            and issue.get("status") == "backlog"
+        ):
+            issue["status"] = "todo"
+            issue.setdefault("log", []).append(
+                {
+                    "ts": _now(),
+                    "event": "auto_promoted_to_todo",
+                },
+            )
+
+        # If the issue just became todo with an assignee and
+        # that agent is idle, schedule auto-dispatch after the
+        # txn releases the lock.
+        if (
+            issue.get("status") == "todo"
+            and new_assignee
+            and not _agent_has_running(new_assignee, issues)
+        ):
+            trigger_agent = new_assignee
+
         issue["updated_at"] = _now()
         _write_all(issues)
+
+    if trigger_agent:
+        _LAST_CTX.setdefault(trigger_agent, ctx)
+        asyncio.get_event_loop().call_soon(
+            lambda aid=trigger_agent: asyncio.ensure_future(
+                _try_dispatch_next(aid),
+            ),
+        )
     return issue
 
 
@@ -265,45 +376,150 @@ async def delete_issue(issue_id: str) -> Dict[str, Any]:
     return {"ok": True}
 
 
-async def _execute_run(ctx: Any, issue_id: str, prompt: str) -> None:
+async def _execute_run(
+    ctx: Any,
+    issue_id: str,
+    prompt: str,
+    assignee: str = "",
+) -> None:
     """Background worker: run the agent and persist the outcome.
 
-    Detached from the HTTP request so ``/stop`` can cancel it. On
-    ``CancelledError`` (user pressed stop) the status/log is handled by
-    the stop handler, so we re-raise without writing a result.
+    Detached from the HTTP request so ``/stop`` can cancel it.
+    On ``CancelledError`` (user pressed stop) the status/log is
+    handled by the stop handler, so we re-raise without writing
+    a result.
+
+    After completion (success or failure), auto-dispatches the
+    next queued issue for the same *assignee* via
+    ``_try_dispatch_next``.
     """
+    # Shallow-copy ctx so we don't mutate the cached _LAST_CTX
+    # instance, and set agent_id to the assignee so the correct
+    # tool execution policy (approval_level) is applied.
+    if assignee:
+        ctx = dataclasses.replace(ctx, agent_id=assignee)
+
     result_text = ""
+    last_ev: Any = None
     error = ""
-    ch = _CHANNELS.get(issue_id)
+    _LIVE_TRACE[issue_id] = []
+    trace = _LIVE_TRACE[issue_id]
+    _seen_tool_ids: set = set()
+
+    def _ch() -> Any:
+        return _CHANNELS.get(issue_id)
+
     try:
-        # Stream the agent output so the UI can render it in realtime: push
-        # each text delta over the SSE channel while accumulating the full
-        # reply (ChatReply handles both delta and final-response chunks).
         chunks: List[Any] = []
-        async for ev in ctx.chat_stream(prompt):
-            chunks.append(ev)
+        logger.info(
+            "[kanban] _execute_run started for %s (agent=%s)",
+            issue_id, assignee,
+        )
+        async for ev in ctx.chat_stream(
+            prompt,
+            session_id=issue_id,
+        ):
+            logger.debug(
+                "[kanban] ev type=%s delta=%s",
+                getattr(ev, "type", "?"),
+                getattr(ev, "delta", "?"),
+            )
+            # 1) Text delta (stream only, not stored in trace)
             if getattr(ev, "delta", False):
                 delta = getattr(ev, "text", None)
-                if delta and ch is not None:
-                    await ch.send_event({"type": "delta", "text": str(delta)})
+                if delta:
+                    ch = _ch()
+                    if ch is not None:
+                        await ch.send_event(
+                            {"type": "delta", "text": str(delta)},
+                        )
+                continue
+            chunks.append(ev)
+            # 2) Tool call / output (Message with type
+            #    plugin_call / plugin_call_output / function_call
+            #    / function_call_output).
+            raw_type = getattr(ev, "type", None)
+            if hasattr(raw_type, "value"):
+                raw_type = raw_type.value
+            msg_type = str(raw_type) if raw_type else ""
+            if not any(
+                k in msg_type
+                for k in (
+                    "plugin_call",
+                    "function_call",
+                    "mcp_tool",
+                )
+            ):
+                continue
+            action = (
+                "output" if "output" in msg_type else "call"
+            )
+            # Dedup: only record once per message id + action.
+            ev_id = getattr(ev, "id", None) or ""
+            dedup_key = f"{ev_id}:{action}"
+            if dedup_key in _seen_tool_ids:
+                continue
+            _seen_tool_ids.add(dedup_key)
+            # Extract tool name from content[0].data.name
+            name = ""
+            content = getattr(ev, "content", None)
+            if isinstance(content, list):
+                for blk in content:
+                    data = getattr(blk, "data", None)
+                    if data is None:
+                        continue
+                    if isinstance(data, dict):
+                        name = data.get("name", "")
+                    else:
+                        name = getattr(data, "name", "") or ""
+                    if name:
+                        break
+            if not name:
+                name = getattr(ev, "name", "") or ""
+            if name:
+                trace.append(
+                    {"t": "tool", "a": action, "n": name},
+                )
+                ch = _ch()
+                if ch is not None:
+                    await ch.send_event(
+                        {
+                            "type": "tool",
+                            "action": action,
+                            "name": name,
+                        },
+                    )
         result_text = ChatReply(chunks).text
+        logger.info(
+            "[kanban] stream done for %s: %d chunks, "
+            "%d trace entries, result=%d chars",
+            issue_id, len(chunks), len(trace),
+            len(result_text),
+        )
     except asyncio.CancelledError:  # pylint: disable=try-except-raise
         raise
     except Exception as e:  # noqa: BLE001
+        logger.exception("[kanban] _execute_run error for %s", issue_id)
         error = str(e)
 
     async with _txn():
         issues = _read_all()
         issue = _find(issues, issue_id)
         if issue is None:
+            ch = _ch()
             if ch is not None:
                 ch.close()
             return
+        _LIVE_TRACE.pop(issue_id, None)
         if error:
             issue["status"] = "todo"
             issue["result"] = f"执行失败: {error}"
             issue.setdefault("log", []).append(
-                {"ts": _now(), "event": "run_failed", "error": error},
+                {
+                    "ts": _now(),
+                    "event": "run_failed",
+                    "error": error,
+                },
             )
         else:
             issue["status"] = "review"
@@ -314,34 +530,164 @@ async def _execute_run(ctx: Any, issue_id: str, prompt: str) -> None:
         issue["updated_at"] = _now()
         _write_all(issues)
 
-    # Signal the realtime stream that the run finished, then close it.
+    ch = _ch()
     if ch is not None:
         if error:
-            await ch.send_event({"type": "error", "message": error})
+            await ch.send_event(
+                {"type": "error", "message": error},
+            )
         else:
-            await ch.send_event({"type": "done", "text": result_text or ""})
+            await ch.send_event(
+                {"type": "done", "text": result_text or ""},
+            )
         ch.close()
+
+    # Auto-dispatch the next queued issue for this agent.
+    if assignee:
+        await _try_dispatch_next(assignee)
+
+
+def _launch_run(
+    ctx: Any,
+    issue_id: str,
+    prompt: str,
+    assignee: str,
+) -> "asyncio.Task":
+    """Create SSE channel + background task for a single run."""
+    old_ch = _CHANNELS.pop(issue_id, None)
+    if old_ch is not None:
+        old_ch.close()
+    _CHANNELS[issue_id] = SSEChannel()
+
+    old = _RUNNING.pop(issue_id, None)
+    if old is not None and not old.done():
+        old.cancel()
+
+    task = asyncio.create_task(
+        _execute_run(ctx, issue_id, prompt, assignee),
+    )
+    _RUNNING[issue_id] = task
+
+    def _cleanup(
+        t: "asyncio.Task",
+        _id: str = issue_id,
+    ) -> None:
+        if _RUNNING.get(_id) is t:
+            _RUNNING.pop(_id, None)
+
+    task.add_done_callback(_cleanup)
+    return task
+
+
+# Stored reference to ctx from the most recent run so that
+# _try_dispatch_next can create a fresh run without an HTTP
+# request.  Safe because PawAppContext is lightweight and
+# the workspace registry it holds is a long-lived singleton.
+_LAST_CTX: Dict[str, Any] = {}
+
+
+async def _try_dispatch_next(
+    agent_id: str,
+    exclude_id: str = "",
+) -> None:
+    """Pick the oldest todo issue for *agent_id* and run it.
+
+    Called after a run finishes or is stopped.  Does nothing if
+    the agent already has an in_progress task or no todo issues.
+    *exclude_id* skips a just-stopped issue so it is not
+    immediately re-dispatched.
+    """
+    ctx = _LAST_CTX.get(agent_id)
+    if ctx is None:
+        logger.debug(
+            "No cached ctx for agent %s; skip auto-dispatch",
+            agent_id,
+        )
+        return
+
+    async with _txn():
+        issues = _read_all()
+        if _agent_has_running(agent_id, issues):
+            return
+        candidate = None
+        for iss in issues:
+            if (
+                iss.get("assignee") == agent_id
+                and iss.get("status") == "todo"
+                and iss.get("id") != exclude_id
+            ):
+                candidate = iss
+                break
+        if candidate is None:
+            return
+        candidate["status"] = "in_progress"
+        candidate["result"] = ""
+        candidate["updated_at"] = _now()
+        candidate.setdefault("log", []).append(
+            {
+                "ts": _now(),
+                "event": "auto_dispatched",
+                "agent": agent_id,
+            },
+        )
+        _write_all(issues)
+        iid = candidate["id"]
+        title = candidate["title"]
+        desc = candidate.get("description") or "(无描述)"
+
+    prompt = (
+        "你被指派处理以下看板任务(Issue):\n"
+        f"标题: {title}\n"
+        f"描述: {desc}\n\n"
+        "请完成该任务，并用简洁的中文汇报你的处理结果。"
+    )
+    logger.info("Auto-dispatching issue %s to agent %s", iid, agent_id)
+    _launch_run(ctx, iid, prompt, agent_id)
 
 
 @router.post("/issues/{issue_id:path}/run")
-async def run_issue(issue_id: str, ctx=Depends(get_ctx)) -> Dict[str, Any]:
-    """Dispatch the issue to its assigned agent via ctx.chat (non-blocking).
+async def run_issue(
+    issue_id: str,
+    ctx=Depends(get_ctx),
+) -> Dict[str, Any]:
+    """Dispatch the issue to its assigned agent (non-blocking).
 
-    The agent runs in a background task (tracked in ``_RUNNING``) so the
-    request returns immediately with ``in_progress``; pollers see the
-    running state and a ``/stop`` call can cancel the task.
+    If the agent is busy, the issue is queued as ``todo`` and will
+    be auto-dispatched when the agent becomes idle.
     """
     async with _txn():
         issues = _read_all()
         issue = _find(issues, issue_id)
         if issue is None:
-            raise HTTPException(status_code=404, detail="Issue not found")
+            raise HTTPException(
+                status_code=404,
+                detail="Issue not found",
+            )
         assignee = issue.get("assignee") or ctx.agent_id or "default"
-        # Mark in-progress first so pollers see the running state.
+
+        if _agent_has_running(assignee, issues):
+            issue["status"] = "todo"
+            issue["updated_at"] = _now()
+            issue.setdefault("log", []).append(
+                {
+                    "ts": _now(),
+                    "event": "queued",
+                    "agent": assignee,
+                },
+            )
+            _write_all(issues)
+            _LAST_CTX.setdefault(assignee, ctx)
+            return issue
+
         issue["status"] = "in_progress"
+        issue["result"] = ""
         issue["updated_at"] = _now()
         issue.setdefault("log", []).append(
-            {"ts": _now(), "event": "run_started", "agent": assignee},
+            {
+                "ts": _now(),
+                "event": "run_started",
+                "agent": assignee,
+            },
         )
         _write_all(issues)
         title = issue["title"]
@@ -354,26 +700,8 @@ async def run_issue(issue_id: str, ctx=Depends(get_ctx)) -> Dict[str, Any]:
         "请完成该任务，并用简洁的中文汇报你的处理结果。"
     )
 
-    # Fresh realtime channel for this run (replaces any stale one). Created
-    # before the task starts so early deltas are buffered until the UI
-    # connects.
-    old_ch = _CHANNELS.pop(issue_id, None)
-    if old_ch is not None:
-        old_ch.close()
-    _CHANNELS[issue_id] = SSEChannel()
-
-    # Cancel any stale task for the same issue, then launch a fresh one.
-    old = _RUNNING.pop(issue_id, None)
-    if old is not None and not old.done():
-        old.cancel()
-    task = asyncio.create_task(_execute_run(ctx, issue_id, prompt))
-    _RUNNING[issue_id] = task
-
-    def _cleanup(t: "asyncio.Task", _id: str = issue_id) -> None:
-        if _RUNNING.get(_id) is t:
-            _RUNNING.pop(_id, None)
-
-    task.add_done_callback(_cleanup)
+    _LAST_CTX[assignee] = ctx
+    _launch_run(ctx, issue_id, prompt, assignee)
     return issue
 
 
@@ -384,6 +712,24 @@ async def stream_issue(issue_id: str) -> StreamingResponse:
     The channel is created by ``run_issue`` before the background task starts,
     so deltas emitted before the browser connects are buffered and replayed.
     """
+    # Replay in-memory trace so late-joining clients see history.
+    replay: List[Dict[str, Any]] = []
+    live = _LIVE_TRACE.get(issue_id)
+    if live:
+        for entry in list(live):
+            if entry.get("t") == "d":
+                replay.append(
+                    {"type": "delta", "text": entry.get("v", "")},
+                )
+            elif entry.get("t") == "tool":
+                replay.append(
+                    {
+                        "type": "tool",
+                        "action": entry.get("a", "call"),
+                        "name": entry.get("n", ""),
+                    },
+                )
+
     ch = _CHANNELS.get(issue_id)
     if ch is None:
         ch = SSEChannel()
@@ -391,6 +737,11 @@ async def stream_issue(issue_id: str) -> StreamingResponse:
 
     async def _gen():
         try:
+            for evt in replay:
+                yield (
+                    f"data: {json.dumps(evt, ensure_ascii=False)}"
+                    "\n\n"
+                )
             async for chunk in ch:
                 yield chunk
         finally:
@@ -413,6 +764,7 @@ async def stop_issue(issue_id: str) -> Dict[str, Any]:
     ch = _CHANNELS.pop(issue_id, None)
     if ch is not None:
         ch.close()
+    agent_id: Optional[str] = None
     async with _txn():
         issues = _read_all()
         issue = _find(issues, issue_id)
@@ -422,13 +774,155 @@ async def stop_issue(issue_id: str) -> Dict[str, Any]:
                 detail="Issue not found",
             )
         if issue.get("status") == "in_progress":
-            issue["status"] = "todo"
+            issue["status"] = "backlog"
+            issue["result"] = ""
             issue["updated_at"] = _now()
             issue.setdefault("log", []).append(
                 {"ts": _now(), "event": "run_stopped"},
             )
             _write_all(issues)
+            _LIVE_TRACE.pop(issue_id, None)
+            agent_id = issue.get("assignee")
+
+    if agent_id:
+        await _try_dispatch_next(agent_id)
     return issue
+
+
+@router.get("/approvals")
+async def list_kanban_approvals() -> Dict[str, Any]:
+    """Return pending approvals for all in_progress kanban issues.
+
+    Queries the global ApprovalService for approvals whose
+    ``session_id`` matches ``pawapp:agent-kanban:<issue_id>``.
+    """
+    try:
+        from qwenpaw.app.approvals import get_approval_service
+        from qwenpaw.app.approvals.display import (
+            approval_display_fields,
+        )
+    except ImportError:
+        return {"approvals": {}}
+
+    svc = get_approval_service()
+    issues = await asyncio.to_thread(_read_all)
+    running_ids = {
+        iss["id"] for iss in issues if iss.get("status") == "in_progress"
+    }
+    if not running_ids:
+        return {"approvals": {}}
+
+    # pylint: disable=protected-access
+    result: Dict[str, List[Dict[str, Any]]] = {}
+    async with svc._lock:
+        for p in svc._pending.values():
+            if p.status != "pending":
+                continue
+            sid = p.session_id or ""
+            for iid in running_ids:
+                if sid == iid or sid.endswith(f":{iid}"):
+                    result.setdefault(iid, []).append(
+                        {
+                            "request_id": p.request_id,
+                            "session_id": p.session_id,
+                            "root_session_id": (p.root_session_id),
+                            "tool_name": p.tool_name,
+                            "agent_id": p.agent_id,
+                            "severity": p.severity,
+                            **approval_display_fields(p),
+                            "created_at": p.created_at,
+                        },
+                    )
+    return {"approvals": result}
+
+
+@router.post("/approvals/{request_id}/approve")
+async def approve_kanban(request_id: str) -> Dict[str, Any]:
+    """Approve a pending tool execution from the kanban UI.
+
+    Looks up the pending approval by *request_id* and resolves
+    it using its own ``root_session_id``, so the frontend does
+    not need to know the session topology.
+    """
+    try:
+        from qwenpaw.app.approvals import get_approval_service
+        from qwenpaw.security.tool_guard.approval import (
+            ApprovalDecision,
+        )
+    except ImportError:
+        raise HTTPException(
+            status_code=501,
+            detail="Approval service unavailable",
+        )
+
+    svc = get_approval_service()
+    pending = await svc.get_request(request_id)
+    if pending is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Approval request not found",
+        )
+    await svc.resolve_request(
+        request_id,
+        ApprovalDecision.APPROVED,
+    )
+    return {"ok": True, "tool_name": pending.tool_name}
+
+
+@router.post("/approvals/{request_id}/deny")
+async def deny_kanban(request_id: str) -> Dict[str, Any]:
+    """Deny a pending tool execution from the kanban UI."""
+    try:
+        from qwenpaw.app.approvals import get_approval_service
+        from qwenpaw.security.tool_guard.approval import (
+            ApprovalDecision,
+        )
+    except ImportError:
+        raise HTTPException(
+            status_code=501,
+            detail="Approval service unavailable",
+        )
+
+    svc = get_approval_service()
+    pending = await svc.get_request(request_id)
+    if pending is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Approval request not found",
+        )
+    await svc.resolve_request(
+        request_id,
+        ApprovalDecision.DENIED,
+    )
+    return {"ok": True, "tool_name": pending.tool_name}
+
+
+@router.get("/queue/{agent_id:path}")
+async def get_agent_queue(agent_id: str) -> Dict[str, Any]:
+    """Return the todo queue and running status for *agent_id*."""
+    issues = await asyncio.to_thread(_read_all)
+    running = None
+    queue: List[Dict[str, Any]] = []
+    for iss in issues:
+        if iss.get("assignee") != agent_id:
+            continue
+        if iss.get("status") == "in_progress":
+            running = {
+                "id": iss["id"],
+                "title": iss.get("title", ""),
+            }
+        elif iss.get("status") == "todo":
+            queue.append(
+                {
+                    "id": iss["id"],
+                    "title": iss.get("title", ""),
+                },
+            )
+    return {
+        "agent_id": agent_id,
+        "running": running,
+        "queue": queue,
+    }
 
 
 # ── PawApp definition + agent-facing tools ───────────────────────────

@@ -43,7 +43,7 @@
 
   var COLUMNS = [
     { key: "backlog", label: "待规划", dot: "#9ca3af", tint: "rgba(148,163,184,0.20)" },
-    { key: "todo", label: "待办", dot: "#94a3b8", tint: "rgba(148,163,184,0.12)" },
+    { key: "todo", label: "等待调度", dot: "#94a3b8", tint: "rgba(148,163,184,0.12)" },
     { key: "in_progress", label: "进行中", dot: "#f59e0b", tint: "rgba(245,158,11,0.18)" },
     { key: "review", label: "审核中", dot: "#22c55e", tint: "rgba(34,197,94,0.16)" },
     { key: "done", label: "已完成", dot: "#3b82f6", tint: "rgba(59,130,246,0.16)" },
@@ -107,6 +107,15 @@
     listAgents: function () {
       return apiFetch("/agents");
     },
+    listApprovals: function () {
+      return apiFetch("/agent-kanban/approvals");
+    },
+    approveRequest: function (requestId) {
+      return apiFetch("/agent-kanban/approvals/" + requestId + "/approve", { method: "POST" });
+    },
+    denyRequest: function (requestId) {
+      return apiFetch("/agent-kanban/approvals/" + requestId + "/deny", { method: "POST" });
+    },
   };
 
   function relTime(ts) {
@@ -131,6 +140,8 @@
     var issue = props.issue;
     var agents = props.agents;
     var running = issue.status === "in_progress";
+    var pendingApprovals = props.pendingApprovals || [];
+    var waitingApproval = running && pendingApprovals.length > 0;
     var expandState = React.useState(false);
     var expanded = expandState[0];
     var setExpanded = expandState[1];
@@ -138,8 +149,9 @@
     // Live streamed text (agent output) while the issue is running.
     var liveText = props.streamText;
     var hasLive = running && typeof liveText === "string" && liveText.length > 0;
+
     var displayResult = hasLive ? liveText : issue.result;
-    var showBody = hasLive || expanded;
+    var showBody = expanded;
 
     var agentOptions = [{ label: "未指派", value: "" }].concat(
       agents.map(function (a) {
@@ -149,6 +161,7 @@
     var assignedName = agentName(agents, issue.assignee);
     var reviewing = issue.status === "review";
     var done = issue.status === "done";
+    var queued = issue.status === "todo";
     // Agent can only be (re)assigned while the issue is still 待办/待规划.
     var canAssign = issue.status === "todo" || issue.status === "backlog";
     var lockAssignee = !canAssign;
@@ -202,9 +215,13 @@
           }),
           "PAW-" + issue.id,
         ),
-        running
-          ? h("span", { style: { fontSize: 12, color: "#d97706" } }, "运行中…")
-          : null,
+        waitingApproval
+          ? h("span", { style: { fontSize: 12, color: "#dc2626", fontWeight: 600 } }, "等待授权")
+          : running
+            ? h("span", { style: { fontSize: 12, color: "#d97706" } }, "运行中…")
+            : props.queuePosition
+              ? h("span", { style: { fontSize: 12, color: "#6366f1" } }, "排队中 #" + props.queuePosition)
+              : null,
       ),
       // Title + description
       h(
@@ -304,7 +321,7 @@
         ),
       ),
       // Result (agent output) — live stream while running, else persisted.
-      displayResult
+      (displayResult || running)
         ? h(
             "div",
             { style: { marginTop: 6 } },
@@ -318,12 +335,17 @@
               },
               showBody
                 ? (hasLive ? "▾ 实时结果" : "▾ 隐藏结果")
-                : "▸ 查看 agent 结果",
+                : (running ? "▸ 查看实时结果" : "▸ 查看 agent 结果"),
             ),
             showBody
               ? h(
                   "div",
                   {
+                    ref: function (el) {
+                      if (el && hasLive) {
+                        el.scrollTop = el.scrollHeight;
+                      }
+                    },
                     style: {
                       whiteSpace: "pre-wrap",
                       fontSize: 12,
@@ -333,9 +355,11 @@
                       borderRadius: 6,
                       padding: 8,
                       marginTop: 4,
+                      maxHeight: 200,
+                      overflowY: "auto",
                     },
                   },
-                  displayResult,
+                  displayResult || (running ? "等待 agent 输出..." : ""),
                   hasLive
                     ? h(
                         "span",
@@ -348,6 +372,68 @@
                     : null,
                 )
               : null,
+          )
+        : null,
+      // Approval panel
+      waitingApproval
+        ? h(
+            "div",
+            {
+              style: {
+                marginTop: 8,
+                padding: "8px 10px",
+                background: "#fef2f2",
+                border: "1px solid #fecaca",
+                borderRadius: 8,
+              },
+            },
+            pendingApprovals.map(function (ap) {
+              return h(
+                "div",
+                {
+                  key: ap.request_id,
+                  style: {
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
+                    marginBottom: pendingApprovals.length > 1 ? 6 : 0,
+                  },
+                },
+                h(
+                  "div",
+                  { style: { fontSize: 12, color: "#991b1b", flex: 1, minWidth: 0 } },
+                  h("div", { style: { fontWeight: 600 } }, "工具需要授权"),
+                  h("div", { style: { color: "#b91c1c", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ap.display_name || ap.tool_name),
+                ),
+                h(
+                  "div",
+                  { style: { display: "flex", gap: 4, flexShrink: 0 } },
+                  h(
+                    Button,
+                    {
+                      size: "small",
+                      type: "primary",
+                      onClick: function () {
+                        props.onApprove(ap.request_id);
+                      },
+                    },
+                    "批准",
+                  ),
+                  h(
+                    Button,
+                    {
+                      size: "small",
+                      danger: true,
+                      onClick: function () {
+                        props.onDeny(ap.request_id);
+                      },
+                    },
+                    "拒绝",
+                  ),
+                ),
+              );
+            }),
           )
         : null,
       // Actions
@@ -363,19 +449,76 @@
             borderTop: "1px solid #f1f5f9",
           },
         },
-        h(
-          Button,
-          {
-            size: "small",
-            type: "primary",
-            loading: running,
-            disabled: running || done,
-            onClick: function () {
-              props.onRun(issue);
-            },
-          },
-          running ? "运行中" : reviewing ? "重新运行" : "运行",
-        ),
+        done
+          ? h(
+              Button,
+              {
+                size: "small",
+                onClick: function () {
+                  props.onMove(issue, "backlog");
+                },
+              },
+              "重新打开",
+            )
+          : queued
+            ? h(
+                Button,
+                {
+                  size: "small",
+                  danger: true,
+                  onClick: function () {
+                    props.onMove(issue, "backlog");
+                  },
+                },
+                "取消调度",
+              )
+            : running
+              ? h(
+                  Button,
+                  {
+                    size: "small",
+                    type: "primary",
+                    loading: true,
+                    disabled: true,
+                  },
+                  "运行中",
+                )
+              : reviewing
+                ? h(React.Fragment, null,
+                    h(
+                      Button,
+                      {
+                        size: "small",
+                        onClick: function () {
+                          props.onRun(issue);
+                        },
+                      },
+                      "重新运行",
+                    ),
+                    h(
+                      Button,
+                      {
+                        size: "small",
+                        type: "primary",
+                        onClick: function () {
+                          props.onMove(issue, "done");
+                        },
+                      },
+                      "标记完成",
+                    ),
+                  )
+                : h(
+                    Button,
+                    {
+                      size: "small",
+                      type: "primary",
+                      disabled: !issue.assignee,
+                      onClick: function () {
+                        props.onRun(issue);
+                      },
+                    },
+                    props.agentBusy ? "调度" : "运行",
+                  ),
         running
           ? h(
               Button,
@@ -441,7 +584,8 @@
   }
 
   var AGENT_BUCKETS = [
-    { key: "todo", label: "待办", statuses: ["backlog", "todo"], dot: "#94a3b8" },
+    { key: "backlog", label: "待规划", statuses: ["backlog"], dot: "#9ca3af" },
+    { key: "todo", label: "等待调度", statuses: ["todo"], dot: "#94a3b8", showQueue: true },
     { key: "running", label: "运行中", statuses: ["in_progress"], dot: "#f59e0b" },
     { key: "review", label: "审核中", statuses: ["review"], dot: "#22c55e" },
     { key: "done", label: "完成", statuses: ["done"], dot: "#3b82f6" },
@@ -511,6 +655,7 @@
         { style: { display: "flex", flexDirection: "column", gap: 8 } },
         AGENT_BUCKETS.map(function (b) {
           var list = items.filter(function (i) { return b.statuses.indexOf(i.status) >= 0; });
+          var hasBusy = busy;
           return h(
             "div",
             { key: b.key, style: { background: "#f8fafc", border: "1px solid #eef2f7", borderRadius: 10, padding: "8px 10px" } },
@@ -525,14 +670,15 @@
               ? h(
                   "div",
                   { style: { display: "flex", flexDirection: "column", gap: 4 } },
-                  list.slice(0, 5).map(function (it) {
+                  list.slice(0, 5).map(function (it, idx) {
+                    var queueLabel = (b.showQueue && hasBusy) ? "#" + (idx + 1) + " " : "";
                     return h(
                       "div",
                       { key: it.id, style: { fontSize: 12, color: C.sub, display: "flex", alignItems: "center", gap: 6, minWidth: 0 } },
                       it.status === "in_progress"
                         ? h("span", { className: "ak-spin", style: { width: 9, height: 9, borderRadius: "50%", border: "2px solid #f59e0b", borderTopColor: "transparent", display: "inline-block", flexShrink: 0 } })
                         : h("span", { style: { width: 5, height: 5, borderRadius: "50%", background: b.dot, display: "inline-block", flexShrink: 0 } }),
-                      h("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, it.title),
+                      h("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, queueLabel + it.title),
                     );
                   }),
                   list.length > 5
@@ -640,17 +786,40 @@
     var setStreams = streamState[1];
     var esRef = React.useRef({});
 
+    // Pending approvals per issue: { issueId: [approval, ...] }
+    var approvalsState = React.useState({});
+    var approvals = approvalsState[0];
+    var setApprovals = approvalsState[1];
+
     function load() {
       api
         .listIssues()
         .then(function (data) {
-          setIssues((data && data.issues) || []);
+          var list = (data && data.issues) || [];
+          setIssues(list);
+          // Auto-subscribe to SSE for running issues that we
+          // are not yet streaming (e.g. after page refresh).
+          list.forEach(function (iss) {
+            if (iss.status === "in_progress" && !esRef.current[iss.id]) {
+              subscribeStream(iss.id);
+            }
+          });
+        })
+        .catch(function () {});
+    }
+
+    function loadApprovals() {
+      api
+        .listApprovals()
+        .then(function (data) {
+          setApprovals((data && data.approvals) || {});
         })
         .catch(function () {});
     }
 
     React.useEffect(function () {
       load();
+      loadApprovals();
       api
         .listAgents()
         .then(function (data) {
@@ -658,8 +827,10 @@
         })
         .catch(function () {});
       var timer = setInterval(load, 4000);
+      var approvalTimer = setInterval(loadApprovals, 3000);
       return function () {
         clearInterval(timer);
+        clearInterval(approvalTimer);
         Object.keys(esRef.current).forEach(function (k) {
           try { esRef.current[k].close(); } catch (e) {}
         });
@@ -668,6 +839,13 @@
     }, []);
 
     function moveIssue(id, status) {
+      if (status === "todo") {
+        var target = issues.find(function (i) { return i.id === id; });
+        if (target && !target.assignee) {
+          if (message) message.warning("请先为该 issue 指派一个 agent 才能移入待办");
+          return;
+        }
+      }
       setIssues(function (prev) {
         return prev.map(function (i) {
           return i.id === id ? Object.assign({}, i, { status: status }) : i;
@@ -677,12 +855,28 @@
     }
 
     function onAssign(issue, assignee) {
+      var patch = { assignee: assignee };
+      // Backend auto-promotes backlog->todo when assignee is set,
+      // but we optimistically update the UI as well.
+      var optimisticStatus = issue.status;
+      if (issue.status === "backlog" && assignee) {
+        optimisticStatus = "todo";
+      }
       setIssues(function (prev) {
         return prev.map(function (i) {
-          return i.id === issue.id ? Object.assign({}, i, { assignee: assignee }) : i;
+          return i.id === issue.id
+            ? Object.assign({}, i, { assignee: assignee, status: optimisticStatus })
+            : i;
         });
       });
-      api.patchIssue(issue.id, { assignee: assignee }).then(load).catch(load);
+      api.patchIssue(issue.id, patch).then(function (updated) {
+        // If the backend auto-dispatched the issue, subscribe to
+        // the realtime stream so the UI shows live output.
+        if (updated && updated.status === "in_progress") {
+          subscribeStream(issue.id);
+        }
+        load();
+      }).catch(load);
     }
 
     function closeStream(id) {
@@ -721,6 +915,15 @@
               n[id] = (n[id] || "") + (msg.text || "");
               return n;
             });
+          } else if (msg.type === "tool") {
+            var label = msg.action === "output"
+              ? "\u2705 " + msg.name
+              : "\u26a1 " + msg.name + "...";
+            setStreams(function (prev) {
+              var n = Object.assign({}, prev);
+              n[id] = (n[id] || "") + "\n[" + label + "]\n";
+              return n;
+            });
           } else if (msg.type === "done" || msg.type === "error") {
             closeStream(id);
             load();
@@ -738,16 +941,19 @@
         if (message) message.warning("请先为该 issue 指派一个 agent");
         return;
       }
-      setIssues(function (prev) {
-        return prev.map(function (i) {
-          return i.id === issue.id ? Object.assign({}, i, { status: "in_progress" }) : i;
-        });
-      });
-      api
-        .runIssue(issue.id, issue.assignee)
-        .then(function () {
-          if (message) message.info("已开始运行");
-          subscribeStream(issue.id);
+      var url = host.getApiUrl("/agent-kanban/issues/" + issue.id + "/run");
+      var token = host.getApiToken ? host.getApiToken() : "";
+      var headers = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = "Bearer " + token;
+      fetch(url, { method: "POST", headers: headers })
+        .then(function (res) {
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          return res.json();
+        })
+        .then(function (data) {
+          if (data && data.status === "in_progress") {
+            subscribeStream(issue.id);
+          }
           load();
         })
         .catch(function (err) {
@@ -803,6 +1009,21 @@
     var working = issues.filter(function (i) {
       return i.status === "in_progress";
     }).length;
+
+    // Build queue positions: for each agent that has a running
+    // issue, number their todo issues sequentially.
+    var busyAgents = {};
+    issues.forEach(function (i) {
+      if (i.status === "in_progress" && i.assignee) busyAgents[i.assignee] = true;
+    });
+    var queuePos = {};
+    var agentCounter = {};
+    issues.forEach(function (i) {
+      if (i.status === "todo" && i.assignee && busyAgents[i.assignee]) {
+        agentCounter[i.assignee] = (agentCounter[i.assignee] || 0) + 1;
+        queuePos[i.id] = agentCounter[i.assignee];
+      }
+    });
 
     var agentOptions = [{ label: "未指派", value: "" }].concat(
       agents.map(function (a) {
@@ -940,7 +1161,7 @@
                 col.label,
                 h("span", { style: { color: C.muted, marginLeft: 4, fontWeight: 400 } }, colIssues.length),
               ),
-              col.key === "backlog" || col.key === "todo"
+              col.key === "backlog"
                 ? h(
                     Button,
                     {
@@ -972,10 +1193,30 @@
                       issue: issue,
                       agents: agents,
                       onAssign: onAssign,
+                      onMove: function (iss, st) { moveIssue(iss.id, st); },
                       onRun: onRun,
                       onStop: onStop,
                       onDelete: onDelete,
                       streamText: streams[issue.id],
+                      queuePosition: queuePos[issue.id] || 0,
+                      agentBusy: !!(issue.assignee && busyAgents[issue.assignee]),
+                      pendingApprovals: approvals[issue.id] || [],
+                      onApprove: function (reqId) {
+                        api.approveRequest(reqId).then(function () {
+                          if (message) message.success("已批准");
+                          loadApprovals();
+                        }).catch(function () {
+                          if (message) message.error("批准失败");
+                        });
+                      },
+                      onDeny: function (reqId) {
+                        api.denyRequest(reqId).then(function () {
+                          if (message) message.info("已拒绝");
+                          loadApprovals();
+                        }).catch(function () {
+                          if (message) message.error("拒绝失败");
+                        });
+                      },
                     });
                   }),
             ),
