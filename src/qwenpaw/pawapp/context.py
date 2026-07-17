@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=too-many-branches, too-many-nested-blocks
 """PawAppContext — The ``ctx`` object that PawApp developers interact with.
 
 Provides access to QwenPaw capabilities via thin delegation:

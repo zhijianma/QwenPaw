@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=too-many-branches,too-many-statements,too-many-nested-blocks
 """Agent Kanban — PawApp backend.
 
 A Kanban board where issues are created, assigned to agents, and
@@ -986,11 +987,11 @@ async def approve_kanban(request_id: str) -> Dict[str, Any]:
         from qwenpaw.security.tool_guard.approval import (
             ApprovalDecision,
         )
-    except ImportError:
+    except ImportError as exc:
         raise HTTPException(
             status_code=501,
             detail="Approval service unavailable",
-        )
+        ) from exc
 
     svc = get_approval_service()
     pending = await svc.get_request(request_id)
@@ -1014,11 +1015,11 @@ async def deny_kanban(request_id: str) -> Dict[str, Any]:
         from qwenpaw.security.tool_guard.approval import (
             ApprovalDecision,
         )
-    except ImportError:
+    except ImportError as exc:
         raise HTTPException(
             status_code=501,
             detail="Approval service unavailable",
-        )
+        ) from exc
 
     svc = get_approval_service()
     pending = await svc.get_request(request_id)
