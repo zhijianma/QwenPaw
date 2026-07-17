@@ -58,6 +58,7 @@ async def get_ctx(request: Request) -> PawAppContext:
     """FastAPI dependency that provides PawAppContext.
 
     Injects all available services from ``request.app.state``.
+    Extracts agent_id, channel, and user_id from request.
     """
     app_id = _extract_app_id_from_request(request)
 
@@ -70,12 +71,24 @@ async def get_ctx(request: Request) -> PawAppContext:
     # Get or create session for storage
     session = _get_session(request)
 
-    # Determine agent_id (from path, query param, or default)
+    # Extract request parameters (from query params, headers, or defaults)
     agent_id = request.query_params.get("agent_id", "default")
+    channel = (
+        request.query_params.get("channel")
+        or request.headers.get("X-Channel")
+        or "console"
+    )
+    user_id = (
+        request.query_params.get("user_id")
+        or request.headers.get("X-User-Id")
+        or "default"
+    )
 
     return PawAppContext(
         app_id=app_id,
         agent_id=agent_id,
+        channel=channel,
+        user_id=user_id,
         _workspace_registry=workspace_registry,
         _app_services=app_services,
         _plugin_registry=plugin_registry,

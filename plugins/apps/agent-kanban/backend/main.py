@@ -280,7 +280,7 @@ async def create_issue(
     async with _txn():
         issues = _read_all()
         issue = {
-            "id": uuid.uuid4().hex[:8],
+            "id": str(uuid.uuid4()),
             "title": body.title.strip() or "Untitled",
             "description": body.description,
             "status": status,
@@ -639,7 +639,12 @@ async def run_issue(
                 status_code=404,
                 detail="Issue not found",
             )
-        assignee = issue.get("assignee") or ctx.agent_id or "default"
+        assignee = issue.get("assignee")
+        if not assignee:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot run issue without assignee",
+            )
 
         if _agent_has_running(assignee, issues):
             issue["status"] = "todo"

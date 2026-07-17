@@ -214,6 +214,8 @@ class PawAppContext:
 
     app_id: str
     agent_id: str = "default"
+    channel: str = "console"  # Channel name (console, dingtalk, etc.)
+    user_id: str = "default"  # User identifier
 
     # Injected services (set by deps.py)
     _workspace_registry: Any = field(default=None, repr=False)
@@ -230,12 +232,19 @@ class PawAppContext:
         *,
         skill: Optional[str] = None,
         session_id: Optional[str] = None,
+        channel: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Any:
         """Send a message to the Agent and get a reply.
 
         Delegates to Workspace.stream_query().
-        ``session_id`` isolates the conversation; defaults to
-        ``pawapp:{app_id}`` when omitted.
+
+        Args:
+            message: User message text
+            skill: Optional skill to invoke
+            session_id: Session ID (defaults to ``pawapp:{app_id}``)
+            channel: Channel name (defaults to context's channel)
+            user_id: User ID (defaults to context's user_id)
         """
         workspace = await self._get_workspace()
         if workspace is None:
@@ -247,6 +256,8 @@ class PawAppContext:
             message,
             skill,
             session_id=session_id,
+            channel=channel or self.channel,
+            user_id=user_id or self.user_id,
         ):
             chunks.append(event)
 
@@ -258,11 +269,17 @@ class PawAppContext:
         *,
         skill: Optional[str] = None,
         session_id: Optional[str] = None,
+        channel: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> AsyncIterator[Any]:
         """Stream chat responses (async generator).
 
-        ``session_id`` isolates the conversation; defaults to
-        ``pawapp:{app_id}`` when omitted.
+        Args:
+            message: User message text
+            skill: Optional skill to invoke
+            session_id: Session ID (defaults to ``pawapp:{app_id}``)
+            channel: Channel name (defaults to context's channel)
+            user_id: User ID (defaults to context's user_id)
         """
         workspace = await self._get_workspace()
         if workspace is None:
@@ -275,6 +292,8 @@ class PawAppContext:
             message,
             skill,
             session_id=session_id,
+            channel=channel or self.channel,
+            user_id=user_id or self.user_id,
         ):
             yield event
 
@@ -305,8 +324,8 @@ class PawAppContext:
 
             state_dict = await session.get_session_state_dict(
                 session_id=sid,
-                user_id=self.agent_id or "default",
-                channel="console",
+                user_id=self.user_id,
+                channel=self.channel,
                 allow_not_exist=True,
             )
 
@@ -381,6 +400,8 @@ class PawAppContext:
         skill: Optional[str],
         *,
         session_id: Optional[str] = None,
+        channel: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> AsyncIterator[Any]:
         """Internal: delegate to workspace's stream_query.
 
@@ -403,7 +424,8 @@ class PawAppContext:
                     },
                 ],
                 session_id=sid,
-                user_id=self.agent_id or "default",
+                user_id=user_id or self.user_id,
+                channel=channel or self.channel,
                 agent_id=self.agent_id or "default",
             )
             async for event in workspace.stream_query(request):
