@@ -394,14 +394,50 @@ async def patch_issue(
 
 
 @router.delete("/issues/{issue_id:path}")
-async def delete_issue(issue_id: str) -> Dict[str, Any]:
-    """Remove an issue from the board."""
+async def delete_issue(
+    issue_id: str,
+    ctx=Depends(get_ctx),
+) -> Dict[str, Any]:
+    """Remove an issue from the board and its session data."""
+    issue = None
     async with _txn():
         issues = _read_all()
-        if _find(issues, issue_id) is None:
+        issue = _find(issues, issue_id)
+        if issue is None:
             raise HTTPException(status_code=404, detail="Issue not found")
         issues = [i for i in issues if i.get("id") != issue_id]
         _write_all(issues)
+
+    # Delete the session file for this issue
+    if issue and issue.get("assignee"):
+        try:
+            # Use the assignee's agent_id to find the correct workspace
+            from dataclasses import replace
+
+            agent_ctx = replace(ctx, agent_id=issue["assignee"])
+            # pylint: disable=protected-access
+            workspace = await agent_ctx._get_workspace()
+            if workspace and hasattr(workspace, "session"):
+                session_mgr = workspace.session
+                # pylint: disable=protected-access
+                session_path = session_mgr._get_save_path(
+                    session_id=issue_id,
+                    user_id=agent_ctx.user_id,
+                    channel=agent_ctx.channel,
+                )
+                if os.path.exists(session_path):
+                    os.remove(session_path)
+                    logger.info(
+                        "[kanban] Deleted session file for issue %s",
+                        issue_id,
+                    )
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "[kanban] Failed to delete session for issue %s",
+                issue_id,
+                exc_info=True,
+            )
+
     return {"ok": True}
 
 
@@ -441,6 +477,12 @@ async def _execute_run(
             issue_id,
             assignee,
         )
+        # Clear session to avoid context pollution across runs
+        async for ev in ctx.chat_stream(
+            "/clear",
+            session_id=issue_id,
+        ):
+            pass  # Consume clear events
         async for ev in ctx.chat_stream(
             prompt,
             session_id=issue_id,
@@ -686,58 +728,44 @@ async def stream_issue(issue_id: str) -> StreamingResponse:
 
     if live:
         for ev_dict in list(live):
-            ev_type = ev_dict.get("type", "")
-            if isinstance(ev_type, dict):
-                ev_type = ev_type.get("value", "")
-            ev_type = str(ev_type)
+            # Only process completed message-level events
+            if ev_dict.get("object") != "message":
+                continue
+            if ev_dict.get("status") != "completed":
+                continue
 
-            # Tool call start
-            if any(
-                k in ev_type
-                for k in ("plugin_call", "function_call", "mcp_tool_call")
-            ):
-                if "_output" not in ev_type:
-                    name = ""
-                    content = ev_dict.get("content", [])
-                    if isinstance(content, list) and content:
-                        data = (
-                            content[0].get("data", {})
-                            if isinstance(content[0], dict)
-                            else {}
-                        )
-                        name = (
-                            data.get("name", "")
-                            if isinstance(
-                                data,
-                                dict,
+            msg_type = ev_dict.get("type", "")
+            content = ev_dict.get("content", [])
+
+            # Reasoning or regular message - extract text
+            if msg_type in ("reasoning", "message"):
+                for blk in content:
+                    if isinstance(blk, dict) and blk.get("type") == "text":
+                        text = blk.get("text", "")
+                        if text:
+                            replay.append({"type": "message", "text": text})
+
+            # Tool call - extract name
+            elif msg_type == "plugin_call":
+                if content and isinstance(content[0], dict):
+                    data = content[0].get("data", {})
+                    if isinstance(data, dict):
+                        name = data.get("name", "")
+                        if name and name != "assistant":
+                            replay.append(
+                                {"type": "tool_start", "name": name},
                             )
-                            else ""
-                        )
-                    if name and name != "assistant":
-                        replay.append({"type": "tool_start", "name": name})
 
-            # Tool call completion
-            elif any(
-                k in ev_type
-                for k in (
-                    "plugin_call_output",
-                    "function_call_output",
-                    "mcp_tool_call_output",
-                )
-            ):
-                name = ""
-                content = ev_dict.get("content", [])
-                if isinstance(content, list) and content:
-                    data = (
-                        content[0].get("data", {})
-                        if isinstance(content[0], dict)
-                        else {}
-                    )
-                    name = (
-                        data.get("name", "") if isinstance(data, dict) else ""
-                    )
-                if name and name != "assistant":
-                    replay.append({"type": "tool_done", "name": name})
+            # Tool output - extract name
+            elif msg_type == "plugin_call_output":
+                if content and isinstance(content[0], dict):
+                    data = content[0].get("data", {})
+                    if isinstance(data, dict):
+                        name = data.get("name", "")
+                        if name and name != "assistant":
+                            replay.append(
+                                {"type": "tool_done", "name": name},
+                            )
 
     ch = _CHANNELS.get(issue_id)
     if ch is None:
@@ -780,8 +808,15 @@ async def get_issue_result(
         return {"error": issue["error"]}
 
     # Try to get from session first
+    # IMPORTANT: Use issue's assignee agent_id to query the correct workspace
+    agent_ctx = ctx
+    if issue.get("assignee"):
+        from dataclasses import replace
+
+        agent_ctx = replace(ctx, agent_id=issue["assignee"])
+
     try:
-        history = await ctx.get_session_history(session_id=issue_id)
+        history = await agent_ctx.get_session_history(session_id=issue_id)
         if history:
             # Return all assistant messages
             assistant_messages = [
@@ -791,8 +826,9 @@ async def get_issue_result(
                 return {"messages": assistant_messages}
     except Exception:  # noqa: BLE001
         logger.exception(
-            "[kanban] Failed to get session history for %s",
+            "[kanban] Failed to get session history for %s (assignee=%s)",
             issue_id,
+            issue.get("assignee"),
         )
 
     # Fallback to in-memory trace if session is empty or failed

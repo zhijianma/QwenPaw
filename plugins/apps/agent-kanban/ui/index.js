@@ -1098,7 +1098,13 @@
         es.onmessage = function (e) {
           var msg;
           try { msg = JSON.parse(e.data); } catch (err) { return; }
-          if (msg.type === "tool_start") {
+          if (msg.type === "message" && msg.text) {
+            setStreams(function (prev) {
+              var n = Object.assign({}, prev);
+              n[id] = (n[id] || "") + msg.text + "\n";
+              return n;
+            });
+          } else if (msg.type === "tool_start") {
             setStreams(function (prev) {
               var n = Object.assign({}, prev);
               n[id] = (n[id] || "") + "调用 `" + msg.name + "` 工具\n";
