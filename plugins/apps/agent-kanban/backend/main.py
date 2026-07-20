@@ -9,6 +9,7 @@ their own assigned issues through the ``list_my_kanban_issues`` tool.
 Persistence: a shared JSON file (``<app_dir>/data/issues.json``) so both
 the HTTP API and the agent tool read/write the exact same data.
 """
+
 import asyncio
 import dataclasses
 import json
@@ -51,6 +52,7 @@ _LIVE_TRACE: Dict[str, List[Dict[str, str]]] = {}
 # In-memory issues cache (reduces I/O)
 _ISSUES_CACHE: Optional[List[Dict[str, Any]]] = None
 _CACHE_DIRTY = False  # Track if cache needs persisting
+_CACHE_VERSION = 0  # Monotonic version counter to prevent race conditions
 
 # Background dispatcher task (started on launch)
 _DISPATCHER_TASK: Optional["asyncio.Task"] = None
@@ -142,9 +144,10 @@ def _write_all(issues: List[Dict[str, Any]]) -> None:
     The cache is persisted periodically by background task and
     on shutdown by on_terminate.
     """
-    global _ISSUES_CACHE, _CACHE_DIRTY
+    global _ISSUES_CACHE, _CACHE_DIRTY, _CACHE_VERSION
     _ISSUES_CACHE = issues
     _CACHE_DIRTY = True
+    _CACHE_VERSION += 1
 
 
 class _Txn:
@@ -170,7 +173,12 @@ class _Txn:
                 "a+",
                 encoding="utf-8",
             )
-            fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX)
+            # Run blocking flock in thread pool to avoid blocking event loop
+            await asyncio.to_thread(
+                fcntl.flock,
+                self._fh.fileno(),
+                fcntl.LOCK_EX,
+            )
         except BaseException:
             if self._fh is not None:
                 self._fh.close()
@@ -182,7 +190,12 @@ class _Txn:
     async def __aexit__(self, *exc: Any) -> bool:
         try:
             if fcntl is not None and self._fh is not None:
-                fcntl.flock(self._fh.fileno(), fcntl.LOCK_UN)
+                # Run blocking flock unlock in thread pool
+                await asyncio.to_thread(
+                    fcntl.flock,
+                    self._fh.fileno(),
+                    fcntl.LOCK_UN,
+                )
                 self._fh.close()
                 self._fh = None
         finally:
@@ -215,10 +228,7 @@ def _agent_has_running(
 ) -> bool:
     """Check whether *agent_id* owns an in_progress issue."""
     for iss in issues:
-        if (
-            iss.get("assignee") == agent_id
-            and iss.get("status") == "in_progress"
-        ):
+        if iss.get("assignee") == agent_id and iss.get("status") == "in_progress":
             iid = iss.get("id", "")
             task = _RUNNING.get(iid)
             if task is not None and not task.done():
@@ -293,11 +303,7 @@ async def create_issue(
         issues.append(issue)
         _write_all(issues)
 
-        if (
-            status == "todo"
-            and assignee
-            and not _agent_has_running(assignee, issues)
-        ):
+        if status == "todo" and assignee and not _agent_has_running(assignee, issues):
             trigger_agent = assignee
 
     if trigger_agent:
@@ -367,11 +373,7 @@ async def patch_issue(
 
         # Auto-promote: assigning an agent to a backlog issue
         # moves it to todo automatically.
-        if (
-            not old_assignee
-            and new_assignee
-            and issue.get("status") == "backlog"
-        ):
+        if not old_assignee and new_assignee and issue.get("status") == "backlog":
             issue["status"] = "todo"
 
         # If the issue just became todo with an assignee and
@@ -522,8 +524,7 @@ async def _execute_run(
 
             # Tool call start
             if any(
-                k in msg_type
-                for k in ("plugin_call", "function_call", "mcp_tool_call")
+                k in msg_type for k in ("plugin_call", "function_call", "mcp_tool_call")
             ):
                 if "_output" not in msg_type:
                     name = ""
@@ -946,9 +947,7 @@ async def list_kanban_approvals() -> Dict[str, Any]:
 
     svc = get_approval_service()
     issues = await asyncio.to_thread(_read_all)
-    running_ids = {
-        iss["id"] for iss in issues if iss.get("status") == "in_progress"
-    }
+    running_ids = {iss["id"] for iss in issues if iss.get("status") == "in_progress"}
     if not running_ids:
         return {"approvals": {}}
 
@@ -1077,7 +1076,7 @@ async def _persist_loop() -> None:
 
     Runs every 10 seconds, only writes if cache is dirty.
     """
-    global _PERSIST_RUNNING, _CACHE_DIRTY
+    global _PERSIST_RUNNING, _CACHE_DIRTY, _CACHE_VERSION
     _PERSIST_RUNNING = True
     logger.info("[kanban] Persistence loop started")
 
@@ -1086,9 +1085,15 @@ async def _persist_loop() -> None:
             await asyncio.sleep(10)  # Persist every 10 seconds
 
             if _CACHE_DIRTY and _ISSUES_CACHE is not None:
+                # Snapshot version before persisting
+                snapshot_version = _CACHE_VERSION
                 await asyncio.to_thread(_persist_to_disk, _ISSUES_CACHE[:])
-                _CACHE_DIRTY = False
-                logger.debug("[kanban] Cache persisted to disk")
+                # Only clear dirty if no new changes occurred during persist
+                if _CACHE_VERSION == snapshot_version:
+                    _CACHE_DIRTY = False
+                    logger.debug("[kanban] Cache persisted to disk")
+                else:
+                    logger.debug("[kanban] Cache persisted, but new changes detected")
 
         except asyncio.CancelledError:
             logger.info("[kanban] Persistence loop cancelled")
@@ -1192,8 +1197,7 @@ async def _dispatch_loop() -> None:
                                 "请完成该任务，并用简洁的中文汇报你的处理结果。"
                             )
                             logger.info(
-                                "[kanban] Dispatcher: "
-                                "launching %s for agent %s",
+                                "[kanban] Dispatcher: " "launching %s for agent %s",
                                 candidate["id"],
                                 agent_id,
                             )

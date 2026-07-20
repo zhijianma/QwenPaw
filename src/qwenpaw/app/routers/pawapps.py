@@ -145,7 +145,8 @@ async def list_pawapps(request: Request) -> Dict[str, Any]:
     """
     apps = _get_pawapps_from_registry(request)
     if not apps:
-        apps = _scan_installed_apps_fallback()
+        # Run blocking directory scan in thread pool
+        apps = await asyncio.to_thread(_scan_installed_apps_fallback)
     return {"apps": apps, "total": len(apps)}
 
 
@@ -154,7 +155,8 @@ async def get_pawapp(app_id: str, request: Request) -> Dict[str, Any]:
     """Get details of a specific PawApp."""
     apps = _get_pawapps_from_registry(request)
     if not apps:
-        apps = _scan_installed_apps_fallback()
+        # Run blocking directory scan in thread pool
+        apps = await asyncio.to_thread(_scan_installed_apps_fallback)
     for app in apps:
         if app["id"] == app_id:
             return app
@@ -186,23 +188,25 @@ async def uninstall_pawapp(app_id: str, request: Request) -> Dict[str, Any]:
             detail="Invalid app path",
         ) from exc
 
-    if app_dir.exists() and app_dir.is_dir():
+    # If the plugin is loaded, unload it first (which also deletes files).
+    loader = getattr(request.app.state, "plugin_loader", None)
+    if loader is not None and loader.get_loaded_plugin(app_id) is not None:
         try:
-            shutil.rmtree(app_dir)
+            await loader.unload_plugin(app_id, delete_files=True)
         except Exception as exc:  # noqa: BLE001
-            logger.error("Failed to remove PawApp '%s': %s", app_id, exc)
             raise HTTPException(
                 status_code=500,
                 detail=f"Uninstall failed: {exc}",
             ) from exc
         return {"id": app_id, "message": f"PawApp '{app_id}' uninstalled."}
 
-    # Fallback: plugin-based PawApp managed by the plugin loader.
-    loader = getattr(request.app.state, "plugin_loader", None)
-    if loader is not None and loader.get_loaded_plugin(app_id) is not None:
+    # If not loaded but directory exists, delete it directly.
+    if app_dir.exists() and app_dir.is_dir():
         try:
-            await loader.unload_plugin(app_id, delete_files=True)
+            # Run blocking directory deletion in thread pool
+            await asyncio.to_thread(shutil.rmtree, app_dir)
         except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to remove PawApp '%s': %s", app_id, exc)
             raise HTTPException(
                 status_code=500,
                 detail=f"Uninstall failed: {exc}",
@@ -217,7 +221,8 @@ async def get_pawapp_settings(app_id: str, request: Request) -> Dict[str, Any]:
     """Get settings schema for a PawApp."""
     apps = _get_pawapps_from_registry(request)
     if not apps:
-        apps = _scan_installed_apps_fallback()
+        # Run blocking directory scan in thread pool
+        apps = await asyncio.to_thread(_scan_installed_apps_fallback)
     for app in apps:
         if app["id"] == app_id:
             return {"app_id": app_id, "settings": app.get("settings", [])}
@@ -227,8 +232,24 @@ async def get_pawapp_settings(app_id: str, request: Request) -> Dict[str, Any]:
 @router.get("/{app_id}/static/{file_path:path}")
 async def serve_pawapp_static(app_id: str, file_path: str):
     """Serve static files for a PawApp (frontend assets)."""
+    # Security: app_id must be a single, non-traversal path segment.
+    if not app_id or "/" in app_id or "\\" in app_id or app_id in (".", ".."):
+        raise HTTPException(status_code=400, detail="Invalid app id")
+
     apps_dir = _get_apps_dir()
     app_dir = apps_dir / app_id
+
+    # Security: verify app_dir is actually under apps_dir.
+    try:
+        if app_dir.resolve().parent != apps_dir.resolve():
+            raise HTTPException(status_code=400, detail="Invalid app path")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid app path",
+        ) from exc
 
     if not app_dir.exists():
         raise HTTPException(

@@ -20,7 +20,8 @@ function buildPath(path: string): string {
   const appId = getAppId();
   // Normalize: ensure path starts with /
   const normalized = path.startsWith("/") ? path : `/${path}`;
-  return `/pawapps/${appId}${normalized}`;
+  // PawApp routes are registered at /api/{app_id}/... by PawApp.register()
+  return `/${appId}${normalized}`;
 }
 
 /**

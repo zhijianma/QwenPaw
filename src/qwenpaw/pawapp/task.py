@@ -66,6 +66,10 @@ class SSEChannel:
     async def __aiter__(self) -> AsyncIterator[str]:
         """Yield SSE-formatted strings until channel is closed."""
         while True:
+            # Check if channel is closed and queue is empty
+            if self._closed and self._queue.empty():
+                break
+
             try:
                 event = await asyncio.wait_for(
                     self._queue.get(),
@@ -77,7 +81,7 @@ class SSEChannel:
                 continue
 
             if event is None:
-                # Channel closed
+                # Channel closed sentinel
                 break
 
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
