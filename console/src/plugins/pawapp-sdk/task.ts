@@ -51,7 +51,8 @@ export function createPawTask(
     try {
       // POST to create task
       const normalized = path.startsWith("/") ? path : `/${path}`;
-      const createRes = await hostFetch(`/pawapps/${appId}${normalized}`, {
+      // Use unified route: /{appId}/... -> /api/{appId}/... via getApiUrl
+      const createRes = await hostFetch(`/${appId}${normalized}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: params != null ? JSON.stringify(params) : undefined,
@@ -73,7 +74,7 @@ export function createPawTask(
 
       // Connect to SSE stream using fetch-based approach
       // (EventSource doesn't support custom auth headers)
-      const streamUrl = getApiUrl(`/pawapps/${appId}/task/${taskId}/stream`);
+      const streamUrl = getApiUrl(`/${appId}/task/${taskId}/stream`);
       const sseRes = await fetch(streamUrl, {
         headers: {
           ...buildAuthHeaders(),

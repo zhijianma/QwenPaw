@@ -17,7 +17,6 @@ app_services, plugin_registry, session).
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any
 
 from fastapi import Request
@@ -26,18 +25,29 @@ from .context import PawAppContext
 
 logger = logging.getLogger(__name__)
 
-_APP_ID_RE = re.compile(r"/(?:api/)?pawapp(?:s)?/([^/]+)")
-
 
 def _extract_app_id_from_request(request: Request) -> str:
-    """Extract PawApp ID from the request path."""
-    match = _APP_ID_RE.search(request.url.path)
-    if match:
-        return match.group(1)
+    """Extract PawApp ID from the request.
 
+    Priority:
+    1. request.state.app_id (explicit injection by router)
+    2. X-PawApp-Id header
+    3. URL path parsing for /api/{app_id}/... pattern
+    """
+    # Priority 1: explicit injection (most reliable)
+    if hasattr(request.state, "app_id") and request.state.app_id:
+        return request.state.app_id
+
+    # Priority 2: header (for iframe/cross-origin scenarios)
     app_id = request.headers.get("X-PawApp-Id", "")
     if app_id:
         return app_id
+
+    # Priority 3: parse URL path /api/{app_id}/...
+    # Real PawApp routes registered by PawApp.register() are /api/{app_id}/...
+    parts = request.url.path.split("/")
+    if len(parts) >= 3 and parts[1] == "api" and parts[2]:
+        return parts[2]
 
     return "unknown"
 

@@ -17,7 +17,8 @@ function getAppId(): string {
  * Send a chat message to the Agent and get a text reply.
  */
 export async function chat(message: string): Promise<string> {
-  const res = await hostFetch(`/pawapps/${getAppId()}/chat`, {
+  // Use unified route: /{appId}/... -> /api/{appId}/... via hostFetch
+  const res = await hostFetch(`/${getAppId()}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message }),
@@ -36,8 +37,9 @@ export async function chat(message: string): Promise<string> {
  */
 export const storage: PawStorageApi = {
   async get<T = unknown>(key: string, defaultValue?: T): Promise<T> {
+    // Use unified route: /{appId}/... -> /api/{appId}/... via hostFetch
     const res = await hostFetch(
-      `/pawapps/${getAppId()}/storage/${encodeURIComponent(key)}`,
+      `/${getAppId()}/storage/${encodeURIComponent(key)}`,
       { method: "GET" },
     );
     if (!res.ok) {
@@ -48,25 +50,21 @@ export const storage: PawStorageApi = {
   },
 
   async set(key: string, value: unknown): Promise<void> {
-    await hostFetch(
-      `/pawapps/${getAppId()}/storage/${encodeURIComponent(key)}`,
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ value }),
-      },
-    );
+    await hostFetch(`/${getAppId()}/storage/${encodeURIComponent(key)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value }),
+    });
   },
 
   async delete(key: string): Promise<void> {
-    await hostFetch(
-      `/pawapps/${getAppId()}/storage/${encodeURIComponent(key)}`,
-      { method: "DELETE" },
-    );
+    await hostFetch(`/${getAppId()}/storage/${encodeURIComponent(key)}`, {
+      method: "DELETE",
+    });
   },
 
   async keys(): Promise<string[]> {
-    const res = await hostFetch(`/pawapps/${getAppId()}/storage`, {
+    const res = await hostFetch(`/${getAppId()}/storage`, {
       method: "GET",
     });
     if (!res.ok) return [];
@@ -97,7 +95,7 @@ export async function toast(
     }
   }
   // Fallback: POST to backend which pushes via SSE
-  await hostFetch(`/pawapps/${getAppId()}/toast`, {
+  await hostFetch(`/${getAppId()}/toast`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message, kind }),
@@ -108,7 +106,7 @@ export async function toast(
  * Send a notification (multi-channel).
  */
 export async function notify(title: string, body?: string): Promise<void> {
-  await hostFetch(`/pawapps/${getAppId()}/notify`, {
+  await hostFetch(`/${getAppId()}/notify`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ title, body }),

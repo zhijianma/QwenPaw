@@ -39,11 +39,24 @@ import logging
 from functools import wraps
 from typing import Any, Callable, List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from .deps import get_ctx
 
 logger = logging.getLogger(__name__)
+
+
+def _make_app_id_injector(app_id: str) -> Callable:
+    """Create a dependency that injects app_id into request.state.
+
+    This ensures get_ctx can retrieve the correct app_id from request.state
+    without relying on URL regex parsing.
+    """
+
+    async def inject_app_id(request: Request) -> None:
+        request.state.app_id = app_id
+
+    return inject_app_id
 
 
 class PawApp:
@@ -218,9 +231,16 @@ class PawApp:
         """
         self._plugin_api = api
 
+        # Create app_id injector dependency
+        app_id_injector = Depends(_make_app_id_injector(self.app_id))
+
         # Mount internal router (decorator-mode routes)
         if self._router.routes:
             prefix = f"/{self.app_id}" if self.app_id else ""
+            # Inject app_id into request.state for all routes
+            if self._router.dependencies is None:
+                self._router.dependencies = []
+            self._router.dependencies.append(app_id_injector)
             api.register_http_router(
                 self._router,
                 prefix=prefix,
@@ -230,6 +250,10 @@ class PawApp:
         # Mount external routers
         for router in self._routers:
             prefix = f"/{self.app_id}" if self.app_id else ""
+            # Inject app_id into request.state for all routes
+            if router.dependencies is None:
+                router.dependencies = []
+            router.dependencies.append(app_id_injector)
             api.register_http_router(
                 router,
                 prefix=prefix,
