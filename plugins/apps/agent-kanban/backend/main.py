@@ -426,12 +426,14 @@ async def delete_issue(
                     user_id=agent_ctx.user_id,
                     channel=agent_ctx.channel,
                 )
-                if os.path.exists(session_path):
+                try:
                     os.remove(session_path)
                     logger.info(
                         "[kanban] Deleted session file for issue %s",
                         issue_id,
                     )
+                except FileNotFoundError:
+                    pass  # Already deleted or never existed
         except Exception:  # noqa: BLE001
             logger.warning(
                 "[kanban] Failed to delete session for issue %s",

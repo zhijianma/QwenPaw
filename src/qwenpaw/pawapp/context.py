@@ -6,7 +6,6 @@ Provides access to QwenPaw capabilities via thin delegation:
 - ctx.chat() / ctx.chat_stream() → Workspace.stream_query()
 - ctx.storage.get/set/search → SafeJSONSession (namespaced)
 - ctx.tools.invoke() → ToolCoordinator
-- ctx.file.read/write → LocalWorkspace + FileGuard
 - ctx.notify() → ChannelManager
 - ctx.ui.push/confirm → UIBridge (SSE + ApprovalService)
 - ctx.settings.get() → PluginRegistry tool config
@@ -17,7 +16,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -96,27 +94,6 @@ class ToolProxy:
         if self._coordinator is None:
             raise RuntimeError("ToolCoordinator not available")
         return await self._coordinator.execute(name, params or {})
-
-
-class FileProxy:
-    """Proxy for file operations.
-
-    TODO: integrate with FileGuard for sandboxed access control.
-    Currently performs raw filesystem I/O without permission checks.
-    """
-
-    async def read(self, path: str) -> str:
-        """Read a file's content (no sandbox check yet)."""
-        p = Path(path)
-        if not p.exists():
-            raise FileNotFoundError(f"File not found: {path}")
-        return p.read_text(encoding="utf-8")
-
-    async def write(self, path: str, data: str) -> None:
-        """Write content to a file (no sandbox check yet)."""
-        p = Path(path)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(data, encoding="utf-8")
 
 
 class UIBridge:
@@ -456,7 +433,6 @@ class PawAppContext:
         self._tools = ToolProxy(
             tool_coordinator=coordinator,
         )
-        self._file = FileProxy()
         self._ui = UIBridge(
             sse_channel=self._sse_channel,
             approval_coordinator=approval,
@@ -476,11 +452,6 @@ class PawAppContext:
     def tools(self) -> ToolProxy:
         """Invoke registered tools."""
         return self._tools
-
-    @property
-    def file(self) -> FileProxy:
-        """File read/write operations."""
-        return self._file
 
     @property
     def ui(self) -> UIBridge:
