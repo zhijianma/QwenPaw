@@ -9,8 +9,9 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router-dom";
-import { Empty, Input, Spin, Select, Modal, Button } from "antd";
-import { AppWindow, Search, RefreshCw, ArrowLeft } from "lucide-react";
+import { Empty, Input, Spin, Select, Modal, Button, Dropdown } from "antd";
+import type { MenuProps } from "antd";
+import { AppWindow, Search, RefreshCw, Info, RotateCcw, X } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { useAppMessage } from "@/hooks/useAppMessage";
 import { pawappApi } from "../../api/modules/pawapp";
@@ -161,27 +162,119 @@ export default function AppCenterPage() {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
+  // ESC key to close app and return to list
+  useEffect(() => {
+    if (!activeApp) return;
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        handleBack();
+      }
+    };
+    window.addEventListener("keydown", handleEsc);
+    return () => window.removeEventListener("keydown", handleEsc);
+  }, [activeApp]);
+
   // ── Embedded app view ─────────────────────────────────────────────────────
   if (activeApp) {
     const AppComponent = activeRoute?.Component;
+
+    // App menu items
+    const appMenuItems: MenuProps["items"] = [
+      {
+        key: "refresh",
+        icon: <RotateCcw size={14} />,
+        label: t("appCenter.refreshApp", "刷新应用"),
+        onClick: () => {
+          // Force reload by unmounting and remounting the app component
+          setActiveApp(null);
+          setTimeout(() => setActiveApp(activeApp), 0);
+          message.success(t("appCenter.appRefreshed", "应用已刷新"));
+        },
+      },
+      {
+        key: "about",
+        icon: <Info size={14} />,
+        label: t("appCenter.aboutApp", "关于应用"),
+        onClick: () => {
+          Modal.info({
+            title: activeApp.name,
+            width: 500,
+            content: (
+              <div style={{ paddingTop: 16 }}>
+                <p>
+                  <strong>{t("appCenter.version", "版本")}:</strong>{" "}
+                  {activeApp.version}
+                </p>
+                <p>
+                  <strong>{t("appCenter.id", "ID")}:</strong> {activeApp.id}
+                </p>
+                {activeApp.category && (
+                  <p>
+                    <strong>{t("appCenter.category", "分类")}:</strong>{" "}
+                    {activeApp.category}
+                  </p>
+                )}
+                {activeApp.description && (
+                  <p>
+                    <strong>{t("appCenter.description", "描述")}:</strong>{" "}
+                    {activeApp.description}
+                  </p>
+                )}
+              </div>
+            ),
+          });
+        },
+      },
+      {
+        type: "divider",
+      },
+      {
+        key: "exit",
+        icon: <X size={14} />,
+        label: t("appCenter.exitApp", "退出应用"),
+        onClick: handleBack,
+      },
+    ];
+
     return (
       <div className={styles.embedPage}>
-        <div className={styles.embedBar}>
-          <button
-            className={styles.backBtn}
-            onClick={handleBack}
-            title={t("common.back", "Back")}
+        {/* Floating capsule button - WeChat mini-program style */}
+        <div className={styles.floatingCapsule}>
+          <Dropdown
+            menu={{ items: appMenuItems }}
+            trigger={["click"]}
+            placement="bottomRight"
           >
-            <ArrowLeft size={16} />
-            <span>{t("appCenter.backToList", "返回")}</span>
+            <button
+              className={styles.capsuleBtn}
+              title={t("appCenter.moreOptions", "更多选项")}
+            >
+              <span className={styles.capsuleDots}>
+                <span></span>
+                <span></span>
+                <span></span>
+              </span>
+            </button>
+          </Dropdown>
+          <div className={styles.capsuleDivider}></div>
+          <button
+            className={styles.capsuleBtn}
+            onClick={handleBack}
+            title={t("appCenter.backToListHint", "返回应用列表 (ESC)")}
+          >
+            <svg
+              className={styles.capsuleCloseIcon}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+            >
+              <circle cx="12" cy="12" r="9" />
+            </svg>
           </button>
-          <span className={styles.embedTitle}>
-            {activeApp.icon ? (
-              <span className={styles.embedIcon}>{activeApp.icon}</span>
-            ) : null}
-            {activeApp.name}
-          </span>
         </div>
+
         <div className={styles.embedFrame}>
           {AppComponent ? (
             <ChunkErrorBoundary resetKey={activeApp.id}>
@@ -261,7 +354,7 @@ export default function AppCenterPage() {
             style={{ marginTop: 48 }}
           />
         ) : (
-          <div className={styles.grid}>
+          <div className={styles.gridLarge}>
             {filteredApps.map((app) => (
               <AppCard
                 key={app.id}

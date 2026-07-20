@@ -31,7 +31,7 @@ interface AppCardProps {
 export const AppCard: FC<AppCardProps> = ({ app, onClick, onUninstall }) => {
   const { t } = useTranslation();
   return (
-    <Card className={styles.appCard} onClick={() => onClick(app)}>
+    <Card className={styles.appCardLarge} onClick={() => onClick(app)}>
       {onUninstall && (
         <Tooltip title={t("appCenter.uninstall", "卸载")}>
           <button
@@ -42,35 +42,35 @@ export const AppCard: FC<AppCardProps> = ({ app, onClick, onUninstall }) => {
               onUninstall(app);
             }}
           >
-            <Trash2 size={14} />
+            <Trash2 size={18} />
           </button>
         </Tooltip>
       )}
-      <div className={styles.appCardIcon}>
+      <div className={styles.appCardIconLarge}>
         {app.icon ? (
-          <span className={styles.appEmoji}>{app.icon}</span>
+          <span className={styles.appEmojiLarge}>{app.icon}</span>
         ) : (
-          <AppWindow size={32} strokeWidth={1.5} />
+          <AppWindow size={48} strokeWidth={1.5} />
         )}
       </div>
       <div className={styles.appCardBody}>
         <div className={styles.appCardHeader}>
-          <Text strong className={styles.appCardTitle}>
+          <Text strong className={styles.appCardTitleLarge}>
             {app.name}
           </Text>
           {app.version && (
-            <span className={styles.appCardVersion}>{app.version}</span>
+            <span className={styles.appCardVersionLarge}>{app.version}</span>
           )}
         </div>
         <Paragraph
           type="secondary"
-          className={styles.appCardDesc}
+          className={styles.appCardDescLarge}
           ellipsis={{ rows: 2 }}
         >
           {app.description || "No description"}
         </Paragraph>
         {app.category && (
-          <Tag bordered={false} className={styles.appCardTag}>
+          <Tag bordered={false} className={styles.appCardTagLarge}>
             {app.category}
           </Tag>
         )}

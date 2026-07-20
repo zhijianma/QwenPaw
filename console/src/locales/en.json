@@ -72,7 +72,20 @@
     "searchMarket": "Search app market...",
     "marketEmpty": "No apps found",
     "install": "Install",
-    "details": "Details"
+    "details": "Details",
+    "featured": "Featured",
+    "featuredApps": "Featured Apps",
+    "allApps": "All Apps",
+    "refreshApp": "Refresh App",
+    "appRefreshed": "App refreshed",
+    "aboutApp": "About App",
+    "exitApp": "Exit App",
+    "moreOptions": "More Options",
+    "backToListHint": "Back to app list (ESC)",
+    "version": "Version",
+    "id": "ID",
+    "category": "Category",
+    "description": "Description"
   },
   "nav": {
     "chat": "Chat",

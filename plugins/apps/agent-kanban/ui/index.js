@@ -1254,11 +1254,13 @@
       {
         style: {
           padding: 16,
+          paddingTop: 24,
           height: "100%",
           display: "flex",
           flexDirection: "column",
           background: C.boardBg,
           color: C.text,
+          boxSizing: "border-box",
         },
       },
       // Header
@@ -1268,43 +1270,36 @@
           style: {
             display: "flex",
             alignItems: "center",
-            justifyContent: "space-between",
+            gap: 16,
             marginBottom: 14,
+            marginRight: 100, // Reserve minimal space for floating capsule button
           },
         },
+        h("div", { style: { fontSize: 18, fontWeight: 700, color: C.text } }, "📋 Agent Kanban"),
+        h(ViewToggle, { view: view, onChange: setView }),
         h(
-          "div",
-          { style: { display: "flex", alignItems: "center", gap: 14 } },
-          h("div", { style: { fontSize: 18, fontWeight: 700, color: C.text } }, "📋 Agent Kanban"),
-          h(ViewToggle, { view: view, onChange: setView }),
-        ),
-        h(
-          "div",
-          { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } },
-          h(
-            "span",
-            {
-              style: {
-                fontSize: 13,
-                color: working ? "#d97706" : C.muted,
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-              },
+          "span",
+          {
+            style: {
+              fontSize: 13,
+              color: working ? "#d97706" : C.muted,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
             },
-            h("span", {
-              style: {
-                width: 8,
-                height: 8,
-                borderRadius: "50%",
-                background: working ? "#f59e0b" : "#d1d5db",
-                display: "inline-block",
-              },
-            }),
-            working + " 运行中",
-          ),
-          h(Button, { size: "small", onClick: load }, "刷新"),
+          },
+          h("span", {
+            style: {
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background: working ? "#f59e0b" : "#d1d5db",
+              display: "inline-block",
+            },
+          }),
+          working + " 运行中",
         ),
+        h(Button, { size: "small", onClick: load }, "刷新"),
       ),
       // Board area: issue columns or agent office
       view === "agents"

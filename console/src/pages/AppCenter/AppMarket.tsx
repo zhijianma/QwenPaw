@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Alert, Button, Card, Empty, Input, Spin, Typography } from "antd";
-import { AppWindow, Download, ExternalLink, Search } from "lucide-react";
+import { AppWindow, Download, ExternalLink, Search, Star } from "lucide-react";
 import { useAppMessage } from "@/hooks/useAppMessage";
 import {
   buildMarketDownloadUrl,
@@ -80,33 +80,67 @@ export function AppMarket({ onInstalled }: AppMarketProps) {
   }, [search, load]);
 
   const handleInstall = useCallback(
-    async (entry: MarketPluginEntry) => {
+    (entry: MarketPluginEntry) => {
       setInstallingId(entry.id);
-      try {
-        const result = await installPlugin(buildMarketDownloadUrl(entry), {
-          force: true,
-        });
-        message.success(
-          `${tRef.current("appCenter.installSuccess", "Installed")}: ${
-            result.name
-          }`,
-        );
-        onInstalled();
-        setTimeout(() => window.location.reload(), 800);
-      } catch (err) {
-        message.error(
-          err instanceof Error
-            ? err.message
-            : tRef.current("appCenter.installFailed", "Install failed"),
-        );
-      } finally {
-        setInstallingId(null);
-      }
+
+      // Show loading message
+      const loadingKey = `install-${entry.id}`;
+      message.loading({
+        content: `${tRef.current("appCenter.installing", "正在安装")}: ${
+          entry.display_name
+        }...`,
+        key: loadingKey,
+        duration: 0,
+      });
+
+      // Non-blocking async installation
+      const performInstall = async () => {
+        try {
+          const result = await installPlugin(buildMarketDownloadUrl(entry), {
+            force: true,
+          });
+          message.success({
+            content: `${tRef.current(
+              "appCenter.installSuccess",
+              "安装成功",
+            )}: ${result.name}`,
+            key: loadingKey,
+          });
+          // Refresh app list in background
+          onInstalled();
+        } catch (err) {
+          message.error({
+            content:
+              err instanceof Error
+                ? err.message
+                : tRef.current("appCenter.installFailed", "安装失败"),
+            key: loadingKey,
+          });
+        } finally {
+          setInstallingId(null);
+        }
+      };
+
+      // Execute asynchronously without blocking
+      void performInstall();
     },
     [message, onInstalled],
   );
 
   const lang = i18n.language;
+
+  // Sort plugins: featured first, then others
+  const sortedPlugins = [...plugins].sort((a, b) => {
+    const aFeatured = a.is_featured === 1;
+    const bFeatured = b.is_featured === 1;
+    if (aFeatured && !bFeatured) return -1;
+    if (!aFeatured && bFeatured) return 1;
+    return 0;
+  });
+
+  // Split into featured and other apps
+  const featuredApps = sortedPlugins.filter((p) => p.is_featured === 1);
+  const otherApps = sortedPlugins.filter((p) => p.is_featured !== 1);
 
   return (
     <div>
@@ -135,72 +169,166 @@ export function AppMarket({ onInstalled }: AppMarketProps) {
       )}
 
       <Spin spinning={loading}>
-        {!loading && plugins.length === 0 && !error ? (
+        {!loading && sortedPlugins.length === 0 && !error ? (
           <Empty
-            image={<AppWindow size={48} strokeWidth={1} />}
+            image={<AppWindow size={80} strokeWidth={1} />}
             description={t("appCenter.marketEmpty", "No apps found")}
-            style={{ marginTop: 48 }}
+            style={{ marginTop: 60, fontSize: 16 }}
           />
         ) : (
-          <div className={styles.grid}>
-            {plugins.map((entry) => (
-              <Card key={entry.id} className={styles.appCard} hoverable>
-                <div className={styles.appCardIcon}>
-                  {entry.logo_url ? (
-                    <img
-                      src={entry.logo_url}
-                      alt=""
-                      className={styles.marketLogo}
-                    />
-                  ) : (
-                    <AppWindow size={32} strokeWidth={1.5} />
-                  )}
+          <>
+            {/* Featured Apps Section */}
+            {featuredApps.length > 0 && (
+              <>
+                <div className={styles.sectionHeader}>
+                  <Star size={20} strokeWidth={2.5} />
+                  <h3 className={styles.sectionTitle}>
+                    {t("appCenter.featuredApps", "Featured")}
+                  </h3>
                 </div>
-                <div className={styles.marketCardBody}>
-                  <Text strong className={styles.appCardTitle}>
-                    {entry.display_name}
-                  </Text>
-                  <Paragraph
-                    type="secondary"
-                    className={styles.appCardDesc}
-                    ellipsis={{ rows: 2 }}
-                  >
-                    {pickDescription(entry, lang) || "No description"}
-                  </Paragraph>
-                  <span className={styles.marketMeta}>
-                    v{entry.version}
-                    {entry.developer ? ` · ${entry.developer}` : ""}
-                    {entry.downloads != null ? ` · ⬇ ${entry.downloads}` : ""}
-                  </span>
-                  <div className={styles.marketActions}>
-                    <Button
-                      type="primary"
-                      size="small"
-                      icon={<Download size={14} />}
-                      loading={installingId === entry.id}
-                      disabled={
-                        installingId !== null && installingId !== entry.id
-                      }
-                      onClick={() => void handleInstall(entry)}
+                <div className={styles.gridLarge}>
+                  {featuredApps.map((entry) => (
+                    <Card
+                      key={entry.id}
+                      className={styles.appCardLarge}
+                      hoverable
                     >
-                      {t("appCenter.install", "Install")}
-                    </Button>
-                    {entry.details_url && (
-                      <Button
-                        size="small"
-                        icon={<ExternalLink size={14} />}
-                        onClick={() =>
-                          window.open(entry.details_url!, "_blank")
-                        }
-                      >
-                        {t("appCenter.details", "Details")}
-                      </Button>
-                    )}
-                  </div>
+                      <div className={styles.appCardIconLarge}>
+                        {entry.logo_url ? (
+                          <img
+                            src={entry.logo_url}
+                            alt=""
+                            className={styles.marketLogo}
+                          />
+                        ) : (
+                          <AppWindow size={48} strokeWidth={1.5} />
+                        )}
+                      </div>
+                      <div className={styles.marketCardBody}>
+                        <Text strong className={styles.appCardTitleLarge}>
+                          {entry.display_name}
+                        </Text>
+                        <Paragraph
+                          type="secondary"
+                          className={styles.appCardDescLarge}
+                          ellipsis={{ rows: 2 }}
+                        >
+                          {pickDescription(entry, lang) || "No description"}
+                        </Paragraph>
+                        <span className={styles.marketMeta}>
+                          v{entry.version}
+                          {entry.developer ? ` · ${entry.developer}` : ""}
+                          {entry.downloads != null
+                            ? ` · ⬇ ${entry.downloads}`
+                            : ""}
+                        </span>
+                        <div className={styles.marketActions}>
+                          <Button
+                            type="primary"
+                            size="small"
+                            icon={<Download size={14} />}
+                            loading={installingId === entry.id}
+                            onClick={() => handleInstall(entry)}
+                          >
+                            {installingId === entry.id
+                              ? t("appCenter.installing", "安装中...")
+                              : t("appCenter.install", "安装")}
+                          </Button>
+                          {entry.details_url && (
+                            <Button
+                              size="small"
+                              icon={<ExternalLink size={14} />}
+                              onClick={() =>
+                                window.open(entry.details_url!, "_blank")
+                              }
+                            >
+                              {t("appCenter.details", "详情")}
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    </Card>
+                  ))}
                 </div>
-              </Card>
-            ))}
-          </div>
+              </>
+            )}
+
+            {/* Other Apps Section */}
+            {otherApps.length > 0 && (
+              <div
+                className={featuredApps.length > 0 ? styles.marketSection : ""}
+              >
+                {featuredApps.length > 0 && (
+                  <div className={styles.sectionHeader}>
+                    <AppWindow size={20} strokeWidth={2.5} />
+                    <h3 className={styles.sectionTitle}>
+                      {t("appCenter.allApps", "All Apps")}
+                    </h3>
+                  </div>
+                )}
+                <div className={styles.grid}>
+                  {otherApps.map((entry) => (
+                    <Card key={entry.id} className={styles.appCard} hoverable>
+                      <div className={styles.appCardIcon}>
+                        {entry.logo_url ? (
+                          <img
+                            src={entry.logo_url}
+                            alt=""
+                            className={styles.marketLogo}
+                          />
+                        ) : (
+                          <AppWindow size={48} strokeWidth={1.5} />
+                        )}
+                      </div>
+                      <div className={styles.marketCardBody}>
+                        <Text strong className={styles.appCardTitle}>
+                          {entry.display_name}
+                        </Text>
+                        <Paragraph
+                          type="secondary"
+                          className={styles.appCardDesc}
+                          ellipsis={{ rows: 2 }}
+                        >
+                          {pickDescription(entry, lang) || "No description"}
+                        </Paragraph>
+                        <span className={styles.marketMeta}>
+                          v{entry.version}
+                          {entry.developer ? ` · ${entry.developer}` : ""}
+                          {entry.downloads != null
+                            ? ` · ⬇ ${entry.downloads}`
+                            : ""}
+                        </span>
+                        <div className={styles.marketActions}>
+                          <Button
+                            type="primary"
+                            size="small"
+                            icon={<Download size={14} />}
+                            loading={installingId === entry.id}
+                            onClick={() => handleInstall(entry)}
+                          >
+                            {installingId === entry.id
+                              ? t("appCenter.installing", "安装中...")
+                              : t("appCenter.install", "安装")}
+                          </Button>
+                          {entry.details_url && (
+                            <Button
+                              size="small"
+                              icon={<ExternalLink size={14} />}
+                              onClick={() =>
+                                window.open(entry.details_url!, "_blank")
+                              }
+                            >
+                              {t("appCenter.details", "详情")}
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
         )}
       </Spin>
     </div>
