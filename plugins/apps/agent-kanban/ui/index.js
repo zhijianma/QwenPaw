@@ -333,16 +333,29 @@
     var setDescExpanded = descExpandState[1];
     var longDesc = (issue.description || "").length > 100;
 
+    // Dragging state for visual feedback
+    var draggingState = React.useState(false);
+    var isDragging = draggingState[0];
+    var setIsDragging = draggingState[1];
+
+    // Create ref for drag image
+    var cardRef = React.useRef(null);
+
     return h(
       "div",
       {
+        ref: cardRef,
         style: {
           background: C.cardBg,
           border: "1px solid " + C.cardBorder,
           borderRadius: 10,
           padding: "10px 12px",
           marginBottom: 10,
-          boxShadow: "0 1px 2px rgba(15,23,42,0.05)",
+          boxShadow: isDragging
+            ? "0 4px 6px rgba(15,23,42,0.15)"
+            : "0 1px 2px rgba(15,23,42,0.05)",
+          opacity: isDragging ? 0.4 : 1,
+          transition: "opacity 0.2s ease, box-shadow 0.2s ease",
         },
       },
       // Header: drag handle (status dot + key). Only this row is draggable so
@@ -354,6 +367,16 @@
           onDragStart: function (e) {
             e.dataTransfer.setData("text/plain", issue.id);
             e.dataTransfer.effectAllowed = "move";
+            // Use the entire card as drag image
+            if (cardRef.current) {
+              e.dataTransfer.setDragImage(cardRef.current, 0, 0);
+            }
+            // Set dragging state for visual feedback
+            setIsDragging(true);
+          },
+          onDragEnd: function (e) {
+            // Reset dragging state
+            setIsDragging(false);
           },
           title: "拖动此处移动到其他列",
           style: {
@@ -361,7 +384,7 @@
             justifyContent: "space-between",
             alignItems: "center",
             marginBottom: 6,
-            cursor: "grab",
+            cursor: isDragging ? "grabbing" : "grab",
           },
         },
         h(
@@ -974,6 +997,11 @@
     var view = viewState[0];
     var setView = viewState[1];
 
+    // Drag over column state for visual feedback
+    var dragOverColumnState = React.useState(null);
+    var dragOverColumn = dragOverColumnState[0];
+    var setDragOverColumn = dragOverColumnState[1];
+
     // Realtime agent output per issue: { issueId: partialText }.
     var streamState = React.useState({});
     var streams = streamState[0];
@@ -1320,6 +1348,7 @@
           var colIssues = issues.filter(function (i) {
             return i.status === col.key;
           });
+          var isHovered = dragOverColumn === col.key;
           return h(
             "div",
             {
@@ -1328,23 +1357,36 @@
                 e.preventDefault();
                 e.dataTransfer.dropEffect = "move";
               },
+              onDragEnter: function (e) {
+                e.preventDefault();
+                setDragOverColumn(col.key);
+              },
+              onDragLeave: function (e) {
+                // Only clear if leaving the column container itself
+                if (e.currentTarget === e.target) {
+                  setDragOverColumn(null);
+                }
+              },
               onDrop: function (e) {
                 e.preventDefault();
                 var id = e.dataTransfer.getData("text/plain");
                 if (id) moveIssue(id, col.key);
+                setDragOverColumn(null);
               },
               style: {
                 flex: "1 1 260px",
                 minWidth: 240,
                 maxWidth: 420,
-                background:
-                  "linear-gradient(180deg, " + col.tint + " 0%, rgba(255,255,255,0) 42%), #ffffff",
-                border: "1px solid rgba(15,23,42,0.05)",
+                background: isHovered
+                  ? "linear-gradient(180deg, " + col.tint + " 0%, " + col.tint.replace('0.20', '0.35').replace('0.12', '0.25').replace('0.18', '0.30').replace('0.16', '0.28') + " 20%, rgba(255,255,255,0) 60%), #ffffff"
+                  : "linear-gradient(180deg, " + col.tint + " 0%, rgba(255,255,255,0) 42%), #ffffff",
+                border: isHovered ? "2px dashed " + col.dot : "1px solid rgba(15,23,42,0.05)",
                 borderRadius: 14,
                 padding: "12px 10px",
                 maxHeight: "100%",
                 display: "flex",
                 flexDirection: "column",
+                transition: "all 0.2s ease",
               },
             },
             // Column header
