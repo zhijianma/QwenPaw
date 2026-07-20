@@ -236,22 +236,15 @@ async def serve_pawapp_static(app_id: str, file_path: str):
             detail=f"PawApp '{app_id}' not found",
         )
 
-    # Security: prevent path traversal (mirrors _console_spa).
-    # 1) reject ".." segments and absolute paths early
-    # 2) resolve and verify the result stays inside app_dir
-    if ".." in file_path or Path(file_path).is_absolute():
+    # Security: prevent path traversal.
+    # Resolve the requested file path and verify it stays inside app_dir.
+    requested_path = (app_dir / file_path).resolve()
+
+    if not requested_path.is_relative_to(app_dir.resolve()):
         raise HTTPException(
             status_code=403,
             detail="Access denied",
         )
-    requested_path = (app_dir / file_path).resolve()
-    try:
-        requested_path.relative_to(app_dir.resolve())
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=403,
-            detail="Access denied",
-        ) from exc
 
     if not requested_path.exists() or not requested_path.is_file():
         raise HTTPException(
