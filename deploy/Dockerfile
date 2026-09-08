@@ -1,6 +1,8 @@
-# Base images — override with --build-arg for environments without ACR access.
-ARG NODE_IMAGE=agentscope-registry.ap-southeast-1.cr.aliyuncs.com/agentscope/node:slim
-ARG UV_IMAGE=agentscope-registry.ap-southeast-1.cr.aliyuncs.com/agentscope/uv:latest
+# Base images — Ubuntu 24.04 (noble) provides GLIBC 2.39 for llama.cpp ARM64 support.
+# Override with --build-arg for custom images or ACR access.
+# See: https://github.com/agentscope-ai/QwenPaw/issues/4025
+ARG NODE_IMAGE=node:20-noble
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:latest
 
 # -----------------------------------------------------------------------------
 # Stage 1: build console frontend (dist not committed in repo).

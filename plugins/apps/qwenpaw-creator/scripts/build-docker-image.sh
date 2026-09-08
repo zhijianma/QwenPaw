@@ -35,8 +35,10 @@ REPO_ROOT="$(cd "${CREATOR_DIR}/../../.." && pwd)"
 IMAGE_NAME="${1:-qwenpaw-creator:latest}"
 
 # Optional build args.
-QWENPAW_BASE_IMAGE="${QWENPAW_BASE_IMAGE:-agentscope-registry.ap-southeast-1.cr.aliyuncs.com/agentscope/qwenpaw:latest}"
-NODE_IMAGE="${NODE_IMAGE:-agentscope-registry.ap-southeast-1.cr.aliyuncs.com/agentscope/node:slim}"
+# Ubuntu 24.04 (noble) provides GLIBC 2.39 for llama.cpp ARM64 support.
+# See: https://github.com/agentscope-ai/QwenPaw/issues/4025
+QWENPAW_BASE_IMAGE="${QWENPAW_BASE_IMAGE:-agentscope/qwenpaw:latest}"
+NODE_IMAGE="${NODE_IMAGE:-node:20-noble}"
 
 # Read version from source for the runtime boundary label.
 QWENPAW_VERSION=""
