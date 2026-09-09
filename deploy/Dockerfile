@@ -1,5 +1,8 @@
-# Base images — override with --build-arg for environments without ACR access.
-ARG NODE_IMAGE=agentscope-registry.ap-southeast-1.cr.aliyuncs.com/agentscope/node:slim
+# Base images — override with --build-arg to use ACR mirrors.
+# NODE_IMAGE is also the runtime stage base, so it must ship GLIBC >= 2.38
+# for llama.cpp's aarch64 build; Debian 12 only provides 2.36.
+# See: https://github.com/agentscope-ai/QwenPaw/issues/4025
+ARG NODE_IMAGE=node:20-trixie
 ARG UV_IMAGE=agentscope-registry.ap-southeast-1.cr.aliyuncs.com/agentscope/uv:latest
 
 # -----------------------------------------------------------------------------
