@@ -246,6 +246,19 @@ async def test_resolve_request_pops_record_and_sets_status():
     assert pending.future.result() is ApprovalDecision.DENIED
 
 
+async def test_wait_accepts_created_request_after_fast_resolution():
+    svc = ApprovalService()
+    pending = _seed_pending(svc, _make_pending("req-fast"))
+    await svc.resolve_request(
+        pending.request_id,
+        ApprovalDecision.APPROVED,
+    )
+
+    decision = await svc.wait_for_approval(pending, timeout_seconds=0.1)
+
+    assert decision is ApprovalDecision.APPROVED
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -356,6 +369,37 @@ async def test_resolve_request_already_resolved_future_is_safe():
     assert resolved is pending
     # The first decision wins because the future was already done.
     assert resolved.future.result() is ApprovalDecision.APPROVED
+
+
+async def test_parallel_resolvers_commit_durable_hook_once():
+    svc = ApprovalService()
+    pending = _seed_pending(svc, _make_pending("req-race"))
+    hook_entered = asyncio.Event()
+    release_hook = asyncio.Event()
+    hook_decisions = []
+
+    async def durable_hook(decision, _scope, _actor):
+        hook_decisions.append(decision)
+        hook_entered.set()
+        await release_hook.wait()
+
+    pending.resolution_hook = durable_hook
+    first = asyncio.create_task(
+        svc.resolve_request("req-race", ApprovalDecision.APPROVED),
+    )
+    await hook_entered.wait()
+
+    second = await svc.resolve_request(
+        "req-race",
+        ApprovalDecision.DENIED,
+    )
+    release_hook.set()
+    resolved = await first
+
+    assert second is None
+    assert resolved is pending
+    assert hook_decisions == [ApprovalDecision.APPROVED]
+    assert pending.future.result() is ApprovalDecision.APPROVED
 
 
 # ---------------------------------------------------------------------------
@@ -541,6 +585,32 @@ async def test_wait_for_approval_timeout_resolves_as_timeout():
     assert await svc.get_request("req-t") is None
 
 
+async def test_cancelled_waiter_denies_through_resolution_hook():
+    svc = ApprovalService()
+    pending = _seed_pending(svc, _make_pending("req-cancelled-wait"))
+    hook_decisions = []
+
+    async def durable_hook(decision, _scope, _actor):
+        hook_decisions.append(decision)
+
+    pending.resolution_hook = durable_hook
+    waiter = asyncio.create_task(
+        svc.wait_for_approval(
+            pending.request_id,
+            timeout_seconds=60.0,
+        ),
+    )
+    await asyncio.sleep(0)
+    waiter.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+
+    assert hook_decisions == [ApprovalDecision.DENIED]
+    assert await svc.get_request(pending.request_id) is None
+    assert pending.status == ApprovalDecision.DENIED.value
+
+
 # ---------------------------------------------------------------------------
 # cancellation
 # ---------------------------------------------------------------------------
@@ -615,6 +685,29 @@ async def test_cancel_all_pending_by_root_session_denies_and_clears():
     assert p3.status == "pending"
 
 
+async def test_cancel_all_uses_each_durable_resolution_hook():
+    svc = ApprovalService()
+    decisions = []
+    for request_id in ("p1", "p2"):
+        pending = _seed_pending(
+            svc,
+            _make_pending(request_id, root_session_id="root-A"),
+        )
+
+        async def durable_hook(decision, _scope, _actor, *, key=request_id):
+            decisions.append((key, decision))
+
+        pending.resolution_hook = durable_hook
+
+    cancelled = await svc.cancel_all_pending_by_root_session("root-A")
+
+    assert cancelled == 2
+    assert decisions == [
+        ("p1", ApprovalDecision.DENIED),
+        ("p2", ApprovalDecision.DENIED),
+    ]
+
+
 # ---------------------------------------------------------------------------
 # GC
 # ---------------------------------------------------------------------------
@@ -639,6 +732,26 @@ def test_gc_evicts_overflow_oldest_first():
     assert "r0" not in svc._pending
     assert "r4" not in svc._pending
     assert f"r{_GC_MAX_PENDING + 4}" in svc._pending
+
+
+def test_gc_never_evicts_approval_with_durable_hook():
+    svc = ApprovalService()
+    pending = _make_pending(
+        "durable",
+        created_at=time.time() - 10_000,
+    )
+
+    async def durable_hook(_decision, _scope, _actor):
+        return None
+
+    pending.resolution_hook = durable_hook
+    svc._pending[pending.request_id] = pending
+
+    svc._gc_pending_locked()
+
+    assert svc._pending[pending.request_id] is pending
+    assert pending.status == "pending"
+    assert not pending.future.done()
 
 
 # ---------------------------------------------------------------------------

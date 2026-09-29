@@ -8,6 +8,7 @@ export const PUSH_MESSAGE_SOURCES = [
   "memory",
   "skill_autoupdate",
   "mail",
+  "task",
 ] as const;
 
 const PUSH_MESSAGE_SOURCE_SET = new Set<string>(PUSH_MESSAGE_SOURCES);

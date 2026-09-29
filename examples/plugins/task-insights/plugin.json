@@ -1,0 +1,54 @@
+{
+  "schema_version": "qwenpaw.plugin.v2",
+  "id": "task-insights",
+  "name": "Task Insights",
+  "version": "1.0.0",
+  "restart_policy": "hot",
+  "contributions": [
+    {
+      "id": "insight-planner",
+      "slot": "planner",
+      "entrypoint": "task_insights.planner:create_planner"
+    },
+    {
+      "id": "insight-strategy",
+      "slot": "strategy",
+      "entrypoint": "task_insights.strategy:create_strategy"
+    },
+    {
+      "id": "summary-runner",
+      "slot": "runner",
+      "entrypoint": "task_insights.runner:create_runner"
+    },
+    {
+      "id": "review-sensor",
+      "slot": "sensor",
+      "entrypoint": "task_insights.sensor:create_sensor"
+    },
+    {
+      "id": "summary-renderer",
+      "slot": "artifact.renderer",
+      "entrypoint": "task_insights.renderer:create_renderer"
+    },
+    {
+      "id": "toolbar",
+      "slot": "ui.task.toolbar",
+      "entrypoint": "frontend/inspector.js"
+    },
+    {
+      "id": "tab",
+      "slot": "ui.task.tab",
+      "entrypoint": "frontend/inspector.js"
+    },
+    {
+      "id": "inspector",
+      "slot": "ui.task.inspector",
+      "entrypoint": "frontend/inspector.js"
+    },
+    {
+      "id": "artifact-preview",
+      "slot": "ui.artifact.preview",
+      "entrypoint": "frontend/inspector.js"
+    }
+  ]
+}

@@ -3,12 +3,18 @@
 import { getApiToken, getApiUrl } from "../api/config";
 import { removePluginRuntime } from "./pluginRuntimeCleanup";
 import { routeRegistry } from "./registry/store";
+import {
+  UiContributionActivation,
+  type UiContributionDeclaration,
+} from "./uiContributionActivation";
 
 interface FrontendPluginInfo {
   id: string;
   name: string;
   plugin_type?: string;
+  schema_version?: string;
   frontend_entry?: string;
+  ui_contributions?: UiContributionDeclaration[];
 }
 
 export interface PluginLoadSummary {
@@ -17,6 +23,16 @@ export interface PluginLoadSummary {
 }
 
 const loadingPlugins = new Map<string, Promise<void>>();
+let uiActivationTail: Promise<void> = Promise.resolve();
+
+function enqueueUiActivation<T>(operation: () => Promise<T>): Promise<T> {
+  const run = uiActivationTail.then(operation, operation);
+  uiActivationTail = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
 
 function authHeaders(): Record<string, string> {
   const token = getApiToken();
@@ -53,6 +69,58 @@ async function executePluginScript(entryUrl: string): Promise<void> {
   }
 }
 
+function frontendEntries(plugin: FrontendPluginInfo): string[] {
+  const entries = [
+    plugin.frontend_entry,
+    ...(plugin.ui_contributions ?? []).map((item) => item.entrypoint),
+  ].filter((entry): entry is string => Boolean(entry));
+  return [...new Set(entries)];
+}
+
+function isStrictUiPlugin(plugin: FrontendPluginInfo): boolean {
+  return (
+    plugin.schema_version === "qwenpaw.plugin.v2" &&
+    (plugin.ui_contributions?.length ?? 0) > 0
+  );
+}
+
+async function executeFrontendPlugin(
+  plugin: FrontendPluginInfo,
+  force = false,
+): Promise<void> {
+  const entries = frontendEntries(plugin);
+  if (entries.length === 0) return;
+
+  if (!isStrictUiPlugin(plugin)) {
+    if (force) removePluginRuntime(plugin.id);
+    try {
+      for (const entry of entries) {
+        await executePluginScript(resolveUrl(plugin.id, entry));
+      }
+    } catch (error) {
+      removePluginRuntime(plugin.id);
+      throw error;
+    }
+    return;
+  }
+
+  return enqueueUiActivation(async () => {
+    const activation = new UiContributionActivation(
+      plugin.id,
+      plugin.ui_contributions ?? [],
+    );
+    try {
+      for (const entry of entries) {
+        await executePluginScript(resolveUrl(plugin.id, entry));
+      }
+      activation.commit();
+    } catch (error) {
+      activation.rollback();
+      throw error;
+    }
+  });
+}
+
 /** Load every installed frontend plugin during Console startup. */
 export async function loadAllPlugins(): Promise<PluginLoadSummary> {
   let plugins: FrontendPluginInfo[];
@@ -63,17 +131,19 @@ export async function loadAllPlugins(): Promise<PluginLoadSummary> {
     return { loaded: 0, failed: [] };
   }
 
-  const loadable = plugins.filter((plugin) => plugin.frontend_entry);
-  const results = await Promise.allSettled(
-    loadable.map((plugin) =>
-      executePluginScript(resolveUrl(plugin.id, plugin.frontend_entry!)),
-    ),
+  const loadable = plugins.filter(
+    (plugin) => frontendEntries(plugin).length > 0,
   );
-  const failed = results.flatMap((result, index) =>
-    result.status === "rejected"
-      ? [`${loadable[index].id}: ${result.reason}`]
-      : [],
-  );
+  const failed: string[] = [];
+  // UI activation is intentionally serial. The host scopes synchronous
+  // registrations to one manifest and commits its declared slots together.
+  for (const plugin of loadable) {
+    try {
+      await executeFrontendPlugin(plugin);
+    } catch (error) {
+      failed.push(`${plugin.id}: ${String(error)}`);
+    }
+  }
   return { loaded: loadable.length - failed.length, failed };
 }
 
@@ -104,7 +174,7 @@ function loadFrontendPlugin(
   const promise = (async () => {
     const plugins = await fetchFrontendPlugins();
     const plugin = plugins.find((item) => item.id === pluginId);
-    if (!plugin?.frontend_entry) {
+    if (!plugin || frontendEntries(plugin).length === 0) {
       if (options.expectedType === "app") {
         throw new Error(`PawApp frontend plugin not found: ${pluginId}`);
       }
@@ -113,14 +183,13 @@ function loadFrontendPlugin(
     if (options.expectedType && plugin.plugin_type !== options.expectedType) {
       throw new Error(`PawApp frontend plugin not found: ${pluginId}`);
     }
-    if (options.force) removePluginRuntime(pluginId);
     try {
-      await executePluginScript(resolveUrl(plugin.id, plugin.frontend_entry));
+      await executeFrontendPlugin(plugin, options.force);
       if (options.expectedType === "app" && !registered()) {
         throw new Error(`PawApp ${pluginId} did not register its app route`);
       }
     } catch (error) {
-      removePluginRuntime(pluginId);
+      if (!isStrictUiPlugin(plugin)) removePluginRuntime(pluginId);
       throw error;
     }
   })().finally(() => {
@@ -180,4 +249,5 @@ export function reloadFrontendPlugin(pluginId: string): Promise<boolean> {
 /** Reset pending loads between unit tests. */
 export function resetPawAppLoaderForTests(): void {
   loadingPlugins.clear();
+  uiActivationTail = Promise.resolve();
 }

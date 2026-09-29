@@ -21,6 +21,7 @@ import type {
 } from "./types";
 import { menuRegistry, routeRegistry, slotRegistry } from "./store";
 import { auditStore } from "./audit";
+import { registerUiSlot } from "../uiContributionActivation";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Plugin-facing namespaces
@@ -111,9 +112,9 @@ export function buildRouteNamespace(): QwenPawRouteNamespace {
 export function buildSlotNamespace(): QwenPawSlotNamespace {
   return {
     fill: (pluginId, name, render, opts) =>
-      slotRegistry.fill(pluginId, name, render, opts),
+      registerUiSlot(pluginId, "fill", name, render, opts),
     replace: (pluginId, name, render, opts) =>
-      slotRegistry.replace(pluginId, name, render, opts),
+      registerUiSlot(pluginId, "replace", name, render, opts),
     snapshot: () => slotRegistry.snapshotAll(),
   };
 }

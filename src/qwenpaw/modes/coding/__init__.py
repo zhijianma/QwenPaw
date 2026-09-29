@@ -33,6 +33,16 @@ class CodingMode(AgentMode):
         return [ProjectDirInjectionHook(owner_mode=self)]
 
     def is_active(self, ctx: HookContext) -> bool:
+        from ...runtime.strategy_directives import requested_runtime_mode
+
+        request = getattr(ctx, "request", None)
+        if (
+            requested_runtime_mode(
+                getattr(request, "request_context", None),
+            )
+            == "coding"
+        ):
+            return True
         cfg = ctx.agent_config
         if cfg is None:
             try:

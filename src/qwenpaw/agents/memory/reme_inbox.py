@@ -2,7 +2,7 @@
 """Inbox notification policy for ReMe job results."""
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -171,12 +171,19 @@ async def emit_job_result(
         )
         if isinstance(metadata, dict):
             metadata[EMITTED_METADATA_KEY] = True
+        if isinstance(event, Mapping):
+            event_id = event.get("id") or event.get("event_id")
+            event_status = event.get("status")
+        else:
+            event_id = getattr(event, "event_id", None)
+            event_status = getattr(event, "status", None)
+            event_status = getattr(event_status, "value", event_status)
         logger.info(
             "ReMe result pushed: agent=%s job=%s event=%s status=%s",
             agent_id,
             name,
-            event.get("id"),
-            event.get("status"),
+            event_id,
+            event_status,
         )
         return True
     except Exception:

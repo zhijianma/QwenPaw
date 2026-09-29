@@ -4,16 +4,22 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
+from copy import deepcopy
 from datetime import datetime, timezone
 from collections.abc import Awaitable, Callable
-from typing import Optional
+from typing import Any, Optional
+from uuid import uuid4
 
 from .models import (
     BatchArchiveResult,
     BatchFailure,
     ChatGroup,
     ChatGroupKind,
+    ChatForkOrigin,
+    ChatForkRequest,
     ChatSpec,
     ChatUpdate,
     SOURCE_CHAT_GROUP_IDS,
@@ -26,6 +32,14 @@ from ...utils.logging import sanitize_log_value
 logger = logging.getLogger(__name__)
 
 MAX_BATCH_SIZE = 500
+
+
+class ChatForkConflictError(RuntimeError):
+    """Raised when one Fork idempotency key has conflicting content."""
+
+
+class ChatForkNotFoundError(RuntimeError):
+    """Raised when the parent ChatSpec does not exist."""
 
 
 def _default_group_id(source: SessionSource) -> str:
@@ -224,6 +238,186 @@ class ChatManager:  # pylint: disable=too-many-public-methods
             await self._validate_group_id_locked(spec.group_id)
             await self._repo.upsert_chat(spec)
             return spec
+
+    async def fork_chat(
+        self,
+        parent_chat_id: str,
+        request: ChatForkRequest,
+        *,
+        snapshot_writer: Callable[
+            [ChatSpec, ChatSpec, str],
+            Awaitable[Any],
+        ],
+        snapshot_rollback: Callable[[ChatSpec], Awaitable[None]],
+    ) -> ChatSpec:
+        """Create one idempotent child spec around a history snapshot."""
+        key_digest = self._fork_digest(request.idempotency_key)
+        request_digest = self._fork_digest(
+            json.dumps(
+                {
+                    "name": request.name,
+                    "source_message_id": request.source_message_id,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+        )
+        async with self._lock:
+            chats_file = await self._repo.load()
+            existing = self._find_fork_by_key(
+                chats_file.chats,
+                parent_chat_id,
+                key_digest,
+            )
+            if existing is not None:
+                origin = existing.fork_origin
+                fork_meta = existing.meta.get("_qwenpaw_fork")
+                if (
+                    origin is None
+                    or not isinstance(fork_meta, dict)
+                    or fork_meta.get("request_digest") != request_digest
+                ):
+                    raise ChatForkConflictError(
+                        "fork idempotency key has conflicting content",
+                    )
+                return existing
+            parent = next(
+                (
+                    chat
+                    for chat in chats_file.chats
+                    if chat.id == parent_chat_id
+                ),
+                None,
+            )
+            if parent is None:
+                raise ChatForkNotFoundError(parent_chat_id)
+
+            child_id = str(uuid4())
+            child_meta = deepcopy(parent.meta)
+            ancestor_chat_ids = [parent.id]
+            parent_fork_meta = parent.meta.get("_qwenpaw_fork")
+            if parent.fork_origin is not None and isinstance(
+                parent_fork_meta,
+                dict,
+            ):
+                raw_ancestor_ids = parent_fork_meta.get(
+                    "ancestor_chat_ids",
+                    (),
+                )
+                for ancestor_id in (
+                    raw_ancestor_ids
+                    if isinstance(raw_ancestor_ids, (list, tuple))
+                    else ()
+                ):
+                    if (
+                        isinstance(ancestor_id, str)
+                        and ancestor_id
+                        and ancestor_id not in ancestor_chat_ids
+                    ):
+                        ancestor_chat_ids.append(ancestor_id)
+            child_meta["_qwenpaw_fork"] = {
+                "ancestor_chat_ids": ancestor_chat_ids,
+                "idempotency_digest": key_digest,
+                "request_digest": request_digest,
+            }
+            child = ChatSpec(
+                id=child_id,
+                name=request.name or f"{parent.name} (Fork)",
+                session_id=f"{parent.channel}:fork:{child_id}",
+                user_id=parent.user_id,
+                channel=parent.channel,
+                meta=child_meta,
+                source=SessionSource.chat,
+                group_id=parent.group_id,
+                fork_origin=ChatForkOrigin(
+                    parent_chat_id=parent.id,
+                    source_message_id=request.source_message_id,
+                ),
+            )
+            await snapshot_writer(
+                parent,
+                child,
+                request.source_message_id,
+            )
+            try:
+                chats_file.chats.append(child)
+                await self._repo.save(chats_file)
+            except BaseException:
+                try:
+                    await asyncio.shield(snapshot_rollback(child))
+                except BaseException:  # noqa: BLE001
+                    logger.warning(
+                        "Failed to roll back fork snapshot for chat %s",
+                        sanitize_log_value(child.id),
+                        exc_info=True,
+                    )
+                raise
+            return child
+
+    async def get_fork_lineage_ids(self, chat_id: str) -> tuple[str, ...]:
+        """Return trusted child-to-root Chat identities for shared reads."""
+        async with self._lock:
+            chats_file = await self._repo.load()
+            chats_by_id = {chat.id: chat for chat in chats_file.chats}
+            chat = chats_by_id.get(chat_id)
+            if chat is None:
+                return ()
+            lineage = [chat.id]
+            if chat.fork_origin is None:
+                return tuple(lineage)
+            current = chat
+            while current.fork_origin is not None:
+                parent_id = current.fork_origin.parent_chat_id
+                if parent_id in lineage:
+                    break
+                lineage.append(parent_id)
+                parent = chats_by_id.get(parent_id)
+                if parent is None:
+                    break
+                current = parent
+            fork_meta = chat.meta.get("_qwenpaw_fork")
+            raw_ancestors = (
+                fork_meta.get("ancestor_chat_ids", ())
+                if isinstance(fork_meta, dict)
+                else ()
+            )
+            ancestors = (
+                raw_ancestors
+                if isinstance(raw_ancestors, (list, tuple))
+                else ()
+            )
+            for ancestor_id in ancestors:
+                if (
+                    isinstance(ancestor_id, str)
+                    and ancestor_id
+                    and ancestor_id not in lineage
+                ):
+                    lineage.append(ancestor_id)
+            return tuple(lineage)
+
+    @staticmethod
+    def _find_fork_by_key(
+        chats: list[ChatSpec],
+        parent_chat_id: str,
+        idempotency_digest: str,
+    ) -> ChatSpec | None:
+        for chat in chats:
+            origin = chat.fork_origin
+            fork_meta = chat.meta.get("_qwenpaw_fork")
+            if (
+                origin is not None
+                and origin.parent_chat_id == parent_chat_id
+                and isinstance(fork_meta, dict)
+                and fork_meta.get("idempotency_digest") == idempotency_digest
+            ):
+                return chat
+        return None
+
+    @staticmethod
+    def _fork_digest(value: str) -> str:
+        """Persist opaque Fork identities without exposing client keys."""
+        return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
     async def _validate_group_id_locked(self, group_id: str | None) -> None:
         """Validate a group ID while the manager lock is held."""

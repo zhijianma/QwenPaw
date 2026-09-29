@@ -14,8 +14,12 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from agentscope.permission import PermissionMode
 
 from qwenpaw.agents.memory.proactive import proactive_responder as pr
+from qwenpaw.capabilities import GenerationRegistry
+from qwenpaw.kernel.models import Proposal, RiskLevel, TaskStatus
+from qwenpaw.tasks.bootstrap import task_service_for_workspace
 
 
 # ---------------------------------------------------------------------------
@@ -49,6 +53,48 @@ class TestCreateTasksFromData:
 
     def test_empty_list(self):
         assert pr._create_tasks_from_data([]) == []
+
+
+def test_lite_proactive_runtime_never_bypasses_approval(monkeypatch):
+    monkeypatch.setenv("QWENPAW_EDITION", "lite")
+
+    assert pr._proactive_permission_mode() is PermissionMode.DEFAULT
+
+
+def test_legacy_runtime_keeps_existing_permission_behavior(monkeypatch):
+    monkeypatch.delenv("QWENPAW_EDITION", raising=False)
+
+    assert pr._proactive_permission_mode() is PermissionMode.BYPASS
+
+
+async def test_lite_proposal_is_persisted_behind_approval(tmp_path):
+    workspace = SimpleNamespace(
+        agent_id="default",
+        workspace_dir=tmp_path,
+        capability_registry=GenerationRegistry(),
+    )
+    proposal = Proposal(
+        source="proactive.memory",
+        objective="Review the pending report",
+        rationale_summary="The report is due",
+        risk=RiskLevel.MEDIUM,
+    )
+
+    task_ids = await pr._persist_lite_proposals(workspace, [proposal])
+
+    service = task_service_for_workspace(workspace)
+    task = await service.get_task(task_ids[0])
+    events = await service.list_events(task.task_id)
+    assert task.status is TaskStatus.WAITING_APPROVAL
+    assert task.metadata["proposal"]["proposal_id"] == str(
+        proposal.proposal_id,
+    )
+    assert [event.event_type for event in events] == [
+        "task.created",
+        "task.planned",
+        "run.started",
+        "approval.requested",
+    ]
 
 
 # ---------------------------------------------------------------------------

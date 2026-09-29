@@ -51,6 +51,22 @@ describe("<Slot kind='fill'>", () => {
     });
     expect(container.textContent).toBe("P1");
   });
+
+  it("passes host context to plugin renderers", () => {
+    slotRegistry.fill("p1", "ui.task.inspector", (_default, context) => (
+      <span>{String(context?.taskId)}</span>
+    ));
+
+    const { getByText } = render(
+      <Slot
+        name="ui.task.inspector"
+        kind="fill"
+        context={{ taskId: "task-1" }}
+      />,
+    );
+
+    expect(getByText("task-1")).toBeInTheDocument();
+  });
 });
 
 describe("<Slot kind='replace'>", () => {

@@ -142,8 +142,7 @@ def test_clean_display_text_strips_both_skill_and_headline():
 
 
 def test_msg_to_message_hides_headline_in_history_path():
-    """Regression: the GET /chats/{id} path now strips the ⟦…⟧ headline, so it
-    no longer reappears after navigating away from the chat and back."""
+    """History rendering must hide the internal headline marker."""
     msg = Msg(
         name="assistant",
         role="assistant",
@@ -153,6 +152,19 @@ def test_msg_to_message_hides_headline_in_history_path():
     rendered = "".join(c.text for c in message.content)
     assert "⟦" not in rendered and "shipped" not in rendered
     assert "all set" in rendered
+
+
+def test_rendered_segments_expose_stable_fork_source_identity():
+    msg = Msg(
+        id="persisted-message-7",
+        name="assistant",
+        role="assistant",
+        content=[{"type": "text", "text": "fork from here"}],
+    )
+
+    [message] = agentscope_msg_to_message(msg)
+
+    assert message.source_message_id == "persisted-message-7"
 
 
 def test_msg_to_message_omits_runtime_hints_from_history():

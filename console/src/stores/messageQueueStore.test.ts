@@ -509,6 +509,32 @@ describe("messageQueueStore", () => {
     expect(store.getRunState("chat-uuid")).toBe("paused");
   });
 
+  it("retains messages queued between local and UUID migrations", () => {
+    const store = useMessageQueueStore.getState();
+    store.enqueue("new", { text: "Q1" });
+    store.migrateQueue("new", "1788357954784-1iwrrlb");
+
+    store.enqueue("1788357954784-1iwrrlb", { text: "Q2" });
+    store.enqueue("1788357954784-1iwrrlb", { text: "Q3" });
+    const beforeIds = store
+      .getQueue("1788357954784-1iwrrlb")
+      .map((item) => item.id);
+
+    store.migrateQueue("1788357954784-1iwrrlb", "chat-uuid");
+
+    const migrated = store.getQueue("chat-uuid");
+    expect(migrated.map((item) => item.text)).toEqual(["Q1", "Q2", "Q3"]);
+    expect(migrated.map((item) => item.id)).toEqual(beforeIds);
+    expect(store.getQueue("1788357954784-1iwrrlb")).toEqual([]);
+    resetStore();
+    store.loadFromStorage("chat-uuid");
+    expect(store.getQueue("chat-uuid").map((item) => item.text)).toEqual([
+      "Q1",
+      "Q2",
+      "Q3",
+    ]);
+  });
+
   it("migrateQueue sets lastMigratedTo to the destination", () => {
     useMessageQueueStore.getState().enqueue("src", { text: "s1" });
 

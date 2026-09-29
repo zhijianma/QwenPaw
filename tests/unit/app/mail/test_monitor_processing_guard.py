@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Safety state-machine tests using the real monitor and temporary JSON."""
+
 # pylint: disable=protected-access,redefined-outer-name,unused-argument
 
 import asyncio
@@ -20,7 +21,10 @@ from .test_monitor import EventRecorder, FakeImapConn, _service
 @pytest.fixture
 def recorder():
     events = EventRecorder()
-    with patch("qwenpaw.app.mail.monitor.append_inbox_event", new=events):
+    with patch(
+        "qwenpaw.app.mail.monitor.publish_operational_event",
+        new=events,
+    ):
         yield events
 
 
@@ -327,14 +331,17 @@ async def test_notification_failure_does_not_unlock_or_lose_notice(tmp_path):
     service, _ = _service(tmp_path, mode="agent_all")
     service._processing_guard.check_batch("scan", list(range(1, 52)), 7)
     with patch(
-        "qwenpaw.app.mail.monitor.append_inbox_event",
+        "qwenpaw.app.mail.monitor.publish_operational_event",
         side_effect=OSError("disk full"),
     ):
         await service._notify_processing_pause()
     pause = await service.get_processing_pause()
     assert not pause["notified"]
     events = EventRecorder()
-    with patch("qwenpaw.app.mail.monitor.append_inbox_event", new=events):
+    with patch(
+        "qwenpaw.app.mail.monitor.publish_operational_event",
+        new=events,
+    ):
         await service._notify_processing_pause()
         await service._notify_processing_pause()
     assert events.types() == ["processing_paused"]

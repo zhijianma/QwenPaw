@@ -10,12 +10,27 @@ Replaces the GuardedFunctionTool. Each tool call goes through two layers:
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
 import uuid
+from collections.abc import AsyncGenerator
 from typing import Any, Optional
+from uuid import UUID
 
 from agentscope.message import TextBlock
 from agentscope.tool import ToolChunk
 
+from ..app.approvals.interaction_bridge import attach_pending_to_interaction
+from ..app.approvals.task_bridge import attach_pending_to_durable_task
+from ..kernel.models import (
+    ApprovalDisplay,
+    ApprovalSource,
+    SideEffectBroker,
+    SideEffectDisposition,
+    SideEffectReservation,
+    SideEffectStatus,
+    ToolEffect,
+)
 from .policy import (
     GovernanceDecision,
     GovernanceAction,
@@ -146,6 +161,7 @@ def _policy_tool_init(
     *,
     governor: Optional[ResourceGovernor] = None,
     request_context: dict[str, str] | None = None,
+    governance_registry: Any = None,
     **kwargs: Any,
 ) -> None:
     from agentscope.tool import FunctionTool
@@ -153,6 +169,7 @@ def _policy_tool_init(
     FunctionTool.__init__(self, func, **kwargs)
     self._qp_governor = governor
     self._qp_request_context = request_context or {}
+    self._qp_governance_registry = governance_registry or DEFAULT_REGISTRY
     # A plugin backend can retain a stable public tool name while selecting a
     # more precise governance identity. Remote searches can therefore opt into
     # a network policy while local backends keep the internal policy identity.
@@ -186,8 +203,13 @@ def _relative_path_base(governor: Any) -> str:
 
 def _policy_tool_name(tool: Any) -> str:
     """Return an optional per-tool governance identity or the name mapping."""
+    registry = getattr(
+        tool,
+        "_qp_governance_registry",
+        DEFAULT_REGISTRY,
+    )
     return getattr(tool, "_qp_policy_name", "") or (
-        DEFAULT_REGISTRY.python_to_policy_name(
+        registry.python_to_policy_name(
             getattr(tool, "name", "Unknown"),
         )
     )
@@ -198,10 +220,15 @@ def _build_tc_spec(self: Any) -> ToolCallSpec:
     governor = self._qp_governor
     params = getattr(self, "_qp_raw_params", {})
     tool_name = _policy_tool_name(self)
+    registry = getattr(
+        self,
+        "_qp_governance_registry",
+        DEFAULT_REGISTRY,
+    )
     request_ctx = getattr(self, "_qp_request_context", {}) or {}
     return ToolCallSpec(
         tool_name=tool_name,
-        target=DEFAULT_REGISTRY.extract_target(
+        target=registry.extract_target(
             tool_name,
             params,
             workspace_dir=_relative_path_base(governor),
@@ -209,6 +236,14 @@ def _build_tc_spec(self: Any) -> ToolCallSpec:
         agent_id=request_ctx.get("agent_id", ""),
         session_id=request_ctx.get("session_id", ""),
         raw_params=params,
+        invocation_id=str(request_ctx.get("os_invocation_id") or ""),
+        correlation_id=str(
+            request_ctx.get("os_correlation_id")
+            or request_ctx.get("os_invocation_id")
+            or "",
+        ),
+        tool_type=registry.get_type(tool_name),
+        effect=registry.get_effect(tool_name),
     )
 
 
@@ -250,7 +285,12 @@ def _prepare_off_mode_sandbox(tool: Any, governor: Any) -> None:
     if governor is None:
         return
     policy_name = _policy_tool_name(tool)
-    if not DEFAULT_REGISTRY.requires_sandbox(policy_name):
+    registry = getattr(
+        tool,
+        "_qp_governance_registry",
+        DEFAULT_REGISTRY,
+    )
+    if not registry.requires_sandbox(policy_name):
         return
     if not getattr(governor, "sandbox_usable", False):
         return
@@ -289,6 +329,8 @@ async def _policy_tool_check_permissions(
 
     governor = getattr(self, "_qp_governor", None)
     self._qp_raw_params = input_data or {}
+    self._qp_policy_decision = None
+    self._qp_approval_id = ""
 
     # ── Effective approval_level check (session > agent) ──
     request_ctx = getattr(self, "_qp_request_context", None) or {}
@@ -403,6 +445,7 @@ async def _policy_tool_check_permissions(
             governor=governor,
             tc_spec=tc_spec,
             request_context=getattr(self, "_qp_request_context", {}) or {},
+            tool_instance=self,
             policy_findings=decision.findings,
             governance_reason=decision.reason,
             source=decision.source,
@@ -415,7 +458,199 @@ async def _policy_tool_check_permissions(
         )
 
 
+def _optional_uuid(value: Any) -> UUID | None:
+    """Parse a UUID without trusting legacy request-context strings."""
+    try:
+        return UUID(str(value)) if value else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _tool_call_id() -> str:
+    """Return AgentScope's per-call identity when supervision is active."""
+    try:
+        from ..tool_calls._ctxvars import get_call_context
+
+        context = get_call_context()
+        return context.tool_call_id if context is not None else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+async def _begin_tool_side_effect(
+    tool: Any,
+) -> SideEffectReservation | None:
+    """Reserve a durable record for one declared mutating tool call."""
+    request_context = getattr(tool, "_qp_request_context", {}) or {}
+    broker = request_context.get("_task_side_effect_broker")
+    if not isinstance(broker, SideEffectBroker):
+        return None
+    tc_spec = getattr(tool, "_qp_tc_spec", None) or tool._build_tc_spec()
+    effect = ToolEffect(tc_spec.effect)
+    if effect is ToolEffect.NONE:
+        return None
+    invocation_id = _optional_uuid(tc_spec.invocation_id)
+    correlation_id = _optional_uuid(tc_spec.correlation_id) or invocation_id
+    call_id = _tool_call_id()
+    idempotency_key = (
+        f"tool:{invocation_id or tc_spec.session_id}:{call_id}"
+        if call_id
+        else f"tool:{uuid.uuid4()}"
+    )
+    request_hash = hashlib.sha256(
+        json.dumps(
+            {
+                "action": tc_spec.tool_name,
+                "target": tc_spec.target,
+                "params": tc_spec.raw_params,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+            default=str,
+        ).encode("utf-8"),
+    ).hexdigest()
+    decision = getattr(tool, "_qp_policy_decision", None)
+    approval_id = _optional_uuid(getattr(tool, "_qp_approval_id", ""))
+    return await broker.begin(
+        action=tc_spec.tool_name,
+        target=tc_spec.target,
+        effect=effect,
+        idempotency_key=idempotency_key,
+        request_hash=request_hash,
+        invocation_id=invocation_id,
+        correlation_id=correlation_id,
+        approval_id=approval_id,
+        policy_decision=(
+            decision.action.value if decision is not None else "allow"
+        ),
+    )
+
+
+def _side_effect_replay_chunk(
+    reservation: SideEffectReservation,
+) -> ToolChunk:
+    """Return a deterministic response without repeating an operation."""
+    from agentscope.message import ToolResultState
+
+    replay = reservation.disposition is SideEffectDisposition.REPLAY
+    return ToolChunk(
+        is_last=True,
+        state=(ToolResultState.SUCCESS if replay else ToolResultState.DENIED),
+        content=[
+            TextBlock(
+                type="text",
+                text=(
+                    "The operation already completed for this tool call; "
+                    "the durable result was reused."
+                    if replay
+                    else "The operation has an unresolved durable record; "
+                    "it was not repeated because its outcome may be unsafe."
+                ),
+            ),
+        ],
+    )
+
+
+def _chunk_terminal_status(chunk: Any) -> SideEffectStatus:
+    """Map a final ToolChunk state onto the durable outcome vocabulary."""
+    from agentscope.message import ToolResultState
+
+    state = getattr(chunk, "state", ToolResultState.ERROR)
+    if state is ToolResultState.SUCCESS:
+        return SideEffectStatus.SUCCEEDED
+    if state in {ToolResultState.ERROR, ToolResultState.DENIED}:
+        return SideEffectStatus.FAILED
+    return SideEffectStatus.UNCERTAIN
+
+
+async def _finish_side_effect(
+    broker: SideEffectBroker,
+    reservation: SideEffectReservation,
+    *,
+    status: SideEffectStatus,
+    digest: str | None = None,
+    error_code: str = "",
+) -> None:
+    """Commit the outcome without replacing the tool's primary result."""
+    await broker.finish(
+        reservation.record.record_id,
+        status=status,
+        result_digest=digest,
+        error_code=error_code,
+    )
+
+
 async def _policy_tool_call(
+    self: Any,
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    """Execute one governed call with durable side-effect accounting."""
+    reservation = await _begin_tool_side_effect(self)
+    if (
+        reservation is not None
+        and reservation.disposition is not SideEffectDisposition.EXECUTE
+    ):
+        return _side_effect_replay_chunk(reservation)
+    broker = (getattr(self, "_qp_request_context", {}) or {}).get(
+        "_task_side_effect_broker",
+    )
+    try:
+        result = await _execute_policy_tool_call(self, *args, **kwargs)
+    except BaseException as exc:
+        if reservation is not None and isinstance(broker, SideEffectBroker):
+            await _finish_side_effect(
+                broker,
+                reservation,
+                status=SideEffectStatus.UNCERTAIN,
+                error_code=type(exc).__name__,
+            )
+        raise
+    if reservation is None or not isinstance(broker, SideEffectBroker):
+        return result
+    if hasattr(result, "__aiter__"):
+        return _tracked_side_effect_stream(broker, reservation, result)
+    digest = hashlib.sha256(repr(result).encode("utf-8")).hexdigest()
+    await _finish_side_effect(
+        broker,
+        reservation,
+        status=_chunk_terminal_status(result),
+        digest=digest,
+    )
+    return result
+
+
+async def _tracked_side_effect_stream(
+    broker: SideEffectBroker,
+    reservation: SideEffectReservation,
+    stream: Any,
+) -> AsyncGenerator[Any, None]:
+    """Finalize streaming tools only after their output is consumed."""
+    digest = hashlib.sha256()
+    terminal = SideEffectStatus.UNCERTAIN
+    try:
+        async for chunk in stream:
+            digest.update(repr(chunk).encode("utf-8"))
+            terminal = _chunk_terminal_status(chunk)
+            yield chunk
+    except BaseException as exc:
+        await _finish_side_effect(
+            broker,
+            reservation,
+            status=SideEffectStatus.UNCERTAIN,
+            error_code=type(exc).__name__,
+        )
+        raise
+    await _finish_side_effect(
+        broker,
+        reservation,
+        status=terminal,
+        digest=digest.hexdigest(),
+    )
+
+
+async def _execute_policy_tool_call(
     self: Any,
     *args: Any,
     **kwargs: Any,
@@ -520,6 +755,7 @@ async def _policy_tool_call(
         governor=governor,
         tc_spec=tc_spec,
         request_context=request_context,
+        tool_instance=self,
         violation_msg=violation_msg or None,
         governance_reason=governance_reason,
         source=governance_source,
@@ -556,11 +792,12 @@ async def _policy_tool_call(
 # ---------------------------------------------------------------------------
 
 
-async def _ask_user_approval(
+async def _ask_user_approval(  # pylint: disable=too-many-statements
     governor: ResourceGovernor,
     tc_spec: ToolCallSpec,
-    request_context: dict[str, str],
+    request_context: dict[str, Any],
     *,
+    tool_instance: Any | None = None,
     violation_msg: str | None = None,
     governance_reason: str | None = None,
     policy_findings: list[Any] | None = None,
@@ -570,6 +807,7 @@ async def _ask_user_approval(
     from agentscope.permission import PermissionBehavior, PermissionDecision
 
     from ..app.approvals import get_approval_service
+    from ..app.approvals.timeouts import approval_timeout_seconds
     from ..constant import TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS
     from ..security.tool_guard.approval import (
         ApprovalDecision,
@@ -590,6 +828,10 @@ async def _ask_user_approval(
     params = tc_spec.raw_params
 
     ctx = request_context or {}
+    timeout_seconds = approval_timeout_seconds(
+        ctx,
+        default=TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS,
+    )
     user_id = str(ctx.get("user_id") or "")
     channel = str(ctx.get("channel") or "")
     root_session_id = str(ctx.get("root_session_id") or session_id)
@@ -597,11 +839,14 @@ async def _ask_user_approval(
 
     from .generalize import generalize_target_for_approval
 
+    generalize_kwargs: dict[str, Any] = {"agent_id": agent_id}
+    if tc_spec.tool_type:
+        generalize_kwargs["tool_type"] = tc_spec.tool_type
     generalized_target = await generalize_target_for_approval(
         tool_name,
         target,
         source,
-        agent_id=agent_id,
+        **generalize_kwargs,
     )
     display_target = generalized_target or target
 
@@ -717,7 +962,7 @@ async def _ask_user_approval(
         agent_id=agent_id or "unknown",
         tool_name=tool_name,
         result=guard_result,
-        timeout_seconds=TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS,
+        timeout_seconds=timeout_seconds,
         extra={
             "tool_call": {
                 "id": tool_call_id,
@@ -739,6 +984,54 @@ async def _ask_user_approval(
             ),
         },
     )
+    if tool_instance is not None:
+        tool_instance._qp_approval_id = pending.request_id
+
+    bridge_ready = await attach_pending_to_durable_task(
+        ctx,
+        pending,
+        svc,
+        agent_id=agent_id or "unknown",
+        tool_name=tool_name,
+        severity=guard_result.max_severity.value,
+        input_data=dict(params or {}),
+        source=ApprovalSource.TOOL,
+        action="tool.execute",
+        policy="governance_policy",
+        display=ApprovalDisplay(
+            title=f"Approve {tool_name}",
+            summary=format_findings_summary(guard_result),
+            target=target,
+            provider=source,
+        ),
+    )
+    if not bridge_ready:
+        return PermissionDecision(
+            behavior=PermissionBehavior.DENY,
+            message=(
+                "Tool approval could not be persisted safely."
+                + _NO_RETRY_INSTRUCTION
+            ),
+        )
+    interaction_ready = await attach_pending_to_interaction(
+        ctx,
+        pending,
+        svc,
+        source="governance_policy",
+        input_data=dict(params or {}),
+    )
+    if not interaction_ready:
+        await svc.resolve_request(
+            pending.request_id,
+            ApprovalDecision.DENIED,
+        )
+        return PermissionDecision(
+            behavior=PermissionBehavior.DENY,
+            message=(
+                "Tool approval could not be persisted safely."
+                + _NO_RETRY_INSTRUCTION
+            ),
+        )
 
     logger.info(
         "PolicyGuardedTool: awaiting approval for tool=%s session=%s "
@@ -751,8 +1044,8 @@ async def _ask_user_approval(
 
     try:
         decision = await svc.wait_for_approval(
-            pending.request_id,
-            TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS,
+            pending,
+            timeout_seconds,
         )
     except Exception as exc:
         logger.error(
@@ -796,7 +1089,7 @@ async def _ask_user_approval(
         if decision == ApprovalDecision.DENIED
         else (
             f"Approval for '{tool_name}' timed out after "
-            f"{int(TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS)}s.\n{summary}"
+            f"{timeout_seconds:g}s.\n{summary}"
         )
     )
     return PermissionDecision(

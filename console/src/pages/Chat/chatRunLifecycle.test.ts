@@ -132,11 +132,14 @@ const backgroundWorkerJS = ts.transpileModule(
   },
 ).outputText;
 
-function backgroundWorkerFixture() {
+function backgroundWorkerFixture(durableChatId?: string) {
   const sessionApi = {
     setLastUserMessage: vi.fn(),
     discardLastUserMessage: vi.fn(),
   };
+  const submitDurableChatRequest = vi.fn(async () => ({
+    submission_id: "submission-1",
+  }));
   const dependencies = {
     useMessageQueueStore,
     withBackgroundSendLock,
@@ -154,6 +157,8 @@ function backgroundWorkerFixture() {
     applyChatPayloadTransforms: (payload: unknown) => payload,
     withPendingProjectDirectory: (requestBody: unknown) => ({ requestBody }),
     setPendingProjectDirectory: vi.fn(),
+    resolveBackendChatId: () => durableChatId,
+    submitDurableChatRequest,
     QWENPAW_CLIENT_MESSAGE_ID_KEY: "qwenpaw_client_message_id",
     DEFAULT_USER_ID: "default",
     DEFAULT_CHANNEL: "console",
@@ -166,7 +171,7 @@ function backgroundWorkerFixture() {
     backendSessionId: string,
     chatId: string,
   ) => Promise<void>;
-  return { start, sessionApi };
+  return { start, sessionApi, submitDurableChatRequest };
 }
 
 describe("background queue transport handoff", () => {
@@ -318,6 +323,29 @@ describe("background queue transport handoff", () => {
     ).toEqual(["failed", "pending"]);
     expect(useMessageQueueStore.getState().getRunState(key)).toBe("error");
     expect(fixture.sessionApi.discardLastUserMessage).toHaveBeenCalledTimes(1);
+    await expectReleased();
+  });
+
+  it("hands known ChatSpec turns to the durable dispatcher", async () => {
+    const fetchFixture = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchFixture);
+    const fixture = backgroundWorkerFixture("chat-spec-1");
+
+    const worker = fixture.start(key, "runtime-a", "chat-spec-1");
+    workers.push(worker);
+    await worker;
+
+    expect(fixture.submitDurableChatRequest).toHaveBeenCalledTimes(2);
+    expect(fixture.submitDurableChatRequest).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        chatId: "chat-spec-1",
+        agentId: "agent-a",
+      }),
+    );
+    expect(fetchFixture).not.toHaveBeenCalled();
+    expect(useMessageQueueStore.getState().getQueue(key)).toEqual([]);
+    expect(fixture.sessionApi.discardLastUserMessage).not.toHaveBeenCalled();
     await expectReleased();
   });
 });

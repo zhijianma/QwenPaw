@@ -96,7 +96,11 @@ async def get_job(job_id: str, mgr: CronManager = Depends(get_cron_manager)):
     job = await mgr.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="job not found")
-    return CronJobView(spec=job, state=mgr.get_state(job_id))
+    return CronJobView(
+        spec=job,
+        state=mgr.get_state(job_id),
+        runtime_decision=mgr.runtime_decision(job),
+    )
 
 
 @router.post("/jobs", response_model=CronJobSpec)

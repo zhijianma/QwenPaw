@@ -158,6 +158,9 @@ export interface SlotOpts {
   after?: string;
 }
 
+/** Host-owned data exposed to a slot without coupling plugins to page code. */
+export type SlotContext = Readonly<Record<string, unknown>>;
+
 /**
  * Slot render function. Receives the host's default content for this slot
  * (i.e. the `children` passed to the <Slot> JSX element) so a
@@ -167,6 +170,7 @@ export interface SlotOpts {
  */
 export type SlotRenderer = (
   defaultContent?: React.ReactNode,
+  context?: SlotContext,
 ) => React.ReactNode;
 
 export interface SlotInfo {

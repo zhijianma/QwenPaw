@@ -78,6 +78,49 @@ def _write_plugin(
     return root
 
 
+class TestMigrationPlan:
+    def test_requires_a_running_runtime(self, monkeypatch):
+        monkeypatch.setattr(pc, "_get_api_base", lambda: None)
+
+        result = CliRunner().invoke(
+            pc.plugin,
+            ["migration-plan", "legacy-plugin"],
+        )
+
+        assert result.exit_code == 1
+        assert "must be running" in result.output
+
+    def test_prints_runtime_plan_as_json(self, monkeypatch):
+        _patch_base(monkeypatch)
+        plan = {
+            "plugin_id": "legacy-plugin",
+            "status": "manual_changes_required",
+            "manifest_patch": {
+                "schema_version": "qwenpaw.plugin.v2",
+                "contributions_to_add": [],
+            },
+            "actions": [],
+            "blockers": [],
+            "safe_to_apply": False,
+        }
+
+        def handler(request):
+            assert request.url.path == "/api/plugins"
+            return httpx.Response(
+                200,
+                json=[{"id": "legacy-plugin", "migration_plan": plan}],
+            )
+
+        _patch_transport(monkeypatch, handler)
+        result = CliRunner().invoke(
+            pc.plugin,
+            ["migration-plan", "legacy-plugin", "--format", "json"],
+        )
+
+        assert result.exit_code == 0
+        assert json.loads(result.output) == plan
+
+
 # ---------------------------------------------------------------------------
 # _get_api_base
 # ---------------------------------------------------------------------------

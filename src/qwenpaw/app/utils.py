@@ -138,6 +138,16 @@ def schedule_agent_reload(
         )
         return False
 
+    method = sanitize_log_value(getattr(request, "method", "UNKNOWN"))
+    path = sanitize_log_value(
+        getattr(getattr(request, "url", None), "path", "unknown"),
+    )
+    logger.info(
+        f"Scheduling agent reload: "
+        f"agent='{sanitize_log_value(agent_id)}' "
+        f"source='{method} {path}'",
+    )
+
     async def reload_in_background():
         reloaded = False
         try:

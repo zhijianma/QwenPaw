@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum
 from typing import Any, Dict, Literal, Optional
 
 from pydantic import (
@@ -160,6 +161,14 @@ class DispatchSpec(BaseModel):
 class JobRuntimeSpec(BaseModel):
     max_concurrency: int = Field(default=1, ge=1)
     timeout_seconds: int = Field(default=120, ge=1)
+    approval_timeout_seconds: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Maximum wait for one protected tool decision. It must be "
+            "shorter than the whole execution timeout."
+        ),
+    )
     misfire_grace_seconds: int = Field(default=600, ge=0)
     share_session: bool = Field(
         default=False,
@@ -179,6 +188,32 @@ class JobRuntimeSpec(BaseModel):
             "without approval checks, suitable for trusted automated tasks."
         ),
     )
+
+    @model_validator(mode="after")
+    def validate_approval_timeout(self) -> "JobRuntimeSpec":
+        """Keep approval waits bounded inside one Cron attempt."""
+        approval_timeout = self.approval_timeout_seconds
+        if approval_timeout is not None and not self.tool_safety:
+            raise ValueError(
+                "approval_timeout_seconds requires tool_safety",
+            )
+        if (
+            approval_timeout is not None
+            and approval_timeout >= self.timeout_seconds
+        ):
+            raise ValueError(
+                "approval_timeout_seconds must be shorter than "
+                "timeout_seconds",
+            )
+        return self
+
+    def effective_approval_timeout_seconds(self) -> float | None:
+        """Return the explicit or compatibility-safe approval deadline."""
+        if not self.tool_safety:
+            return None
+        if self.approval_timeout_seconds is not None:
+            return self.approval_timeout_seconds
+        return min(30.0, self.timeout_seconds / 2)
 
 
 class CronJobRequest(BaseModel):
@@ -248,6 +283,42 @@ class JobsFile(BaseModel):
     jobs: list[CronJobSpec] = Field(default_factory=list)
 
 
+class CronRuntimePath(str, Enum):
+    """Execution path selected for one legacy Cron declaration."""
+
+    DURABLE_TASK = "durable_task"
+    LEGACY_EXECUTOR = "legacy_executor"
+
+
+class CronRuntimeDecisionCode(str, Enum):
+    """Stable reason codes for Cron runtime migration decisions."""
+
+    MIGRATED = "migrated"
+    TASK_RUNTIME_UNAVAILABLE = "task_runtime_unavailable"
+    RUNTIME_DECISION_UNAVAILABLE = "runtime_decision_unavailable"
+    RUNTIME_DECLINED = "runtime_declined"
+    TEXT_DELIVERY_ONLY = "text_delivery_only"
+    STREAM_DELIVERY_UNVERIFIED = "stream_delivery_unverified"
+    REPEATING_ONCE_UNSUPPORTED = "repeating_once_unsupported"
+    AGENT_REQUEST_MISSING = "agent_request_missing"
+    INTERACTIVE_TOOL_SAFETY = "interactive_tool_safety"
+    MODEL_SELECTION_INVALID = "model_selection_invalid"
+
+
+class CronRuntimeDecision(BaseModel):
+    """Explain whether one Cron job can use the durable Task runtime."""
+
+    path: CronRuntimePath
+    reason_code: CronRuntimeDecisionCode
+    reason: str
+    removal_gates: tuple[str, ...] = ()
+
+    @property
+    def uses_durable_runtime(self) -> bool:
+        """Return whether execution must enter Scheduler and Task."""
+        return self.path is CronRuntimePath.DURABLE_TASK
+
+
 class CronJobState(BaseModel):
     next_run_at: Optional[datetime] = None
     last_run_at: Optional[datetime] = None
@@ -255,6 +326,7 @@ class CronJobState(BaseModel):
         Literal["success", "error", "running", "skipped", "cancelled"]
     ] = None
     last_error: Optional[str] = None
+    runtime_decision: Optional[CronRuntimeDecision] = None
 
 
 class CronExecutionRecord(BaseModel):
@@ -262,11 +334,13 @@ class CronExecutionRecord(BaseModel):
     status: Literal["success", "error", "running", "skipped", "cancelled"]
     error: Optional[str] = None
     trigger: Literal["scheduled", "manual"] = "scheduled"
+    runtime_decision: Optional[CronRuntimeDecision] = None
 
 
 class CronJobView(BaseModel):
     spec: CronJobSpec
     state: CronJobState = Field(default_factory=CronJobState)
+    runtime_decision: Optional[CronRuntimeDecision] = None
 
 
 class CronDispatchTargetItem(BaseModel):

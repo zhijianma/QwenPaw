@@ -274,6 +274,9 @@ export interface QwenPawHostNamespace {
 
   // ── Imperative getters (safe outside React render) ────────────────────────
   getSelectedAgentId(): string;
+  /** Return the persisted ChatSpec.id, never a runtime session_id. */
+  getCurrentChatId?(): string | null;
+  /** @deprecated Use getCurrentChatId() for conversation ownership. */
   getCurrentSessionId(): string | null;
 
   /** Auth-aware fetch. Automatically injects `Authorization` and `X-Agent-Id`. */
@@ -282,6 +285,34 @@ export interface QwenPawHostNamespace {
 
 export interface QwenPawAuditNamespace {
   overrides(): OverrideRecord[];
+}
+
+export type SlotContext = Readonly<Record<string, unknown>>;
+
+export type SlotRenderer = (
+  defaultContent?: React.ReactNode,
+  context?: SlotContext,
+) => React.ReactNode;
+
+export interface QwenPawSlotNamespace {
+  fill(
+    pluginId: string,
+    name: string,
+    render: SlotRenderer,
+    opts?: {
+      id?: string;
+      order?: number;
+      visible?: () => boolean;
+      before?: string;
+      after?: string;
+    },
+  ): Disposable;
+  replace(
+    pluginId: string,
+    name: string,
+    render: SlotRenderer,
+    opts?: { id?: string; order?: number; visible?: () => boolean },
+  ): Disposable;
 }
 
 export interface MemoryBackendExtension {
@@ -309,6 +340,7 @@ export interface PluginRouteDeclaration {
 export interface QwenPawWindowNamespace {
   host: QwenPawHostNamespace;
   chat: QwenPawChatNamespace;
+  slot: QwenPawSlotNamespace;
   audit: QwenPawAuditNamespace;
   memoryBackends: QwenPawMemoryBackendsNamespace;
   modules: Record<string, Record<string, unknown>>;

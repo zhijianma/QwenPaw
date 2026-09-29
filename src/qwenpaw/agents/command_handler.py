@@ -273,17 +273,45 @@ class CommandHandler(ConversationCommandHandlerMixin):
         if getattr(ctx, "agent", None) is None and self._agent is not None:
             ctx.agent = self._agent
 
-        for mode in getattr(
-            getattr(getattr(ctx, "workspace", None), "plugins", None),
-            "modes",
-            [],
-        ):
+        extras = getattr(ctx, "extras", None)
+        mode_session = (
+            extras.get("agent_mode_session")
+            if isinstance(extras, dict)
+            else None
+        )
+        if mode_session is not None:
             try:
-                await mode.on_conversation_reset(ctx)
+                await mode_session.reset_conversation()
             except Exception:  # noqa: BLE001
                 logger.warning(
-                    "mode '%s' reset raised",
-                    getattr(mode, "name", "?"),
+                    "agent mode session reset raised",
+                    exc_info=True,
+                )
+        else:
+            for mode in getattr(
+                getattr(getattr(ctx, "workspace", None), "plugins", None),
+                "modes",
+                [],
+            ):
+                try:
+                    await mode.on_conversation_reset(ctx)
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "mode '%s' reset raised",
+                        getattr(mode, "name", "?"),
+                        exc_info=True,
+                    )
+        stop_gate_session = (
+            extras.get("stop_gate_session")
+            if isinstance(extras, dict)
+            else None
+        )
+        if stop_gate_session is not None:
+            try:
+                await stop_gate_session.reset_conversation()
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "stop-gate session reset raised",
                     exc_info=True,
                 )
         clear_pending_gate_state(getattr(ctx, "agent", None) or self._agent)

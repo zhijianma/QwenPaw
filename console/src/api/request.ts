@@ -10,7 +10,7 @@ function getErrorMessageFromBody(
     return null;
   }
 
-  if (!contentType.includes("application/json")) {
+  if (!contentType.includes("json")) {
     return text;
   }
 

@@ -5,6 +5,8 @@ import pytest
 from pydantic import ValidationError
 
 from qwenpaw.app.chats.models import (
+    ChatForkOrigin,
+    ChatForkRequest,
     ChatGroup,
     ChatGroupKind,
     ChatGroupUpdate,
@@ -51,6 +53,27 @@ def test_chat_spec_default_values():
     assert spec.group_id is None
     assert spec.parent_session_id is None
     assert spec.root_session_id is None
+    assert spec.fork_origin is None
+
+
+def test_chat_fork_uses_chat_and_source_message_identity():
+    request = ChatForkRequest(
+        source_message_id="agentscope-message-7",
+        idempotency_key="fork-click-1",
+    )
+    origin = ChatForkOrigin(
+        parent_chat_id="parent-chat",
+        source_message_id=request.source_message_id,
+    )
+    child = ChatSpec(
+        session_id="console:child-chat",
+        user_id="u1",
+        fork_origin=origin,
+    )
+
+    assert child.id != origin.parent_chat_id
+    assert child.fork_origin == origin
+    assert "session_id" not in origin.model_dump()
 
 
 def test_chat_spec_requires_session_id_and_user_id():

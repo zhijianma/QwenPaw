@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import logging
 import re
 from functools import wraps
@@ -59,6 +60,7 @@ from .dependency import (
 )
 from .agent import ManagedAgentProfile, ManagedAgentProfileSpec
 from .service import ManagedService, ManagedServiceSpec
+from .task import get_task_manager
 
 logger = logging.getLogger(__name__)
 _APP_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
@@ -124,8 +126,6 @@ def _build_capability_router() -> APIRouter:  # pylint: disable=R0915
     Every route resolves its context through ``get_scoped_ctx``: identity
     comes from the authenticated principal, never from request parameters.
     """
-    import json
-
     router = APIRouter()
 
     @router.post("/chat")
@@ -274,6 +274,34 @@ def _build_capability_router() -> APIRouter:  # pylint: disable=R0915
             )
         return {"ok": True}
 
+    @router.get("/task/{task_id}/stream")
+    async def task_stream(task_id: str, ctx=Depends(get_scoped_ctx)):
+        manager = get_task_manager()
+        record = manager.get_task(task_id)
+        if (
+            record is None
+            or record.app_id != ctx.app_id
+            or record.agent_id != ctx.agent_id
+            or record.user_id != ctx.user_id
+        ):
+            raise HTTPException(status_code=404, detail="Task not found")
+        return StreamingResponse(
+            manager.stream(task_id),
+            media_type="text/event-stream",
+        )
+
+    @router.post("/task/{task_id}/cancel")
+    async def cancel_task(task_id: str, ctx=Depends(get_scoped_ctx)):
+        cancelled = await get_task_manager().cancel_task(
+            task_id,
+            app_id=ctx.app_id,
+            agent_id=ctx.agent_id,
+            user_id=ctx.user_id,
+        )
+        if not cancelled:
+            raise HTTPException(status_code=404, detail="Task not found")
+        return {"ok": True, "task_id": task_id}
+
     @router.get("/storage")
     async def storage_keys(ctx=Depends(get_scoped_ctx)):
         return {"keys": await ctx.storage.keys()}
@@ -331,7 +359,7 @@ def _make_app_id_injector(app_id: str) -> Callable:
     return inject_app_id
 
 
-class PawApp:
+class PawApp:  # pylint: disable=too-many-public-methods
     """PawApp SDK — thin wrapper over QwenPaw's Plugin API.
 
     In the plugin loading pipeline, ``PawApp.register(api)`` is called
@@ -424,6 +452,87 @@ class PawApp:
                         path,
                     )(func)
 
+            return func
+
+        return decorator
+
+    # ─── Decorator: long-running task ──────────────────────────────
+
+    def task(self, path: str):
+        """Register a JSON-started task with SSE and Interaction support.
+
+        Task handlers are asynchronous and receive ``ctx`` followed by
+        keyword arguments decoded from the request JSON object.
+        """
+        if not path.startswith("/") or path == "/":
+            raise ValueError("PawApp task path must start with '/'")
+        if path == "/task" or path.startswith("/task/"):
+            raise ValueError("PawApp task path uses a reserved prefix")
+        if not self._standard_capabilities_enabled:
+            self.enable_standard_capabilities()
+
+        def decorator(func: Callable) -> Callable:
+            if not inspect.iscoroutinefunction(func):
+                raise TypeError("PawApp task handler must be async")
+            signature = inspect.signature(func)
+            parameters = list(signature.parameters.values())
+            if not parameters or parameters[0].name != "ctx":
+                raise TypeError(
+                    "PawApp task handler must receive ctx first",
+                )
+
+            async def start_task(
+                request: Request,
+                ctx=Depends(get_scoped_ctx),
+            ):
+                body = await request.body()
+                try:
+                    payload = json.loads(body) if body else {}
+                except (UnicodeDecodeError, ValueError) as exc:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Task body must be valid JSON",
+                    ) from exc
+                if not isinstance(payload, dict):
+                    raise HTTPException(
+                        status_code=422,
+                        detail="Task body must be a JSON object",
+                    )
+                try:
+                    signature.bind(ctx, **payload)
+                except TypeError as exc:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"Invalid task parameters: {exc}",
+                    ) from exc
+                manager = get_task_manager()
+                try:
+                    task_id = await manager.create_task(
+                        self.app_id,
+                        func,
+                        ctx,
+                        payload,
+                    )
+                except PermissionError as exc:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Chat not found",
+                    ) from exc
+                except RuntimeError as exc:
+                    raise HTTPException(
+                        status_code=503,
+                        detail=str(exc),
+                    ) from exc
+                record = manager.get_task(task_id)
+                return {
+                    "task_id": task_id,
+                    "chat_id": record.chat_id if record else None,
+                    "invocation_id": task_id,
+                }
+
+            start_task.__name__ = f"start_{func.__name__}_task"
+            start_task.__doc__ = func.__doc__
+            self._router.post(path)(start_task)
             return func
 
         return decorator

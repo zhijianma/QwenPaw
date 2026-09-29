@@ -135,6 +135,8 @@ async def test_daily_paper_result_is_delivered_to_inbox() -> None:
     manager._load_memory_config = lambda: SimpleNamespace(
         daily_paper_inbox_push_enabled=True,
     )
+    append_event = AsyncMock(return_value={"id": "event-1"})
+    manager._operational_event_publisher = append_event
     response = SimpleNamespace(
         success=True,
         answer="Generated daily paper brief",
@@ -144,17 +146,11 @@ async def test_daily_paper_result_is_delivered_to_inbox() -> None:
         },
     )
 
-    with patch(
-        "qwenpaw.agents.memory.reme_light_memory_manager."
-        "append_inbox_event",
-        new_callable=AsyncMock,
-        return_value={"id": "event-1"},
-    ) as append_event:
-        emitted = await manager._append_reme_job_result_to_inbox(
-            "daily_paper",
-            response=response,
-            kwargs={"date": "2026-08-08", "force": False},
-        )
+    emitted = await manager._append_reme_job_result_to_inbox(
+        "daily_paper",
+        response=response,
+        kwargs={"date": "2026-08-08", "force": False},
+    )
 
     assert emitted is True
     call_kwargs = append_event.await_args.kwargs

@@ -1,12 +1,18 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
+
 from qwenpaw.app.crons.heartbeat import (
     _extract_message_preview,
     is_cron_expression,
     parse_heartbeat_every,
+    run_heartbeat_once,
 )
-
 
 # ---------------------------------------------------------------------------
 # is_cron_expression
@@ -107,3 +113,91 @@ def test_extract_message_preview_truncates_long_text():
     msg = {"content": [{"type": "text", "text": long_text}]}
     result = _extract_message_preview(msg)
     assert result == long_text
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_delegates_last_target_to_task_runtime(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Compatibility preparation passes one typed durable request."""
+    (tmp_path / "HEARTBEAT.md").write_text(
+        "Check open work.",
+        encoding="utf-8",
+    )
+    config = SimpleNamespace(
+        active_hours=None,
+        timeout_seconds=45,
+        target="last",
+        every="30m",
+    )
+    last_dispatch = SimpleNamespace(
+        channel="console",
+        user_id="user-a",
+        session_id="console:user-a",
+    )
+    monkeypatch.setattr(
+        "qwenpaw.app.crons.heartbeat.get_heartbeat_config",
+        lambda _agent_id: config,
+    )
+    monkeypatch.setattr(
+        "qwenpaw.app.crons.heartbeat.read_last_dispatch",
+        lambda _agent_id: last_dispatch,
+    )
+    runtime = SimpleNamespace(execute=AsyncMock())
+    scheduled_for = datetime(2030, 1, 1, tzinfo=timezone.utc)
+
+    await run_heartbeat_once(
+        workspace=SimpleNamespace(),
+        channel_manager=SimpleNamespace(),
+        agent_id="agent-a",
+        workspace_dir=tmp_path,
+        task_runtime=runtime,
+        trigger="scheduled",
+        scheduled_for=scheduled_for,
+    )
+
+    runtime.execute.assert_awaited_once()
+    request = runtime.execute.await_args.args[0]
+    assert request.query_text == "Check open work."
+    assert request.target == "last"
+    assert request.scheduled_for == scheduled_for
+    assert request.channel == "console"
+    assert request.user_id == "user-a"
+    assert request.transport_context == "console:user-a"
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_without_last_dispatch_falls_back_to_main(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """A missing last destination preserves the legacy main behavior."""
+    (tmp_path / "HEARTBEAT.md").write_text("Check.", encoding="utf-8")
+    config = SimpleNamespace(
+        active_hours=None,
+        timeout_seconds=45,
+        target="last",
+        every="30m",
+    )
+    monkeypatch.setattr(
+        "qwenpaw.app.crons.heartbeat.get_heartbeat_config",
+        lambda _agent_id: config,
+    )
+    monkeypatch.setattr(
+        "qwenpaw.app.crons.heartbeat.read_last_dispatch",
+        lambda _agent_id: None,
+    )
+    runtime = SimpleNamespace(execute=AsyncMock())
+
+    await run_heartbeat_once(
+        workspace=SimpleNamespace(),
+        channel_manager=SimpleNamespace(),
+        agent_id="agent-a",
+        workspace_dir=tmp_path,
+        task_runtime=runtime,
+    )
+
+    request = runtime.execute.await_args.args[0]
+    assert request.target == "main"
+    assert request.transport_context == "main"

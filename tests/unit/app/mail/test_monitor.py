@@ -39,19 +39,18 @@ from qwenpaw.app.mail.monitor import (
 )
 from qwenpaw.utils.io_utils import run_sync_io
 
-
 _HAN_RE = re.compile("[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 
 # ── test doubles ─────────────────────────────────────────────────────
 
 
 class EventRecorder:
-    """Async stand-in for inbox_store.append_event."""
+    """Async stand-in for the Mail operational event publisher."""
 
     def __init__(self) -> None:
         self.events: list[dict] = []
 
-    async def __call__(self, **kwargs):
+    async def __call__(self, _workspace=None, **kwargs):
         self.events.append(kwargs)
         return kwargs
 
@@ -143,9 +142,10 @@ class FakeImapConn:
 
 
 class FakeWorkspace:
-    """Workspace stub exposing workspace_dir + stream_query."""
+    """Workspace stub exposing identity, directory, and stream query."""
 
     def __init__(self, workspace_dir: Path) -> None:
+        self.agent_id = "test-agent"
         self.workspace_dir = workspace_dir
         self.queries: list[dict] = []
 
@@ -206,7 +206,7 @@ def _mail_config(
 def recorder():
     rec = EventRecorder()
     with patch(
-        "qwenpaw.app.mail.monitor.append_inbox_event",
+        "qwenpaw.app.mail.monitor.publish_operational_event",
         new=rec,
     ):
         yield rec

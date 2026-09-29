@@ -91,6 +91,16 @@ class HarnessAdapter(ABC):
         """Forget provider state associated with one QwenPaw session."""
         del session_id
 
+    async def cancel_turn(
+        self,
+        session_id: str,
+        *,
+        reason: str,
+    ) -> bool:
+        """Cooperatively cancel one active provider turn, if present."""
+        del session_id, reason
+        return False
+
     @abstractmethod
     def run_turn(
         self,

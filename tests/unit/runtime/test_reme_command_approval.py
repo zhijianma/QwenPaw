@@ -101,6 +101,73 @@ async def test_reme_action_denies_when_approval_is_rejected(
 
 
 @pytest.mark.asyncio
+async def test_durable_reme_uses_task_deadline_and_bridges(
+    monkeypatch,
+) -> None:
+    from qwenpaw.app.approvals import interaction_bridge as interaction_module
+    from qwenpaw.app.approvals import task_bridge as task_module
+
+    pending = SimpleNamespace(request_id="approval-durable")
+    service = SimpleNamespace(
+        create_pending_summary=AsyncMock(return_value=pending),
+        wait_for_approval=AsyncMock(
+            return_value=ApprovalDecision.APPROVED,
+        ),
+    )
+    task_bridge = AsyncMock(return_value=True)
+    interaction_bridge = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        "qwenpaw.app.approvals.get_approval_service",
+        lambda: service,
+    )
+    monkeypatch.setattr(
+        task_module,
+        "attach_pending_to_durable_task",
+        task_bridge,
+    )
+    monkeypatch.setattr(
+        interaction_module,
+        "attach_pending_to_interaction",
+        interaction_bridge,
+    )
+    request_context = {
+        "durable_task": True,
+        "_task_approval_broker": object(),
+        "execution_contract": {
+            "timeout_policy": {"approval_seconds": 9},
+        },
+    }
+    ctx = SimpleNamespace(
+        request=SimpleNamespace(
+            user_id="task-user",
+            channel="console",
+            request_context=request_context,
+        ),
+        session_id="task-session",
+        root_session_id="task-session",
+        agent_id="agent-1",
+        root_agent_id="agent-1",
+        workspace=SimpleNamespace(channel_manager=None),
+    )
+
+    approved = await _request_reme_action_approval(
+        ctx,
+        "daily_paper",
+        {"topics": "agents"},
+    )
+
+    assert approved is True
+    create_kwargs = service.create_pending_summary.await_args.kwargs
+    assert create_kwargs["timeout_seconds"] == 9
+    assert create_kwargs["identity_policy"] is ApprovalIdentityPolicy.AGENT
+    assert service.wait_for_approval.await_args.args == (pending, 9.0)
+    task_kwargs = task_bridge.await_args.kwargs
+    assert task_kwargs["action"] == "reme.daily_paper"
+    assert task_kwargs["policy"] == "reme_action"
+    interaction_bridge.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_other_requester_cannot_approve_reme_action(monkeypatch) -> None:
     service = ApprovalService()
     pending = await service.create_pending_summary(

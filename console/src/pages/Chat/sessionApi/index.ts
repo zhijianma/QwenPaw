@@ -1207,6 +1207,15 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     return this.findSession(libraryId)?.sessionId || libraryId;
   }
 
+  /** Return a server-persisted ChatSpec.id, never a transport alias. */
+  getPersistedChatId(referenceId: string): string | null {
+    const session = this.findSession(referenceId);
+    if (!session) return null;
+    const realId = (session as ExtendedSession).realId;
+    if (realId) return realId;
+    return isLocalTimestamp(session.id) ? null : session.id;
+  }
+
   /** Resolve one immutable identity from an explicit SDK, chat, or runtime id. */
   getSessionIdentity(referenceId?: string | null): SessionIdentity {
     const explicitId = referenceId || "";

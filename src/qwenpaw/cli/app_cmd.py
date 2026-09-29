@@ -11,6 +11,7 @@ from ..app.auth import is_auth_enabled
 from ..browser.control_link.chrome.protocol import NM_MAX_INBOUND_BYTES
 from ..config.utils import write_last_api
 from ..constant import LOG_LEVEL_ENV
+from ..editions.resolver import EDITION_ENV, resolve_edition
 from ..utils.http import is_loopback_host, probe_host_for_bind_host
 from ..utils.logging import SuppressPathAccessLogFilter, setup_logger
 from ..utils.platform import warn_unelevated_sandbox
@@ -118,6 +119,12 @@ def configure_server_process(
     "This option is deprecated and will be removed in a future version. "
     "QwenPaw always uses 1 worker.",
 )
+@click.option(
+    "--edition",
+    type=click.Choice(["lite", "workstation", "hub"]),
+    default=None,
+    help="Product profile; defaults to QWENPAW_EDITION or lite.",
+)
 def app_cmd(
     host: str,
     port: int,
@@ -125,6 +132,7 @@ def app_cmd(
     workers: int,  # pylint: disable=unused-argument
     log_level: str,
     hide_access_paths: tuple[str, ...],
+    edition: str | None,
 ) -> None:
     """Run QwenPaw FastAPI app."""
     # NOTE: the server intentionally runs UNPRIVILEGED. The Windows
@@ -147,6 +155,9 @@ def app_cmd(
             err=True,
         )
         click.echo(err=True)
+
+    profile = resolve_edition(edition)
+    os.environ[EDITION_ENV] = profile.edition
 
     configure_server_process(
         host,

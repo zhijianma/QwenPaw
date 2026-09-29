@@ -21,6 +21,7 @@ const {
   mockListProviders,
   mockGetActiveModels,
   mockUploadFile,
+  mockGetChat,
   mockGetChatStatus,
   mockFilePreviewUrl,
   mockGetApiUrl,
@@ -34,10 +35,15 @@ const {
   mockBeginLoopModeSubmission,
   mockRequiresQwenPawModel,
   mockSdkInput,
+  mockSubmitDurableChatRequest,
+  mockWaitForDurableAdmission,
+  mockGetRealIdForSession,
+  mockGetSessionIdentity,
 } = vi.hoisted(() => ({
   mockListProviders: vi.fn(),
   mockGetActiveModels: vi.fn(),
   mockUploadFile: vi.fn(),
+  mockGetChat: vi.fn(),
   mockGetChatStatus: vi.fn(),
   mockFilePreviewUrl: vi.fn((f: string) => `/preview/${f}`),
   mockGetApiUrl: vi.fn((p: string) => `http://localhost:3000${p}`),
@@ -51,6 +57,10 @@ const {
   mockBeginLoopModeSubmission: vi.fn((text: string) => text),
   mockRequiresQwenPawModel: vi.fn(() => true),
   mockSdkInput: { loading: false, setSessionLoading: vi.fn() },
+  mockSubmitDurableChatRequest: vi.fn(),
+  mockWaitForDurableAdmission: vi.fn(),
+  mockGetRealIdForSession: vi.fn(() => null as string | null),
+  mockGetSessionIdentity: vi.fn(),
 }));
 
 let capturedOptions: any = null;
@@ -143,10 +153,16 @@ vi.mock("@/api/modules/provider", () => ({
 vi.mock("@/api/modules/chat", () => ({
   chatApi: {
     uploadFile: mockUploadFile,
+    getChat: mockGetChat,
     getChatStatus: mockGetChatStatus,
     filePreviewUrl: mockFilePreviewUrl,
     stopChat: vi.fn(() => Promise.resolve()),
   },
+}));
+
+vi.mock("./durableSubmission", () => ({
+  submitDurableChatRequest: mockSubmitDurableChatRequest,
+  waitForDurableAdmission: mockWaitForDurableAdmission,
 }));
 
 vi.mock("@/api/modules/agent", () => ({
@@ -200,17 +216,13 @@ vi.mock("./sessionApi", () => ({
       updateSession: vi.fn(),
       removeSession: vi.fn(),
     })),
-    getRealIdForSession: vi.fn(() => null),
+    getRealIdForSession: mockGetRealIdForSession,
     getBackendSessionId: vi.fn(() => "backend-session-1"),
     setLastUserMessage: vi.fn(),
     discardLastUserMessage: vi.fn(),
     lastActiveChatId: "last-chat-1",
     patchLastUserMessage: vi.fn(),
-    getSessionIdentity: vi.fn(() => ({
-      sessionId: "test-session",
-      userId: "test-user",
-      channel: "console",
-    })),
+    getSessionIdentity: mockGetSessionIdentity,
     triggerResolve: vi.fn(),
     resetWindowIdentity: vi.fn(),
     isSessionSwitching: false,
@@ -437,6 +449,10 @@ vi.mock("./components/ChatSenderTabsPanel", () => ({
   default: () => <div data-testid="sender-tabs" />,
 }));
 
+vi.mock("./components/ServerRuntimeQueue", () => ({
+  default: () => null,
+}));
+
 vi.mock("./components/ApprovalLevelToggle", () => ({
   default: () => <div data-testid="approval-toggle" />,
 }));
@@ -564,6 +580,8 @@ vi.mock("./utils", async () => {
 describe("ChatPage coverage", () => {
   beforeEach(() => {
     mockSdkInput.loading = false;
+    mockGetChat.mockReset();
+    mockGetChat.mockResolvedValue({ messages: [], status: "idle" });
     mockGetChatStatus.mockReset();
     mockGetChatStatus.mockResolvedValue({ status: "idle" });
     chatExtensions.__resetForTests();
@@ -576,6 +594,22 @@ describe("ChatPage coverage", () => {
     mockBeginLoopModeSubmission.mockImplementation((text: string) => text);
     mockRequiresQwenPawModel.mockReset();
     mockRequiresQwenPawModel.mockReturnValue(true);
+    mockSubmitDurableChatRequest.mockReset();
+    mockSubmitDurableChatRequest.mockResolvedValue({
+      receipt: {
+        submission_id: "submission-1",
+      },
+    });
+    mockWaitForDurableAdmission.mockReset();
+    mockWaitForDurableAdmission.mockResolvedValue("active");
+    mockGetRealIdForSession.mockReset();
+    mockGetRealIdForSession.mockReturnValue(null);
+    mockGetSessionIdentity.mockReset();
+    mockGetSessionIdentity.mockReturnValue({
+      sessionId: "test-session",
+      userId: "test-user",
+      channel: "console",
+    });
     mockListProviders.mockResolvedValue([
       {
         id: "openai",
@@ -614,8 +648,16 @@ describe("ChatPage coverage", () => {
     vi.clearAllMocks();
   });
 
-  it("queues attachments when SDK loading is false but backend cleanup is still running", async () => {
+  it("admits a stable Chat through the server while cleanup is running", async () => {
     const chatId = "75590000-0000-4000-8000-000000000001";
+    mockGetSessionIdentity.mockImplementation(
+      (referenceId?: string | null) => ({
+        sessionId: "test-session",
+        chatId: referenceId || chatId,
+        userId: "test-user",
+        channel: "console",
+      }),
+    );
     mockGetChatStatus.mockResolvedValue({ status: "running" });
     renderWithProviders(<ChatPage />, { initialEntries: [`/chat/${chatId}`] });
     await screen.findByTestId("chat-ui");
@@ -634,7 +676,27 @@ describe("ChatPage coverage", () => {
           uid: "file",
           name: "notes.txt",
           type: "text/plain",
-          response: { url: "/files/notes.txt" },
+          response: {
+            url: "/files/notes.txt",
+            artifact_ref: {
+              artifact_id: "artifact-1",
+              kind: "chat.attachment",
+              uri: "qwenpaw-artifact://sha256/content",
+              media_type: "text/plain",
+              content_hash: "sha256:content",
+              size_bytes: 5,
+              metadata: {},
+            },
+            evidence_ref: {
+              evidence_id: "evidence-1",
+              artifact_id: "artifact-1",
+              claim: "Uploaded chat attachment",
+              producer: "qwenpaw.system.chat-upload",
+              captured_at: "2026-09-24T00:00:00Z",
+              metadata: {},
+            },
+            artifact_receipt: "receipt-1",
+          },
         },
       ],
     });
@@ -642,30 +704,27 @@ describe("ChatPage coverage", () => {
     expect(mockGetChatStatus).toHaveBeenCalledWith(chatId, {
       agentId: "default",
     });
-    expect(result).toEqual({ proceed: false, clear: true });
-    expect(mockQueueEnqueue).toHaveBeenCalledWith(
-      chatId,
+    expect(result).toEqual(
       expect.objectContaining({
-        text: "follow-up during cleanup",
-        agentId: "default",
-        backendSessionId: "test-session",
-        userId: "test-user",
-        channel: "console",
-        attachments: [
-          {
-            url: "/files/notes.txt",
-            name: "notes.txt",
-            type: "text/plain",
-            size: undefined,
-          },
-        ],
+        proceed: true,
+        query: "follow-up during cleanup",
+        session_id: "test-session",
       }),
     );
+    expect(mockQueueEnqueue).not.toHaveBeenCalled();
   });
 
   it("queues a late admission into its original Chat and preserves the new route's input", async () => {
     const source = "75590000-0000-4000-8000-000000000002";
     const target = "75590000-0000-4000-8000-000000000003";
+    mockGetSessionIdentity.mockImplementation(
+      (referenceId?: string | null) => ({
+        sessionId: "test-session",
+        chatId: referenceId || source,
+        userId: "test-user",
+        channel: "console",
+      }),
+    );
     let resolveStatus!: (status: { status: string }) => void;
     mockGetChatStatus.mockImplementationOnce(
       () =>
@@ -1892,6 +1951,60 @@ describe("ChatPage coverage", () => {
       ]),
       expect.any(String),
     );
+  });
+
+  it("submits an existing Chat durably before reconnecting its stream", async () => {
+    const session = (await import("./sessionApi")).default;
+    vi.mocked(session.getRealIdForSession).mockReturnValue("chat-spec-1");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response("", {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        }),
+      ),
+    );
+
+    renderWithProviders(<ChatPage />, {
+      initialEntries: ["/chat/local-chat"],
+    });
+    await screen.findByTestId("chat-ui");
+    await capturedOptions.api.fetch({
+      chatSessionId: "local-chat",
+      clientRequestId: "message-1",
+      input: [
+        {
+          role: "user",
+          content: [{ type: "text", text: "durable foreground" }],
+        },
+      ],
+    });
+
+    expect(mockSubmitDurableChatRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatId: "chat-spec-1",
+        agentId: "default",
+        idempotencyKey: "message-1",
+        requestBody: expect.objectContaining({
+          input: expect.any(Array),
+        }),
+      }),
+    );
+    expect(mockWaitForDurableAdmission).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatId: "chat-spec-1",
+        submissionId: "submission-1",
+      }),
+    );
+    const reconnect = vi.mocked(fetch).mock.calls.at(-1);
+    expect(reconnect?.[0]).toContain("/console/chat");
+    expect(JSON.parse(String(reconnect?.[1]?.body))).toMatchObject({
+      reconnect: true,
+      session_id: "test-session",
+      user_id: "test-user",
+      channel: "console",
+    });
   });
 
   it("uses the runtime for the API but only the submitted Chat ID for pending storage", async () => {

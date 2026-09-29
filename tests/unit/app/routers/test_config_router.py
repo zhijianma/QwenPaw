@@ -672,7 +672,7 @@ async def test_run_heartbeat_once_uses_configured_timeout(
         AsyncMock(return_value=[]),
     )
     monkeypatch.setattr(heartbeat, "finalize_trace", AsyncMock())
-    monkeypatch.setattr(heartbeat, "append_inbox_event", AsyncMock())
+    monkeypatch.setattr(heartbeat, "publish_heartbeat_event", AsyncMock())
 
     await heartbeat.run_heartbeat_once(
         workspace=_HeartbeatWorkspace(),

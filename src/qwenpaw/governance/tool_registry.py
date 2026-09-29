@@ -39,6 +39,7 @@ class ToolRegistry:
         # supplied — as opposed to shell tools like Bash that execute directly
         # when unsandboxed. See ``requires_sandbox`` for why this matters.
         self._sandbox_required: Dict[str, bool] = {}
+        self._effects: Dict[str, str] = {}
         # python_name → owner id (``"builtin"`` or plugin_id). Used to revoke
         # plugin identities on unload / hot-reload.
         self._owners: Dict[str, str] = {}
@@ -50,6 +51,7 @@ class ToolRegistry:
         target_param: str,
         pattern_param: str = "",
         sandbox_required: bool = False,
+        effect: str = "none",
     ) -> None:
         """Register a tool.
 
@@ -79,6 +81,7 @@ class ToolRegistry:
             self._sandbox_required[tool_name] = True
         else:
             self._sandbox_required.pop(tool_name, None)
+        self._effects[tool_name] = effect
 
     def register_python_name(self, python_name: str, policy_name: str) -> None:
         """Register a python function name → policy tool name mapping."""
@@ -107,6 +110,7 @@ class ToolRegistry:
             self._target_params.pop(pname, None)
             self._pattern_params.pop(pname, None)
             self._sandbox_required.pop(pname, None)
+            self._effects.pop(pname, None)
         return True
 
     def unregister_owner(self, owner: str) -> List[str]:
@@ -133,6 +137,10 @@ class ToolRegistry:
         Returns "" if not registered.
         """
         return self._target_params.get(tool_name, "")
+
+    def get_effect(self, tool_name: str) -> str:
+        """Return the declared observable effect for one tool."""
+        return self._effects.get(tool_name, "none")
 
     def get_pattern_param(self, tool_name: str) -> str:
         """Return the optional pattern parameter name (e.g. Glob)."""
@@ -231,13 +239,14 @@ class ToolRegistry:
     def get_identity(
         self,
         tool_name: str,
-    ) -> Tuple[str, str, str, bool]:
-        """Return (type, target, pattern, sandbox_required) for comparisons."""
+    ) -> Tuple[str, str, str, bool, str]:
+        """Return stable governance identity metadata for comparisons."""
         return (
             self.get_type(tool_name),
             self.get_target_param(tool_name),
             self.get_pattern_param(tool_name),
             self.requires_sandbox(tool_name),
+            self.get_effect(tool_name),
         )
 
 
@@ -253,6 +262,9 @@ def snake_to_pascal(name: str) -> str:
 
 ALLOWED_TOOL_TYPES = frozenset({"file", "network", "shell", "internal"})
 ALLOWED_DEFAULT_POLICIES = frozenset({"allow", "ask", "deny", ""})
+ALLOWED_TOOL_EFFECTS = frozenset(
+    {"none", "local_write", "external_write", "process"},
+)
 
 
 class GovernanceRegistrationConflict(ValueError):
@@ -281,6 +293,17 @@ def validate_default_policy(default_policy: str) -> str:
     return normalized
 
 
+def validate_tool_effect(effect: str) -> str:
+    """Return normalized effect metadata or reject an unknown value."""
+    normalized = (effect or "none").strip().lower()
+    if normalized not in ALLOWED_TOOL_EFFECTS:
+        raise GovernanceRegistrationConflict(
+            f"Invalid tool effect {effect!r}; expected one of "
+            f"{sorted(ALLOWED_TOOL_EFFECTS)}",
+        )
+    return normalized
+
+
 def register_tool_governance(
     registry: ToolRegistry,
     python_name: str,
@@ -289,6 +312,7 @@ def register_tool_governance(
     policy_name: str = "",
     pattern_param: str = "",
     sandbox_required: bool = False,
+    effect: str = "none",
     owner: str = "",
 ) -> str:
     """Register one tool into the governance registry.
@@ -307,12 +331,14 @@ def register_tool_governance(
     (or already present with identical metadata).
     """
     tool_type = validate_tool_type(tool_type)
+    effect = validate_tool_effect(effect)
     pname = policy_name or snake_to_pascal(python_name)
     new_identity = (
         tool_type,
         target_param or "",
         pattern_param or "",
         bool(sandbox_required),
+        effect,
     )
     existing_type = registry.get_type(pname)
     existing_map = registry.get_mapped_policy_name(python_name)
@@ -342,6 +368,7 @@ def register_tool_governance(
             target_param,
             pattern_param=pattern_param,
             sandbox_required=sandbox_required,
+            effect=effect,
         )
         registry.register_python_name(python_name, pname)
         registry.set_owner(python_name, owner)
@@ -362,6 +389,7 @@ def register_tool_governance(
             target_param,
             pattern_param=pattern_param,
             sandbox_required=sandbox_required,
+            effect=effect,
         )
         return pname
 
@@ -418,6 +446,7 @@ def _register_from_descriptors(registry: ToolRegistry) -> None:
             policy_name=gov.policy_name,
             pattern_param=gov.pattern_param,
             sandbox_required=gov.fail_without_sandbox,
+            effect=gov.effect,
             owner="builtin",
         )
 

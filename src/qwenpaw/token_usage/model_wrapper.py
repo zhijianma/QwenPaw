@@ -8,6 +8,7 @@ from agentscope.model import ChatModelBase
 from agentscope.model._model_response import ChatResponse
 from agentscope.model._model_usage import ChatUsage
 
+from ..kernel.models import UsageDelta, UsageMeter
 from ..utils.model_response import safe_attr
 from .buffer import _UsageEvent
 from .manager import _usage_agent_id, get_token_usage_manager
@@ -175,6 +176,39 @@ class TokenRecordingModelWrapper(ChatModelBase):
         }
         self._store_usage(usage_data)
 
+    async def _record_task_budget(self, usage: ChatUsage | None) -> None:
+        """Charge descendant model calls to the root Task usage scope."""
+        if usage is None:
+            return
+        from ..app.agent_context import (
+            get_current_task_usage_meter,
+            should_record_current_model_usage,
+        )
+
+        if not should_record_current_model_usage():
+            return
+        meter = get_current_task_usage_meter()
+        if not isinstance(meter, UsageMeter):
+            return
+        input_tokens = max(
+            int(getattr(usage, "input_tokens", 0) or 0),
+            0,
+        )
+        output_tokens = max(
+            int(getattr(usage, "output_tokens", 0) or 0),
+            0,
+        )
+        raw_cost = getattr(usage, "cost_micros", None)
+        await meter.record(
+            UsageDelta(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_micros=max(int(raw_cost or 0), 0),
+                cost_unknown=raw_cost is None,
+            ),
+            source=f"model:{self._provider_id}",
+        )
+
     @classmethod
     def pop_usage_for_session(cls, session_id: str) -> dict[str, Any] | None:
         return cls._usage_by_session.pop(session_id, None)
@@ -224,6 +258,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
     ) -> Any:
         result = await self._model.generate_structured_output(*args, **kwargs)
         self._record_usage(safe_attr(result, "usage"))
+        await self._record_task_budget(safe_attr(result, "usage"))
         return result
 
     async def __call__(
@@ -257,6 +292,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
         if isinstance(result, AsyncGenerator):
             return self._wrap_stream(result)
         self._record_usage(safe_attr(result, "usage"))
+        await self._record_task_budget(safe_attr(result, "usage"))
         return result
 
     async def _wrap_stream(
@@ -273,3 +309,4 @@ class TokenRecordingModelWrapper(ChatModelBase):
         finally:
             await stream.aclose()
             self._record_usage(last_usage)
+            await self._record_task_budget(last_usage)

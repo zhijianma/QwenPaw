@@ -158,6 +158,18 @@ class TestBuildAgentRequestFromNative:
             "qwenpaw_client_message_id": "client-2",
         }
 
+    def test_message_identity_propagated(self, console_channel):
+        payload = {
+            "sender_id": "u1",
+            "content_parts": [TextContent(text="hi")],
+            "message_id": "message-1",
+            "meta": {},
+        }
+
+        req = console_channel.build_agent_request_from_native(payload)
+
+        assert req.input[0].id == "message-1"
+
     def test_non_dict_payload_returns_empty_request(
         self,
         console_channel,

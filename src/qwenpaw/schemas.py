@@ -14,6 +14,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .kernel.models import ArtifactRef, EvidenceRef
+
 
 # ---------------------------------------------------------------------------
 # Enums.
@@ -200,11 +202,20 @@ class Message(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     id: str = Field(default_factory=lambda: uuid4().hex)
+    source_message_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Stable persisted message identity used for conversation forks; "
+            "several rendered segments may share one source identity"
+        ),
+    )
     type: MessageType = MessageType.MESSAGE
     role: Optional[Role] = None
     content: List[Any] = Field(default_factory=list)
     status: RunStatus = RunStatus.InProgress
     metadata: Optional[Dict[str, Any]] = None
+    artifact_refs: List[ArtifactRef] = Field(default_factory=list)
+    evidence_refs: List[EvidenceRef] = Field(default_factory=list)
 
     @field_validator("content", mode="before")
     @classmethod

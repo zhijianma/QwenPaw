@@ -8,6 +8,7 @@ from qwenpaw.app.crons.models import (
     CronJobSpec,
     DispatchSpec,
     DispatchTarget,
+    JobRuntimeSpec,
     ScheduleSpec,
     _crontab_dow_to_name,
 )
@@ -81,6 +82,20 @@ def test_schedule_cron_rejects_6_fields():
 def test_schedule_once_requires_run_at():
     with pytest.raises(ValidationError, match="run_at is missing"):
         ScheduleSpec(type="once")
+
+
+def test_tool_safety_approval_timeout_is_bounded_by_attempt() -> None:
+    runtime = JobRuntimeSpec(tool_safety=True, timeout_seconds=120)
+
+    assert runtime.effective_approval_timeout_seconds() == 30
+    with pytest.raises(ValidationError, match="requires tool_safety"):
+        JobRuntimeSpec(approval_timeout_seconds=10)
+    with pytest.raises(ValidationError, match="must be shorter"):
+        JobRuntimeSpec(
+            tool_safety=True,
+            timeout_seconds=10,
+            approval_timeout_seconds=10,
+        )
 
 
 # ---------------------------------------------------------------------------

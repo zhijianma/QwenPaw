@@ -14,6 +14,7 @@ from fastapi import APIRouter, Request
 
 from .plugins import (
     _list_plugins_from_disk,
+    _ui_contribution_projection,
     serve_plugin_ui_file,
 )
 
@@ -53,7 +54,9 @@ async def list_frontend_plugins(request: Request):
                 "enabled": record.enabled,
                 "loaded": True,
                 "plugin_type": manifest.plugin_type,
+                "schema_version": manifest.schema_version,
                 "frontend_entry": manifest.entry.frontend,
+                "ui_contributions": _ui_contribution_projection(manifest),
             },
         )
 

@@ -1,0 +1,659 @@
+# -*- coding: utf-8 -*-
+"""Tests for Chat-first runtime assembly."""
+
+# pylint: disable=protected-access
+
+from types import SimpleNamespace
+from uuid import UUID
+
+import pytest
+
+from qwenpaw.capabilities import GenerationRegistry
+from qwenpaw.kernel.invocation import (
+    CapabilitySelection,
+    CapabilitySelectionOverrides,
+    DEFAULT_AGENT_FACTORY_ID,
+    DEFAULT_AGENT_MODE_PROVIDER_ID,
+    DEFAULT_COMMAND_PROVIDER_ID,
+    DEFAULT_DRIVER_PROVIDER_ID,
+    DEFAULT_HOOK_PROVIDER_ID,
+    DEFAULT_STOP_GATE_PROVIDER_ID,
+    DEFAULT_MEMORY_PROVIDER_ID,
+    DEFAULT_PROMPT_PROVIDER_ID,
+    DEFAULT_TOOL_PROVIDER_ID,
+    InvocationScope,
+)
+from qwenpaw.kernel.models import (
+    CapabilityBundle,
+    CapabilityContribution,
+    CapabilityProviderKind,
+)
+from qwenpaw.runtime.assembly import (
+    CapabilityUnavailableError,
+    RuntimeAssemblyFactory,
+    capability_registry_for,
+)
+from qwenpaw.runtime.builder import AgentBuilder
+from qwenpaw.runtime.runtime import Runtime
+
+
+def test_capability_registry_for_returns_host_owned_registry() -> None:
+    registry = GenerationRegistry()
+    workspace = SimpleNamespace(capability_registry=registry)
+
+    assert capability_registry_for(workspace) is registry
+
+
+@pytest.mark.parametrize(
+    "workspace",
+    [
+        SimpleNamespace(),
+        SimpleNamespace(capability_registry=object()),
+    ],
+)
+def test_capability_registry_for_fails_closed_without_shared_registry(
+    workspace: SimpleNamespace,
+) -> None:
+    with pytest.raises(
+        CapabilityUnavailableError,
+        match="no shared capability registry",
+    ):
+        capability_registry_for(workspace)
+
+    assert not isinstance(
+        getattr(workspace, "capability_registry", None),
+        GenerationRegistry,
+    )
+
+
+@pytest.mark.asyncio
+async def test_open_resolves_system_agent_factory_without_task_ids() -> None:
+    registry = GenerationRegistry()
+    assembly = await RuntimeAssemblyFactory(registry).open(
+        agent_id="default",
+        session_id="chat-session",
+        root_agent_id="default",
+        root_session_id="chat-session",
+        workspace_dir="/tmp/qwenpaw-workspace",
+    )
+
+    factory = assembly.require(DEFAULT_AGENT_FACTORY_ID, "agent.factory")
+    tool_provider = assembly.require(
+        DEFAULT_TOOL_PROVIDER_ID,
+        "tool.provider",
+    )
+    memory_provider = assembly.require(
+        DEFAULT_MEMORY_PROVIDER_ID,
+        "memory.provider",
+    )
+    mode_provider = assembly.require(
+        DEFAULT_AGENT_MODE_PROVIDER_ID,
+        "agent.mode.provider",
+    )
+    prompt_provider = assembly.require(
+        DEFAULT_PROMPT_PROVIDER_ID,
+        "prompt.provider",
+    )
+    driver_provider = assembly.require(
+        DEFAULT_DRIVER_PROVIDER_ID,
+        "driver.provider",
+    )
+    command_provider = assembly.require(
+        DEFAULT_COMMAND_PROVIDER_ID,
+        "command.provider",
+    )
+    hook_provider = assembly.require(
+        DEFAULT_HOOK_PROVIDER_ID,
+        "hook.provider",
+    )
+    stop_gate_provider = assembly.require(
+        DEFAULT_STOP_GATE_PROVIDER_ID,
+        "loop.gate.provider",
+    )
+
+    assert factory.factory_id == DEFAULT_AGENT_FACTORY_ID
+    assert tool_provider.provider_id == DEFAULT_TOOL_PROVIDER_ID
+    assert memory_provider.provider_id == DEFAULT_MEMORY_PROVIDER_ID
+    assert mode_provider.provider_id == DEFAULT_AGENT_MODE_PROVIDER_ID
+    assert prompt_provider.provider_id == DEFAULT_PROMPT_PROVIDER_ID
+    assert driver_provider.provider_id == DEFAULT_DRIVER_PROVIDER_ID
+    assert command_provider.provider_id == DEFAULT_COMMAND_PROVIDER_ID
+    assert hook_provider.provider_id == DEFAULT_HOOK_PROVIDER_ID
+    assert stop_gate_provider.provider_id == DEFAULT_STOP_GATE_PROVIDER_ID
+    assert assembly.scope.registry_generation == 10
+    assert not hasattr(assembly.scope, "task_id")
+    await assembly.close()
+
+
+@pytest.mark.asyncio
+async def test_open_reuses_the_published_system_bundle() -> None:
+    registry = GenerationRegistry()
+    first = await RuntimeAssemblyFactory(registry).open(
+        agent_id="default",
+        session_id="one",
+        root_agent_id="default",
+        root_session_id="one",
+        workspace_dir="/tmp/qwenpaw-workspace",
+    )
+    second = await RuntimeAssemblyFactory(registry).open(
+        agent_id="default",
+        session_id="two",
+        root_agent_id="default",
+        root_session_id="two",
+        workspace_dir="/tmp/qwenpaw-workspace",
+    )
+
+    assert first.scope.registry_generation == 10
+    assert second.scope.registry_generation == 10
+    await first.close()
+    await second.close()
+
+
+class _PluginToolProvider:
+    provider_id = "example.tools.provider"
+
+    def __init__(self, version: str) -> None:
+        self.version = version
+
+    async def health_check(self) -> bool:
+        return True
+
+    async def list_tools(self, scope, selection, host):
+        del scope, selection, host
+        return ()
+
+
+class _PluginDriverProvider:
+    provider_id = "example.drivers.provider"
+
+    async def health_check(self) -> bool:
+        return True
+
+    async def open(self, scope, host):
+        return SimpleNamespace(scope=scope, host=host)
+
+
+def _plugin_tool_bundle(version: str) -> CapabilityBundle:
+    return CapabilityBundle(
+        provider_id="example.tools",
+        provider_kind=CapabilityProviderKind.PLUGIN,
+        version=version,
+        contributions=(
+            CapabilityContribution(
+                contribution_id="provider",
+                slot="tool.provider",
+                entrypoint="example:provider",
+            ),
+        ),
+    )
+
+
+def _plugin_driver_bundle() -> CapabilityBundle:
+    return CapabilityBundle(
+        provider_id="example.drivers",
+        provider_kind=CapabilityProviderKind.PLUGIN,
+        version="1.0.0",
+        contributions=(
+            CapabilityContribution(
+                contribution_id="provider",
+                slot="driver.provider",
+                entrypoint="example:driver_provider",
+            ),
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_plugin_tool_provider_replacement_keeps_old_invocation() -> None:
+    registry = GenerationRegistry()
+    await registry.activate_bundle(
+        _plugin_tool_bundle("1.0.0"),
+        lambda _: _PluginToolProvider("1.0.0"),
+    )
+    selection = CapabilitySelection(
+        tool_provider_ids=("example.tools.provider",),
+    )
+    old = await RuntimeAssemblyFactory(registry).open(
+        agent_id="default",
+        session_id="old",
+        root_agent_id="default",
+        root_session_id="old",
+        workspace_dir="/tmp/qwenpaw-workspace",
+        selection=selection,
+    )
+
+    await registry.activate_bundle(
+        _plugin_tool_bundle("2.0.0"),
+        lambda _: _PluginToolProvider("2.0.0"),
+    )
+    new = await RuntimeAssemblyFactory(registry).open(
+        agent_id="default",
+        session_id="new",
+        root_agent_id="default",
+        root_session_id="new",
+        workspace_dir="/tmp/qwenpaw-workspace",
+        selection=selection,
+    )
+    resumed = await RuntimeAssemblyFactory(registry).open(
+        agent_id="default",
+        session_id="resumed",
+        root_agent_id="default",
+        root_session_id="resumed",
+        workspace_dir="/tmp/qwenpaw-workspace",
+        selection=selection,
+        registry_generation=old.scope.registry_generation,
+    )
+
+    assert old.require("example.tools.provider", "tool.provider").version == (
+        "1.0.0"
+    )
+    assert new.require("example.tools.provider", "tool.provider").version == (
+        "2.0.0"
+    )
+    assert (
+        resumed.require(
+            "example.tools.provider",
+            "tool.provider",
+        ).version
+        == "1.0.0"
+    )
+    old_generation = old.scope.registry_generation
+    await old.close()
+    await resumed.close()
+    await new.close()
+
+    with pytest.raises(LookupError, match=str(old_generation)):
+        await RuntimeAssemblyFactory(registry).open(
+            agent_id="default",
+            session_id="expired",
+            root_agent_id="default",
+            root_session_id="expired",
+            workspace_dir="/tmp/qwenpaw-workspace",
+            selection=selection,
+            registry_generation=old_generation,
+        )
+
+
+@pytest.mark.asyncio
+async def test_new_invocation_auto_selects_installed_tool_provider() -> None:
+    registry = GenerationRegistry()
+    await registry.activate_bundle(
+        _plugin_tool_bundle("1.0.0"),
+        lambda _: _PluginToolProvider("1.0.0"),
+    )
+
+    assembly = await RuntimeAssemblyFactory(registry).open(
+        agent_id="default",
+        session_id="chat",
+        root_agent_id="default",
+        root_session_id="chat",
+        workspace_dir="/tmp/qwenpaw-workspace",
+    )
+
+    assert assembly.scope.selection.tool_provider_ids == (
+        "example.tools.provider",
+        DEFAULT_TOOL_PROVIDER_ID,
+    )
+    await assembly.close()
+
+
+@pytest.mark.asyncio
+async def test_driver_override_preserves_auto_slots() -> None:
+    registry = GenerationRegistry()
+    await registry.activate_bundle(
+        _plugin_tool_bundle("1.0.0"),
+        lambda _: _PluginToolProvider("1.0.0"),
+    )
+    await registry.activate_bundle(
+        _plugin_driver_bundle(),
+        lambda _: _PluginDriverProvider(),
+    )
+
+    assembly = await RuntimeAssemblyFactory(registry).open(
+        agent_id="default",
+        session_id="chat",
+        root_agent_id="default",
+        root_session_id="chat",
+        workspace_dir="/tmp/qwenpaw-workspace",
+        selection_overrides=CapabilitySelectionOverrides(
+            driver_provider_id="example.drivers.provider",
+        ),
+    )
+
+    assert assembly.scope.selection.driver_provider_id == (
+        "example.drivers.provider"
+    )
+    assert assembly.scope.selection.tool_provider_ids == (
+        "example.tools.provider",
+        DEFAULT_TOOL_PROVIDER_ID,
+    )
+    assert (
+        assembly.require(
+            "example.drivers.provider",
+            "driver.provider",
+        ).provider_id
+        == "example.drivers.provider"
+    )
+    await assembly.close()
+
+
+@pytest.mark.asyncio
+async def test_disabled_optional_slot_removes_scalar_provider() -> None:
+    overrides = CapabilitySelectionOverrides(
+        disabled_optional_slots=("driver.provider",),
+    )
+
+    assembly = await RuntimeAssemblyFactory(GenerationRegistry()).open(
+        agent_id="default",
+        session_id="chat",
+        root_agent_id="default",
+        root_session_id="chat",
+        workspace_dir="/tmp/qwenpaw-workspace",
+        selection_overrides=overrides,
+    )
+
+    assert assembly.scope.selection.driver_provider_id is None
+    await assembly.close()
+
+
+@pytest.mark.asyncio
+async def test_missing_driver_override_releases_generation() -> None:
+    registry = GenerationRegistry()
+    factory = RuntimeAssemblyFactory(registry)
+    await factory.prepare()
+    rejected_generation = registry.generation
+
+    with pytest.raises(CapabilityUnavailableError, match="missing.driver"):
+        await factory.open(
+            agent_id="default",
+            session_id="invalid",
+            root_agent_id="default",
+            root_session_id="invalid",
+            workspace_dir="/tmp/qwenpaw-workspace",
+            selection_overrides=CapabilitySelectionOverrides(
+                driver_provider_id="missing.driver",
+            ),
+        )
+
+    await registry.activate_bundle(
+        _plugin_driver_bundle(),
+        lambda _: _PluginDriverProvider(),
+    )
+    with pytest.raises(LookupError, match=str(rejected_generation)):
+        await registry.pin(rejected_generation)
+
+
+@pytest.mark.asyncio
+async def test_null_required_provider_keeps_automatic_selection() -> None:
+    assembly = await RuntimeAssemblyFactory(GenerationRegistry()).open(
+        agent_id="default",
+        session_id="chat",
+        root_agent_id="default",
+        root_session_id="chat",
+        workspace_dir="/tmp/qwenpaw-workspace",
+        selection_overrides=CapabilitySelectionOverrides.model_validate(
+            {"agent_factory_id": None},
+        ),
+    )
+
+    assert assembly.scope.selection.agent_factory_id == (
+        DEFAULT_AGENT_FACTORY_ID
+    )
+    await assembly.close()
+
+
+def test_profile_override_rejects_selected_and_disabled_slot() -> None:
+    with pytest.raises(ValueError, match="selected and disabled"):
+        CapabilitySelectionOverrides(
+            driver_provider_id="example.drivers.provider",
+            disabled_optional_slots=("driver.provider",),
+        )
+
+
+@pytest.mark.asyncio
+async def test_explicit_selection_and_profile_override_are_exclusive() -> None:
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        await RuntimeAssemblyFactory(GenerationRegistry()).open(
+            agent_id="default",
+            session_id="invalid",
+            root_agent_id="default",
+            root_session_id="invalid",
+            workspace_dir="/tmp/qwenpaw-workspace",
+            selection=CapabilitySelection(),
+            selection_overrides=CapabilitySelectionOverrides(),
+        )
+
+
+@pytest.mark.asyncio
+async def test_selection_fails_closed_and_releases_its_generation() -> None:
+    registry = GenerationRegistry()
+    factory = RuntimeAssemblyFactory(registry)
+    await factory.prepare()
+    rejected_generation = registry.generation
+
+    with pytest.raises(CapabilityUnavailableError, match="missing.provider"):
+        await factory.open(
+            agent_id="default",
+            session_id="invalid",
+            root_agent_id="default",
+            root_session_id="invalid",
+            workspace_dir="/tmp/qwenpaw-workspace",
+            selection=CapabilitySelection(
+                tool_provider_ids=("missing.provider",),
+            ),
+        )
+
+    await registry.activate_bundle(
+        _plugin_tool_bundle("1.0.0"),
+        lambda _: _PluginToolProvider("1.0.0"),
+    )
+    with pytest.raises(LookupError, match=str(rejected_generation)):
+        await registry.pin(rejected_generation)
+
+
+@pytest.mark.asyncio
+async def test_selection_rejects_capability_from_the_wrong_slot() -> None:
+    registry = GenerationRegistry()
+
+    with pytest.raises(CapabilityUnavailableError, match="expected"):
+        await RuntimeAssemblyFactory(registry).open(
+            agent_id="default",
+            session_id="wrong-slot",
+            root_agent_id="default",
+            root_session_id="wrong-slot",
+            workspace_dir="/tmp/qwenpaw-workspace",
+            selection=CapabilitySelection(
+                agent_factory_id=DEFAULT_TOOL_PROVIDER_ID,
+            ),
+        )
+
+
+def test_task_generation_hint_requires_internal_broker() -> None:
+    internal = type(
+        "Request",
+        (),
+        {
+            "request_context": {
+                "durable_task": True,
+                "_task_approval_broker": object(),
+                "os_registry_generation": 12,
+            },
+        },
+    )()
+    spoofed = type(
+        "Request",
+        (),
+        {
+            "request_context": {
+                "durable_task": True,
+                "os_registry_generation": 12,
+            },
+        },
+    )()
+
+    assert Runtime._task_registry_generation(internal) == 12
+    assert Runtime._task_registry_generation(spoofed) is None
+
+
+def test_task_causal_identity_requires_internal_broker() -> None:
+    invocation_id = UUID("00000000-0000-0000-0000-000000000311")
+    correlation_id = UUID("00000000-0000-0000-0000-000000000312")
+    internal = SimpleNamespace(
+        request_context={
+            "durable_task": True,
+            "_task_approval_broker": object(),
+            "os_invocation_id": str(invocation_id),
+            "os_correlation_id": str(correlation_id),
+        },
+    )
+    spoofed = SimpleNamespace(
+        request_context={
+            "durable_task": True,
+            "os_invocation_id": str(invocation_id),
+            "os_correlation_id": str(correlation_id),
+        },
+    )
+
+    assert Runtime._task_causal_identity(internal) == (
+        invocation_id,
+        correlation_id,
+    )
+    assert Runtime._task_causal_identity(spoofed) == (None, None)
+
+
+def test_task_causal_identity_rejects_malformed_internal_bridge() -> None:
+    request = SimpleNamespace(
+        request_context={
+            "durable_task": True,
+            "_task_approval_broker": object(),
+            "os_invocation_id": "invalid",
+            "os_correlation_id": "invalid",
+        },
+    )
+
+    with pytest.raises(ValueError, match="invalid causal identity"):
+        Runtime._task_causal_identity(request)
+
+
+@pytest.mark.asyncio
+async def test_open_preserves_task_causal_identity() -> None:
+    invocation_id = UUID("00000000-0000-0000-0000-000000000313")
+    correlation_id = UUID("00000000-0000-0000-0000-000000000314")
+    assembly = await RuntimeAssemblyFactory(GenerationRegistry()).open(
+        agent_id="default",
+        session_id="task-session",
+        root_agent_id="default",
+        root_session_id="task-session",
+        workspace_dir="/tmp/qwenpaw-workspace",
+        invocation_id=invocation_id,
+        correlation_id=correlation_id,
+    )
+
+    assert assembly.scope.invocation_id == invocation_id
+    assert assembly.scope.correlation_id == correlation_id
+    await assembly.close()
+
+
+def test_runtime_overwrites_spoofed_causal_identity() -> None:
+    invocation_id = UUID("00000000-0000-0000-0000-000000000321")
+    scope = InvocationScope(
+        invocation_id=invocation_id,
+        agent_id="default",
+        conversation_id="chat-spec-1",
+        session_id="chat",
+        root_agent_id="default",
+        root_session_id="chat",
+        workspace_dir="/tmp/qwenpaw-workspace",
+        registry_generation=1,
+    )
+    context = SimpleNamespace(
+        request=SimpleNamespace(
+            request_context={
+                "os_invocation_id": "spoofed",
+                "os_correlation_id": "spoofed",
+            },
+        ),
+        invocation_scope=scope,
+        session_id="chat",
+        agent_id="default",
+        root_session_id="chat",
+        root_agent_id="default",
+        workspace_dir="/tmp/qwenpaw-workspace",
+        mode_state={},
+    )
+
+    request_context = AgentBuilder._build_request_context(context)
+
+    assert request_context["os_invocation_id"] == str(invocation_id)
+    assert request_context["os_correlation_id"] == str(invocation_id)
+
+
+def test_runtime_injects_trusted_interaction_broker() -> None:
+    invocation_id = UUID("00000000-0000-0000-0000-000000000322")
+    service = object()
+    scope = InvocationScope(
+        invocation_id=invocation_id,
+        agent_id="default",
+        conversation_id="chat-spec-1",
+        session_id="chat",
+        root_agent_id="default",
+        root_session_id="chat",
+        workspace_dir="/tmp/qwenpaw-workspace",
+        registry_generation=1,
+    )
+    context = SimpleNamespace(
+        request=SimpleNamespace(
+            request_context={
+                "os_conversation_id": "forged-chat",
+                "_interaction_service": "forged",
+                "_interaction_broker": "forged",
+                "_steering_session": "forged",
+            },
+        ),
+        invocation_scope=scope,
+        session_id="chat",
+        agent_id="default",
+        root_session_id="chat",
+        root_agent_id="default",
+        workspace_dir="/tmp/qwenpaw-workspace",
+        mode_state={},
+        extras={"interaction_service": service},
+    )
+
+    request_context = AgentBuilder._build_request_context(context)
+
+    broker = request_context["_interaction_broker"]
+    assert request_context["_interaction_service"] is service
+    assert broker.service is service
+    assert broker.conversation_id == "chat-spec-1"
+    assert broker.invocation_id == invocation_id
+    assert "_steering_session" not in request_context
+
+
+def test_runtime_does_not_promote_session_to_conversation() -> None:
+    scope = InvocationScope(
+        agent_id="default",
+        session_id="transport-session",
+        root_agent_id="default",
+        root_session_id="transport-session",
+        workspace_dir="/tmp/qwenpaw-workspace",
+        registry_generation=1,
+    )
+    context = SimpleNamespace(
+        request=SimpleNamespace(
+            request_context={"os_conversation_id": "forged-chat"},
+        ),
+        invocation_scope=scope,
+        session_id="transport-session",
+        agent_id="default",
+        root_session_id="transport-session",
+        root_agent_id="default",
+        workspace_dir="/tmp/qwenpaw-workspace",
+        mode_state={},
+        extras={},
+    )
+
+    request_context = AgentBuilder._build_request_context(context)
+
+    assert scope.conversation_id is None
+    assert "os_conversation_id" not in request_context

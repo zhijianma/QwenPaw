@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS audit_events (
     workspace_dir TEXT NOT NULL,
     agent_id      TEXT NOT NULL,
     session_id    TEXT NOT NULL,
+    invocation_id TEXT NOT NULL DEFAULT '',
+    correlation_id TEXT NOT NULL DEFAULT '',
     tool_name     TEXT NOT NULL,
     target        TEXT NOT NULL,
     decision      TEXT NOT NULL,
@@ -70,6 +72,8 @@ class AuditEvent:
     target: str
     decision: str  # "allow" | "deny" | "ask" | "sandbox_fallback"
     reason: str = ""  # Additional explanation (e.g. violation cause)
+    invocation_id: str = ""
+    correlation_id: str = ""
     extra: dict = field(default_factory=dict)
 
 
@@ -80,6 +84,8 @@ def _event_from_row(row: sqlite3.Row) -> AuditEvent:
         workspace_dir=row["workspace_dir"],
         agent_id=row["agent_id"],
         session_id=row["session_id"],
+        invocation_id=row["invocation_id"],
+        correlation_id=row["correlation_id"],
         tool_name=row["tool_name"],
         target=row["target"],
         decision=row["decision"],
@@ -163,6 +169,7 @@ class AuditLog:
         # while the feature is still pre-release.
         cls._migrate_legacy_schema(obj._conn)
         obj._conn.executescript(_SCHEMA)
+        cls._migrate_identity_columns(obj._conn)
         obj._conn.commit()
         obj._insert_count = 0
         obj._lock = threading.RLock()
@@ -178,6 +185,20 @@ class AuditLog:
                 conn.execute("DROP TABLE audit_events")
                 conn.commit()
                 break
+
+    @staticmethod
+    def _migrate_identity_columns(conn: sqlite3.Connection) -> None:
+        """Add causal identity fields without discarding existing audits."""
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(audit_events)")
+        }
+        for name in ("invocation_id", "correlation_id"):
+            if name not in columns:
+                conn.execute(
+                    f"ALTER TABLE audit_events ADD COLUMN {name} "
+                    "TEXT NOT NULL DEFAULT ''",
+                )
+        conn.commit()
 
     def close(self) -> None:
         """Close the database connection and reset the singleton.
@@ -227,13 +248,16 @@ class AuditLog:
                 conn.execute(
                     "INSERT INTO audit_events "
                     "(ts, workspace_dir, agent_id, session_id, "
+                    "invocation_id, correlation_id, "
                     "tool_name, target, decision, reason, extra) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         _now_unix_ms(),
                         workspace_dir,
                         tc_spec.agent_id,
                         tc_spec.session_id,
+                        tc_spec.invocation_id,
+                        tc_spec.correlation_id,
                         tc_spec.tool_name,
                         tc_spec.target,
                         str(decision.action.value),

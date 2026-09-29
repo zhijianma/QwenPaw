@@ -60,6 +60,7 @@ async def test_watcher_ignores_mutated_cache_without_disk_change(
 async def test_watcher_reloads_after_disk_and_channel_change(
     tmp_path,
     monkeypatch,
+    caplog,
 ) -> None:
     """A changed file and observable config section trigger a reload."""
     config_path = tmp_path / "agent.json"
@@ -81,10 +82,12 @@ async def test_watcher_reloads_after_disk_and_channel_change(
         lambda _agent_id: config,
     )
 
-    await watcher._snapshot()
-    config.channels.console.enabled = False
-    config_path.write_text('{"changed": true}', encoding="utf-8")
-    await watcher._check()
+    with caplog.at_level("INFO"):
+        await watcher._snapshot()
+        config.channels.console.enabled = False
+        config_path.write_text('{"changed": true}', encoding="utf-8")
+        await watcher._check()
 
     manager.note_agent_config_changed.assert_called_once_with("agent")
     manager.reload_agent.assert_awaited_once_with("agent")
+    assert f"path={config_path}" in caplog.text

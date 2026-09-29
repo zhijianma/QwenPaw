@@ -7,10 +7,12 @@ import asyncio
 import logging
 import uuid
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ..kernel import SubmissionStatus, TurnSubmissionRequest
 from ..schemas import (
     AgentResponse,
     ContentType,
@@ -39,6 +41,17 @@ from .streaming import TextStream, ToolStream
 logger = logging.getLogger(__name__)
 
 
+@dataclass(slots=True)
+class _HarnessInvocationBinding:
+    """Resources pinned while one Harness turn owns an OS invocation."""
+
+    control: Any
+    interaction_service: Any
+    interrupt: Any
+    lease: Any
+    invocation_id: uuid.UUID
+
+
 class HarnessRuntime:
     """Own adapters for one workspace and expose QwenPaw envelopes."""
 
@@ -51,6 +64,7 @@ class HarnessRuntime:
     ) -> None:
         self._state_dir = workspace_dir / "harnesses"
         self._agent_id = agent_id
+        self._workspace = workspace
         self._adapters: dict[str, HarnessAdapter] = {}
         self._adapter_keys: dict[str, tuple[Any, ...]] = {}
         self._adapter_lock = asyncio.Lock()
@@ -105,12 +119,12 @@ class HarnessRuntime:
                 return adapter
             if adapter is not None:
                 await adapter.stop()
-            adapter = create_adapter(provider_id, self._state_dir, settings)
+            created = create_adapter(provider_id, self._state_dir, settings)
             self._adapter_keys[provider_id] = next_key
-            self._adapters[provider_id] = adapter
-            return adapter
+            self._adapters[provider_id] = created
+            return created
 
-    async def stream(  # pylint: disable=too-many-branches,too-many-statements
+    async def stream(
         self,
         *,
         backend: str,
@@ -118,7 +132,236 @@ class HarnessRuntime:
         cwd: Path,
         settings: dict[str, Any] | None = None,
     ) -> AsyncGenerator[Any, None]:
-        """Run a harness turn and emit the established QwenPaw protocol."""
+        """Run one Harness turn through the shared invocation lifecycle."""
+        settings = dict(settings or {})
+        lifecycle = await self._bind_invocation_control(
+            backend=backend,
+            request=request,
+            settings=settings,
+        )
+        if lifecycle is None:
+            async for item in self._stream_uncontrolled(
+                backend=backend,
+                request=request,
+                cwd=cwd,
+                settings=settings,
+            ):
+                yield item
+            return
+
+        terminal = SubmissionStatus.SUCCEEDED
+        try:
+            async for item in self._stream_uncontrolled(
+                backend=backend,
+                request=request,
+                cwd=cwd,
+                settings=settings,
+            ):
+                item_status = getattr(item, "status", None)
+                if item_status is RunStatus.Failed:
+                    terminal = SubmissionStatus.FAILED
+                elif item_status is RunStatus.Cancelled:
+                    terminal = SubmissionStatus.INTERRUPTED
+                yield item
+        except asyncio.CancelledError:
+            terminal = SubmissionStatus.INTERRUPTED
+            raise
+        except BaseException:
+            terminal = SubmissionStatus.FAILED
+            raise
+        finally:
+            await self._drain_invocation_cleanup(lifecycle, terminal)
+
+    async def task_events(
+        self,
+        *,
+        backend: str,
+        session_id: str,
+        prompt: str,
+        cwd: Path,
+        settings: dict[str, Any] | None = None,
+    ) -> AsyncGenerator[HarnessEvent, None]:
+        """Run one Task-owned turn without creating a second Chat lease."""
+        settings = dict(settings or {})
+        request_context = dict(settings.get("_request_context") or {})
+        settings[
+            "_runtime_capabilities"
+        ] = await self._capability_resolver.resolve(request_context)
+        adapter = await self.adapter(backend, settings)
+        try:
+            async for event in adapter.run_turn(
+                session_id=session_id,
+                prompt=prompt,
+                cwd=cwd,
+                settings=settings,
+                attachments=None,
+            ):
+                yield event
+        except asyncio.CancelledError:
+            reason = str(
+                request_context.get("cancellation_reason")
+                or "QwenPaw Task execution cancelled",
+            )
+            await asyncio.shield(
+                adapter.cancel_turn(session_id, reason=reason),
+            )
+            raise
+
+    async def _bind_invocation_control(
+        self,
+        *,
+        backend: str,
+        request: Any,
+        settings: dict[str, Any],
+    ) -> _HarnessInvocationBinding | None:
+        """Open the shared OS lifecycle when the request carries its IDs."""
+        request_context = {
+            **dict(getattr(request, "request_context", None) or {}),
+            **dict(settings.get("_request_context") or {}),
+        }
+        control = getattr(self._workspace, "invocation_control", None)
+        conversation_id = request_context.get("os_conversation_id")
+        idempotency_key = request_context.get(
+            "os_submission_idempotency_key",
+        )
+        if control is None or not conversation_id or not idempotency_key:
+            return None
+
+        invocation_id = uuid.uuid4()
+        prompt, _ = self._content_from_request(request)
+        raw_priority = request_context.get("os_submission_priority", 20)
+        priority = (
+            raw_priority
+            if isinstance(raw_priority, int)
+            and not isinstance(raw_priority, bool)
+            else 20
+        )
+        input_messages = getattr(request, "input", None) or []
+        latest = input_messages[-1] if input_messages else None
+        artifact_refs = tuple(getattr(latest, "artifact_refs", None) or ())
+        submission = TurnSubmissionRequest(
+            agent_id=self._agent_id,
+            conversation_id=str(conversation_id),
+            priority=priority,
+            content=prompt or "[non-text user input]",
+            artifact_refs=artifact_refs,
+            request_context={
+                "channel": str(
+                    getattr(request, "channel", "") or "",
+                ),
+                "harness_backend": backend,
+            },
+            idempotency_key=str(idempotency_key),
+        )
+        raw_submission_id = request_context.get("os_submission_id")
+        if raw_submission_id:
+            try:
+                submission_id = uuid.UUID(str(raw_submission_id))
+            except ValueError as exc:
+                raise ValueError(
+                    "invalid prequeued submission identity",
+                ) from exc
+            lease = await control.begin_submitted_turn(
+                submission_id,
+                invocation_id=invocation_id,
+                agent_id=self._agent_id,
+                conversation_id=str(conversation_id),
+            )
+        else:
+            lease = await control.begin_turn(
+                submission,
+                invocation_id=invocation_id,
+            )
+        interaction_service = getattr(
+            self._workspace,
+            "interaction_service",
+            None,
+        )
+        request_context.update(
+            {
+                "os_invocation_id": str(invocation_id),
+                "_interaction_service": interaction_service,
+            },
+        )
+        settings["_request_context"] = request_context
+        task = asyncio.current_task()
+        if task is None:
+            await control.finish_turn(lease, SubmissionStatus.FAILED)
+            raise RuntimeError("harness invocation has no owning task")
+
+        session_id = str(getattr(request, "session_id", "") or "default")
+
+        async def cancel_harness_turn() -> int:
+            adapter = await self.adapter(backend, settings)
+            cancelled = await adapter.cancel_turn(
+                session_id,
+                reason="QwenPaw invocation interrupted",
+            )
+            return int(cancelled)
+
+        try:
+            binding = await control.bind_interrupt(
+                invocation_id,
+                task,
+                lease=lease,
+                agent_id=self._agent_id,
+                conversation_id=str(conversation_id),
+                cancel_children=cancel_harness_turn,
+            )
+        except BaseException:
+            await control.finish_turn(lease, SubmissionStatus.FAILED)
+            raise
+        return _HarnessInvocationBinding(
+            control=control,
+            interaction_service=interaction_service,
+            interrupt=binding,
+            lease=lease,
+            invocation_id=invocation_id,
+        )
+
+    async def _drain_invocation_cleanup(
+        self,
+        lifecycle: _HarnessInvocationBinding,
+        terminal: SubmissionStatus,
+    ) -> None:
+        """Finish durable cleanup even when cancellation is still pending."""
+        cleanup = asyncio.create_task(
+            self._finish_invocation_control(lifecycle, terminal),
+        )
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                current = asyncio.current_task()
+                if current is not None:
+                    current.uncancel()
+        await cleanup
+
+    @staticmethod
+    async def _finish_invocation_control(
+        lifecycle: _HarnessInvocationBinding,
+        terminal: SubmissionStatus,
+    ) -> None:
+        """Commit Harness cleanup before releasing its pinned invocation."""
+        await lifecycle.interrupt.close()
+        if lifecycle.interaction_service is not None:
+            await lifecycle.interaction_service.cancel_invocation(
+                lifecycle.invocation_id,
+                detail=f"invocation finished as {terminal.value}",
+                include_non_blocking=False,
+            )
+        await lifecycle.control.finish_turn(lifecycle.lease, terminal)
+
+    # pylint: disable-next=too-many-branches,too-many-statements
+    async def _stream_uncontrolled(
+        self,
+        *,
+        backend: str,
+        request: Any,
+        cwd: Path,
+        settings: dict[str, Any] | None = None,
+    ) -> AsyncGenerator[Any, None]:
+        """Translate one Harness turn after lifecycle ownership is bound."""
         settings = dict(settings or {})
         request_context = dict(settings.get("_request_context") or {})
         settings[

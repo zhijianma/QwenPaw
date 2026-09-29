@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import mimetypes
 import re
 import time
 import uuid
@@ -21,7 +22,7 @@ from fastapi import (
     Request,
     UploadFile,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from starlette.responses import StreamingResponse
 
 from qwenpaw.schemas import (
@@ -30,11 +31,44 @@ from qwenpaw.schemas import (
 )
 from qwenpaw.tool_calls import CancelReason
 from qwenpaw.utils.timeout import resolve_stream_task_timeout
+from ...invocation_control import (
+    QueueCommandConflictError,
+    QueueRevisionConflictError,
+)
+from ...kernel import ControlCommandStatus
+from ...inbox import SQLiteInboxProjectionStore
+from ...kernel.models import (
+    EvidenceRef,
+    ExecutionContract,
+    PlanStep,
+    Task,
+    TaskSource,
+)
+from ...tasks.artifacts import lite_artifact_store
+from ...tasks.bootstrap import task_service_for_workspace
+from ...tasks.conversation_artifacts import conversation_artifact_receipts
+from ...tasks.service import TaskService
+from ...tasks.usage_scope import (
+    RECORD_MODEL_USAGE_CONTEXT_KEY,
+    USAGE_SCOPE_CONTEXT_KEY,
+    USAGE_SCOPE_LEASE_CONTEXT_KEY,
+    UsageScopeUnavailableError,
+    close_usage_scope_in_context,
+    lite_usage_scope_registry,
+)
 from ...utils.logging import LOG_FILE_PATH, sanitize_log_value
 from ..agent_context import get_agent_for_request
 from ..approvals.display import approval_display_fields
 from ..chats.models import ChatUpdate
+from ..chats.input_artifacts import (
+    ConversationInputArtifactError,
+    claim_conversation_artifacts,
+)
 from ..chats.title_generator import generate_and_update_title
+from ..legacy_inbox_observation import (
+    LegacyInboxDualReadAssessment,
+    SQLiteLegacyInboxObservationStore,
+)
 from ..utils import check_upload_size
 
 logger = logging.getLogger(__name__)
@@ -65,6 +99,44 @@ class MarkInboxReadRequest(BaseModel):
     all: bool = False
 
 
+def _inbox_projection_store(workspace: Any) -> SQLiteInboxProjectionStore:
+    return SQLiteInboxProjectionStore(
+        Path(workspace.workspace_dir) / ".qwenpaw" / "lite" / "inbox.db",
+    )
+
+
+def _legacy_inbox_event(item: Any) -> dict[str, Any]:
+    payload = {
+        **item.source_payload,
+        "delivery_id": str(item.delivery_id),
+        "delivery_status": item.delivery_status.value,
+        "delivery_attempt": item.delivery_attempt,
+        "conversation_id": item.conversation_id,
+        "task_id": str(item.task_id) if item.task_id else None,
+        "run_id": str(item.run_id) if item.run_id else None,
+        "artifact_refs": [
+            ref.model_dump(mode="json") for ref in item.artifact_refs
+        ],
+        "evidence_refs": [
+            ref.model_dump(mode="json") for ref in item.evidence_refs
+        ],
+    }
+    return {
+        "id": str(item.item_id),
+        "agent_id": item.agent_id,
+        "source_type": item.source_type,
+        "source_id": item.source_id,
+        "event_type": item.event_type,
+        "status": item.source_status,
+        "severity": item.severity,
+        "title": item.title,
+        "body": item.summary,
+        "payload": payload,
+        "read": item.read,
+        "created_at": item.created_at.timestamp(),
+    }
+
+
 MAX_DEBUG_LOG_LINES = 1000
 
 
@@ -91,6 +163,16 @@ def _background_task_cancel_error(
             "code": "timeout",
         }
     return {"message": "Task cancelled"}
+
+
+def _finish_background_task_with_error(
+    task: _BackgroundTask,
+    error: Dict[str, Any],
+) -> None:
+    """Record one terminal background-task failure consistently."""
+    task.status = "finished"
+    task.finished_at = time.time()
+    task.result = {"status": "failed", "error": error}
 
 
 def _safe_filename(name: str) -> str:
@@ -153,68 +235,18 @@ async def _persist_pending_project_dirs(
     ``ContextVarsSetupHook`` can still honour the user's pick for this
     first turn instead of silently falling back to the agent default.
     """
-    request_context = native_payload["meta"].get("request_context")
-    if not isinstance(request_context, dict):
-        return chat
+    from ..chats.input_context import persist_pending_project_dirs
 
-    raw_list = request_context.pop("session_project_dirs", None)
-    raw_single = request_context.pop("session_project_dir", None)
-
-    def _leave_for_hook() -> None:
-        """Restore the unconsumed keys for ContextVarsSetupHook."""
-        if raw_list is not None:
-            request_context["session_project_dirs"] = raw_list
-        if raw_single is not None:
-            request_context["session_project_dir"] = raw_single
-
-    pending: list | None = None
-    if isinstance(raw_list, list) and raw_list:
-        pending = raw_list
-    elif isinstance(raw_single, str) and raw_single.strip():
-        pending = [raw_single]
-    if pending is None:
-        return chat
-
-    from ...services.project_directory import (
-        normalize_project_dir_list,
-        session_project_dirs_raw_from_meta,
+    return await persist_pending_project_dirs(
+        workspace,
+        chat,
+        native_payload,
     )
 
-    if session_project_dirs_raw_from_meta(getattr(chat, "meta", None)):
-        return chat
 
-    def _validate() -> list[dict]:
-        entries = []
-        for path, label in normalize_project_dir_list(pending):
-            if not path.is_dir():
-                logger.warning(
-                    "Ignoring pending project dir that is not a "
-                    "directory: %s",
-                    path,
-                )
-                continue
-            entries.append({"path": str(path), "label": label})
-        return entries
-
-    entries = await asyncio.to_thread(_validate)
-    if not entries:
-        return chat
-
-    updated = await workspace.chat_manager.set_session_project_dirs(
-        chat.id,
-        entries,
-    )
-    if updated is None:
-        # The chat could not be updated, so nothing persisted the pick.
-        # Hand it to the hook rather than dropping it: this turn would
-        # otherwise run in the agent default while the console shows the
-        # directory the user chose.
-        _leave_for_hook()
-        return chat
-    return updated
-
-
-def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
+def _extract_session_and_payload(  # pylint: disable=too-many-branches
+    request_data: Union[AgentRequest, dict],
+):
     """Extract run_key (ChatSpec.id), session_id, and native payload.
 
     run_key must be ChatSpec.id (chat_id) so it matches list_chats/get_chat.
@@ -229,6 +261,7 @@ def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
         message_metadata = (
             request_data.input[0].metadata if request_data.input else None
         )
+        message_id = request_data.input[0].id if request_data.input else ""
     else:
         channel_id = request_data.get("channel", "console")
         sender_id = request_data.get("user_id", "default")
@@ -236,6 +269,7 @@ def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
         input_data = request_data.get("input", [])
         content_parts = []
         message_metadata = None
+        message_id = ""
         for content_part in input_data:
             if hasattr(content_part, "content"):
                 content_parts.extend(list(content_part.content or []))
@@ -243,6 +277,9 @@ def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
                     content_part,
                     "metadata",
                     message_metadata,
+                )
+                message_id = str(
+                    getattr(content_part, "id", message_id) or message_id,
                 )
             elif isinstance(content_part, dict) and "content" in content_part:
                 # Coerce raw dicts to typed Content models so downstream
@@ -253,6 +290,12 @@ def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
                 )
                 if isinstance(content_part.get("metadata"), dict):
                     message_metadata = content_part["metadata"]
+                message_id = str(content_part.get("id") or message_id)
+
+    if isinstance(message_metadata, dict):
+        message_id = str(
+            message_metadata.get("qwenpaw_client_message_id") or message_id,
+        )
 
     meta: dict = {
         "session_id": session_id,
@@ -272,6 +315,7 @@ def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
         "sender_id": sender_id,
         "content_parts": content_parts,
         "message_metadata": message_metadata,
+        "message_id": message_id,
         "meta": meta,
     }
 
@@ -283,6 +327,79 @@ def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
         native_payload["model_slot_override"] = mso
 
     return native_payload
+
+
+def _bind_os_runtime_identity(
+    native_payload: dict[str, Any],
+    conversation_id: str,
+) -> None:
+    """Attach server-owned conversation and idempotency identities."""
+    meta = native_payload.setdefault("meta", {})
+    raw_context = meta.get("request_context")
+    request_context = (
+        dict(raw_context) if isinstance(raw_context, dict) else {}
+    )
+    request_context["os_conversation_id"] = conversation_id
+    request_context["os_submission_idempotency_key"] = str(
+        native_payload.get("message_id") or uuid.uuid4(),
+    )
+    meta["request_context"] = request_context
+
+
+def _bind_inherited_usage_scope(
+    native_payload: dict[str, Any],
+    *,
+    agent_id: str,
+) -> None:
+    """Resolve a child HTTP token to the root Task's live UsageMeter."""
+    request_context = native_payload.get("meta", {}).get("request_context")
+    if not isinstance(request_context, dict):
+        return
+    raw_scope_id = request_context.get(USAGE_SCOPE_CONTEXT_KEY)
+    if not isinstance(raw_scope_id, str) or not raw_scope_id:
+        return
+    if request_context.get("_spawn_subagent") is not True:
+        raise HTTPException(
+            status_code=403,
+            detail="Task usage scope is restricted to child dispatch",
+        )
+    try:
+        lease = lite_usage_scope_registry.acquire(
+            raw_scope_id,
+            agent_id=agent_id,
+        )
+    except UsageScopeUnavailableError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Task usage scope is unavailable or expired",
+        ) from exc
+    request_context["_task_usage_meter"] = lease.meter
+    request_context[USAGE_SCOPE_LEASE_CONTEXT_KEY] = lease
+    request_context[RECORD_MODEL_USAGE_CONTEXT_KEY] = True
+
+
+def _release_bound_usage_scope(native_payload: dict[str, Any]) -> None:
+    """Release a bound scope when dispatch fails before Runtime owns it."""
+    request_context = native_payload.get("meta", {}).get("request_context")
+    if not isinstance(request_context, dict):
+        return
+    close_usage_scope_in_context(request_context)
+
+
+async def _claim_conversation_artifacts(
+    workspace: Any,
+    chat_id: str,
+    content_parts: list[Any],
+) -> None:
+    """Validate and bind uploaded artifact receipts to one Chat."""
+    try:
+        await claim_conversation_artifacts(
+            workspace,
+            chat_id,
+            content_parts,
+        )
+    except ConversationInputArtifactError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _is_reconnect_request(request_data: Union[AgentRequest, dict]) -> bool:
@@ -402,6 +519,7 @@ async def post_console_chat(
         name=name,
         **_chat_registration_fields(native_payload),
     )
+    _bind_os_runtime_identity(native_payload, chat.id)
     tracker = workspace.task_tracker
     is_reconnect = _is_reconnect_request(request_data)
 
@@ -434,18 +552,31 @@ async def post_console_chat(
             chat,
             native_payload,
         )
+        await _claim_conversation_artifacts(
+            workspace,
+            chat.id,
+            native_payload["content_parts"],
+        )
         # Project directories are resolved exactly once, inside
         # ContextVarsSetupHook (from the chat meta persisted above);
         # the router no longer pre-resolves or injects them.
-
-        queue, is_new_run = await tracker.attach_or_start(
-            chat.id,
+        _bind_inherited_usage_scope(
             native_payload,
-            console_channel.stream_one,
-            owner=workspace,
-            on_finished=workspace.chat_manager.mark_chat_finished,
+            agent_id=workspace.agent_id,
         )
+        try:
+            queue, is_new_run = await tracker.attach_or_start(
+                chat.id,
+                native_payload,
+                console_channel.stream_one,
+                owner=workspace,
+                on_finished=workspace.chat_manager.mark_chat_finished,
+            )
+        except BaseException:
+            _release_bound_usage_scope(native_payload)
+            raise
         if not is_new_run:
+            _release_bound_usage_scope(native_payload)
             await tracker.detach_subscriber(chat.id, queue)
             raise HTTPException(
                 status_code=409,
@@ -524,6 +655,35 @@ async def post_console_chat_stop(
         if chat is not None:
             runtime_session_id = chat.session_id
 
+    control = getattr(workspace, "invocation_control", None)
+    interrupt_command_id: uuid.UUID | None = None
+    interrupt_applied = False
+    if control is not None and resolved_chat_id:
+        try:
+            receipt = await control.interrupt_current(
+                agent_id=workspace.agent_id,
+                conversation_id=resolved_chat_id,
+                idempotency_key=f"console-stop:{uuid.uuid4()}",
+            )
+            if receipt is not None:
+                interrupt_command_id = receipt.command_id
+                interrupt_applied = (
+                    receipt.status is ControlCommandStatus.APPLIED
+                )
+        except (QueueCommandConflictError, QueueRevisionConflictError):
+            logger.info(
+                "[STOP API] invocation changed before interrupt applied "
+                "chat_id=%s",
+                resolved_chat_id,
+            )
+
+    if interrupt_applied:
+        logger.debug(
+            "[STOP API] OS interrupt applied chat_id=%s",
+            resolved_chat_id,
+        )
+        return {"stopped": True}
+
     tool_cancelled = 0
     app_services = getattr(request.app.state, "app_services", None)
     coordinator = getattr(app_services, "tool_coordinator", None)
@@ -547,6 +707,16 @@ async def post_console_chat_stop(
     )
     run_stopped = await workspace.task_tracker.request_stop(resolved_chat_id)
     stopped = run_stopped or tool_cancelled > 0
+    if interrupt_command_id is not None:
+        await control.acknowledge_interrupt(
+            interrupt_command_id,
+            applied=stopped,
+            detail=(
+                "compatibility cancellation applied"
+                if stopped
+                else "runtime binding and compatibility run were unavailable"
+            ),
+        )
 
     logger.debug(
         "[STOP API] stop completed: stopped=%s run_stopped=%s tools=%s",
@@ -611,11 +781,35 @@ async def post_console_upload(
     stored_name = f"{uuid.uuid4().hex}_{safe_name}"
 
     path = (media_dir / stored_name).resolve()
-    path.write_bytes(data)
+    await asyncio.to_thread(path.write_bytes, data)
+    media_type = (
+        file.content_type
+        or mimetypes.guess_type(safe_name)[0]
+        or "application/octet-stream"
+    )
+    artifact = await lite_artifact_store(
+        Path(workspace.workspace_dir),
+    ).put(
+        kind="chat.attachment",
+        media_type=media_type,
+        content=data,
+        metadata={"name": safe_name, "source": "chat.upload"},
+    )
+    evidence = EvidenceRef(
+        artifact_id=artifact.artifact_id,
+        claim="Uploaded chat attachment",
+        producer="qwenpaw.system.chat-upload",
+    )
+    receipt = await conversation_artifact_receipts(
+        Path(workspace.workspace_dir),
+    ).create(artifact, evidence)
     return {
         "url": path,
         "file_name": safe_name,
         "size": len(data),
+        "artifact_ref": artifact.model_dump(mode="json"),
+        "evidence_ref": evidence.model_dump(mode="json"),
+        "artifact_receipt": receipt,
     }
 
 
@@ -714,6 +908,7 @@ async def get_push_messages(
 
 @router.get("/inbox/events")
 async def get_inbox_events(
+    request: Request,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     source_type: str | None = Query(None),
@@ -724,17 +919,63 @@ async def get_inbox_events(
 ):
     from ..inbox_store import query_events
 
+    workspace = await get_agent_for_request(request)
+    selected_agent = agent_id or workspace.agent_id
     selected_sources = set(source_types or [])
     if source_type:
         selected_sources.add(source_type)
-    events, total, unread_count = await query_events(
-        limit=limit,
-        offset=offset,
+    legacy_events, _, _ = await query_events(
+        limit=5000,
+        offset=0,
         source_types=selected_sources or None,
         status=status,
-        agent_id=agent_id,
+        agent_id=selected_agent,
         unread_only=unread_only,
     )
+    all_items = await _inbox_projection_store(workspace).list_items(
+        agent_id=selected_agent,
+        unread_only=False,
+        limit=5000,
+        include_handled=True,
+    )
+    migrated_legacy_ids = {
+        legacy_id
+        for item in all_items
+        if isinstance(
+            legacy_id := item.source_payload.get("legacy_event_id"),
+            str,
+        )
+    }
+    legacy_events = [
+        event
+        for event in legacy_events
+        if event.get("id") not in migrated_legacy_ids
+    ]
+    items = [
+        item
+        for item in all_items
+        if not item.handled and (not unread_only or not item.read)
+    ]
+    projection_events = [
+        _legacy_inbox_event(item)
+        for item in items
+        if not selected_sources or item.source_type in selected_sources
+    ]
+    if projection_events:
+        if status:
+            projection_events = [
+                event
+                for event in projection_events
+                if event["status"] == status
+            ]
+    merged = legacy_events + projection_events
+    merged.sort(
+        key=lambda event: (event.get("created_at", 0), event.get("id", "")),
+        reverse=True,
+    )
+    total = len(merged)
+    unread_count = sum(not bool(event.get("read")) for event in merged)
+    events = merged[offset : offset + limit]
     return {
         "events": events,
         "total": total,
@@ -742,22 +983,83 @@ async def get_inbox_events(
     }
 
 
+@router.get(
+    "/inbox/migration-observation",
+    response_model=LegacyInboxDualReadAssessment,
+)
+async def get_inbox_migration_observation(
+    request: Request,
+) -> LegacyInboxDualReadAssessment:
+    """Return the read-only gate for disabling legacy Inbox dual read."""
+    workspace = await get_agent_for_request(request)
+    store = SQLiteLegacyInboxObservationStore(
+        Path(workspace.workspace_dir) / ".qwenpaw" / "lite" / "inbox.db",
+    )
+    return await store.assess(agent_id=workspace.agent_id)
+
+
 @router.post("/inbox/read")
-async def post_mark_inbox_read(payload: MarkInboxReadRequest):
+async def post_mark_inbox_read(
+    payload: MarkInboxReadRequest,
+    request: Request,
+):
     from ..inbox_store import mark_all_read, mark_read
 
+    workspace = await get_agent_for_request(request)
+    projection = _inbox_projection_store(workspace)
     if payload.all:
-        updated = await mark_all_read()
+        updated = await mark_all_read(agent_id=workspace.agent_id)
+        items = await projection.list_items(
+            agent_id=workspace.agent_id,
+            unread_only=True,
+            limit=5000,
+        )
     else:
         updated = await mark_read(payload.event_ids)
+        items = []
+        for raw_item_id in payload.event_ids:
+            try:
+                item = await projection.get(uuid.UUID(raw_item_id))
+            except ValueError:
+                continue
+            if (
+                item is not None
+                and item.agent_id == workspace.agent_id
+                and not item.read
+            ):
+                items.append(item)
+    for item in items:
+        await projection.mark_read(
+            item.item_id,
+            agent_id=workspace.agent_id,
+            expected_revision=item.revision,
+        )
+        updated += 1
     return {"updated": updated}
 
 
 @router.delete("/inbox/events/{event_id}")
-async def delete_inbox_event(event_id: str):
+async def delete_inbox_event(event_id: str, request: Request):
     from ..inbox_store import delete_event
     from ..inbox_trace_store import delete_trace
 
+    workspace = await get_agent_for_request(request)
+    projection = _inbox_projection_store(workspace)
+    try:
+        item = await projection.get(uuid.UUID(event_id))
+    except ValueError:
+        item = None
+    if item is not None and item.agent_id == workspace.agent_id:
+        await projection.mark_handled(
+            item.item_id,
+            agent_id=workspace.agent_id,
+            expected_revision=item.revision,
+        )
+        return {
+            "deleted": True,
+            "trace_deleted": False,
+            "run_id": str(item.run_id) if item.run_id else None,
+        }
     deleted, run_id, run_id_still_referenced = await delete_event(event_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="event not found")
@@ -872,6 +1174,49 @@ async def _mark_background_fork_failed(
         )
 
 
+async def _start_durable_chat_task(
+    workspace: Any,
+    *,
+    objective: str,
+    chat_id: str,
+    session_id: str,
+    compatibility_task_id: str,
+    execution_contract: ExecutionContract | None = None,
+) -> tuple[TaskService, Task]:
+    """Create the durable task projection for a legacy chat task."""
+    service = task_service_for_workspace(workspace)
+    task = await service.create_task(
+        objective=objective,
+        agent_id=workspace.agent_id,
+        source=TaskSource.API,
+        acceptance_criteria=(
+            execution_contract.acceptance
+            if execution_contract is not None
+            else ()
+        ),
+        execution_contract=execution_contract,
+        metadata={
+            "chat_id": chat_id,
+            "session_id": session_id,
+            "compatibility_task_id": compatibility_task_id,
+        },
+    )
+    await service.plan_task(
+        task.task_id,
+        steps=(
+            PlanStep(
+                title="Agent run",
+                objective=objective,
+            ),
+        ),
+    )
+    await service.start_task(
+        task.task_id,
+        runner_id="runner.local-agent",
+    )
+    return service, task
+
+
 @router.post(
     "/chat/task",
     status_code=200,
@@ -908,13 +1253,15 @@ async def post_console_chat_task(
     except (ValueError, OverflowError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    task_id = f"task-{uuid.uuid4().hex[:12]}"
     native_payload = _extract_session_and_payload(request_data)
+    task_id = f"task-{uuid.uuid4().hex[:12]}"
     session_id = console_channel.resolve_session_id(
         sender_id=native_payload["sender_id"],
         channel_meta=native_payload["meta"],
     )
-    name, _ = _extract_placeholder_name(native_payload["content_parts"])
+    name, first_user_text = _extract_placeholder_name(
+        native_payload["content_parts"],
+    )
     chat = await workspace.chat_manager.get_or_create_chat(
         session_id,
         native_payload["sender_id"],
@@ -926,6 +1273,11 @@ async def post_console_chat_task(
         workspace,
         chat,
         native_payload,
+    )
+    await _claim_conversation_artifacts(
+        workspace,
+        chat.id,
+        native_payload["content_parts"],
     )
 
     fork_project_dir = ""
@@ -952,6 +1304,47 @@ async def post_console_chat_task(
     producer_cancelled = False
     tracker = workspace.task_tracker
 
+    objective = first_user_text or name
+    raw_contract = request_data.get("execution_contract")
+    try:
+        execution_contract = (
+            ExecutionContract.model_validate(raw_contract)
+            if raw_contract is not None
+            else None
+        )
+        if (
+            execution_contract is not None
+            and execution_contract.goal != objective
+        ):
+            raise ValueError(
+                "execution contract goal must match chat objective",
+            )
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid execution_contract: {exc}",
+        ) from exc
+    if execution_contract is not None:
+        request_context = native_payload["meta"].setdefault(
+            "request_context",
+            {},
+        )
+        request_context["execution_contract"] = execution_contract.model_dump(
+            mode="json",
+        )
+    task_service, durable_task = await _start_durable_chat_task(
+        workspace,
+        objective=objective,
+        chat_id=chat.id,
+        session_id=session_id,
+        compatibility_task_id=task_id,
+        execution_contract=execution_contract,
+    )
+    _bind_inherited_usage_scope(
+        native_payload,
+        agent_id=workspace.agent_id,
+    )
+
     async def _tracked_stream(payload: dict) -> AsyncGenerator[str, None]:
         """Expose the background run to TaskTracker without hiding failures."""
         nonlocal producer_cancelled, producer_error
@@ -965,15 +1358,21 @@ async def post_console_chat_task(
             producer_error = exc
             raise
 
-    queue, is_new_run = await tracker.attach_or_start(
-        chat.id,
-        native_payload,
-        _tracked_stream,
-        owner=workspace,
-        on_finished=workspace.chat_manager.mark_chat_finished,
-    )
+    try:
+        queue, is_new_run = await tracker.attach_or_start(
+            chat.id,
+            native_payload,
+            _tracked_stream,
+            owner=workspace,
+            on_finished=workspace.chat_manager.mark_chat_finished,
+        )
+    except BaseException:
+        _release_bound_usage_scope(native_payload)
+        raise
     if not is_new_run:
+        _release_bound_usage_scope(native_payload)
         await tracker.detach_subscriber(chat.id, queue)
+        await task_service.cancel_task(durable_task.task_id)
         raise HTTPException(
             status_code=409,
             detail=(
@@ -1031,28 +1430,26 @@ async def post_console_chat_task(
                     )
                     finalized = False
                 if not finalized:
-                    bg.status = "finished"
-                    bg.finished_at = time.time()
-                    bg.result = {
-                        "status": "failed",
-                        "error": {
-                            "message": "Failed to finalize fork worktree",
-                        },
-                    }
+                    await task_service.fail_task(
+                        durable_task.task_id,
+                        error_summary="ForkFinalizationError",
+                    )
+                    _finish_background_task_with_error(
+                        bg,
+                        {"message": "Failed to finalize fork worktree"},
+                    )
                     return
         except asyncio.CancelledError:
-            if is_new_run:
-                await tracker.request_stop(chat.id)
             cancel_error = _background_task_cancel_error(
                 timed_out=timed_out,
                 timeout_seconds=effective_timeout,
             )
-            bg.status = "finished"
-            bg.finished_at = time.time()
-            bg.result = {
-                "status": "failed",
-                "error": cancel_error,
-            }
+            _finish_background_task_with_error(bg, cancel_error)
+            if is_new_run:
+                await tracker.request_stop(chat.id)
+            await asyncio.shield(
+                task_service.cancel_task(durable_task.task_id),
+            )
             # In-flight Git finalize is detached bookkeeping; do not race
             # it with mark_fork_failed or let it flip this result later.
             if not finalize_started:
@@ -1065,12 +1462,14 @@ async def post_console_chat_task(
                 )
             return
         except Exception as exc:
-            bg.status = "finished"
-            bg.finished_at = time.time()
-            bg.result = {
-                "status": "failed",
-                "error": {"message": str(exc)},
-            }
+            _finish_background_task_with_error(
+                bg,
+                {"message": str(exc)},
+            )
+            await task_service.fail_task(
+                durable_task.task_id,
+                error_summary=type(exc).__name__,
+            )
             await _mark_background_fork_failed(
                 fork_project_dir,
                 fork_worktree_branch,
@@ -1082,6 +1481,7 @@ async def post_console_chat_task(
 
         bg.status = "finished"
         bg.finished_at = time.time()
+        await task_service.complete_task(durable_task.task_id)
         if last_response is not None:
             bg.result = {
                 "status": "completed",

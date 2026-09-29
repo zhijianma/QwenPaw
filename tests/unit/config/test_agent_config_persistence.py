@@ -58,6 +58,31 @@ def _prepare_agent(
     return agent_config_path, raw
 
 
+def test_capability_selection_preserves_unset_and_disabled_slot() -> None:
+    default_profile = AgentProfileConfig(id="agent", name="Agent")
+    configured_profile = AgentProfileConfig.model_validate(
+        {
+            "id": "agent",
+            "name": "Agent",
+            "capability_selection": {
+                "disabled_optional_slots": ["driver.provider"],
+                "tool_provider_ids": ["example.tools.provider"],
+            },
+        },
+    )
+    restored = AgentProfileConfig.model_validate_json(
+        configured_profile.model_dump_json(),
+    )
+
+    assert default_profile.capability_selection.model_fields_set == set()
+    assert restored.capability_selection.disabled_optional_slots == (
+        "driver.provider",
+    )
+    assert restored.capability_selection.tool_provider_ids == (
+        "example.tools.provider",
+    )
+
+
 def test_acl_migration_replaces_long_agent_json_completely(
     tmp_path: Path,
     monkeypatch,

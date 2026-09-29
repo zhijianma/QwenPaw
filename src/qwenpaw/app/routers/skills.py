@@ -64,7 +64,7 @@ from ...agents.skill_system.store import (
     suggest_conflict_name,
 )
 from ...security.skill_scanner import SkillScanError
-from ..inbox_store import append_event as append_inbox_event
+from ..operational_delivery import publish_operational_event
 from ..utils import check_upload_size, schedule_agent_reload
 
 logger = logging.getLogger(__name__)
@@ -78,6 +78,7 @@ SKILL_AUTOMATION_INBOX_SOURCE = "skill_autoupdate"
 
 
 async def _append_automation_event(
+    workspace: Any,
     *,
     event_type: str,
     status: str,
@@ -87,8 +88,9 @@ async def _append_automation_event(
     payload: dict[str, Any],
 ) -> bool:
     try:
-        await append_inbox_event(
-            agent_id="default",
+        await publish_operational_event(
+            workspace,
+            producer_id="qwenpaw.system.skills",
             source_type=SKILL_AUTOMATION_INBOX_SOURCE,
             source_id="",
             event_type=event_type,
@@ -104,7 +106,11 @@ async def _append_automation_event(
         return False
 
 
-async def post_auto_sync_inbox(result: dict[str, Any] | None) -> bool:
+async def post_auto_sync_inbox(
+    result: dict[str, Any] | None,
+    *,
+    workspace: Any,
+) -> bool:
     if not result:
         return False
     synced = [
@@ -130,6 +136,7 @@ async def post_auto_sync_inbox(result: dict[str, Any] | None) -> bool:
         else f"Auto Sync: {len(synced)} skill(s) synced"
     )
     return await _append_automation_event(
+        workspace,
         event_type="auto_sync",
         status="error" if failure_count else "success",
         severity="error" if failure_count else "info",
@@ -141,6 +148,8 @@ async def post_auto_sync_inbox(result: dict[str, Any] | None) -> bool:
 
 async def post_pool_automation_inbox(
     result: dict[str, Any] | None,
+    *,
+    workspace: Any,
 ) -> bool:
     if not result:
         return False
@@ -151,6 +160,7 @@ async def post_pool_automation_inbox(
     if not pool_updated and not pool_failed:
         return await post_auto_sync_inbox(
             {"synced": synced, "failed": sync_failed},
+            workspace=workspace,
         )
 
     lines = [
@@ -174,6 +184,7 @@ async def post_pool_automation_inbox(
     )
     failure_count = len(pool_failed) + len(sync_failed)
     return await _append_automation_event(
+        workspace,
         event_type="auto_update",
         status="error" if failure_count else "success",
         severity="error" if failure_count else "info",
@@ -191,13 +202,16 @@ async def post_pool_automation_inbox(
     )
 
 
-async def _follow_auto_sync(skill_name: str | None = None) -> None:
+async def _follow_auto_sync(
+    workspace: Any,
+    skill_name: str | None = None,
+) -> None:
     try:
         result = await asyncio.to_thread(
             run_pool_auto_sync,
             skill_name=skill_name,
         )
-        await post_auto_sync_inbox(result)
+        await post_auto_sync_inbox(result, workspace=workspace)
     except Exception:
         logger.warning("Auto Sync follow-up failed", exc_info=True)
 
@@ -529,10 +543,14 @@ def _restore_workspace_skill(snapshot: dict[str, Any]) -> None:
         shutil.rmtree(Path(backup_dir).parent, ignore_errors=True)
 
 
-async def _request_workspace_dir(request: Request) -> Path:
+async def _request_workspace(request: Request) -> Any:
     from ..agent_context import get_agent_for_request
 
-    workspace = await get_agent_for_request(request)
+    return await get_agent_for_request(request)
+
+
+async def _request_workspace_dir(request: Request) -> Path:
+    workspace = await _request_workspace(request)
     return Path(workspace.workspace_dir)
 
 
@@ -1043,10 +1061,11 @@ async def list_pool_skills() -> list[PoolSkillSpec]:
 
 
 @router.post("/pool/refresh")
-async def refresh_pool_skills() -> list[PoolSkillSpec]:
+async def refresh_pool_skills(request: Request) -> list[PoolSkillSpec]:
     """Force reconcile and return updated pool skill list."""
     result = await asyncio.to_thread(refresh_pool_automation)
-    await post_pool_automation_inbox(result)
+    workspace = await _request_workspace(request)
+    await post_pool_automation_inbox(result, workspace=workspace)
     return _build_pool_skill_specs()
 
 
@@ -1189,7 +1208,10 @@ async def create_pool_skill(body: CreateSkillRequest) -> dict[str, Any]:
 
 
 @router.put("/pool/save")
-async def save_pool_skill(body: SavePoolSkillRequest) -> dict[str, Any]:
+async def save_pool_skill(
+    request: Request,
+    body: SavePoolSkillRequest,
+) -> dict[str, Any]:
     """Save one pool skill.
 
     ``overwrite`` only matters when the save would replace an existing target
@@ -1212,12 +1234,14 @@ async def save_pool_skill(body: SavePoolSkillRequest) -> dict[str, Any]:
         reason = result.get("reason")
         status = 404 if reason == "not_found" else 409
         raise HTTPException(status_code=status, detail=result)
-    await _follow_auto_sync(result.get("name"))
+    workspace = await _request_workspace(request)
+    await _follow_auto_sync(workspace, result.get("name"))
     return result
 
 
 @router.post("/pool/upload-zip")
 async def upload_skill_pool_zip(
+    request: Request,
     file: UploadFile = File(...),
     target_name: str = "",
     rename_map: str = "",
@@ -1250,12 +1274,14 @@ async def upload_skill_pool_zip(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if result.get("conflicts"):
         raise HTTPException(status_code=409, detail=result)
-    await _follow_auto_sync()
+    workspace = await _request_workspace(request)
+    await _follow_auto_sync(workspace)
     return result
 
 
 @router.post("/pool/import")
 async def import_skill_pool_from_hub(
+    request: Request,
     body: HubInstallRequest,
 ) -> dict[str, Any]:
     try:
@@ -1272,7 +1298,8 @@ async def import_skill_pool_from_hub(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    await _follow_auto_sync(result.name)
+    workspace = await _request_workspace(request)
+    await _follow_auto_sync(workspace, result.name)
     return {
         "installed": True,
         "name": result.name,
@@ -1284,6 +1311,7 @@ async def import_skill_pool_from_hub(
 
 @router.post("/pool/upload")
 async def upload_workspace_skill_to_pool(
+    request: Request,
     body: UploadToPoolRequest,
 ) -> dict[str, Any]:
     workspace_dir = _workspace_dir_for_agent(body.workspace_id)
@@ -1302,7 +1330,8 @@ async def upload_workspace_skill_to_pool(
         status = 404 if result.get("reason") == "not_found" else 409
         raise HTTPException(status_code=status, detail=result)
     if not body.preview_only:
-        await _follow_auto_sync(result.get("name"))
+        workspace = await _request_workspace(request)
+        await _follow_auto_sync(workspace, result.get("name"))
     return result
 
 
@@ -1470,6 +1499,7 @@ async def download_pool_skill_to_workspaces(
 
 @router.post("/pool/import-builtin")
 async def import_pool_builtins(
+    request: Request,
     body: ImportBuiltinRequest,
 ) -> dict[str, Any]:
     imports: list[dict[str, Any]] = (
@@ -1484,12 +1514,14 @@ async def import_pool_builtins(
     )
     if result.get("conflicts") and not body.overwrite_conflicts:
         raise HTTPException(status_code=409, detail=result)
-    await _follow_auto_sync()
+    workspace = await _request_workspace(request)
+    await _follow_auto_sync(workspace)
     return result
 
 
 @router.post("/pool/{skill_name}/update-builtin")
 async def update_pool_builtin(
+    request: Request,
     skill_name: str,
     body: UpdateBuiltinRequest | None = Body(default=None),
 ) -> dict[str, Any]:
@@ -1508,7 +1540,8 @@ async def update_pool_builtin(
         )
     except (ValueError, AppBaseException) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    await _follow_auto_sync()
+    workspace = await _request_workspace(request)
+    await _follow_auto_sync(workspace)
     return result
 
 
@@ -1605,6 +1638,7 @@ async def update_pool_skill_tags(
 @router.put("/pool/{skill_name}/auto-update", deprecated=True)
 @router.put("/pool/{skill_name}/auto-sync")
 async def update_pool_skill_auto_sync(
+    request: Request,
     skill_name: str,
     body: AutoSyncRequest,
 ) -> dict[str, Any]:
@@ -1623,7 +1657,8 @@ async def update_pool_skill_auto_sync(
             status_code=404,
             detail="Pool skill not found",
         )
-    await post_auto_sync_inbox(result)
+    workspace = await _request_workspace(request)
+    await post_auto_sync_inbox(result, workspace=workspace)
     return {
         "updated": True,
         "enabled": body.enabled,
@@ -1633,6 +1668,7 @@ async def update_pool_skill_auto_sync(
 
 @router.put("/pool/{skill_name}/automation")
 async def update_pool_skill_automation(
+    request: Request,
     skill_name: str,
     body: SkillAutomationRequest,
 ) -> dict[str, Any]:
@@ -1681,7 +1717,11 @@ async def update_pool_skill_automation(
             )
         raise HTTPException(status_code=400, detail="Invalid automation")
 
-    await post_pool_automation_inbox(result.get("automation"))
+    workspace = await _request_workspace(request)
+    await post_pool_automation_inbox(
+        result.get("automation"),
+        workspace=workspace,
+    )
     return {
         "updated": True,
         "auto_update": bool(result.get("auto_update")),

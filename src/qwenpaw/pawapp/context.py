@@ -7,7 +7,7 @@ Provides access to QwenPaw capabilities via thin delegation:
 - ctx.storage.get/set/search → SafeJSONSession (namespaced)
 - ctx.tools.invoke() → ToolCoordinator
 - ctx.notify() → ChannelManager
-- ctx.ui.push/confirm → UIBridge (SSE + ApprovalService)
+- ctx.ui.push/confirm → UIBridge (SSE + InteractionService)
 - ctx.settings.get() → PluginRegistry tool config
 - ctx.toast() → frontend notification via bridge
 """
@@ -16,8 +16,18 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Any, AsyncIterator, Dict, List, Optional
-from uuid import uuid4
+from uuid import UUID, uuid4
+
+from ..kernel import (
+    InteractionKind,
+    InteractionMode,
+    InteractionOption,
+    InteractionRequest,
+    InteractionStatus,
+)
+from ..kernel.models import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -98,15 +108,21 @@ class ToolProxy:
 
 
 class UIBridge:
-    """Agent→UI realtime communication via SSE."""
+    """Agent-to-UI delivery backed by durable runtime interactions."""
 
     def __init__(
         self,
         sse_channel: Any = None,
-        approval_coordinator: Any = None,
+        interaction_service: Any = None,
+        agent_id: str = "",
+        chat_id: str = "",
+        invocation_id: UUID | None = None,
     ):
         self._channel = sse_channel
-        self._approval = approval_coordinator
+        self._interaction_service = interaction_service
+        self._agent_id = agent_id
+        self._chat_id = chat_id
+        self._invocation_id = invocation_id
 
     async def push(self, event_type: str, data: Any = None) -> None:
         """Non-blocking push: send event to frontend UI in realtime."""
@@ -128,34 +144,85 @@ class UIBridge:
         data: Any = None,
         timeout: int = 300,
     ) -> Dict[str, Any]:
-        """Blocking wait: pause until frontend user responds.
+        """Persist and await a ChatSpec-owned confirmation request."""
+        if (
+            self._channel is None
+            or self._interaction_service is None
+            or not self._agent_id
+            or not self._chat_id
+            or self._invocation_id is None
+        ):
+            raise RuntimeError(
+                "UIBridge is not bound to a task interaction runtime",
+            )
+        if timeout <= 0:
+            raise ValueError("timeout must be greater than zero")
 
-        Uses ApprovalService's asyncio.Future mechanism.
-        """
-        if self._channel is None or self._approval is None:
-            raise RuntimeError("UIBridge not connected to SSE/Approval")
-
-        import uuid
-
-        request_id = str(uuid.uuid4())
-        # Send confirm request to frontend via SSE
+        request = InteractionRequest(
+            kind=InteractionKind.USER_INPUT,
+            mode=InteractionMode.BLOCKING,
+            agent_id=self._agent_id,
+            conversation_id=self._chat_id,
+            invocation_id=self._invocation_id,
+            title="Confirmation required",
+            prompt=message,
+            options=(
+                InteractionOption(
+                    option_id="approve",
+                    label="Approve",
+                    value={"action": "approve"},
+                ),
+                InteractionOption(
+                    option_id="deny",
+                    label="Deny",
+                    value={"action": "deny"},
+                ),
+            ),
+            metadata={
+                "adapter": "pawapp",
+                "app_data": data,
+            },
+            expires_at=utc_now() + timedelta(seconds=timeout),
+        )
+        await self._interaction_service.open(request)
         await self._channel.send_event(
             {
                 "type": "pawapp:confirm_request",
-                "request_id": request_id,
+                "request_id": str(request.interaction_id),
+                "interaction_id": str(request.interaction_id),
+                "agent_id": self._agent_id,
+                "chat_id": self._chat_id,
+                "invocation_id": str(self._invocation_id),
+                "revision": request.revision,
                 "message": message,
                 "data": data,
+                "options": [
+                    option.model_dump(mode="json")
+                    for option in request.options
+                ],
             },
         )
-        # Wait for user response (via approval service)
-        try:
-            decision = await self._approval.wait_for_approval(
-                request_id,
-                timeout,
-            )
-            return {"action": "approve", "data": decision}
-        except Exception:
+        resolution = await self._interaction_service.wait(
+            request.interaction_id,
+            timeout_seconds=timeout,
+        )
+        if resolution.status is InteractionStatus.EXPIRED:
             return {"action": "timeout", "data": None}
+        if resolution.status is InteractionStatus.CANCELLED:
+            return {"action": "cancel", "data": None}
+        response = resolution.response
+        if response is None:
+            return {"action": "cancel", "data": None}
+        option_id = "deny"
+        if len(response.selected_option_ids) == 1:
+            option_id = response.selected_option_ids[0]
+        response_data: Any = response.values or None
+        if response.text:
+            response_data = {
+                **dict(response.values),
+                "text": response.text,
+            }
+        return {"action": option_id, "data": response_data}
 
 
 class AppSettings:
@@ -195,6 +262,7 @@ class PawAppContext:
     agent_id: str = "default"
     channel: str = "console"  # Channel name (console, dingtalk, etc.)
     user_id: str = "default"  # User identifier
+    chat_id: Optional[str] = None  # Optional ChatSpec task ownership
 
     # Injected services (set by deps.py)
     _workspace_registry: Any = field(default=None, repr=False)
@@ -385,6 +453,21 @@ class PawAppContext:
             and self.is_app_session_id(getattr(chat, "session_id", ""))
         )
 
+    def _can_bind_task_chat(self, chat: Any) -> bool:
+        """Authorize one host or app ChatSpec as task ownership."""
+        if (
+            getattr(chat, "user_id", None) != self.user_id
+            or getattr(chat, "channel", None) != self.channel
+        ):
+            return False
+        meta = getattr(chat, "meta", None)
+        owner = meta.get("pawapp") if isinstance(meta, dict) else None
+        if owner is not None:
+            return self._owns_chat_spec(chat)
+        return not str(getattr(chat, "session_id", "")).startswith(
+            "pawapp:",
+        )
+
     def _chat_owner_metadata(self) -> Dict[str, Any]:
         return {
             "pawapp": {
@@ -571,6 +654,60 @@ class PawAppContext:
         except Exception:
             return None
 
+    async def bind_task_runtime(
+        self,
+        *,
+        sse_channel: Any,
+        invocation_id: UUID,
+    ) -> str:
+        """Bind one PawApp task to a ChatSpec-owned interaction runtime."""
+        workspace = await self._get_workspace()
+        if workspace is None:
+            raise RuntimeError("No workspace available for task runtime")
+        chat = None
+        if self.chat_id:
+            selected = await workspace.chat_manager.get_chat(self.chat_id)
+            if selected is None or not self._can_bind_task_chat(selected):
+                raise PermissionError(
+                    "ChatSpec is not owned by this PawApp context",
+                )
+            chat = self._chat_session_payload(selected)
+        else:
+            chat = await self.ensure_chat_session()
+        if chat is None:
+            raise RuntimeError("No ChatSpec available for task runtime")
+        interaction_service = getattr(
+            workspace,
+            "interaction_service",
+            None,
+        )
+        if interaction_service is None:
+            raise RuntimeError("InteractionService not available")
+        self._sse_channel = sse_channel
+        self._ui = UIBridge(
+            sse_channel=sse_channel,
+            interaction_service=interaction_service,
+            agent_id=self.agent_id,
+            chat_id=chat["id"],
+            invocation_id=invocation_id,
+        )
+        return chat["id"]
+
+    async def _cancel_task_runtime(self, invocation_id: UUID) -> None:
+        """Cancel every open interaction owned by one PawApp invocation."""
+        workspace = await self._get_workspace()
+        interaction_service = (
+            getattr(workspace, "interaction_service", None)
+            if workspace is not None
+            else None
+        )
+        if interaction_service is None:
+            return
+        await interaction_service.cancel_invocation(
+            invocation_id,
+            detail="PawApp task cancelled",
+        )
+
     async def _stream_query(
         self,
         workspace: Any,
@@ -622,10 +759,6 @@ class PawAppContext:
         coordinator = None
         if self._app_services:
             coordinator = self._app_services.tool_coordinator
-        approval = None
-        if self._app_services:
-            approval = self._app_services.approval_coordinator
-
         self._storage = AppStorage(
             session=self._session,
             namespace=f"pawapp:{self.app_id}",
@@ -635,7 +768,6 @@ class PawAppContext:
         )
         self._ui = UIBridge(
             sse_channel=self._sse_channel,
-            approval_coordinator=approval,
         )
         self._settings = AppSettings(
             plugin_registry=self._plugin_registry,

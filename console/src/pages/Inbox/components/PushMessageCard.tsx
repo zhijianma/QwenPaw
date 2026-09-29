@@ -8,6 +8,7 @@ import {
   RefreshCw,
   Trash2,
   Brain,
+  ListChecks,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { PushMessage } from "../types";
@@ -31,6 +32,7 @@ const CHANNEL_ICONS = {
   memory: Brain,
   heartbeat: MessageCircle,
   skill: RefreshCw,
+  task: ListChecks,
 };
 
 const CHANNEL_COLORS = {
@@ -42,6 +44,7 @@ const CHANNEL_COLORS = {
   memory: "#7C3AED",
   heartbeat: "#5865F2",
   skill: "#1677ff",
+  task: "#5f7658",
 };
 
 const normalizeCronTaskName = (title: string): string =>

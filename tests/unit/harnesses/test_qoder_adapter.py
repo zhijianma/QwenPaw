@@ -577,6 +577,11 @@ async def test_qoder_approval_uses_qwenpaw_service(
         "agent_id": "agent-1",
         "user_id": "user-1",
         "channel": "console",
+        "durable_task": True,
+        "_task_approval_broker": object(),
+        "execution_contract": {
+            "timeout_policy": {"approval_seconds": 13},
+        },
     }
     pending = type(
         "Pending",
@@ -598,10 +603,29 @@ async def test_qoder_approval_uses_qwenpaw_service(
             "blocked_path": None,
         },
     )()
+    approval_path = "qwenpaw.harnesses.qoder.adapter.get_approval_service"
+    task_path = (
+        "qwenpaw.harnesses.qoder.adapter.attach_pending_to_durable_task"
+    )
+    interaction_path = (
+        "qwenpaw.harnesses.qoder.adapter.attach_pending_to_interaction"
+    )
 
-    with patch(
-        "qwenpaw.harnesses.qoder.adapter.get_approval_service",
-        return_value=service,
+    with (
+        patch(
+            approval_path,
+            return_value=service,
+        ),
+        patch(
+            task_path,
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as attach_pending,
+        patch(
+            interaction_path,
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as attach_interaction,
     ):
         result = await adapter._approve_tool(
             "chat-1",
@@ -614,6 +638,15 @@ async def test_qoder_approval_uses_qwenpaw_service(
     summary = service.create_pending_summary.call_args.kwargs["summary"]
     assert summary.source_type == "qoder"
     assert summary.payload["tool_name"] == "Bash"
+    assert (
+        service.create_pending_summary.call_args.kwargs["timeout_seconds"]
+        == 13
+    )
+    attach_call = attach_pending.await_args.kwargs
+    assert attach_call["source"].value == "harness"
+    assert attach_call["policy"] == "qoder"
+    attach_interaction.assert_awaited_once()
+    assert service.wait_for_approval.await_args.args == (pending, 13.0)
 
 
 @pytest.mark.asyncio

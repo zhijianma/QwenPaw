@@ -8,9 +8,12 @@ so no real model / HTTP / agentscope runtime is needed.
 """
 from __future__ import annotations
 
+import time
+
 # pylint: disable=protected-access
 
 from qwenpaw.governance.policy import ToolCallSpec
+from qwenpaw.kernel.models import ApprovalSource
 from qwenpaw.security.tool_guard.approval import (
     ApprovalDecision,
     ApprovalScope,
@@ -20,7 +23,10 @@ from qwenpaw.security.tool_guard.approval import (
 class _FakePending:
     def __init__(self, request_id: str) -> None:
         self.request_id = request_id
+        self.created_at = time.time()
+        self.timeout_seconds = 300.0
         self.scope: ApprovalScope | None = None
+        self.resolution_hook = None
 
 
 class _FakeApprovalService:
@@ -33,6 +39,8 @@ class _FakeApprovalService:
     def __init__(self, scope: ApprovalScope | None) -> None:
         self._scope = scope
         self._pending = _FakePending("fake-req-id")
+        self.created_timeout_seconds: float | None = None
+        self.wait_timeout_seconds: float | None = None
 
     async def cancel_stale_pending_for_tool_call(
         self,
@@ -44,13 +52,16 @@ class _FakeApprovalService:
     async def create_pending(self, **kwargs):  # noqa: ANN
         # Carry the display payload so we can assert on it too.
         self._pending.extra = kwargs.get("extra", {})
+        self.created_timeout_seconds = kwargs.get("timeout_seconds")
+        self._pending.timeout_seconds = self.created_timeout_seconds
         return self._pending
 
     async def wait_for_approval(
         self,
         _request_id,
-        _timeout_seconds,
+        timeout_seconds,
     ):  # noqa: ANN
+        self.wait_timeout_seconds = timeout_seconds
         self._pending.scope = self._scope
         return ApprovalDecision.APPROVED
 
@@ -169,6 +180,85 @@ class TestApprovalScopeConsumer:
         assert target == "git status"
         _spec, decision = governor.audits[-1]
         assert "exact" in decision.reason
+
+    async def test_durable_task_installs_ledger_bridge(
+        self,
+        monkeypatch,
+    ):
+        """The active PolicyGuardedTool path persists Task approvals."""
+        from qwenpaw.app.approvals import task_bridge
+        from qwenpaw.governance import tool_adapter
+
+        fake_svc = _FakeApprovalService(ApprovalScope.EXACT)
+        monkeypatch.setattr(
+            "qwenpaw.app.approvals.get_approval_service",
+            lambda: fake_svc,
+        )
+
+        class _FakeBridge:
+            def __init__(self) -> None:
+                self.requests: list[dict] = []
+
+            async def request(self, **kwargs):  # noqa: ANN
+                self.requests.append(kwargs)
+
+            async def resolve(self, *_args, **_kwargs):  # noqa: ANN
+                return None
+
+        bridge = _FakeBridge()
+
+        async def _bridge_factory(_context, _request_id):  # noqa: ANN
+            return bridge
+
+        monkeypatch.setattr(
+            task_bridge,
+            "task_approval_bridge_from_context",
+            _bridge_factory,
+        )
+        import qwenpaw.governance.generalize as generalize_mod
+
+        async def _fake_generalize(
+            _tool_name,
+            target,
+            _source,
+            agent_id=None,
+        ):  # noqa: ANN
+            del agent_id
+            return target
+
+        monkeypatch.setattr(
+            generalize_mod,
+            "generalize_target_for_approval",
+            _fake_generalize,
+        )
+
+        await tool_adapter._ask_user_approval(
+            governor=_FakeGovernor(),
+            tc_spec=_tc("README.md"),
+            request_context={
+                "durable_task": True,
+                "_task_approval_broker": object(),
+                "execution_contract": {
+                    "timeout_policy": {"approval_seconds": 12.5},
+                },
+            },
+        )
+
+        assert len(bridge.requests) == 1
+        request = bridge.requests[0]
+        assert request["agent_id"] == "agent-1"
+        assert request["tool_name"] == "Bash"
+        assert request["severity"] == "INFO"
+        assert request["input_data"] == {}
+        assert request["source"] is ApprovalSource.TOOL
+        assert request["action"] == "tool.execute"
+        assert request["policy"] == "governance_policy"
+        assert request["display"].target == "README.md"
+        assert fake_svc.created_timeout_seconds == 12.5
+        assert fake_svc.wait_timeout_seconds == 12.5
+        resolution_hook = fake_svc._pending.resolution_hook
+        assert callable(resolution_hook)
+        assert resolution_hook.__self__ is bridge
 
     async def test_none_scope_defaults_to_exact(self, monkeypatch):
         """No scope (IM channel / CLI) → records the literal target."""

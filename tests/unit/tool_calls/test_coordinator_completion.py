@@ -12,6 +12,7 @@ import pytest
 from agentscope.message import TextBlock, ToolResultBlock, ToolResultState
 from agentscope.tool import ToolChunk, ToolResponse
 
+from qwenpaw.kernel.models import UsageDelta, UsageSnapshot
 from qwenpaw.tool_calls import ToolCoordinator, ToolCoordinatorMiddleware
 from qwenpaw.tool_calls._context import CancelReason, ToolCallContext
 from qwenpaw.tool_calls._entry import ToolCallEntry, ToolCallStatus
@@ -23,6 +24,36 @@ class _ToolCall:
     id: str = "call-1"
     name: str = "test_tool"
     input: dict[str, Any] = field(default_factory=dict)
+
+
+class _ConcurrencyMeter:
+    def __init__(self, limit: int = 1) -> None:
+        self._semaphore = asyncio.Semaphore(limit)
+        self.snapshot_value = UsageSnapshot()
+        self.active = 0
+        self.max_active = 0
+
+    async def record(
+        self,
+        delta: UsageDelta,
+        *,
+        source: str | None = None,
+    ) -> UsageSnapshot:
+        assert source == "qwenpaw.system.tool-coordinator"
+        self.snapshot_value = self.snapshot_value.add(delta)
+        return self.snapshot_value
+
+    async def snapshot(self) -> UsageSnapshot:
+        return self.snapshot_value
+
+    async def acquire_concurrency(self) -> None:
+        await self._semaphore.acquire()
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+
+    def release_concurrency(self) -> None:
+        self.active -= 1
+        self._semaphore.release()
 
 
 def _text_response(tool_call_id: str, text: str) -> ToolResponse:
@@ -307,6 +338,7 @@ async def test_after_hook_transforms_final_response_and_blocks_caller():
 @pytest.mark.asyncio
 async def test_middleware_caller_observes_coordinator_response():
     coordinator = ToolCoordinator()
+    usage_meter = _ConcurrencyMeter()
     middleware = ToolCoordinatorMiddleware(
         coordinator=coordinator,
     )
@@ -319,6 +351,7 @@ async def test_middleware_caller_observes_coordinator_response():
                 "agent_id": "agent-1",
                 "root_session_id": "root-1",
                 "root_agent_id": "parent-agent",
+                "_task_usage_meter": usage_meter,
             },
         },
     )()
@@ -341,6 +374,8 @@ async def test_middleware_caller_observes_coordinator_response():
     entry = coordinator.get(tool_call.id)
     assert entry is not None
     assert entry.ctx.root_agent_id == "parent-agent"
+    assert usage_meter.snapshot_value.tool_calls == 1
+    assert usage_meter.active == 0
 
 
 @pytest.mark.asyncio
@@ -1631,3 +1666,90 @@ async def test_drain_logs_handler_exception(_coordinator_caplog, caplog):
     assert len(error_records) == 1
     assert error_records[0].exc_info is not None
     assert error_records[0].exc_info[0] is RuntimeError
+
+
+@pytest.mark.asyncio
+async def test_usage_meter_serializes_parallel_tool_handlers():
+    coordinator = ToolCoordinator()
+    usage_meter = _ConcurrencyMeter(limit=1)
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    started: list[str] = []
+
+    async def next_handler(
+        tool_call: _ToolCall,
+    ) -> AsyncGenerator[Any, None]:
+        started.append(tool_call.id)
+        if tool_call.id == "call-first":
+            first_started.set()
+            await release_first.wait()
+        yield _text_response(tool_call.id, "done")
+
+    def execute(tool_call_id: str) -> asyncio.Task[list[Any]]:
+        return asyncio.create_task(
+            _collect(
+                coordinator.execute(
+                    tool_call=_ToolCall(id=tool_call_id),
+                    next_handler=next_handler,
+                    session_id="session-budget",
+                    agent_id="agent-1",
+                    root_session_id="root-1",
+                    usage_meter=usage_meter,
+                ),
+            ),
+        )
+
+    first = execute("call-first")
+    await asyncio.wait_for(first_started.wait(), timeout=1)
+    second = execute("call-second")
+    await asyncio.sleep(0)
+
+    assert started == ["call-first"]
+    assert usage_meter.active == 1
+
+    release_first.set()
+    await asyncio.gather(first, second)
+
+    assert started == ["call-first", "call-second"]
+    assert usage_meter.snapshot_value.tool_calls == 2
+    assert usage_meter.max_active == 1
+    assert usage_meter.active == 0
+
+
+@pytest.mark.asyncio
+async def test_usage_meter_failure_prevents_tool_handler_start():
+    class _RejectingMeter(_ConcurrencyMeter):
+        async def record(
+            self,
+            delta: UsageDelta,
+            *,
+            source: str | None = None,
+        ) -> UsageSnapshot:
+            del delta, source
+            raise RuntimeError("tool budget exhausted")
+
+    coordinator = ToolCoordinator()
+    usage_meter = _RejectingMeter()
+    handler_started = False
+
+    async def next_handler(
+        tool_call: _ToolCall,
+    ) -> AsyncGenerator[Any, None]:
+        nonlocal handler_started
+        handler_started = True
+        yield _text_response(tool_call.id, "unreachable")
+
+    with pytest.raises(RuntimeError, match="tool budget exhausted"):
+        await _collect(
+            coordinator.execute(
+                tool_call=_ToolCall(id="call-rejected"),
+                next_handler=next_handler,
+                session_id="session-budget",
+                agent_id="agent-1",
+                root_session_id="root-1",
+                usage_meter=usage_meter,
+            ),
+        )
+
+    assert not handler_started
+    assert usage_meter.active == 0

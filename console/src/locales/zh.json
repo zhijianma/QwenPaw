@@ -3532,6 +3532,16 @@
       "recent": "近 7 天",
       "earlier": "更早"
     },
+    "forkFromHere": "从这轮对话分叉",
+    "forkCreated": "已创建新的分支对话",
+    "forkFailed": "创建分支对话失败",
+    "forkUnavailable": "当前对话尚未完成持久化，暂时无法分叉",
+    "interaction": {
+      "answerPlaceholder": "请输入回复",
+      "dismiss": "忽略",
+      "responseFailed": "提交回复失败",
+      "submit": "提交"
+    },
     "regenerate": "重新生成",
     "regenerateUnavailable": "该历史回合没有请求标识，请发送新消息继续。",
     "turnCanceled": "已停止"

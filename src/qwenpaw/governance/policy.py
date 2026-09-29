@@ -81,12 +81,20 @@ class ToolCallSpec:
         agent_id: str,
         session_id: str,
         raw_params: dict[str, Any] | None = None,
+        invocation_id: str = "",
+        correlation_id: str = "",
+        tool_type: str = "",
+        effect: str = "none",
     ) -> None:
         self.tool_name = tool_name
         self.target = target
         self.agent_id = agent_id
         self.session_id = session_id
         self.raw_params = raw_params or {}
+        self.invocation_id = invocation_id
+        self.correlation_id = correlation_id or invocation_id
+        self.tool_type = tool_type
+        self.effect = effect
 
 
 @dataclass
@@ -712,7 +720,9 @@ class GovernancePolicy:
         Returns: GovernanceDecision (with optional findings attached)
         """
         # ── Phase 0: ToolRegistry type check ──
-        tool_type = self._registry.get_type(tc_spec.tool_name)
+        tool_type = tc_spec.tool_type or self._registry.get_type(
+            tc_spec.tool_name,
+        )
         if tool_type == "unknown":
             return GovernanceDecision(
                 action=GovernanceAction.DENY,
@@ -1069,7 +1079,9 @@ class GovernancePolicy:
             "user_rules"     — matched user_rules
             "fallback" — no match, global fallback
         """
-        tool_type = self._registry.get_type(tc_spec.tool_name)
+        tool_type = tc_spec.tool_type or self._registry.get_type(
+            tc_spec.tool_name,
+        )
         for rule in self.builtin_rules:
             if rule.matches_tool_call(
                 tc_spec,

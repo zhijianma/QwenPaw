@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
     async_execution=True,
     tool_type="internal",
     policy_name="ActivateF1ExplorationMode",
+    effect="local_write",
     ui_description=(
         "Activate F1 exploration mode for step-by-step mail approval"
     ),

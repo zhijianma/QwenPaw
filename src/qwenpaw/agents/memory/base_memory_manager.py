@@ -6,9 +6,9 @@ import json
 import logging
 import uuid
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
@@ -58,6 +58,9 @@ class MemoryBackendContext:
     backend_config: Mapping[str, Any]
     language: str = "zh"
     token_estimate_divisor: float = 4.0
+    operational_event_publisher: Callable[..., Awaitable[Any]] | None = field(
+        default=None, compare=False, repr=False
+    )
 
 
 class BaseMemoryManager(ABC):
@@ -158,6 +161,12 @@ class BaseMemoryManager(ABC):
         from ..middlewares import MemoryMiddleware
 
         return [MemoryMiddleware(memory_manager=self)]
+
+    def rebind_host_services(self, context: MemoryBackendContext) -> None:
+        """Refresh non-comparable Host services after Workspace reload."""
+        if self.context is None or self.context != context:
+            raise ValueError("memory backend context is not reuse-compatible")
+        self.context = context
 
     def list_cron_jobs(self) -> list[ServiceCronJob]:
         """Return background jobs contributed by this memory backend.

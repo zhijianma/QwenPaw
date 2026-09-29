@@ -583,6 +583,7 @@ async def list_agents(
     tool_type="internal",
     target_param="to_agent",
     policy_name="ChatWithAgent",
+    effect="external_write",
     ui_description=(
         "Send a message to another configured agent and wait for "
         "the response"
@@ -677,6 +678,7 @@ async def chat_with_agent(
     tool_type="internal",
     target_param="to_agent",
     policy_name="SubmitToAgent",
+    effect="external_write",
     ui_description="Submit a background task to another configured agent",
     ui_icon="📨",
 )
@@ -894,7 +896,9 @@ def _build_spawn_request_context(current_agent_id: str) -> dict[str, Any]:
         get_current_root_session_id,
         get_current_session_id,
         get_current_user_id,
+        get_current_usage_scope_id,
     )
+    from ...tasks.usage_scope import USAGE_SCOPE_CONTEXT_KEY
 
     inherited = get_current_approval_route() or {}
     context: dict[str, Any] = {
@@ -915,6 +919,9 @@ def _build_spawn_request_context(current_agent_id: str) -> dict[str, Any]:
         context["channel_meta"] = safe_meta
     if inherited.get("approval_level"):
         context["approval_level"] = inherited["approval_level"]
+    usage_scope_id = get_current_usage_scope_id()
+    if usage_scope_id:
+        context[USAGE_SCOPE_CONTEXT_KEY] = usage_scope_id
 
     # Subagents do not share the parent's chat, so the parent's resolved
     # project-dir list is handed down explicitly. Fork workers override
@@ -1141,6 +1148,7 @@ async def _build_subagent_request_context(
     async_execution=True,
     tool_type="internal",
     policy_name="SpawnSubagent",
+    effect="external_write",
     ui_description="Spawn an ephemeral sub-task within the current workspace",
     ui_icon="🔀",
 )

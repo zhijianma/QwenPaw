@@ -58,7 +58,6 @@ from .reme_reranker import (
     rerank_search_results,
 )
 from ..model_factory import create_model_and_formatter_async
-from ...app.inbox_store import append_event as append_inbox_event
 from ...app.crons.contracts import ServiceCronJob
 from ...config import load_config
 from ...config.config import (
@@ -659,6 +658,20 @@ class ReMeLightMemoryManager(BaseMemoryManager, MemoryActionProvider):
     ) -> bool:
         if name not in RESULT_JOB_NAMES:
             return False
+        context = getattr(self, "context", None)
+        publisher = (
+            context.operational_event_publisher
+            if context is not None
+            else getattr(self, "_operational_event_publisher", None)
+        )
+        if publisher is None:
+            logger.warning(
+                "ReMe result notification skipped; publisher unavailable: "
+                "agent=%s job=%s",
+                self.agent_id,
+                name,
+            )
+            return False
         memory_config = await run_sync_io(self._load_memory_config)
         return await emit_job_result(
             agent_id=self.agent_id,
@@ -666,7 +679,7 @@ class ReMeLightMemoryManager(BaseMemoryManager, MemoryActionProvider):
             name=name,
             response=response,
             kwargs=kwargs,
-            append_event=append_inbox_event,
+            append_event=publisher,
         )
 
     @staticmethod

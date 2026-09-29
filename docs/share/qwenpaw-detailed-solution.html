@@ -1,0 +1,802 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta
+    name="description"
+    content="QwenPaw 完整解决方案与能力建设路线"
+  >
+  <title>QwenPaw 完整解决方案与能力建设路线</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172019;
+      --muted: #687168;
+      --surface: #fbfcf8;
+      --soft: #f0f3ed;
+      --line: #d8ded4;
+      --green: #4f6b52;
+      --deep: #2f4933;
+      --pale: #e3ebdf;
+      --gold: #9d7642;
+      --white: #fff;
+      --shadow: 0 22px 64px rgba(35, 49, 37, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(
+          circle at 91% 1%,
+          rgba(117, 143, 112, 0.14),
+          transparent 30rem
+        ),
+        var(--surface);
+      font-family:
+        Inter, "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.7;
+    }
+
+    a { color: inherit; }
+    .page { width: min(1180px, calc(100% - 40px)); margin: 0 auto; }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      border-bottom: 1px solid rgba(216, 222, 212, 0.82);
+      background: rgba(251, 252, 248, 0.9);
+      backdrop-filter: blur(16px);
+    }
+
+    .topbar-inner {
+      min-height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 10px;
+      color: var(--white);
+      background: var(--green);
+      font-size: 13px;
+    }
+
+    nav { display: flex; gap: 18px; color: var(--muted); font-size: 14px; }
+    nav a { text-decoration: none; }
+    nav a:hover { color: var(--deep); }
+
+    .hero {
+      min-height: 680px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.4fr) minmax(310px, 0.6fr);
+      align-items: center;
+      gap: 70px;
+      padding: 96px 0 86px;
+    }
+
+    .eyebrow,
+    .kicker {
+      margin: 0 0 16px;
+      color: var(--green);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    h1, h2, h3, p { margin-top: 0; }
+    h1 {
+      max-width: 860px;
+      margin-bottom: 28px;
+      font-size: clamp(44px, 6.5vw, 80px);
+      font-weight: 580;
+      letter-spacing: -0.055em;
+      line-height: 1.08;
+    }
+    .hero-lead {
+      max-width: 770px;
+      margin-bottom: 34px;
+      color: var(--muted);
+      font-size: clamp(18px, 2vw, 23px);
+    }
+    .actions { display: flex; flex-wrap: wrap; gap: 12px; }
+    .button {
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 19px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--white);
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 650;
+    }
+    .button.primary {
+      border-color: var(--deep);
+      color: var(--white);
+      background: var(--deep);
+    }
+
+    .hero-card {
+      padding: 30px;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: rgba(255, 255, 255, 0.82);
+      box-shadow: var(--shadow);
+    }
+    .hero-card small {
+      display: block;
+      margin-bottom: 16px;
+      color: var(--muted);
+      letter-spacing: 0.08em;
+    }
+    .hero-card blockquote {
+      margin: 0;
+      color: var(--deep);
+      font-size: 22px;
+      font-weight: 560;
+      line-height: 1.56;
+    }
+    .hero-card p {
+      margin: 24px 0 0;
+      padding-top: 22px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    section { padding: 86px 0; }
+    .band {
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      background: var(--soft);
+    }
+    .section-head {
+      display: grid;
+      grid-template-columns: minmax(240px, 0.47fr) minmax(0, 1fr);
+      gap: 64px;
+      margin-bottom: 46px;
+    }
+    h2 {
+      margin-bottom: 18px;
+      font-size: clamp(32px, 4vw, 51px);
+      font-weight: 560;
+      letter-spacing: -0.045em;
+      line-height: 1.16;
+    }
+    .intro {
+      align-self: end;
+      max-width: 780px;
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 18px;
+    }
+
+    .flow { overflow-x: auto; padding-bottom: 8px; }
+    .flow-inner {
+      min-width: 1040px;
+      display: grid;
+      grid-template-columns: repeat(6, minmax(150px, 1fr));
+      gap: 12px;
+    }
+    .flow-node {
+      position: relative;
+      min-height: 165px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 21px;
+      border: 1px solid var(--line);
+      border-radius: 17px;
+      background: var(--white);
+    }
+    .flow-node::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: -13px;
+      width: 13px;
+      height: 1px;
+      background: var(--green);
+    }
+    .flow-node:last-child::after { display: none; }
+    .flow-node small { color: var(--green); font-weight: 700; }
+    .flow-node strong { font-size: 17px; }
+    .flow-node span { color: var(--muted); font-size: 13px; }
+
+    .problem-list { display: grid; gap: 14px; }
+    details.problem {
+      border: 1px solid var(--line);
+      border-radius: 19px;
+      background: var(--white);
+      overflow: hidden;
+    }
+    details.problem summary {
+      display: grid;
+      grid-template-columns: 58px minmax(230px, 0.55fr) minmax(0, 1fr) 30px;
+      gap: 24px;
+      align-items: center;
+      padding: 25px;
+      cursor: pointer;
+      list-style: none;
+    }
+    details.problem summary::-webkit-details-marker { display: none; }
+    .problem-no { color: var(--gold); font-size: 26px; }
+    .problem-title { font-size: 20px; font-weight: 650; }
+    .problem-summary { color: var(--muted); }
+    .toggle { color: var(--muted); font-size: 24px; transition: transform 0.18s; }
+    details[open] .toggle { transform: rotate(45deg); }
+    .problem-body {
+      display: grid;
+      grid-template-columns: minmax(220px, 0.55fr) minmax(0, 1fr);
+      gap: 34px;
+      padding: 0 25px 28px 107px;
+    }
+    .root-cause,
+    .solution {
+      padding-top: 20px;
+      border-top: 1px solid var(--line);
+    }
+    .root-cause h3,
+    .solution h3 { font-size: 17px; }
+    .root-cause p,
+    .solution p,
+    .solution li { color: var(--muted); font-size: 14px; }
+    .solution ul { margin: 0; padding-left: 20px; }
+
+    .domain-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .domain-card {
+      min-height: 275px;
+      padding: 25px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--white);
+    }
+    .domain-card small {
+      display: block;
+      margin-bottom: 34px;
+      color: var(--green);
+      font-weight: 700;
+    }
+    .domain-card h3 { font-size: 21px; }
+    .domain-card p { color: var(--muted); font-size: 14px; }
+
+    .mechanism-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 13px;
+    }
+    .mechanism {
+      min-height: 250px;
+      padding: 24px;
+      border-top: 2px solid var(--green);
+      background: var(--white);
+    }
+    .mechanism h3 { font-size: 19px; }
+    .mechanism p { color: var(--muted); font-size: 14px; }
+
+    .chain { overflow-x: auto; padding-bottom: 8px; }
+    .chain-inner {
+      min-width: 980px;
+      display: grid;
+      grid-template-columns: repeat(8, minmax(110px, 1fr));
+      padding: 34px 24px;
+      border-radius: 22px;
+      background: var(--deep);
+    }
+    .chain-step {
+      position: relative;
+      color: rgba(255, 255, 255, 0.72);
+      text-align: center;
+      font-size: 13px;
+    }
+    .chain-step::after {
+      content: "";
+      position: absolute;
+      top: 21px;
+      right: -14%;
+      width: 28%;
+      height: 1px;
+      background: rgba(255, 255, 255, 0.3);
+    }
+    .chain-step:last-child::after { display: none; }
+    .chain-step span {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      margin: 0 auto 12px;
+      border: 1px solid rgba(255, 255, 255, 0.34);
+      border-radius: 50%;
+      color: var(--white);
+      font-weight: 700;
+    }
+
+    .delivery-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .delivery {
+      padding: 28px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--white);
+    }
+    .delivery h3 { font-size: 22px; }
+    .delivery p,
+    .delivery li { color: var(--muted); }
+    .delivery ul { padding-left: 20px; }
+
+    .capability-table-wrap,
+    .profile-table-wrap { overflow-x: auto; }
+    table {
+      width: 100%;
+      min-width: 800px;
+      border-collapse: collapse;
+      background: var(--white);
+    }
+    th, td {
+      padding: 17px 18px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+    th { color: var(--deep); font-size: 13px; }
+    td { color: var(--muted); font-size: 14px; }
+
+    .architecture {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .layer {
+      min-height: 270px;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--white);
+    }
+    .layer small {
+      display: block;
+      margin-bottom: 30px;
+      color: var(--green);
+      font-weight: 700;
+    }
+    .layer h3 { font-size: 19px; }
+    .layer ul { padding-left: 18px; color: var(--muted); font-size: 14px; }
+
+    .roadmap {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .phase {
+      min-height: 410px;
+      display: flex;
+      flex-direction: column;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--white);
+    }
+    .phase-tag {
+      width: fit-content;
+      margin-bottom: 34px;
+      padding: 4px 9px;
+      border-radius: 999px;
+      color: var(--deep);
+      background: var(--pale);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .phase h3 { font-size: 19px; }
+    .phase p { color: var(--muted); font-size: 14px; }
+    .phase footer {
+      margin-top: auto;
+      padding-top: 16px;
+      border-top: 1px solid var(--line);
+      color: var(--deep);
+      font-size: 13px;
+    }
+
+    .risk-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 13px;
+    }
+    .risk {
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.68);
+    }
+    .risk h3 { font-size: 18px; }
+    .risk p { margin: 0; color: var(--muted); font-size: 14px; }
+
+    .finale { padding-bottom: 110px; text-align: center; }
+    .finale-inner {
+      padding: 76px 42px;
+      border-radius: 28px;
+      color: var(--white);
+      background: var(--deep);
+    }
+    .finale .kicker { color: rgba(255, 255, 255, 0.64); }
+    .finale h2 {
+      max-width: 900px;
+      margin: 0 auto 28px;
+      font-size: clamp(35px, 5vw, 60px);
+    }
+    .finale p {
+      max-width: 810px;
+      margin: 0 auto;
+      color: rgba(255, 255, 255, 0.74);
+      font-size: 18px;
+    }
+
+    .site-footer {
+      padding: 28px 0 42px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .footer-inner { display: flex; justify-content: space-between; gap: 24px; }
+
+    @media (max-width: 1100px) {
+      .roadmap { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .architecture,
+      .mechanism-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 900px) {
+      .hero, .section-head { grid-template-columns: 1fr; gap: 32px; }
+      .hero { min-height: auto; }
+      .domain-grid,
+      .risk-grid { grid-template-columns: 1fr; }
+      .domain-card { min-height: auto; }
+      details.problem summary {
+        grid-template-columns: 45px 1fr 28px;
+      }
+      .problem-summary { grid-column: 2; }
+      .problem-body {
+        grid-template-columns: 1fr;
+        padding-left: 94px;
+      }
+    }
+    @media (max-width: 640px) {
+      .page { width: min(100% - 24px, 1180px); }
+      nav { display: none; }
+      .hero { padding: 68px 0 60px; }
+      section { padding: 64px 0; }
+      h1 { font-size: 45px; }
+      .hero-card { padding: 24px; }
+      .mechanism-grid,
+      .delivery-grid,
+      .architecture,
+      .roadmap { grid-template-columns: 1fr; }
+      .mechanism, .layer, .phase { min-height: auto; }
+      details.problem summary {
+        grid-template-columns: 40px 1fr;
+        gap: 14px;
+        padding: 20px;
+      }
+      .problem-summary { grid-column: 2; }
+      .toggle { display: none; }
+      .problem-body { padding: 0 20px 24px 74px; }
+      .phase footer { margin-top: 20px; }
+      .finale-inner { padding: 56px 24px; }
+      .footer-inner { flex-direction: column; }
+    }
+    @media print {
+      .topbar, .actions { display: none; }
+      body { background: var(--white); }
+      .hero { min-height: auto; padding-top: 40px; }
+      section { padding: 42px 0; }
+      .hero-card { box-shadow: none; }
+      details.problem:not([open]) > *:not(summary) { display: grid; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="page topbar-inner">
+      <div class="brand"><span class="brand-mark">QP</span>Detailed Solution</div>
+      <nav aria-label="页面导航">
+        <a href="#problems">问题与方案</a>
+        <a href="#architecture">架构</a>
+        <a href="#roadmap">路线图</a>
+        <a href="#risks">风险</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="page hero">
+      <div>
+        <p class="eyebrow">Detailed Solution · Capability Roadmap</p>
+        <h1>从问题根因，到可验收的解决方案</h1>
+        <p class="hero-lead">
+          在现有 AgentScope Runtime 之上建立统一 Work 领域层，将 Chat、
+          Goal、Cron、Harness、Approval、Checkpoint、Artifact 与 Plugin
+          逐步接入同一事实源。
+        </p>
+        <div class="actions">
+          <a class="button primary" href="#problems">逐项查看解决方案</a>
+          <a class="button" href="#roadmap">查看实施路线</a>
+        </div>
+      </div>
+      <aside class="hero-card">
+        <small>核心策略</small>
+        <blockquote>
+          不重写现有 Runtime，不新建平行任务系统；用统一 Work、因果事件、
+          结果交付和能力注册中心收敛现有能力。
+        </blockquote>
+        <p>每个方案必须具备领域边界、运行机制、用户价值与验收标准。</p>
+      </aside>
+    </div>
+
+    <section class="band">
+      <div class="page">
+        <div class="section-head">
+          <div><p class="kicker">01 · Target Loop</p><h2>完整目标闭环</h2></div>
+          <p class="intro">所有入口最终进入统一 Work，所有结果最终可交付、可验证、可追溯、可复用。</p>
+        </div>
+        <div class="flow">
+          <div class="flow-inner">
+            <article class="flow-node"><small>SOURCES</small><strong>Chat / Task / Trigger</strong><span>用户、时间、事件与插件</span></article>
+            <article class="flow-node"><small>WORK</small><strong>Unified Work</strong><span>Goal、Acceptance、Plan</span></article>
+            <article class="flow-node"><small>RUNTIME</small><strong>Reliable Execution</strong><span>Executor、Policy、Recovery</span></article>
+            <article class="flow-node"><small>GRAPH</small><strong>Causal Events</strong><span>Timeline、Audit、Root Cause</span></article>
+            <article class="flow-node"><small>DELIVERY</small><strong>Inbox & Artifact</strong><span>Reply、Result、Evidence</span></article>
+            <article class="flow-node"><small>FLYWHEEL</small><strong>Capabilities</strong><span>复盘、Registry、Plugin</span></article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="problems">
+      <div class="page">
+        <div class="section-head">
+          <div><p class="kicker">02 · Problem Solving</p><h2>五个问题，五组解决机制</h2></div>
+          <p class="intro">展开每项可查看根因、解决方案和具体建设重点。默认打开的是最基础的统一 Work。</p>
+        </div>
+        <div class="problem-list">
+          <details class="problem" open>
+            <summary><span class="problem-no">01</span><span class="problem-title">能力分散，工作闭环不完整</span><span class="problem-summary">多个入口和模块分别保存状态，无法形成唯一事实源。</span><span class="toggle">+</span></summary>
+            <div class="problem-body">
+              <div class="root-cause"><h3>根因</h3><p>Chat、Goal、Mission、Cron、Harness、Approval 与 Checkpoint 缺少统一身份和生命周期。</p></div>
+              <div class="solution"><h3>解决方案：Unified Work Domain</h3><ul><li>建立 Work、Run、Step、Artifact、Evidence、Verification 核心对象；</li><li>Chat、Task、Cron、Webhook 只作为入口和 Trigger；</li><li>所有状态转换由 Work Service 执行并记录 Event；</li><li>Console、CLI、Runtime 和 Plugin 通过同一应用服务访问。</li></ul></div>
+            </div>
+          </details>
+          <details class="problem">
+            <summary><span class="problem-no">02</span><span class="problem-title">长任务和无人值守不够可靠</span><span class="problem-summary">后台、重启、重试、预算和异常升级没有统一契约。</span><span class="toggle">+</span></summary>
+            <div class="problem-body">
+              <div class="root-cause"><h3>根因</h3><p>一次 Agent Run 的连续执行假设，无法覆盖长期工作中的进程、网络、审批和副作用失败。</p></div>
+              <div class="solution"><h3>解决方案：Reliable Work Runtime</h3><ul><li>Execution Contract 声明权限、预算、重试、退出和验收；</li><li>L1 交互、L2 后台、L3 无人值守；</li><li>持久队列、lease、heartbeat 与安全重新调度；</li><li>幂等副作用、Checkpoint、Recovery 与 Kill Switch。</li></ul></div>
+            </div>
+          </details>
+          <details class="problem">
+            <summary><span class="problem-no">03</span><span class="problem-title">轨迹可见，但因果不完整</span><span class="problem-summary">知道发生了什么，却无法解释为什么、影响什么和如何恢复。</span><span class="toggle">+</span></summary>
+            <div class="problem-body">
+              <div class="root-cause"><h3>根因</h3><p>Policy、Approval、Audit、Checkpoint、Artifact 与 Verification 使用不同记录方式，缺少因果关联。</p></div>
+              <div class="solution"><h3>解决方案：Causal Event Graph</h3><ul><li>统一 Event Envelope、cause_event_id 与 correlation_id；</li><li>Timeline、Audit、Status、Cost、Recovery 均为同一事件源投影；</li><li>Tool、Policy、Approval、Side Effect、Artifact、Evidence、Verification 建立边；</li><li>失败自动生成 Failure Summary 与推荐恢复点。</li></ul></div>
+            </div>
+          </details>
+          <details class="problem">
+            <summary><span class="problem-no">04</span><span class="problem-title">回复和结果缺少稳定交付位置</span><span class="problem-summary">异步结果分散，Artifact 容易退化为附件或文件列表。</span><span class="toggle">+</span></summary>
+            <div class="problem-body">
+              <div class="root-cause"><h3>根因</h3><p>内容事实源、结果投递和长期交付物没有分层，用户必须重新进入原页面阅读过程。</p></div>
+              <div class="solution"><h3>解决方案：Inbox Delivery + Artifact Registry</h3><ul><li>Inbox 只投递 Reply、Result、Approval、Exception；</li><li>不复制内容，只保存摘要、引用和处理状态；</li><li>Artifact 保存来源、版本、Evidence、Verification 与替代关系；</li><li>支持验收、修改、分享、重新验证和复用。</li></ul></div>
+            </div>
+          </details>
+          <details class="problem">
+            <summary><span class="problem-no">05</span><span class="problem-title">一次任务无法形成能力复利</span><span class="problem-summary">经验散落，Workflow、Automation、Tool 与 Plugin 缺少统一治理。</span><span class="toggle">+</span></summary>
+            <div class="problem-body">
+              <div class="root-cause"><h3>根因</h3><p>缺少任务复盘、候选分类、发布门槛、能力注册中心和使用反馈。</p></div>
+              <div class="solution"><h3>解决方案：Capability Flywheel</h3><ul><li>任务结束生成结构化 Retrospective；</li><li>候选路由到 Knowledge、Skill、Workflow、Tool、Automation 或 Plugin；</li><li>Capability Registry 保存来源、版本、权限和成功率；</li><li>版本化 Manifest、标准 Slot、健康检查与回滚。</li></ul></div>
+            </div>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <section class="band">
+      <div class="page">
+        <div class="section-head">
+          <div><p class="kicker">03 · Domain Model</p><h2>最小稳定领域对象</h2></div>
+          <p class="intro">公共 API 应围绕稳定领域对象，而不是页面、Provider 或具体 Harness。</p>
+        </div>
+        <div class="domain-grid">
+          <article class="domain-card"><small>D01</small><h3>Work</h3><p>用户希望完成的真实工作。包含 Goal、Acceptance、来源、权限、预算、自治等级和当前状态。</p></article>
+          <article class="domain-card"><small>D02</small><h3>Run</h3><p>Work 的一次执行。记录 Executor、恢复来源、预算使用、开始结束时间与失败原因。</p></article>
+          <article class="domain-card"><small>D03</small><h3>Step</h3><p>Plan 中可观察和恢复的步骤。包含依赖、状态、重试策略、Checkpoint 与 Artifact。</p></article>
+          <article class="domain-card"><small>D04</small><h3>Artifact</h3><p>阶段或最终产出。保存类型、版本、存储引用、来源、Evidence 和 Verification。</p></article>
+          <article class="domain-card"><small>D05</small><h3>Event</h3><p>领域事实。通过 cause_event_id 与 correlation_id 形成可投影的因果图。</p></article>
+          <article class="domain-card"><small>D06</small><h3>Capability</h3><p>可复用知识、Skill、Workflow、Tool、Automation 或 Plugin，保留来源与验证状态。</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="page">
+        <div class="section-head">
+          <div><p class="kicker">04 · Unattended Runtime</p><h2>无人值守的四个可靠性机制</h2></div>
+          <p class="intro">无人值守不是放开权限，而是在明确目标、预算、Policy、恢复和退出条件内持续执行。</p>
+        </div>
+        <div class="mechanism-grid">
+          <article class="mechanism"><h3>Execution Contract</h3><p>声明 Goal、Acceptance、权限、副作用、预算、重试、升级与退出条件。</p></article>
+          <article class="mechanism"><h3>Queue & Lease</h3><p>持久队列、Worker lease、heartbeat 与安全重新调度，避免僵尸 Work。</p></article>
+          <article class="mechanism"><h3>Idempotency</h3><p>外部写入使用幂等键和 Side Effect Record，重试不重复评论、Push 或发布。</p></article>
+          <article class="mechanism"><h3>Checkpoint & Budget</h3><p>绑定 Work/Run/Step，支持恢复、超时、费用上限和全局 Kill Switch。</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="band">
+      <div class="page">
+        <div class="section-head">
+          <div><p class="kicker">05 · Causal Chain</p><h2>从工具调用到结果验证的因果链</h2></div>
+          <p class="intro">Timeline 说明发生了什么，Causal Graph 说明为什么发生、产生了什么以及如何恢复。</p>
+        </div>
+        <div class="chain">
+          <div class="chain-inner">
+            <div class="chain-step"><span>1</span>Goal</div>
+            <div class="chain-step"><span>2</span>Step</div>
+            <div class="chain-step"><span>3</span>Tool</div>
+            <div class="chain-step"><span>4</span>Policy</div>
+            <div class="chain-step"><span>5</span>Approval</div>
+            <div class="chain-step"><span>6</span>Side Effect</div>
+            <div class="chain-step"><span>7</span>Artifact</div>
+            <div class="chain-step"><span>8</span>Verification</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="page">
+        <div class="section-head">
+          <div><p class="kicker">06 · Delivery</p><h2>Inbox 投递，Artifact 交付</h2></div>
+          <p class="intro">将“用户现在需要关注什么”和“长期结果是什么”分开，避免所有内容挤在 Chat 与 Timeline。</p>
+        </div>
+        <div class="delivery-grid">
+          <article class="delivery"><h3>Inbox Delivery</h3><p>只投递需要用户关注的内容。</p><ul><li>异步 Chat Reply</li><li>Task 与 Automation Result</li><li>Approval Request</li><li>Exception 与人工接管</li><li>Artifact Ready 与 Verification Result</li></ul></article>
+          <article class="delivery"><h3>Artifact Registry</h3><p>保存长期、可验收和可复用的结果。</p><ul><li>来源 Work、Run、Step</li><li>版本、状态与 checksum</li><li>Evidence 与 Verification</li><li>预览、比较、分享和重新验证</li><li>提升为复用候选</li></ul></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="band">
+      <div class="page">
+        <div class="section-head">
+          <div><p class="kicker">07 · Capability Registry</p><h2>复用资产的清晰边界</h2></div>
+          <p class="intro">评分决定是否值得沉淀，类型规则决定形式，验证和权限门槛决定能否发布。</p>
+        </div>
+        <div class="capability-table-wrap">
+          <table>
+            <thead><tr><th>类型</th><th>适合内容</th><th>发布门槛</th></tr></thead>
+            <tbody>
+              <tr><th>Knowledge</th><td>稳定知识、规范和决策</td><td>来源、范围、脱敏与后续复用</td></tr>
+              <tr><th>Template</th><td>稳定输入输出结构</td><td>真实任务验证与版本</td></tr>
+              <tr><th>Skill</th><td>需要语义判断的经验</td><td>输入输出、边界、成功与失败样例</td></tr>
+              <tr><th>Workflow</th><td>可重复的多步骤过程</td><td>失败、恢复、退出和 Artifact</td></tr>
+              <tr><th>Tool</th><td>输入输出明确的动作</td><td>Schema、单元测试、最小权限</td></tr>
+              <tr><th>Automation</th><td>Trigger 与 Workflow 的绑定</td><td>幂等、预算、异常升级和结果投递</td></tr>
+              <tr><th>Plugin</th><td>能力安装、分发和治理</td><td>Manifest、兼容性、健康与回滚</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="architecture">
+      <div class="page">
+        <div class="section-head">
+          <div><p class="kicker">08 · Architecture</p><h2>模块边界与依赖方向</h2></div>
+          <p class="intro">按领域职责组织，避免页面、Provider 或 Edition 再次形成独立 Runtime。</p>
+        </div>
+        <div class="architecture">
+          <article class="layer"><small>CORE</small><h3>Kernel + Work</h3><ul><li>Contracts 与 Events</li><li>Work Domain</li><li>Application Service</li><li>Runtime 与 Persistence</li></ul></article>
+          <article class="layer"><small>TRUST</small><h3>Governance</h3><ul><li>Policy</li><li>Approval</li><li>Audit</li><li>Checkpoint</li></ul></article>
+          <article class="layer"><small>OUTCOME</small><h3>Delivery + Artifact</h3><ul><li>Inbox Projection</li><li>Artifact Registry</li><li>Storage</li><li>Verification</li></ul></article>
+          <article class="layer"><small>GROWTH</small><h3>Automation + Capability</h3><ul><li>Trigger 与 Scheduler</li><li>Retrospective</li><li>Capability Registry</li><li>Plugin Contract</li></ul></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="band">
+      <div class="page">
+        <div class="section-head">
+          <div><p class="kicker">09 · Product Profiles</p><h2>Lite、Workstation、Hub 共享核心</h2></div>
+          <p class="intro">Edition 只负责能力装配，不复制 Domain、Runtime 和 Contract。</p>
+        </div>
+        <div class="profile-table-wrap">
+          <table>
+            <thead><tr><th>配置</th><th>默认能力</th><th>差异能力</th><th>主要价值</th></tr></thead>
+            <tbody>
+              <tr><th>Lite</th><td>Chat、Task、Inbox、Artifact、L1/部分 L2</td><td>单用户、本地存储、简单定时</td><td>安装后快速完成个人工作</td></tr>
+              <tr><th>Workstation</th><td>Lite + 多仓库、Coding、L2/L3</td><td>Git、IDE、Terminal、本地事件、插件开发</td><td>本地与内网开发工作台</td></tr>
+              <tr><th>Hub</th><td>共享核心 + 多用户、多节点</td><td>公网 Webhook、队列、团队治理、能力分发</td><td>外部事件与团队协作中枢</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="roadmap">
+      <div class="page">
+        <div class="section-head">
+          <div><p class="kicker">10 · Roadmap</p><h2>分阶段实施与退出条件</h2></div>
+          <p class="intro">每个阶段只有在端到端验收通过后才进入下一阶段，避免同时铺开所有能力。</p>
+        </div>
+        <div class="roadmap">
+          <article class="phase"><span class="phase-tag">P0</span><h3>用户工作闭环</h3><p>Work 核心模型、Chat 升级 Task、Task 视图、Inbox、Artifact 和恢复基础。</p><footer>退出：状态唯一、结果不丢、审批和产物可追溯。</footer></article>
+          <article class="phase"><span class="phase-tag">P1-A</span><h3>无人值守与因果图</h3><p>Execution Contract、队列租约、幂等、预算、Causal Graph 与 Recovery。</p><footer>退出：重启可恢复、无重复副作用、失败和完成可解释。</footer></article>
+          <article class="phase"><span class="phase-tag">P1-B</span><h3>插件契约与自动化</h3><p>Manifest、SDK、generation 切换、官方迁移与 Trigger。</p><footer>退出：安装按声明生效，Trigger 不绕过 Work。</footer></article>
+          <article class="phase"><span class="phase-tag">P2-A</span><h3>能力复用飞轮</h3><p>Retrospective、Candidate Scoring、Registry 与反馈治理。</p><footer>退出：完成执行、沉淀、复用、反馈闭环。</footer></article>
+          <article class="phase"><span class="phase-tag">P2-B</span><h3>Hub 与团队场景</h3><p>多用户、多仓库、多节点、团队治理与组织分发。</p><footer>退出：外部事件持续运行，团队结果可追溯。</footer></article>
+        </div>
+      </div>
+    </section>
+
+    <section id="risks" class="band">
+      <div class="page">
+        <div class="section-head">
+          <div><p class="kicker">11 · Risks</p><h2>主要风险与控制</h2></div>
+          <p class="intro">方案是否可行，不只看能力是否存在，还要防止架构再次分裂和产品再次复杂化。</p>
+        </div>
+        <div class="risk-grid">
+          <article class="risk"><h3>平行 Runtime</h3><p>复用 AgentScope；Work 只统一身份、状态和治理；Harness 通过 Executor Contract 接入。</p></article>
+          <article class="risk"><h3>Inbox 噪声</h3><p>只投递 Reply、Result、Approval、Exception；普通 Event 留在 Timeline。</p></article>
+          <article class="risk"><h3>因果图过度复杂</h3><p>先覆盖 Tool、Approval、Side Effect、Artifact、Verification 主链。</p></article>
+          <article class="risk"><h3>无人值守越权</h3><p>L3 强制 Policy、Budget、Exit Conditions、幂等与 Kill Switch。</p></article>
+          <article class="risk"><h3>低质量能力堆积</h3><p>候选不自动发布，要求真实复用、验证、成功率和生命周期治理。</p></article>
+          <article class="risk"><h3>Edition 代码分叉</h3><p>共享 Domain、Runtime、Contract；Edition 只做装配和默认配置。</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="finale">
+      <div class="page finale-inner">
+        <p class="kicker">Final Outcome</p>
+        <h2>让用户容易开始，让 QwenPaw 可靠完成，让结果清楚到达。</h2>
+        <p>
+          统一 Work 负责工作事实，可靠 Runtime 负责完成，因果图负责解释，
+          Inbox 与 Artifact 负责交付，能力飞轮负责持续复用。
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="page footer-inner">
+      <span>QwenPaw 完整解决方案与能力建设路线</span>
+      <span>Problem · Mechanism · Acceptance</span>
+    </div>
+  </footer>
+</body>
+</html>

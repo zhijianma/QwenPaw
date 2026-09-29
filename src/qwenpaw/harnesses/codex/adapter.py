@@ -13,6 +13,11 @@ from ...app.approvals import (
     ApprovalRequestSummary,
     get_approval_service,
 )
+from ...app.approvals.interaction_bridge import attach_pending_to_interaction
+from ...app.approvals.task_bridge import attach_pending_to_durable_task
+from ...app.approvals.timeouts import approval_timeout_seconds
+from ...constant import TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS
+from ...kernel.models import ApprovalDisplay, ApprovalSource
 from ...security.tool_guard.approval import ApprovalDecision
 from ...utils.io_utils import read_json, write_json_atomic_async
 from ..base import HarnessAdapter
@@ -76,6 +81,7 @@ class CodexAdapter(HarnessAdapter):
         self._threads = self._load_threads()
         self._loaded_threads: set[tuple[int, str]] = set()
         self._thread_contexts: dict[str, dict[str, Any]] = {}
+        self._active_turns: dict[str, tuple[Any, str, str]] = {}
         if hasattr(self._client, "set_server_request_handler"):
             self._client.set_server_request_handler(
                 self._handle_server_request,
@@ -374,7 +380,8 @@ class CodexAdapter(HarnessAdapter):
                 history.extend(self._history_item(item))
         return history
 
-    async def run_turn(  # pylint: disable=invalid-overridden-method
+    # pylint: disable-next=invalid-overridden-method,too-many-branches
+    async def run_turn(
         self,
         *,
         session_id: str,
@@ -415,6 +422,12 @@ class CodexAdapter(HarnessAdapter):
                 params["sandboxPolicy"] = sandbox_policy
             result = await client.request("turn/start", params)
             turn_id = str((result or {}).get("turn", {}).get("id", ""))
+            if turn_id:
+                self._active_turns[session_id] = (
+                    client,
+                    thread_id,
+                    turn_id,
+                )
             while True:
                 message = await queue.get()
                 params = message.get("params") or {}
@@ -430,9 +443,17 @@ class CodexAdapter(HarnessAdapter):
                     break
         except asyncio.CancelledError:
             if turn_id:
-                await self._interrupt_turn(client, thread_id, turn_id)
+                await asyncio.shield(
+                    self.cancel_turn(
+                        session_id,
+                        reason="QwenPaw invocation cancelled",
+                    ),
+                )
             raise
         finally:
+            active = self._active_turns.get(session_id)
+            if active is not None and active[2] == turn_id:
+                self._active_turns.pop(session_id, None)
             client.unsubscribe(queue)
 
     @staticmethod
@@ -527,6 +548,20 @@ class CodexAdapter(HarnessAdapter):
                 self._threads,
             )
 
+    async def cancel_turn(
+        self,
+        session_id: str,
+        *,
+        reason: str,
+    ) -> bool:
+        """Interrupt the exact active Codex turn captured for a session."""
+        del reason
+        active = self._active_turns.get(session_id)
+        if active is None:
+            return False
+        client, thread_id, turn_id = active
+        return await self._interrupt_turn(client, thread_id, turn_id)
+
     async def stop(self) -> None:
         """Stop the workspace Codex process."""
         clients = {
@@ -542,6 +577,7 @@ class CodexAdapter(HarnessAdapter):
         self._session_clients.clear()
         self._session_fingerprints.clear()
         self._loaded_threads.clear()
+        self._active_turns.clear()
 
     async def _thread_for_session(
         self,
@@ -677,6 +713,10 @@ class CodexAdapter(HarnessAdapter):
                 "permissions": params.get("permissions"),
             },
         )
+        timeout_seconds = approval_timeout_seconds(
+            context,
+            default=TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS,
+        )
         service = get_approval_service()
         pending = await service.create_pending_summary(
             session_id=session_id,
@@ -686,10 +726,43 @@ class CodexAdapter(HarnessAdapter):
             channel=str(context.get("channel") or "console"),
             agent_id=str(context.get("agent_id") or "default"),
             summary=summary,
+            timeout_seconds=timeout_seconds,
         )
+        bridge_ready = await attach_pending_to_durable_task(
+            context,
+            pending,
+            service,
+            agent_id=str(context.get("agent_id") or "default"),
+            tool_name=name,
+            severity=summary.severity,
+            input_data=summary.payload,
+            source=ApprovalSource.HARNESS,
+            action=f"harness.{method}",
+            policy="codex",
+            display=ApprovalDisplay(
+                title=f"Approve {name}",
+                summary=detail,
+                target=command or name,
+                provider="codex",
+            ),
+        )
+        if bridge_ready:
+            bridge_ready = await attach_pending_to_interaction(
+                context,
+                pending,
+                service,
+                source="codex",
+                input_data=summary.payload,
+            )
+        if not bridge_ready:
+            await service.resolve_request(
+                pending.request_id,
+                ApprovalDecision.DENIED,
+            )
+            return {"decision": "decline"}
         decision = await service.wait_for_approval(
-            pending.request_id,
-            pending.timeout_seconds,
+            pending,
+            timeout_seconds,
         )
         if is_permissions:
             permissions = (
@@ -783,14 +856,15 @@ class CodexAdapter(HarnessAdapter):
         client: Any,
         thread_id: str,
         turn_id: str,
-    ) -> None:
+    ) -> bool:
         try:
             await client.request(
                 "turn/interrupt",
                 {"threadId": thread_id, "turnId": turn_id},
             )
         except CodexAppServerError:
-            return
+            return False
+        return True
 
     @staticmethod
     def _notification_turn_id(message: dict[str, Any]) -> str | None:

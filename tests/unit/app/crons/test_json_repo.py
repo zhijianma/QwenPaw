@@ -12,7 +12,12 @@ from qwenpaw.app.crons.repo.json_repo import (
     migrate_final_mode_to_stream,
     migrate_legacy_weixin_jobs_file,
 )
-from qwenpaw.app.crons.models import JobsFile
+from qwenpaw.app.crons.models import (
+    CronRuntimeDecision,
+    CronRuntimeDecisionCode,
+    CronRuntimePath,
+    JobsFile,
+)
 from tests.unit.app.conftest import make_cron_job_spec, make_execution_record
 
 
@@ -74,6 +79,29 @@ async def test_append_history_prepends_and_limits(repo: JsonJobRepository):
 
     # Only the two most recent survive the limit=2 cap.
     assert len(records) == 2
+
+
+@pytest.mark.asyncio
+async def test_history_round_trips_structured_runtime_decision(
+    repo: JsonJobRepository,
+):
+    record = make_execution_record(status="success").model_copy(
+        update={
+            "runtime_decision": CronRuntimeDecision(
+                path=CronRuntimePath.LEGACY_EXECUTOR,
+                reason_code=(
+                    CronRuntimeDecisionCode.STREAM_DELIVERY_UNVERIFIED
+                ),
+                reason="External stream validation is pending.",
+                removal_gates=("Validate one live external Channel.",),
+            ),
+        },
+    )
+
+    await repo.append_history("j1", record)
+    loaded = await repo.get_history("j1")
+
+    assert loaded == [record]
 
 
 @pytest.mark.asyncio

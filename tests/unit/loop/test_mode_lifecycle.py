@@ -186,24 +186,20 @@ async def test_mission_state_uses_session_lifecycle_and_reset(tmp_path):
 
 @pytest.mark.asyncio
 async def test_runtime_awaits_mode_turn_start_callbacks():
-    """Runtime awaits each registered mode turn-start callback."""
+    """Runtime awaits the pinned mode session turn-start callback."""
     calls = []
 
-    class _Mode:
-        name = "test"
+    class _Session:
+        async def start_turn(self):
+            calls.append("started")
 
-        async def on_turn_start(self, ctx):
-            calls.append(ctx)
-
-    workspace = SimpleNamespace(
-        plugins=SimpleNamespace(modes=[_Mode()]),
-    )
+    workspace = SimpleNamespace()
     runtime = Runtime(workspace=workspace, app_services=None)
-    ctx = SimpleNamespace()
+    ctx = SimpleNamespace(extras={"agent_mode_session": _Session()})
 
     await runtime._start_modes(ctx)
 
-    assert calls == [ctx]
+    assert calls == ["started"]
 
 
 @pytest.mark.asyncio

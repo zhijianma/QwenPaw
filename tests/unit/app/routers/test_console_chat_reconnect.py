@@ -19,7 +19,10 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from qwenpaw.app.routers.console import _extract_session_and_payload
+from qwenpaw.app.routers.console import (
+    _bind_os_runtime_identity,
+    _extract_session_and_payload,
+)
 from qwenpaw.app.task_tracker import TaskTracker
 from qwenpaw.schemas import AgentRequest, Message, Role, TextContent
 
@@ -115,6 +118,27 @@ def test_extract_payload_preserves_user_message_metadata():
 
     assert payload["message_metadata"] == {
         "qwenpaw_client_message_id": "client-new",
+    }
+    assert payload["message_id"] == "client-new"
+
+
+def test_os_runtime_identity_overwrites_untrusted_reserved_values():
+    payload = {
+        "message_id": "message-1",
+        "meta": {
+            "request_context": {
+                "approval_level": "strict",
+                "os_conversation_id": "forged-chat",
+            },
+        },
+    }
+
+    _bind_os_runtime_identity(payload, "server-chat")
+
+    assert payload["meta"]["request_context"] == {
+        "approval_level": "strict",
+        "os_conversation_id": "server-chat",
+        "os_submission_idempotency_key": "message-1",
     }
 
 

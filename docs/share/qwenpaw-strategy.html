@@ -1,0 +1,809 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="QwenPaw 产品定位、能力建设与迭代路线">
+  <title>QwenPaw：从 AI 助手到 Agent 工作台</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #182019;
+      --muted: #687168;
+      --surface: #fbfcf8;
+      --soft: #f0f3ed;
+      --line: #d8ded4;
+      --green: #4f6b52;
+      --deep: #2f4933;
+      --pale: #e3ebdf;
+      --gold: #a07840;
+      --white: #fff;
+      --shadow: 0 24px 70px rgba(35, 49, 37, 0.09);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 92% 2%, rgba(117,143,112,.15), transparent 30rem),
+        var(--surface);
+      font-family: Inter, "SF Pro Display", "PingFang SC", "Microsoft YaHei",
+        sans-serif;
+      line-height: 1.7;
+    }
+    a { color: inherit; }
+    .page { width: min(1180px, calc(100% - 40px)); margin: 0 auto; }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      border-bottom: 1px solid rgba(216,222,212,.82);
+      background: rgba(251,252,248,.9);
+      backdrop-filter: blur(16px);
+    }
+    .topbar-inner {
+      min-height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 650;
+      letter-spacing: -.02em;
+    }
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 10px;
+      color: var(--white);
+      background: var(--green);
+      font-size: 13px;
+    }
+    nav { display: flex; gap: 18px; color: var(--muted); font-size: 14px; }
+    nav a { text-decoration: none; }
+    nav a:hover { color: var(--deep); }
+    .hero {
+      min-height: 660px;
+      display: grid;
+      grid-template-columns: minmax(0,1.35fr) minmax(310px,.65fr);
+      align-items: center;
+      gap: 72px;
+      padding: 96px 0 84px;
+    }
+    .eyebrow, .kicker {
+      margin: 0 0 16px;
+      color: var(--green);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 {
+      max-width: 820px;
+      margin-bottom: 28px;
+      font-size: clamp(45px,6.7vw,84px);
+      font-weight: 580;
+      letter-spacing: -.055em;
+      line-height: 1.07;
+    }
+    .hero-lead {
+      max-width: 760px;
+      margin-bottom: 34px;
+      color: var(--muted);
+      font-size: clamp(18px,2vw,23px);
+    }
+    .actions { display: flex; flex-wrap: wrap; gap: 12px; }
+    .button {
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 19px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--white);
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 650;
+    }
+    .button.primary {
+      border-color: var(--deep);
+      color: var(--white);
+      background: var(--deep);
+    }
+    .position {
+      padding: 32px;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: rgba(255,255,255,.8);
+      box-shadow: var(--shadow);
+    }
+    .position small {
+      display: block;
+      margin-bottom: 17px;
+      color: var(--muted);
+      letter-spacing: .08em;
+    }
+    blockquote {
+      margin: 0;
+      color: var(--deep);
+      font-size: 22px;
+      font-weight: 560;
+      line-height: 1.56;
+    }
+    .position p {
+      margin: 24px 0 0;
+      padding-top: 22px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 14px;
+    }
+    section { padding: 88px 0; }
+    .band {
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      background: var(--soft);
+    }
+    .section-head {
+      display: grid;
+      grid-template-columns: minmax(230px,.46fr) minmax(0,1fr);
+      gap: 64px;
+      margin-bottom: 48px;
+    }
+    h2 {
+      margin-bottom: 20px;
+      font-size: clamp(32px,4vw,52px);
+      font-weight: 560;
+      letter-spacing: -.045em;
+      line-height: 1.16;
+    }
+    .intro {
+      align-self: end;
+      max-width: 760px;
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 18px;
+    }
+    .grid-4 {
+      display: grid;
+      grid-template-columns: repeat(4,minmax(0,1fr));
+      gap: 15px;
+    }
+    .asset {
+      min-height: 280px;
+      padding: 27px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: rgba(255,255,255,.74);
+    }
+    .index {
+      display: block;
+      margin-bottom: 38px;
+      color: var(--green);
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .asset h3 { font-size: 20px; }
+    .asset p { color: var(--muted); font-size: 15px; }
+    .problems { display: grid; }
+    .problem {
+      display: grid;
+      grid-template-columns: 64px minmax(250px,.52fr) minmax(0,1fr);
+      gap: 26px;
+      padding: 28px 0;
+      border-top: 1px solid var(--line);
+    }
+    .problem:last-child { border-bottom: 1px solid var(--line); }
+    .problem b { color: var(--gold); font-size: 28px; line-height: 1; }
+    .problem h3 { margin: 0; font-size: 21px; }
+    .problem p { margin: 0; color: var(--muted); }
+    .tabs {
+      display: flex;
+      gap: 8px;
+      width: fit-content;
+      margin-bottom: 26px;
+      padding: 5px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255,255,255,.6);
+    }
+    .tabs button {
+      min-height: 42px;
+      padding: 0 20px;
+      border: 0;
+      border-radius: 10px;
+      color: var(--muted);
+      background: transparent;
+      font: inherit;
+      cursor: pointer;
+    }
+    .tabs button[aria-selected="true"] {
+      color: var(--white);
+      background: var(--deep);
+    }
+    .panel {
+      display: grid;
+      grid-template-columns: minmax(260px,.62fr) minmax(0,1.38fr);
+      gap: 42px;
+      padding: 38px;
+      border: 1px solid var(--line);
+      border-radius: 23px;
+      background: var(--white);
+      box-shadow: 0 14px 45px rgba(35,49,37,.05);
+    }
+    .panel[hidden] { display: none; }
+    .panel-summary {
+      padding: 25px;
+      border-radius: 17px;
+      color: var(--deep);
+      background: var(--pale);
+    }
+    .panel-summary h3 { font-size: 25px; }
+    .panel-summary p { margin: 0; }
+    .clean-list { margin: 0; padding-left: 21px; color: var(--muted); }
+    .clean-list li { margin: 8px 0; }
+    .note {
+      margin: 28px 0 0;
+      padding: 20px 24px;
+      border-left: 3px solid var(--green);
+      color: var(--muted);
+      background: rgba(227,235,223,.5);
+    }
+    .sources {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px;
+      margin-bottom: 20px;
+    }
+    .sources span {
+      padding: 7px 11px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: var(--white);
+      font-size: 13px;
+    }
+    .loop {
+      display: grid;
+      grid-template-columns: repeat(4,minmax(0,1fr));
+      gap: 14px;
+    }
+    .loop article {
+      position: relative;
+      min-height: 205px;
+      padding: 25px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--white);
+    }
+    .loop article::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: -15px;
+      width: 15px;
+      height: 1px;
+      background: var(--green);
+    }
+    .loop article:last-child::after { display: none; }
+    .loop span {
+      display: block;
+      margin-bottom: 28px;
+      color: var(--green);
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .loop h3 { font-size: 20px; }
+    .loop p { color: var(--muted); font-size: 14px; }
+    .chain { overflow-x: auto; margin-top: 22px; padding-bottom: 8px; }
+    .chain-inner {
+      min-width: 980px;
+      display: grid;
+      grid-template-columns: repeat(8,minmax(110px,1fr));
+      padding: 34px 24px;
+      border-radius: 22px;
+      background: var(--deep);
+    }
+    .step {
+      position: relative;
+      color: rgba(255,255,255,.72);
+      text-align: center;
+      font-size: 13px;
+    }
+    .step::after {
+      content: "";
+      position: absolute;
+      top: 21px;
+      right: -14%;
+      width: 28%;
+      height: 1px;
+      background: rgba(255,255,255,.3);
+    }
+    .step:last-child::after { display: none; }
+    .step span {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      margin: 0 auto 12px;
+      border: 1px solid rgba(255,255,255,.34);
+      border-radius: 50%;
+      color: var(--white);
+      font-weight: 700;
+    }
+    details { border-top: 1px solid var(--line); }
+    details:last-child { border-bottom: 1px solid var(--line); }
+    summary {
+      display: grid;
+      grid-template-columns: 72px minmax(0,1fr) 30px;
+      align-items: center;
+      gap: 20px;
+      padding: 25px 0;
+      cursor: pointer;
+      list-style: none;
+    }
+    summary::-webkit-details-marker { display: none; }
+    .d-no { color: var(--green); font-size: 13px; font-weight: 700; }
+    .d-title { font-size: 22px; font-weight: 620; }
+    .toggle { color: var(--muted); font-size: 24px; transition: transform .18s; }
+    details[open] .toggle { transform: rotate(45deg); }
+    .d-body {
+      display: grid;
+      grid-template-columns: 72px minmax(0,1fr);
+      gap: 20px;
+      padding: 0 0 31px;
+    }
+    .d-copy { max-width: 900px; color: var(--muted); }
+    .d-copy ul { padding-left: 20px; }
+    .compare {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin: 22px 0;
+    }
+    .compare article {
+      padding: 23px;
+      border: 1px solid var(--line);
+      border-radius: 17px;
+      background: var(--white);
+    }
+    .compare small { color: var(--green); font-weight: 700; }
+    .compare h3 { margin: 10px 0; }
+    .compare p { margin: 0; }
+    .roadmap {
+      display: grid;
+      grid-template-columns: repeat(3,minmax(0,1fr));
+      gap: 15px;
+    }
+    .phase {
+      min-height: 410px;
+      display: flex;
+      flex-direction: column;
+      padding: 26px;
+      border: 1px solid var(--line);
+      border-radius: 19px;
+      background: var(--white);
+    }
+    .priority {
+      width: fit-content;
+      margin-bottom: 38px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      color: var(--deep);
+      background: var(--pale);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .phase h3 { min-height: 58px; font-size: 21px; }
+    .phase p { color: var(--muted); font-size: 14px; }
+    .accept {
+      margin-top: auto;
+      padding-top: 18px;
+      border-top: 1px solid var(--line);
+      color: var(--deep);
+      font-size: 14px;
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4,minmax(0,1fr));
+      gap: 12px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .metrics li {
+      min-height: 108px;
+      padding: 22px;
+      border-top: 2px solid var(--green);
+      color: var(--muted);
+      background: rgba(255,255,255,.58);
+      font-size: 14px;
+    }
+    .metrics strong {
+      display: block;
+      margin-bottom: 7px;
+      color: var(--ink);
+      font-size: 17px;
+    }
+    .non-goals {
+      display: grid;
+      grid-template-columns: repeat(2,minmax(0,1fr));
+      gap: 0 32px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .non-goals li {
+      position: relative;
+      padding: 17px 16px 17px 40px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+    }
+    .non-goals li::before {
+      content: "—";
+      position: absolute;
+      left: 10px;
+      color: var(--gold);
+      font-weight: 700;
+    }
+    .finale { padding-bottom: 110px; text-align: center; }
+    .finale-inner {
+      padding: 76px 44px;
+      border-radius: 28px;
+      color: var(--white);
+      background: var(--deep);
+    }
+    .finale .kicker { color: rgba(255,255,255,.64); }
+    .finale h2 {
+      max-width: 870px;
+      margin: 0 auto 28px;
+      font-size: clamp(36px,5vw,62px);
+    }
+    .finale p {
+      max-width: 780px;
+      margin: 0 auto;
+      color: rgba(255,255,255,.74);
+      font-size: 18px;
+    }
+    footer {
+      padding: 28px 0 42px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .footer-inner { display: flex; justify-content: space-between; gap: 24px; }
+    @media (max-width: 1020px) {
+      .grid-4, .metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
+      .roadmap { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    }
+    @media (max-width: 880px) {
+      .hero, .section-head, .panel { grid-template-columns: 1fr; gap: 32px; }
+      .hero { min-height: auto; }
+      .problem { grid-template-columns: 48px 1fr; }
+      .problem p { grid-column: 2; }
+      .loop { grid-template-columns: repeat(2,minmax(0,1fr)); }
+      .loop article:nth-child(2)::after { display: none; }
+    }
+    @media (max-width: 640px) {
+      .page { width: min(100% - 24px,1180px); }
+      nav { display: none; }
+      .hero { padding: 68px 0 60px; }
+      section { padding: 64px 0; }
+      h1 { font-size: 46px; }
+      .position, .panel { padding: 24px; }
+      .grid-4, .roadmap, .metrics, .non-goals, .loop, .compare {
+        grid-template-columns: 1fr;
+      }
+      .asset, .phase { min-height: auto; }
+      .phase h3 { min-height: 0; }
+      .accept { margin-top: 24px; }
+      .tabs { width: 100%; }
+      .tabs button { flex: 1; padding: 0 8px; }
+      .loop article::after { display: none; }
+      summary, .d-body { grid-template-columns: 48px minmax(0,1fr); }
+      .toggle { display: none; }
+      .finale-inner { padding: 56px 24px; }
+      .footer-inner { flex-direction: column; }
+    }
+    @media print {
+      .topbar, .actions, .tabs { display: none; }
+      body { background: var(--white); }
+      .hero { min-height: auto; padding-top: 40px; }
+      section { padding: 42px 0; }
+      .position, .panel, .phase { box-shadow: none; }
+      details:not([open]) > *:not(summary) { display: block; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="page topbar-inner">
+      <div class="brand"><span class="brand-mark">QP</span>QwenPaw Strategy</div>
+      <nav aria-label="页面导航">
+        <a href="#foundation">基础</a>
+        <a href="#profiles">配置</a>
+        <a href="#directions">方向</a>
+        <a href="#roadmap">路线图</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="page hero">
+      <div>
+        <p class="eyebrow">Product Strategy · Unified Edition</p>
+        <h1>从 AI 助手，走向 Agent 工作台</h1>
+        <p class="hero-lead">
+          QwenPaw 的问题不是能力不足，而是已有能力尚未形成清晰、可靠、
+          可恢复、可验证并且能够持续复用的产品闭环。
+        </p>
+        <div class="actions">
+          <a class="button primary" href="#directions">查看七个迭代方向</a>
+          <a class="button" href="#profiles">查看产品配置</a>
+        </div>
+      </div>
+      <aside class="position">
+        <small>统一产品定位</small>
+        <blockquote>
+          基于 AgentScope、本地优先、能够持续完成并验证真实工作的
+          Agent 工作台。
+        </blockquote>
+        <p>
+          它既服务个人与本地开发，也通过 Hub 承接外部事件和团队协作，
+          并为二次开发者提供稳定、可治理的扩展平台。
+        </p>
+      </aside>
+    </div>
+
+    <section id="foundation" class="band">
+      <div class="page">
+        <div class="section-head">
+          <div><p class="kicker">01 · Foundation</p><h2>已有资产不是起点，而是底座</h2></div>
+          <p class="intro">
+            原生 Agent、安全恢复、扩展生态和工作执行基础已经存在。
+            下一阶段的任务是统一、收敛，并让能力形成结果闭环。
+          </p>
+        </div>
+        <div class="grid-4">
+          <article class="asset"><span class="index">A01</span><h3>原生 Agent 与 Runtime</h3><p>AgentScope、模型、工具、记忆、Coding、Hook 与中间件构成原生运行基础。</p></article>
+          <article class="asset"><span class="index">A02</span><h3>安全、治理与恢复</h3><p>Sandbox、Policy、Approval、Audit 与 Shadow Git Checkpoint 支撑可信执行。</p></article>
+          <article class="asset"><span class="index">A03</span><h3>扩展与生态基础</h3><p>Skills、插件、渠道、模型、应用、Plugin API 与 Registry 已经存在。</p></article>
+          <article class="asset"><span class="index">A04</span><h3>工作与自动化基础</h3><p>Goal、Mission、Cron、Harness、Coding 与 Checkpoint 已覆盖多种入口。</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="page">
+        <div class="section-head">
+          <div><p class="kicker">02 · Contradictions</p><h2>四个结构性矛盾</h2></div>
+          <p class="intro">问题不在于少几个功能，而在于工作对象、可信链路、扩展契约与经验复用没有形成统一结构。</p>
+        </div>
+        <div class="problems">
+          <article class="problem"><b>01</b><h3>能力丰富，工作闭环不完整</h3><p>用户难以判断目标、进度、暂停原因、待审批事项、产物与验收结果。</p></article>
+          <article class="problem"><b>02</b><h3>扩展面广，公共契约不稳定</h3><p>插件能接入不等于能放心发布，版本、权限、Slot 和生命周期还不稳定。</p></article>
+          <article class="problem"><b>03</b><h3>安全组件强，可信体验割裂</h3><p>Guard、Policy、Approval、Audit 与 Checkpoint 尚未形成完整因果链。</p></article>
+          <article class="problem"><b>04</b><h3>任务能完成，经验无法复利</h3><p>成功流程与失败经验散落在对话中，Cron 也不能代表完整事件自动化。</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section id="profiles" class="band">
+      <div class="page">
+        <div class="section-head">
+          <div><p class="kicker">03 · Product Profiles</p><h2>同一核心，三种产品配置</h2></div>
+          <p class="intro">三种配置共享 Runtime、领域模型和插件契约，只在部署方式、信任边界与运行规模上不同。</p>
+        </div>
+        <div class="tabs" role="tablist" aria-label="产品配置">
+          <button id="tab-lite" type="button" role="tab" aria-selected="true" aria-controls="panel-lite">Lite</button>
+          <button id="tab-workstation" type="button" role="tab" aria-selected="false" aria-controls="panel-workstation">Workstation</button>
+          <button id="tab-hub" type="button" role="tab" aria-selected="false" aria-controls="panel-hub">Hub</button>
+        </div>
+        <article id="panel-lite" class="panel" role="tabpanel" aria-labelledby="tab-lite">
+          <div class="panel-summary"><h3>轻量个人 Agent</h3><p>面向个人和轻量任务，安装后即可完成、验证并交付一项工作。</p></div>
+          <ul class="clean-list">
+            <li>对话与手动任务，统一任务视图、审批和 Artifact；</li>
+            <li>简单定时任务与轻量 Skill、Tool、Workflow；</li>
+            <li>本地优先，不承担公网 Webhook 和组织级调度；</li>
+            <li>隐藏内部 Agent、Harness 与插件装配复杂度。</li>
+          </ul>
+        </article>
+        <article id="panel-workstation" class="panel" role="tabpanel" aria-labelledby="tab-workstation" hidden>
+          <div class="panel-summary"><h3>本地与内网开发工作台</h3><p>面向专业开发者与本地技术团队，连接真实工程环境。</p></div>
+          <ul class="clean-list">
+            <li>多仓库、Git Hook、文件变化、本地事件与定时任务；</li>
+            <li>长任务、恢复、Sandbox、Checkpoint 与 Coding Harness；</li>
+            <li>插件开发、调试、热安装、定点验证与健康检查；</li>
+            <li>连接内网 GitLab、CI，或通过 Relay 接收外部事件。</li>
+          </ul>
+        </article>
+        <article id="panel-hub" class="panel" role="tabpanel" aria-labelledby="tab-hub" hidden>
+          <div class="panel-summary"><h3>外部事件与团队协作中枢</h3><p>面向持续在线的外部集成、多人协作和组织级治理。</p></div>
+          <ul class="clean-list">
+            <li>公网 Webhook、代码平台、PR、Issue 与 CI/CD；</li>
+            <li>多用户、多仓库、队列、并发和执行节点调度；</li>
+            <li>团队权限、审批、审计、配额与组织级知识；</li>
+            <li>Automation、Workflow 与 Plugin 的集中分发。</li>
+          </ul>
+        </article>
+        <p class="note">插件主要在 Workstation 开发、调试和验证，在 Hub 分发、运行与治理；Lite 以安装和使用为主。</p>
+      </div>
+    </section>
+
+    <section>
+      <div class="page">
+        <div class="section-head">
+          <div><p class="kicker">04 · Unified Work Loop</p><h2>所有入口，最终都进入同一个 Work</h2></div>
+          <p class="intro">对话、Cron、Webhook、Git 事件和插件事件只是不同来源，它们共享目标、治理、交付、验证和复盘。</p>
+        </div>
+        <div class="sources">
+          <span>用户对话</span><span>手动创建</span><span>定时任务</span>
+          <span>Webhook</span><span>Git / 文件事件</span><span>内部事件</span><span>插件事件</span>
+        </div>
+        <div class="loop">
+          <article><span>W01</span><h3>目标与计划</h3><p>Goal、Acceptance、Plan、当前步骤与上下文边界。</p></article>
+          <article><span>W02</span><h3>执行与治理</h3><p>Run、Tool、Policy、Approval、Side Effect 与恢复点。</p></article>
+          <article><span>W03</span><h3>交付与验证</h3><p>Artifact、Evidence、Verification 与完整事件时间线。</p></article>
+          <article><span>W04</span><h3>复盘与复用</h3><p>Retrospective、复用候选与 Capability Registry。</p></article>
+        </div>
+        <div class="chain">
+          <div class="chain-inner">
+            <div class="step"><span>1</span>Work ID</div>
+            <div class="step"><span>2</span>Tool Call</div>
+            <div class="step"><span>3</span>Policy</div>
+            <div class="step"><span>4</span>Approval</div>
+            <div class="step"><span>5</span>Side Effect</div>
+            <div class="step"><span>6</span>Audit</div>
+            <div class="step"><span>7</span>Checkpoint</div>
+            <div class="step"><span>8</span>Verification</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="directions" class="band">
+      <div class="page">
+        <div class="section-head">
+          <div><p class="kicker">05 · Directions</p><h2>七个迭代方向</h2></div>
+          <p class="intro">七个方向共同服务于一个目标：主动承接工作、可靠交付结果，并将成功转化为后续能力。</p>
+        </div>
+        <div>
+          <details open>
+            <summary><span class="d-no">D01</span><span class="d-title">加强 Agent 原生完成能力</span><span class="toggle">+</span></summary>
+            <div class="d-body"><span></span><div class="d-copy"><p>保留 AgentScope 与 QwenPawAgent 作为核心，建设目标理解、动态计划、按需上下文、失败恢复和主动验证；外部 Harness 是受治理的执行后端。</p></div></div>
+          </details>
+          <details>
+            <summary><span class="d-no">D02</span><span class="d-title">建立统一 Work / Task 对象</span><span class="toggle">+</span></summary>
+            <div class="d-body"><span></span><div class="d-copy"><p>Goal、Acceptance、Plan、Run、Approval、Artifact、Evidence、Verification 与 Timeline 使用同一工作身份。Chat 是视图，Cron 与 Webhook 是触发方式，Harness 是执行策略。</p></div></div>
+          </details>
+          <details>
+            <summary><span class="d-no">D03</span><span class="d-title">串联端到端可信执行</span><span class="toggle">+</span></summary>
+            <div class="d-body"><span></span><div class="d-copy"><p>推进审批持久化、重启恢复、审计关联 Work/Run/Artifact、Checkpoint 绑定任务阶段，以及验证记录可查看。每次副作用都拥有完整因果链。</p></div></div>
+          </details>
+          <details>
+            <summary><span class="d-no">D04</span><span class="d-title">收敛为稳定插件契约</span><span class="toggle">+</span></summary>
+            <div class="d-body"><span></span><div class="d-copy"><p>建立版本化 Manifest 与 SDK，统一 Tool、Memory、Channel、Trigger、UI Slot、PawApp、Executor、权限与生命周期。真实官方能力遵循同一契约，按声明安装生效。</p></div></div>
+          </details>
+          <details>
+            <summary><span class="d-no">D05</span><span class="d-title">建设工作台自动化</span><span class="toggle">+</span></summary>
+            <div class="d-body"><span></span><div class="d-copy">
+              <p>自动化负责从时间或事件创建标准 Work，不是另一套 Runtime，也不能绕过审批、恢复、Artifact 与验证。</p>
+              <div class="compare">
+                <article><small>TIME-DRIVEN</small><h3>定时任务</h3><p>由时间触发，适合日报、周期检查、定期维护和计划性工作。</p></article>
+                <article><small>EVENT-DRIVEN</small><h3>事件自动化</h3><p>由 PR、Issue、Push、Review Request、文件变化、任务完成或验证失败触发。</p></article>
+              </div>
+              <p>Lite 支持手动和简单定时；Workstation 重点支持本地、Git 与内网事件；Hub 重点支持公网 Webhook、外部平台与团队调度。</p>
+            </div></div>
+          </details>
+          <details>
+            <summary><span class="d-no">D06</span><span class="d-title">建立知识与能力复用闭环</span><span class="toggle">+</span></summary>
+            <div class="d-body"><span></span><div class="d-copy"><p>任务结束生成结构化复盘，将成功步骤、失败原因、证据和边界整理为 Knowledge、Checklist、Template、Skill、Workflow、Tool 或 Automation 候选。评分决定是否沉淀，类型路由决定形式，验证门槛决定能否发布。</p></div></div>
+          </details>
+          <details>
+            <summary><span class="d-no">D07</span><span class="d-title">降低默认使用与安装成本</span><span class="toggle">+</span></summary>
+            <div class="d-body"><span></span><div class="d-copy"><p>默认入口只突出开始工作、进行中、审批和产物；内部模型与执行细节进入高级设置。长尾集成和重型依赖按需安装，三种配置共享核心。</p></div></div>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <section id="roadmap">
+      <div class="page">
+        <div class="section-head">
+          <div><p class="kicker">06 · Roadmap</p><h2>P0–P2 路线与验收</h2></div>
+          <p class="intro">先统一事实源和可信执行，再建设稳定扩展、自动化与知识复用，最后扩大 Hub 与场景包。</p>
+        </div>
+        <div class="roadmap">
+          <article class="phase"><span class="priority">P0</span><h3>统一身份、状态与任务视图</h3><p>对话、计划、执行、审批、Checkpoint、Artifact 和 Verification 贯穿同一 Work。</p><div class="accept"><strong>验收：</strong>唯一事实源；重启可恢复；审批可见；Artifact 可追溯；手动与定时使用同一模型。</div></article>
+          <article class="phase"><span class="priority">P1</span><h3>原生完成能力与可信执行</h3><p>QwenPawAgent 持续完成长任务，对副作用负责并主动验证结果。</p><div class="accept"><strong>验收：</strong>失败可恢复；计划可调整；完成前验收；副作用关联治理链。</div></article>
+          <article class="phase"><span class="priority">P1</span><h3>稳定插件契约</h3><p>二次开发者不理解核心实现，也能开发、验证和发布可靠扩展。</p><div class="accept"><strong>验收：</strong>契约和生命周期明确；官方能力迁移；安装按声明生效；Workstation 开发，Hub 治理。</div></article>
+          <article class="phase"><span class="priority">P1</span><h3>工作台自动化基础</h3><p>定时与事件都能创建标准 Work，并进入相同治理与交付链路。</p><div class="accept"><strong>验收：</strong>区分 Cron 与事件；支持 PR、Issue、Push 和内部事件；可解释、去重、暂停、恢复和接管。</div></article>
+          <article class="phase"><span class="priority">P2</span><h3>知识复用与能力飞轮</h3><p>经验证的任务经验安全转化为知识、流程、工具和 Automation。</p><div class="accept"><strong>验收：</strong>复盘与候选生成；来源可追溯；完成执行、沉淀、复用和反馈闭环。</div></article>
+          <article class="phase"><span class="priority">P2</span><h3>Hub 与完整场景包</h3><p>核心闭环稳定后，再承接团队、组织和外部开发平台事件。</p><div class="accept"><strong>验收：</strong>Webhook 与集中调度生效；Workstation 成为受治理节点；团队审批、审计与分发生效。</div></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="band">
+      <div class="page">
+        <div class="section-head">
+          <div><p class="kicker">07 · Measures</p><h2>用结果衡量，而不是用功能数量衡量</h2></div>
+          <p class="intro">核心指标应反映可靠完成、可信执行、自动化效率与能力复利。</p>
+        </div>
+        <ul class="metrics">
+          <li><strong>结果质量</strong>验收通过率、Artifact 可追溯率</li>
+          <li><strong>运行可靠性</strong>失败恢复率、长任务恢复率</li>
+          <li><strong>可信执行</strong>审批、审计与 Checkpoint 覆盖率</li>
+          <li><strong>自动化价值</strong>自动化成功率、人工接管率</li>
+          <li><strong>能力复用</strong>候选采纳率、复用后成功率</li>
+          <li><strong>使用成本</strong>首次完成时间、上下文与执行成本</li>
+          <li><strong>插件质量</strong>安装、升级、禁用与回滚成功率</li>
+          <li><strong>体验收敛</strong>首项工作所需步骤与配置数量</li>
+        </ul>
+      </div>
+    </section>
+
+    <section>
+      <div class="page">
+        <div class="section-head">
+          <div><p class="kicker">08 · Focus</p><h2>现阶段明确不做什么</h2></div>
+          <p class="intro">拒绝无边界扩张，保护统一 Work、可信执行与能力复用三条主线。</p>
+        </div>
+        <ul class="non-goals">
+          <li>不把增加长尾 Channel、Provider 和 Mode 当作主要竞争力。</li>
+          <li>不把 QwenPaw 做成多 Agent 控制面板或聚合应用。</li>
+          <li>不新建平行的任务 Runtime 或自动化 Runtime。</li>
+          <li>不把定时任务等同于完整工作台自动化。</li>
+          <li>不允许 Webhook 或 Harness 绕过统一治理链。</li>
+          <li>不与竞品比拼插件数量，先证明契约稳定。</li>
+          <li>不维护 Lite、Workstation、Hub 三套代码分叉。</li>
+          <li>审批仍是临时状态时，不宣称完整审计闭环。</li>
+          <li>官方能力未统一迁移前，不宣称 SDK 已稳定。</li>
+          <li>未经真实复用和验证，不自动升级为正式工具或插件。</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="finale">
+      <div class="page finale-inner">
+        <p class="kicker">Final Position</p>
+        <h2>主动承接工作，可靠交付结果，把每次成功转化为下一次能力。</h2>
+        <p>差异来自 AgentScope 原生能力、统一 Work、可信执行、工作台自动化、稳定插件契约与持续复用飞轮。</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="page footer-inner">
+      <span>QwenPaw 产品定位、能力建设与迭代路线</span>
+      <span>统一优化版 · 2026</span>
+    </div>
+  </footer>
+
+  <script>
+    const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+    const panels = Array.from(document.querySelectorAll('[role="tabpanel"]'));
+
+    tabs.forEach((tab) => {
+      tab.addEventListener('click', () => {
+        tabs.forEach((item) => {
+          item.setAttribute('aria-selected', String(item === tab));
+        });
+
+        panels.forEach((panel) => {
+          panel.hidden = panel.id !== tab.getAttribute('aria-controls');
+        });
+      });
+    });
+  </script>
+</body>
+</html>

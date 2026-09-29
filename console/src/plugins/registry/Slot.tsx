@@ -12,7 +12,7 @@
 import React from "react";
 import { useSyncExternalStore } from "react";
 import { slotRegistry, subscribe } from "./store";
-import type { SlotKind, SlotName } from "./types";
+import type { SlotContext, SlotKind, SlotName } from "./types";
 import { auditStore } from "./audit";
 
 interface SlotProps {
@@ -20,9 +20,11 @@ interface SlotProps {
   kind: SlotKind;
   /** Host's own content for this slot. Always rendered for fill, used as fallback for replace. */
   children?: React.ReactNode;
+  /** Read-only page data documented by each host slot. */
+  context?: SlotContext;
 }
 
-export function Slot({ name, kind, children }: SlotProps) {
+export function Slot({ name, kind, children, context }: SlotProps) {
   const entries = useSyncExternalStore(subscribe, () =>
     slotRegistry.snapshot(name),
   );
@@ -38,7 +40,7 @@ export function Slot({ name, kind, children }: SlotProps) {
     // Also fall back to children when the render itself yields null/
     // undefined (e.g. a plugin that returns null instead of taking the
     // defaultContent path). Either way the slot still paints.
-    const rendered = replaceEntry.render(children);
+    const rendered = replaceEntry.render(children, context);
     if (rendered == null) return <>{children}</>;
     return (
       <SlotErrorBoundary slot={name} pluginId={replaceEntry.source}>
@@ -58,7 +60,7 @@ export function Slot({ name, kind, children }: SlotProps) {
           slot={name}
           pluginId={e.source}
         >
-          {e.render()}
+          {e.render(undefined, context)}
         </SlotErrorBoundary>
       ))}
     </>

@@ -4,27 +4,42 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
-from typing import Literal, Optional
-from uuid import uuid4
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from collections.abc import AsyncIterator, Awaitable
+from typing import Annotated, Any, Literal, Optional
+from urllib.parse import quote
+from uuid import UUID, uuid4
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.responses import Response, StreamingResponse
 
 from agentscope.message import Msg
 from agentscope.state import AgentState
 
-from .session import SafeJSONSession
-from .manager import ChatManager, MAX_BATCH_SIZE
+from .manager import (
+    MAX_BATCH_SIZE,
+    ChatManager,
+)
 from .models import (
     BatchArchiveResult,
     ChatGroup,
     ChatGroupCreate,
     ChatGroupOrderUpdate,
     ChatGroupUpdate,
+    ChatForkRequest,
+    ChatControlRequest,
+    ChatInteractionDecisionRequest,
+    ChatQueueReorderRequest,
     ChatSpec,
+    ChatSteerRequest,
+    ChatSubmissionRequest,
     ChatUpdate,
     ChatHistory,
+)
+from .session import (
+    SafeJSONSession,
 )
 from .utils import agentscope_msg_to_message, parse_legacy_memory_state
 from ...services.project_directory import (
@@ -33,11 +48,87 @@ from ...services.project_directory import (
     session_project_dirs_raw_from_meta,
 )
 from ...checkpoints.runtime import RUNTIME as CHECKPOINT_RUNTIME
+from ...interactions import (
+    InteractionConflictError,
+    InteractionNotFoundError,
+)
+from ...invocation_control import (
+    ConversationRuntimeProjectionService,
+    ControlIdempotencyConflictError,
+    QueueCommandConflictError,
+    QueueRevisionConflictError,
+    QueueTargetNotFoundError,
+)
+from ...kernel import (
+    ActorRef,
+    ActorType,
+    ArtifactRef,
+    InteractionRequest,
+    InteractionResolution,
+    InteractionResponse,
+    ConversationRuntimeProjection,
+    ControlReceipt,
+    QueueProjection,
+    SubmissionInputEnvelope,
+    TurnSubmissionRequest,
+    ConversationForkCommand,
+    ConversationForkConflictError,
+    ConversationForkInvalidAnchorError,
+    ConversationForkNotFoundError,
+)
+from ...conversations import LiteConversationForkAdapter
+from ...config.config import load_agent_config_async
+from ...kernel.models import ArtifactRenderDisposition
+from ...runtime.assembly import capability_registry_for
+from ...tasks.artifacts import (
+    ArtifactIntegrityError,
+    artifact_filename,
+    lite_artifact_store,
+)
+from ...tasks.conversation_artifacts import (
+    ConversationArtifactReceiptError,
+    conversation_artifact_receipts,
+)
+from ...tasks.renderers import (
+    ArtifactPreviewTooLargeError,
+    ArtifactRendererUnavailableError,
+    ArtifactRenderService,
+)
+from ...tasks.system_contributions import (
+    SYSTEM_CAPABILITY_BUNDLE,
+    system_contribution_factory,
+)
+from .input_artifacts import (
+    ConversationInputArtifactError,
+    claim_conversation_artifacts,
+)
+from .submission_dispatcher import CONSOLE_SUBMISSION_ENVELOPE
+from .compatibility import (
+    ExternalQueueFallbackRequest,
+    SQLiteExternalQueueCompatibilityStore,
+)
 
 logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/chats", tags=["chats"])
+_MAX_ARTIFACT_PREVIEW_BYTES = 256 * 1024
+
+
+def _external_queue_compatibility_store(
+    workspace: Any,
+) -> SQLiteExternalQueueCompatibilityStore:
+    store = getattr(workspace, "_external_queue_compatibility_store", None)
+    if isinstance(store, SQLiteExternalQueueCompatibilityStore):
+        return store
+    store = SQLiteExternalQueueCompatibilityStore(
+        Path(workspace.workspace_dir)
+        / ".qwenpaw"
+        / "lite"
+        / "chat-compatibility.db",
+    )
+    setattr(workspace, "_external_queue_compatibility_store", store)
+    return store
 
 
 def _is_app_owned_chat(chat: ChatSpec) -> bool:
@@ -51,6 +142,36 @@ async def get_workspace(request: Request):
     from ..agent_context import get_agent_for_request
 
     return await get_agent_for_request(request)
+
+
+@router.post("/compatibility/external-queue/hits", status_code=202)
+async def record_external_queue_fallback(
+    body: ExternalQueueFallbackRequest,
+    workspace=Depends(get_workspace),
+) -> dict[str, bool]:
+    """Observe external queue use without accepting message content."""
+    profile = await load_agent_config_async(workspace.agent_id)
+    if profile.backend == "qwenpaw" or profile.backend != body.backend_id:
+        raise HTTPException(
+            status_code=409,
+            detail="External queue observation does not match agent backend",
+        )
+    recorded = await _external_queue_compatibility_store(workspace).record(
+        agent_id=workspace.agent_id,
+        request=body,
+    )
+    return {"recorded": recorded}
+
+
+@router.get("/compatibility/external-queue")
+async def external_queue_compatibility(
+    workspace=Depends(get_workspace),
+) -> dict[str, Any]:
+    """Return structured external queue migration diagnostics."""
+    report = await _external_queue_compatibility_store(workspace).report(
+        agent_id=workspace.agent_id,
+    )
+    return report.model_dump(mode="json")
 
 
 async def get_chat_manager(
@@ -357,6 +478,508 @@ async def create_chat(
         return await mgr.create_chat(spec)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{parent_chat_id}/fork", response_model=ChatSpec)
+async def fork_chat(
+    parent_chat_id: str,
+    payload: ChatForkRequest,
+    mgr: ChatManager = Depends(get_chat_manager),
+    session: SafeJSONSession = Depends(get_session),
+    workspace=Depends(get_workspace),
+):
+    """Fork persisted history through one stable source message."""
+    adapter = LiteConversationForkAdapter(
+        agent_id=workspace.agent_id,
+        manager=mgr,
+        session=session,
+    )
+    try:
+        result = await adapter.fork(
+            ConversationForkCommand(
+                agent_id=workspace.agent_id,
+                parent_conversation_id=parent_chat_id,
+                source_message_id=payload.source_message_id,
+                idempotency_key=payload.idempotency_key,
+                name=payload.name,
+            ),
+        )
+        child = await mgr.get_chat(result.child_conversation_id)
+        if child is None:
+            raise ConversationForkNotFoundError(
+                result.child_conversation_id,
+            )
+        return child
+    except ConversationForkNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (
+        ConversationForkConflictError,
+        ConversationForkInvalidAnchorError,
+    ) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+async def _chat_interaction_context(
+    chat_id: str,
+    mgr: ChatManager,
+    workspace,
+):
+    """Resolve a Chat and its workspace-owned interaction service."""
+    chat = await mgr.get_chat(chat_id)
+    if chat is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Chat not found: {chat_id}",
+        )
+    service = getattr(workspace, "interaction_service", None)
+    if service is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Interaction service is unavailable",
+        )
+    return chat, service
+
+
+async def _chat_control_context(
+    chat_id: str,
+    mgr: ChatManager,
+    workspace,
+):
+    """Resolve a Chat and its workspace-owned invocation control service."""
+    chat = await mgr.get_chat(chat_id)
+    if chat is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Chat not found: {chat_id}",
+        )
+    service = getattr(workspace, "invocation_control", None)
+    if service is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Invocation control service is unavailable",
+        )
+    return service
+
+
+async def _chat_runtime_projection_context(
+    chat_id: str,
+    mgr: ChatManager,
+    workspace,
+) -> ConversationRuntimeProjectionService:
+    """Compose the current-state projection from workspace-owned services."""
+    control = await _chat_control_context(chat_id, mgr, workspace)
+    interactions = getattr(workspace, "interaction_service", None)
+    if interactions is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Interaction service is unavailable",
+        )
+    return ConversationRuntimeProjectionService(control, interactions)
+
+
+async def _apply_chat_control(
+    operation: Awaitable[ControlReceipt | None],
+) -> ControlReceipt:
+    """Map domain control outcomes to the stable Chat HTTP contract."""
+    try:
+        receipt = await operation
+    except QueueTargetNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (
+        ControlIdempotencyConflictError,
+        QueueCommandConflictError,
+        QueueRevisionConflictError,
+    ) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if receipt is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Chat has no active invocation",
+        )
+    return receipt
+
+
+def _chat_submission_content(parts: tuple[dict[str, Any], ...]) -> str:
+    """Return the first meaningful text without interpreting tool payloads."""
+    for part in parts:
+        text = part.get("text")
+        if isinstance(text, str) and text.strip():
+            return text
+    return "[non-text user input]"
+
+
+@router.get(
+    "/{chat_id}/interactions",
+    response_model=list[InteractionRequest],
+)
+async def list_chat_interactions(
+    chat_id: str,
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+) -> list[InteractionRequest]:
+    """List server-authoritative open interactions for one ChatSpec."""
+    _, service = await _chat_interaction_context(chat_id, mgr, workspace)
+    interactions = await service.list_open(
+        agent_id=workspace.agent_id,
+        conversation_id=chat_id,
+    )
+    return list(interactions)
+
+
+@router.post(
+    "/{chat_id}/interactions/{interaction_id}/response",
+    response_model=InteractionResolution,
+)
+async def respond_chat_interaction(
+    chat_id: str,
+    interaction_id: UUID,
+    body: ChatInteractionDecisionRequest,
+    request: Request,
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+) -> InteractionResolution:
+    """Resolve one Chat-owned interaction using optimistic concurrency."""
+    chat, service = await _chat_interaction_context(
+        chat_id,
+        mgr,
+        workspace,
+    )
+    interaction = await service.get_request(interaction_id)
+    if (
+        interaction is None
+        or interaction.agent_id != workspace.agent_id
+        or interaction.conversation_id != chat_id
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Interaction does not belong to this chat",
+        )
+    user = getattr(request.state, "user", None)
+    actor_id = (
+        str(user.get("username") or "") if isinstance(user, dict) else ""
+    )
+    if not actor_id:
+        actor_id = chat.user_id or "local-user"
+    try:
+        return await service.resolve(
+            InteractionResponse(
+                interaction_id=interaction_id,
+                idempotency_key=body.idempotency_key,
+                expected_revision=body.expected_revision,
+                actor=ActorRef(type=ActorType.USER, id=actor_id),
+                selected_option_ids=body.selected_option_ids,
+                text=body.text,
+                values=body.values,
+            ),
+        )
+    except InteractionNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="Interaction does not belong to this chat",
+        ) from exc
+    except InteractionConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post(
+    "/{chat_id}/submissions",
+    response_model=ControlReceipt,
+)
+async def submit_chat_turn(
+    chat_id: str,
+    body: ChatSubmissionRequest,
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+) -> ControlReceipt:
+    """Persist a complete Console turn for independent server dispatch."""
+    chat = await mgr.get_chat(chat_id)
+    if chat is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Chat not found: {chat_id}",
+        )
+    if chat.channel != "console":
+        raise HTTPException(
+            status_code=409,
+            detail="Only Console chats support durable HTTP submission",
+        )
+    dispatcher = getattr(workspace, "submission_dispatcher", None)
+    if dispatcher is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Chat submission dispatcher is unavailable",
+        )
+    content_parts = [dict(part) for part in body.content_parts]
+    try:
+        await claim_conversation_artifacts(
+            workspace,
+            chat_id,
+            content_parts,
+        )
+    except ConversationInputArtifactError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    artifact_refs = tuple(
+        ArtifactRef.model_validate(part["artifact_ref"])
+        for part in content_parts
+        if part.get("artifact_ref") is not None
+    )
+    message_metadata = dict(body.message_metadata)
+    message_metadata.setdefault(
+        "qwenpaw_client_message_id",
+        body.idempotency_key,
+    )
+    native_payload: dict[str, Any] = dict(body.request_extensions)
+    native_payload.update(
+        {
+            "channel_id": chat.channel,
+            "sender_id": chat.user_id,
+            "content_parts": content_parts,
+            "message_metadata": message_metadata,
+            "message_id": body.idempotency_key,
+            "meta": {
+                "session_id": chat.session_id,
+                "user_id": chat.user_id,
+                "request_context": dict(body.request_context),
+            },
+        },
+    )
+    if body.model_slot_override is not None:
+        native_payload["model_slot_override"] = body.model_slot_override
+    request = TurnSubmissionRequest(
+        agent_id=workspace.agent_id,
+        conversation_id=chat_id,
+        priority=body.priority,
+        content=_chat_submission_content(body.content_parts),
+        artifact_refs=artifact_refs,
+        request_context={"channel": chat.channel},
+        input_envelope=SubmissionInputEnvelope(
+            kind=CONSOLE_SUBMISSION_ENVELOPE,
+            payload=native_payload,
+        ),
+        idempotency_key=body.idempotency_key,
+    )
+    return await _apply_chat_control(
+        dispatcher.enqueue(
+            request,
+            expected_revision=body.expected_revision,
+        ),
+    )
+
+
+@router.get(
+    "/{chat_id}/queue",
+    response_model=QueueProjection,
+)
+async def get_chat_queue(
+    chat_id: str,
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+) -> QueueProjection:
+    """Read the server-authoritative queue for one ChatSpec identity."""
+    service = await _chat_control_context(chat_id, mgr, workspace)
+    return await service.read_queue(
+        agent_id=workspace.agent_id,
+        conversation_id=chat_id,
+    )
+
+
+@router.post(
+    "/{chat_id}/control/steer",
+    response_model=ControlReceipt,
+)
+async def steer_chat(
+    chat_id: str,
+    body: ChatSteerRequest,
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+) -> ControlReceipt:
+    """Persist a steer for delivery at the active invocation's safe point."""
+    service = await _chat_control_context(chat_id, mgr, workspace)
+    return await _apply_chat_control(
+        service.steer_current(
+            agent_id=workspace.agent_id,
+            conversation_id=chat_id,
+            instruction=body.instruction,
+            idempotency_key=body.idempotency_key,
+            expected_revision=body.expected_revision,
+        ),
+    )
+
+
+@router.post(
+    "/{chat_id}/control/interrupt",
+    response_model=ControlReceipt,
+)
+async def interrupt_chat(
+    chat_id: str,
+    body: ChatControlRequest,
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+) -> ControlReceipt:
+    """Interrupt only the invocation currently active for this ChatSpec."""
+    service = await _chat_control_context(chat_id, mgr, workspace)
+    return await _apply_chat_control(
+        service.interrupt_current(
+            agent_id=workspace.agent_id,
+            conversation_id=chat_id,
+            idempotency_key=body.idempotency_key,
+            expected_revision=body.expected_revision,
+        ),
+    )
+
+
+@router.post(
+    "/{chat_id}/control/stop-and-clear",
+    response_model=ControlReceipt,
+)
+async def stop_and_clear_chat(
+    chat_id: str,
+    body: ChatControlRequest,
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+) -> ControlReceipt:
+    """Atomically clear queued turns and interrupt the captured invocation."""
+    service = await _chat_control_context(chat_id, mgr, workspace)
+    return await _apply_chat_control(
+        service.stop_and_clear(
+            agent_id=workspace.agent_id,
+            conversation_id=chat_id,
+            idempotency_key=body.idempotency_key,
+            expected_revision=body.expected_revision,
+        ),
+    )
+
+
+@router.post(
+    "/{chat_id}/queue/{submission_id}/cancel",
+    response_model=ControlReceipt,
+)
+async def cancel_chat_queue_item(
+    chat_id: str,
+    submission_id: UUID,
+    body: ChatControlRequest,
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+) -> ControlReceipt:
+    """Cancel one queued submission without touching the active run."""
+    service = await _chat_control_context(chat_id, mgr, workspace)
+    return await _apply_chat_control(
+        service.cancel_queued(
+            agent_id=workspace.agent_id,
+            conversation_id=chat_id,
+            submission_id=submission_id,
+            idempotency_key=body.idempotency_key,
+            expected_revision=body.expected_revision,
+        ),
+    )
+
+
+@router.post(
+    "/{chat_id}/queue/reorder",
+    response_model=ControlReceipt,
+)
+async def reorder_chat_queue(
+    chat_id: str,
+    body: ChatQueueReorderRequest,
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+) -> ControlReceipt:
+    """Replace the complete order of queued submissions atomically."""
+    service = await _chat_control_context(chat_id, mgr, workspace)
+    return await _apply_chat_control(
+        service.reorder_queue(
+            agent_id=workspace.agent_id,
+            conversation_id=chat_id,
+            ordered_submission_ids=body.ordered_submission_ids,
+            idempotency_key=body.idempotency_key,
+            expected_revision=body.expected_revision,
+        ),
+    )
+
+
+@router.get(
+    "/{chat_id}/runtime",
+    response_model=ConversationRuntimeProjection,
+)
+async def get_chat_runtime_projection(
+    chat_id: str,
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+) -> ConversationRuntimeProjection:
+    """Read one recoverable Queue and Interaction snapshot."""
+    service = await _chat_runtime_projection_context(
+        chat_id,
+        mgr,
+        workspace,
+    )
+    return await service.read(
+        agent_id=workspace.agent_id,
+        conversation_id=chat_id,
+    )
+
+
+@router.get("/{chat_id}/runtime/stream")
+async def stream_chat_runtime_projection(
+    chat_id: str,
+    request: Request,
+    last_event_id: Annotated[
+        str | None,
+        Header(alias="Last-Event-ID"),
+    ] = None,
+    after_cursor: Annotated[
+        str | None,
+        Query(min_length=1, max_length=200),
+    ] = None,
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+) -> StreamingResponse:
+    """Follow latest authoritative snapshots with reconnect recovery."""
+    if (
+        after_cursor is not None
+        and last_event_id is not None
+        and after_cursor != last_event_id
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="after_cursor conflicts with Last-Event-ID",
+        )
+    service = await _chat_runtime_projection_context(
+        chat_id,
+        mgr,
+        workspace,
+    )
+    starting_cursor = after_cursor or last_event_id or ""
+
+    async def generate() -> AsyncIterator[str]:
+        cursor = starting_cursor
+        while not await request.is_disconnected():
+            projection = await service.wait_for_change(
+                agent_id=workspace.agent_id,
+                conversation_id=chat_id,
+                after_cursor=cursor,
+                timeout=15.0,
+            )
+            if projection is None:
+                yield ": keepalive\n\n"
+                continue
+            cursor = projection.cursor
+            payload = json.dumps(
+                projection.model_dump(mode="json"),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            yield (
+                f"id: {cursor}\n" f"event: snapshot\n" f"data: {payload}\n\n"
+            )
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ----- Chat group endpoints -----
@@ -810,6 +1433,153 @@ async def get_chat(
 
     messages = agentscope_msg_to_message(memories)
     return ChatHistory(messages=messages, status=status)
+
+
+def _artifact_receipt_from_history(
+    history: ChatHistory,
+    artifact_id: UUID,
+) -> str | None:
+    """Find the opaque receipt paired with an artifact in Chat history."""
+    for message in history.messages:
+        for part in message.content:
+            if isinstance(part, dict):
+                raw_artifact = part.get("artifact_ref")
+                receipt = part.get("artifact_receipt")
+            else:
+                raw_artifact = getattr(part, "artifact_ref", None)
+                receipt = getattr(part, "artifact_receipt", None)
+            if not isinstance(raw_artifact, dict) or not receipt:
+                continue
+            if str(raw_artifact.get("artifact_id")) == str(artifact_id):
+                return str(receipt)
+    return None
+
+
+@router.get("/{chat_id}/artifacts/{artifact_id}/content")
+async def get_chat_artifact_content(
+    chat_id: str,
+    artifact_id: UUID,
+    disposition: Annotated[
+        str,
+        Query(pattern=r"^(inline|attachment)$"),
+    ] = "inline",
+    mgr: ChatManager = Depends(get_chat_manager),
+    session: SafeJSONSession = Depends(get_session),
+    workspace=Depends(get_workspace),
+) -> Response:
+    """Read a Chat-owned artifact through the shared safe renderer."""
+    history = await get_chat(
+        chat_id,
+        True,
+        mgr,
+        session,
+        workspace,
+    )
+    receipt_id = _artifact_receipt_from_history(history, artifact_id)
+    if receipt_id is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Artifact does not belong to this chat",
+        )
+    try:
+        lineage_ids = await mgr.get_fork_lineage_ids(chat_id)
+        artifact, _ = await conversation_artifact_receipts(
+            Path(workspace.workspace_dir),
+        ).resolve(
+            receipt_id=receipt_id,
+            chat_id=chat_id,
+            artifact_id=artifact_id,
+            inherited_chat_ids=lineage_ids[1:],
+        )
+    except ConversationArtifactReceiptError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="Artifact does not belong to this chat",
+        ) from exc
+    if (
+        disposition == "inline"
+        and artifact.size_bytes > _MAX_ARTIFACT_PREVIEW_BYTES
+    ):
+        raise HTTPException(
+            status_code=413,
+            detail="Artifact is too large for inline preview",
+        )
+    try:
+        content = await lite_artifact_store(
+            Path(workspace.workspace_dir),
+        ).read(artifact)
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="Artifact content is unavailable",
+        ) from exc
+    except ArtifactIntegrityError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Artifact content failed integrity verification",
+        ) from exc
+
+    registry = capability_registry_for(workspace)
+
+    async def resolve_workspace(agent_id: str):
+        if agent_id == workspace.agent_id:
+            return workspace
+        raise LookupError(agent_id)
+
+    await registry.ensure_bundle(
+        SYSTEM_CAPABILITY_BUNDLE,
+        system_contribution_factory(resolve_workspace),
+    )
+    render_disposition = ArtifactRenderDisposition(disposition)
+    render_budget = (
+        _MAX_ARTIFACT_PREVIEW_BYTES
+        if render_disposition is ArtifactRenderDisposition.INLINE
+        else max(len(content), 1)
+    )
+    try:
+        rendered, generation = await ArtifactRenderService(registry).render(
+            artifact,
+            content,
+            disposition=render_disposition,
+            filename=artifact_filename(
+                artifact.metadata,
+                artifact.artifact_id,
+            ),
+            max_output_bytes=render_budget,
+        )
+    except ArtifactPreviewTooLargeError as exc:
+        raise HTTPException(
+            status_code=413,
+            detail="Artifact is too large for inline preview",
+        ) from exc
+    except ArtifactRendererUnavailableError as exc:
+        status_code = 503 if exc.failures else 415
+        detail = (
+            "Artifact renderers failed without a safe fallback"
+            if exc.failures
+            else "No safe renderer supports this artifact"
+        )
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+
+    encoded_filename = quote(rendered.filename, safe="")
+    headers = {
+        "Cache-Control": "private, no-store",
+        "Content-Disposition": (
+            f"{rendered.disposition.value}; "
+            f"filename*=UTF-8''{encoded_filename}"
+        ),
+        "X-Content-Type-Options": "nosniff",
+        "X-QwenPaw-Artifact-Renderer": rendered.renderer_id,
+        "X-QwenPaw-Registry-Generation": str(generation),
+        "X-QwenPaw-Source-Hash": rendered.source_content_hash,
+    }
+    if rendered.disposition is ArtifactRenderDisposition.INLINE:
+        headers["Content-Security-Policy"] = "default-src 'none'; sandbox"
+    return Response(
+        content=rendered.content,
+        media_type=rendered.media_type,
+        headers=headers,
+    )
 
 
 @router.put("/{chat_id}", response_model=ChatSpec)

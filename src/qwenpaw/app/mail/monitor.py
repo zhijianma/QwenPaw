@@ -10,7 +10,7 @@ Every new message goes through a three-step pipeline:
 
 1. deterministic rules (case-insensitive substring match) executing
    ``mark_read`` / ``move`` on the monitor's own IMAP connection and
-   ``notify`` via :func:`qwenpaw.app.inbox_store.append_event`;
+   ``notify`` through the shared operational Delivery pipeline;
 2. mode-dependent agent wake-up (``rules_then_agent`` / ``agent_all``)
    built like ``run_heartbeat_once``: construct a request and consume
    ``workspace.stream_query(req)``, then record an ``auto_handled``
@@ -58,8 +58,8 @@ from ...config.config import (
 from ...config.context import deactivate_f1_for_session
 from ...utils.io_utils import run_sync_io, write_json_atomic
 from ..channels.schema import DEFAULT_CHANNEL
-from ..inbox_store import append_event as append_inbox_event
 from ..inbox_trace_store import read_session_messages
+from ..operational_delivery import publish_operational_event
 from .mail_access_control import (
     get_mail_access_control_store,
     validate_acl_address,
@@ -69,6 +69,34 @@ from .processing_guard import MailProcessingGuard
 logger = logging.getLogger(__name__)
 
 _MAIL_SOURCE_ID = "_mail_monitor"
+
+
+async def publish_mail_event(
+    workspace: Any,
+    *,
+    agent_id: str,
+    event_type: str,
+    status: str,
+    title: str,
+    body: str,
+    severity: str = "info",
+    payload: dict[str, Any] | None = None,
+) -> None:
+    """Publish one Mail fact through the shared operational pipeline."""
+    if agent_id != workspace.agent_id:
+        raise ValueError("mail event agent does not own the workspace")
+    await publish_operational_event(
+        workspace,
+        producer_id="qwenpaw.system.mail",
+        source_type="mail",
+        source_id=_MAIL_SOURCE_ID,
+        event_type=event_type,
+        status=status,
+        severity=severity,
+        title=title,
+        body=body,
+        payload=payload or {},
+    )
 
 
 class _MailProcessingPaused(Exception):
@@ -990,10 +1018,9 @@ async def wake_agent_for_mail(
         if report_failure:
             if retry_on_failure:
                 payload["delivery_status"] = "retryable"
-            await append_inbox_event(
+            await publish_mail_event(
+                workspace,
                 agent_id=agent_id,
-                source_type="mail",
-                source_id=_MAIL_SOURCE_ID,
                 event_type="auto_handled",
                 status="error",
                 severity="error",
@@ -1024,10 +1051,9 @@ async def wake_agent_for_mail(
         if report_failure:
             if retry_on_failure:
                 payload["delivery_status"] = "retryable"
-            await append_inbox_event(
+            await publish_mail_event(
+                workspace,
                 agent_id=agent_id,
-                source_type="mail",
-                source_id=_MAIL_SOURCE_ID,
                 event_type="auto_handled",
                 status="error",
                 severity="error",
@@ -1063,10 +1089,9 @@ async def wake_agent_for_mail(
         _WAKE_BODY_MAX_CHARS,
     )
     payload["trace"] = build_wake_trace(delta)
-    await append_inbox_event(
+    await publish_mail_event(
+        workspace,
         agent_id=agent_id,
-        source_type="mail",
-        source_id=_MAIL_SOURCE_ID,
         event_type="auto_handled",
         status="success",
         severity="info",
@@ -2374,10 +2399,9 @@ class MailMonitorService:
         **kwargs: Any,
     ) -> bool:
         submitted, _result = self._submit(
-            append_inbox_event(
+            publish_mail_event(
+                self.workspace,
                 agent_id=self.agent_id,
-                source_type="mail",
-                source_id=_MAIL_SOURCE_ID,
                 event_type=event_type,
                 status=status,
                 title=title,
@@ -2447,10 +2471,9 @@ class MailMonitorService:
                 pause = await self.get_processing_pause()
                 if not pause or pause["notified"]:
                     return
-                await append_inbox_event(
+                await publish_mail_event(
+                    self.workspace,
                     agent_id=self.agent_id,
-                    source_type="mail",
-                    source_id=_MAIL_SOURCE_ID,
                     event_type="processing_paused",
                     status="error",
                     severity="warning",

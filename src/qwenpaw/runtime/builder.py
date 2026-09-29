@@ -17,6 +17,8 @@ from typing import Any, Iterable
 from ..agents.acp.meta import ACP_PROJECT_DIR_META_KEY
 from ..utils.io_utils import run_sync_io
 from ..utils.logging import sanitize_log_value
+from .driver_providers import close_driver_session
+from .memory_providers import close_memory_session
 
 _logger = logging.getLogger(__name__)
 
@@ -36,6 +38,23 @@ _PORTABILITY_ADAPTATION_SYSTEM_RULES = (
     "passes.\n"
     "</portability_adaptation_security>"
 )
+
+
+def _bind_runtime_interactions(
+    request_context: dict[str, Any],
+    service: Any,
+) -> None:
+    """Replace untrusted payload entries with one trusted live binding."""
+    request_context.pop("_interaction_service", None)
+    request_context.pop("_interaction_broker", None)
+    if service is None:
+        return
+    from ..interactions import runtime_interaction_broker_from_context
+
+    request_context["_interaction_service"] = service
+    broker = runtime_interaction_broker_from_context(request_context)
+    if broker is not None:
+        request_context["_interaction_broker"] = broker
 
 
 def _resolve_react_iterations(
@@ -119,16 +138,17 @@ class AgentBuilder:
         active_modes: Iterable[str] | None = None,
         effective_skills: Iterable[str] | None = None,
         enabled_features: Iterable[str] | None = None,
+        tool_providers: Iterable[Any] | None = None,
         extra_tools: Iterable[Any] | None = None,
         memory_tools: Iterable[Any] | None = None,
+        memory_provider_id: str = "",
         governor: Any = None,
         ctx: Any = None,
         workspace_dir: str | None = None,
     ) -> Any:
         """Build a populated ``Toolkit`` for one agent invocation.
 
-        Tools are obtained from the per-workspace
-        :class:`QwenPawLocalWorkspace` via ``list_tools()``.
+        Workspace tools are obtained through pinned Tool Providers.
         ``extra_tools`` and ``memory_tools`` are appended after the
         workspace tools.
 
@@ -136,9 +156,24 @@ class AgentBuilder:
         from agentscope.tool import Toolkit
 
         effective_skills = list(effective_skills or ())
+        active_modes = tuple(active_modes or ())
+        enabled_features = tuple(enabled_features or ())
         local_ws = self._get_local_workspace(ctx) if ctx else None
-        if local_ws is not None:
-            tools: list[Any] = await local_ws.list_tools(
+        tools: list[Any]
+        if tool_providers is not None:
+            tools = await self._collect_provider_tools(
+                tool_providers=tool_providers,
+                ctx=ctx,
+                local_workspace=local_ws,
+                agent_config=agent_config,
+                request_context=request_context or {},
+                governor=governor,
+                active_modes=active_modes,
+                active_skills=effective_skills,
+                enabled_features=enabled_features,
+            )
+        elif local_ws is not None:
+            tools = await local_ws.list_tools(
                 agent_config=agent_config,
                 agent_id=agent_id,
                 request_context=request_context,
@@ -158,14 +193,13 @@ class AgentBuilder:
             )
 
         if memory_tools:
-            from ..governance import PolicyGuardedTool
-
-            for fn in memory_tools:
+            for raw_tool in memory_tools:
                 tools.append(
-                    PolicyGuardedTool(
-                        fn,
+                    self._ensure_governed_provider_tool(
+                        raw_tool,
+                        provider_id=memory_provider_id,
                         governor=governor,
-                        request_context=request_context,
+                        request_context=request_context or {},
                     ),
                 )
 
@@ -261,6 +295,190 @@ class AgentBuilder:
             request_context,
         )
 
+    async def _collect_provider_tools(
+        self,
+        *,
+        tool_providers: Iterable[Any],
+        ctx: Any,
+        local_workspace: Any,
+        agent_config: Any,
+        request_context: dict[str, Any],
+        governor: Any,
+        active_modes: Iterable[str],
+        active_skills: Iterable[str],
+        enabled_features: Iterable[str],
+    ) -> list[Any]:
+        """Collect tools from pinned providers and reject collisions."""
+        from ..kernel.invocation import DEFAULT_TOOL_PROVIDER_ID
+        from ..kernel.ports import RuntimeInteractionProducer
+        from .provider_config import validate_provider_config
+        from .tool_providers import (
+            ProviderToolHost,
+            WorkspaceToolHost,
+            tool_selection_from_request,
+        )
+
+        invocation = getattr(ctx, "invocation_scope", None)
+        if invocation is None:
+            raise RuntimeError("tool providers require an invocation scope")
+        selection = tool_selection_from_request(
+            active_modes=tuple(active_modes),
+            active_skills=tuple(active_skills),
+            enabled_features=tuple(enabled_features),
+            request_context=request_context,
+        )
+        extras = getattr(ctx, "extras", None)
+        assembly = (
+            extras.get("runtime_assembly")
+            if isinstance(extras, dict)
+            else None
+        )
+        workspace = getattr(ctx, "workspace", None)
+        profile = getattr(workspace, "config", None)
+        capability_configs = getattr(profile, "capability_configs", {}) or {}
+        capability_credential_refs = (
+            getattr(
+                profile,
+                "capability_credential_refs",
+                {},
+            )
+            or {}
+        )
+        credential_manager = getattr(workspace, "driver_manager", None)
+        raw_broker = request_context.get("_interaction_broker")
+        broker = (
+            raw_broker
+            if isinstance(raw_broker, RuntimeInteractionProducer)
+            else None
+        )
+        tools = []
+        owners: dict[str, str] = {}
+        for provider in tool_providers:
+            provider_id = str(getattr(provider, "provider_id", ""))
+            provider_config = dict(
+                capability_configs.get(provider_id, {}) or {},
+            )
+            descriptor = (
+                assembly.descriptor(provider_id)
+                if assembly is not None
+                else None
+            )
+            provider_config = validate_provider_config(
+                provider_id,
+                provider_config,
+                descriptor.config_schema if descriptor is not None else None,
+            )
+            credential_refs = dict(
+                capability_credential_refs.get(provider_id, {}) or {},
+            )
+            if provider_id == DEFAULT_TOOL_PROVIDER_ID:
+                host = WorkspaceToolHost(
+                    local_workspace=local_workspace,
+                    agent_config=agent_config,
+                    request_context=request_context,
+                    governor=governor,
+                    provider_id=provider_id,
+                    provider_config=provider_config,
+                    credential_manager=credential_manager,
+                    credential_refs=credential_refs,
+                )
+            else:
+                host = ProviderToolHost(
+                    provider_id,
+                    provider_config,
+                    credential_manager,
+                    credential_refs,
+                    broker,
+                )
+            provided = await provider.list_tools(
+                invocation,
+                selection,
+                host,
+            )
+            for raw_tool in provided:
+                tool = self._ensure_governed_provider_tool(
+                    raw_tool,
+                    provider_id=provider_id,
+                    governor=governor,
+                    request_context=request_context,
+                )
+                tool_name = self._tool_name(tool)
+                if not tool_name:
+                    raise TypeError(
+                        f"tool provider '{provider_id}' returned an "
+                        "unnamed tool",
+                    )
+                previous = owners.get(tool_name)
+                if previous is not None:
+                    raise ValueError(
+                        f"tool '{tool_name}' is provided by both "
+                        f"'{previous}' and '{provider_id}'",
+                    )
+                owners[tool_name] = provider_id
+                tools.append(tool)
+        return tools
+
+    @staticmethod
+    def _ensure_governed_provider_tool(
+        tool: Any,
+        *,
+        provider_id: str,
+        governor: Any,
+        request_context: dict[str, Any],
+    ) -> Any:
+        """Wrap raw provider tools while preserving governed adapters."""
+        if callable(getattr(tool, "check_permissions", None)) and hasattr(
+            tool,
+            "_qp_request_context",
+        ):
+            return tool
+        from ..kernel.models import ToolDefinition
+
+        governance_registry = None
+        if isinstance(tool, ToolDefinition):
+            from ..governance.tool_registry import (
+                DEFAULT_REGISTRY,
+                ToolRegistry,
+                register_tool_governance,
+            )
+
+            register_tool_governance(
+                DEFAULT_REGISTRY,
+                python_name=tool.name,
+                tool_type=tool.tool_type,
+                target_param=tool.target_param,
+                policy_name=tool.policy_name,
+                pattern_param=tool.pattern_param,
+                sandbox_required=tool.sandbox_required,
+                effect=tool.effect.value,
+                owner=provider_id,
+            )
+            governance_registry = ToolRegistry()
+            register_tool_governance(
+                governance_registry,
+                python_name=tool.name,
+                tool_type=tool.tool_type,
+                target_param=tool.target_param,
+                policy_name=tool.policy_name,
+                pattern_param=tool.pattern_param,
+                sandbox_required=tool.sandbox_required,
+                effect=tool.effect.value,
+                owner=provider_id,
+            )
+            tool = tool.function
+        if not callable(tool):
+            raise TypeError(
+                "tool providers must return callables or governed tools",
+            )
+        from ..governance import PolicyGuardedTool
+
+        return PolicyGuardedTool(
+            tool,
+            governor=governor,
+            request_context=request_context,
+            governance_registry=governance_registry,
+        )
+
     @staticmethod
     def _resolve_skill_loader_dirs(
         effective_skills: Iterable[str] | None,
@@ -342,6 +560,10 @@ class AgentBuilder:
         agent_id = getattr(ctx, "agent_id", None) or "default"
         agent_config = await run_sync_io(load_agent_config, agent_id)
         request_context = self._build_request_context(ctx)
+        agent_config = self._apply_runtime_strategy(
+            agent_config,
+            request_context,
+        )
         agent_config = self._apply_request_project(
             agent_config,
             request_context,
@@ -383,11 +605,15 @@ class AgentBuilder:
 
         # Compute active modes.
         active_modes: set[str] = set()
-        workspace = getattr(ctx, "workspace", None)
-        if workspace is not None:
-            plugins = getattr(workspace, "plugins", None)
-            if plugins is not None:
-                active_modes = plugins.active_mode_names(ctx)
+        mode_session = self._get_agent_mode_session(ctx)
+        if mode_session is not None:
+            active_modes = set(mode_session.active_mode_names())
+        else:
+            workspace = getattr(ctx, "workspace", None)
+            if workspace is not None:
+                plugins = getattr(workspace, "plugins", None)
+                if plugins is not None:
+                    active_modes = plugins.active_mode_names(ctx)
 
         # Governor (governance policy layer). Built per request against
         # the dirs the tools will actually use, so a session-level
@@ -435,16 +661,44 @@ class AgentBuilder:
                 governor,
             ),
         )
-        (
-            driver_tools,
-            driver_prompt_hints,
-        ) = await self._collect_driver_tools_and_prompts(
+        driver_session = await self._open_driver_session(
             ctx,
             request_context,
         )
-        extra_tools.extend(driver_tools)
         if not hasattr(ctx, "extras") or ctx.extras is None:
             ctx.extras = {}
+        # Publish ownership immediately: list_tools()/prompt_hints() may
+        # fail, and Runtime finalization must still be able to close the
+        # already-opened provider session.
+        ctx.extras["driver_session"] = driver_session
+        if driver_session is None:
+            (
+                driver_tools,
+                driver_prompt_hints,
+            ) = await self._collect_driver_tools_and_prompts(
+                ctx,
+                request_context,
+            )
+        else:
+            from ..drivers.adapters.agentscope_tool import (
+                adapt_driver_definitions,
+            )
+            from .driver_providers import validate_driver_session
+
+            driver_invocation = getattr(ctx, "invocation_scope", None)
+            if driver_invocation is None:
+                raise RuntimeError(
+                    "driver session requires an invocation scope",
+                )
+            driver_provider_id = driver_invocation.selection.driver_provider_id
+            assert driver_provider_id is not None
+            definitions, fragments = validate_driver_session(
+                driver_session,
+                driver_provider_id,
+            )
+            driver_tools = adapt_driver_definitions(list(definitions))
+            driver_prompt_hints = [fragment.content for fragment in fragments]
+        extra_tools.extend(driver_tools)
         ctx.extras["driver_prompt_hints"] = driver_prompt_hints
 
         # Model + formatter (built before the toolkit so the scroll context
@@ -495,27 +749,36 @@ class AgentBuilder:
                 governor,
             )
 
-        memory_manager = self._get_memory_manager(ctx)
+        memory_session = await self._open_memory_session(ctx)
+        ctx.extras["memory_session"] = memory_session
+        invocation = getattr(ctx, "invocation_scope", None)
+        memory_provider_id = (
+            invocation.selection.memory_provider_id
+            if invocation is not None
+            else ""
+        )
+        tool_providers = self._resolve_tool_providers(ctx)
         toolkit = await self.build_toolkit(
             agent_config,
             agent_id=agent_id,
             request_context=request_context,
             active_modes=active_modes,
             effective_skills=effective_skills,
+            tool_providers=tool_providers,
             extra_tools=extra_tools,
             memory_tools=(
-                memory_manager.list_memory_tools()
-                if memory_manager is not None
+                memory_session.list_tools()
+                if memory_session is not None
                 else None
             ),
+            memory_provider_id=memory_provider_id or "",
             governor=governor,
             ctx=ctx,
             workspace_dir=workspace_dir,
         )
 
         # System prompt.
-        sys_prompt = await run_sync_io(
-            self.build_prompt,
+        sys_prompt = await self._build_prompt_from_providers(
             ctx,
             agent_config,
         )
@@ -604,6 +867,8 @@ class AgentBuilder:
                 "env_context": self._build_env_context(ctx, agent_config),
                 "agent_config": agent_config,
                 "driver_prompt_hints": self._get_driver_prompt_hints(ctx),
+                "memory_manager": self._get_memory_session(ctx),
+                "memory_session": self._get_memory_session(ctx),
                 "preloaded_skills": preloaded_skills,
             },
         )
@@ -618,6 +883,47 @@ class AgentBuilder:
         from .prompt_contributors import build_default_prompt_manager
 
         return build_default_prompt_manager().build_sync(prompt_ctx)
+
+    async def _build_prompt_from_providers(
+        self,
+        ctx: Any,
+        agent_config: Any,
+    ) -> str:
+        """Build prompt fragments from the invocation's pinned providers."""
+        providers = self._resolve_prompt_providers(ctx)
+        if providers is None:
+            return await run_sync_io(self.build_prompt, ctx, agent_config)
+
+        from ..kernel.models import PromptFragment
+        from .prompt_providers import WorkspacePromptHost
+
+        invocation = getattr(ctx, "invocation_scope", None)
+        host = WorkspacePromptHost(self, ctx, agent_config)
+        fragments: dict[str, PromptFragment] = {}
+        for provider in providers:
+            provider_id = str(provider.provider_id)
+            raw_fragments = await provider.list_fragments(invocation, host)
+            for fragment in raw_fragments:
+                if not isinstance(fragment, PromptFragment):
+                    raise TypeError(
+                        f"prompt provider '{provider_id}' returned an "
+                        "untyped fragment",
+                    )
+                if not fragment.fragment_id.startswith(f"{provider_id}."):
+                    raise ValueError(
+                        f"prompt fragment '{fragment.fragment_id}' is not "
+                        f"owned by provider '{provider_id}'",
+                    )
+                if fragment.fragment_id in fragments:
+                    raise ValueError(
+                        f"duplicate prompt fragment '{fragment.fragment_id}'",
+                    )
+                fragments[fragment.fragment_id] = fragment
+        ordered = sorted(
+            fragments.values(),
+            key=lambda item: (item.priority, item.fragment_id),
+        )
+        return "\n\n".join(item.content for item in ordered)
 
     def build_model(
         self,
@@ -690,6 +996,64 @@ class AgentBuilder:
         return None
 
     @staticmethod
+    def _resolve_tool_providers(ctx: Any) -> tuple[Any, ...] | None:
+        """Resolve selected providers from the invocation's pinned lease."""
+        extras = getattr(ctx, "extras", None)
+        assembly = (
+            extras.get("runtime_assembly")
+            if isinstance(extras, dict)
+            else None
+        )
+        invocation = getattr(ctx, "invocation_scope", None)
+        if assembly is None or invocation is None:
+            return None
+        providers = []
+        for provider_id in invocation.selection.tool_provider_ids:
+            provider = assembly.require(provider_id, "tool.provider")
+            if getattr(provider, "provider_id", None) != provider_id:
+                raise TypeError(
+                    f"tool provider '{provider_id}' returned an "
+                    "implementation with a mismatched identity",
+                )
+            list_tools = getattr(provider, "list_tools", None)
+            if not callable(list_tools):
+                raise TypeError(
+                    f"tool provider '{provider_id}' does not implement "
+                    "list_tools()",
+                )
+            providers.append(provider)
+        return tuple(providers)
+
+    @staticmethod
+    def _resolve_prompt_providers(ctx: Any) -> tuple[Any, ...] | None:
+        """Resolve prompt providers from the invocation's pinned lease."""
+        extras = getattr(ctx, "extras", None)
+        assembly = (
+            extras.get("runtime_assembly")
+            if isinstance(extras, dict)
+            else None
+        )
+        invocation = getattr(ctx, "invocation_scope", None)
+        if assembly is None or invocation is None:
+            return None
+        providers = []
+        for provider_id in invocation.selection.prompt_provider_ids:
+            provider = assembly.require(provider_id, "prompt.provider")
+            if getattr(provider, "provider_id", None) != provider_id:
+                raise TypeError(
+                    f"prompt provider '{provider_id}' returned an "
+                    "implementation with a mismatched identity",
+                )
+            list_fragments = getattr(provider, "list_fragments", None)
+            if not callable(list_fragments):
+                raise TypeError(
+                    f"prompt provider '{provider_id}' does not implement "
+                    "list_fragments()",
+                )
+            providers.append(provider)
+        return tuple(providers)
+
+    @staticmethod
     def _build_request_context(ctx: Any) -> dict[str, Any]:
         request = getattr(ctx, "request", None)
         rc: dict[str, Any] = {
@@ -737,6 +1101,36 @@ class AgentBuilder:
         )
         if isinstance(_payload_ctx, dict):
             rc.update(_payload_ctx)
+        invocation = getattr(ctx, "invocation_scope", None)
+        if invocation is not None:
+            rc["os_invocation_id"] = str(invocation.invocation_id)
+            # Causal identities are runtime-owned. Request payloads are
+            # untrusted and must not be able to forge an internal chain.
+            rc["os_correlation_id"] = str(
+                invocation.correlation_id or invocation.invocation_id,
+            )
+            rc["os_registry_generation"] = invocation.registry_generation
+            rc["os_agent_factory_id"] = invocation.selection.agent_factory_id
+            rc["os_tool_provider_ids"] = list(
+                invocation.selection.tool_provider_ids,
+            )
+            rc[
+                "os_memory_provider_id"
+            ] = invocation.selection.memory_provider_id
+            if invocation.conversation_id is None:
+                rc.pop("os_conversation_id", None)
+            else:
+                rc["os_conversation_id"] = invocation.conversation_id
+        steering_session = getattr(ctx, "extras", {}).get(
+            "steering_session",
+        )
+        rc.pop("_steering_session", None)
+        if steering_session is not None:
+            rc["_steering_session"] = steering_session
+        interaction_service = getattr(ctx, "extras", {}).get(
+            "interaction_service",
+        )
+        _bind_runtime_interactions(rc, interaction_service)
         mode_state = getattr(ctx, "mode_state", {}) or {}
         mission_state = mode_state.get("mission", {})
         if isinstance(mission_state, dict) and mission_state.get("active"):
@@ -749,6 +1143,29 @@ class AgentBuilder:
                 if isinstance(source_project, str) and source_project:
                     rc["active_mode_project_dir"] = source_project
         return rc
+
+    @staticmethod
+    def _apply_runtime_strategy(
+        agent_config: Any,
+        request_context: dict[str, Any],
+    ) -> Any:
+        """Apply an invocation-only strategy without persisting config."""
+        from .strategy_directives import requested_runtime_mode
+
+        if requested_runtime_mode(request_context) != "coding":
+            return agent_config
+        coding_mode = getattr(agent_config, "coding_mode", None)
+        if coding_mode is None:
+            return agent_config
+        copy_mode = getattr(coding_mode, "model_copy", None)
+        copy_config = getattr(agent_config, "model_copy", None)
+        if not callable(copy_mode) or not callable(copy_config):
+            return agent_config
+        return copy_config(
+            update={
+                "coding_mode": copy_mode(update={"enabled": True}),
+            },
+        )
 
     @staticmethod
     def _stamp_resolved_project(agent_config: Any) -> Any:
@@ -1010,6 +1427,195 @@ class AgentBuilder:
         if workspace is not None:
             return getattr(workspace, "memory_manager", None)
         return None
+
+    @staticmethod
+    def _get_memory_session(ctx: Any) -> Any:
+        extras = getattr(ctx, "extras", None)
+        if isinstance(extras, dict):
+            return extras.get("memory_session")
+        return None
+
+    @staticmethod
+    def _get_agent_mode_session(ctx: Any) -> Any:
+        """Return the invocation-scoped Agent Mode session, if opened."""
+        extras = getattr(ctx, "extras", None)
+        if isinstance(extras, dict):
+            return extras.get("agent_mode_session")
+        return None
+
+    async def _open_memory_session(self, ctx: Any) -> Any:
+        """Open the selected memory provider from the pinned assembly."""
+        extras = getattr(ctx, "extras", None)
+        assembly = (
+            extras.get("runtime_assembly")
+            if isinstance(extras, dict)
+            else None
+        )
+        invocation = getattr(ctx, "invocation_scope", None)
+        if assembly is None or invocation is None:
+            return None
+        provider_id = invocation.selection.memory_provider_id
+        if provider_id is None:
+            return None
+        provider = assembly.require(provider_id, "memory.provider")
+        if getattr(provider, "provider_id", None) != provider_id:
+            raise TypeError(
+                f"memory provider '{provider_id}' returned an "
+                "implementation with a mismatched identity",
+            )
+        open_session = getattr(provider, "open", None)
+        if not callable(open_session):
+            raise TypeError(
+                f"memory provider '{provider_id}' does not implement open()",
+            )
+        from ..kernel.invocation import DEFAULT_MEMORY_PROVIDER_ID
+        from .memory_providers import ProviderMemoryHost, WorkspaceMemoryHost
+        from .provider_config import validate_provider_config
+
+        workspace = getattr(ctx, "workspace", None)
+        profile = getattr(workspace, "config", None)
+        capability_configs = getattr(profile, "capability_configs", {}) or {}
+        provider_config = dict(capability_configs.get(provider_id, {}) or {})
+        descriptor = assembly.descriptor(provider_id)
+        provider_config = validate_provider_config(
+            provider_id,
+            provider_config,
+            descriptor.config_schema,
+        )
+        if provider_id == DEFAULT_MEMORY_PROVIDER_ID:
+            host = WorkspaceMemoryHost(
+                self._get_memory_manager(ctx),
+                provider_id=provider_id,
+                agent_id=invocation.agent_id,
+                conversation_id=invocation.conversation_id,
+                workspace_dir=invocation.workspace_dir,
+                provider_config=provider_config,
+            )
+        else:
+            host = ProviderMemoryHost(
+                provider_id=provider_id,
+                agent_id=invocation.agent_id,
+                conversation_id=invocation.conversation_id,
+                workspace_dir=invocation.workspace_dir,
+                provider_config=provider_config,
+            )
+        session = await open_session(invocation, host)
+        try:
+            for method_name in ("get_prompt", "list_tools", "close"):
+                if not callable(getattr(session, method_name, None)):
+                    raise TypeError(
+                        f"memory provider '{provider_id}' returned a "
+                        f"session without {method_name}()",
+                    )
+        except BaseException:
+            await close_memory_session(session)
+            raise
+        return session
+
+    async def _open_driver_session(
+        self,
+        ctx: Any,
+        request_context: dict[str, Any],
+    ) -> Any:
+        """Open the selected Driver Provider from the pinned assembly."""
+        extras = getattr(ctx, "extras", None)
+        assembly = (
+            extras.get("runtime_assembly")
+            if isinstance(extras, dict)
+            else None
+        )
+        invocation = getattr(ctx, "invocation_scope", None)
+        if assembly is None or invocation is None:
+            return None
+        provider_id = invocation.selection.driver_provider_id
+        if provider_id is None:
+            return None
+        provider = assembly.require(provider_id, "driver.provider")
+        if getattr(provider, "provider_id", None) != provider_id:
+            raise TypeError(
+                f"driver provider '{provider_id}' returned an "
+                "implementation with a mismatched identity",
+            )
+        open_session = getattr(provider, "open", None)
+        if not callable(open_session):
+            raise TypeError(
+                f"driver provider '{provider_id}' does not implement open()",
+            )
+        from .driver_providers import (
+            ProviderDriverHost,
+            WorkspaceDriverHost,
+        )
+        from .provider_credentials import provider_credential_handle
+        from .provider_config import validate_provider_config
+        from ..kernel.invocation import DEFAULT_DRIVER_PROVIDER_ID
+
+        workspace = getattr(ctx, "workspace", None)
+        manager = (
+            getattr(workspace, "driver_manager", None)
+            if workspace is not None
+            else None
+        )
+        profile = getattr(workspace, "config", None)
+        capability_configs = getattr(profile, "capability_configs", {}) or {}
+        provider_config = dict(capability_configs.get(provider_id, {}) or {})
+        descriptor = assembly.descriptor(provider_id)
+        provider_config = validate_provider_config(
+            provider_id,
+            provider_config,
+            descriptor.config_schema,
+        )
+        capability_credential_refs = (
+            getattr(
+                profile,
+                "capability_credential_refs",
+                {},
+            )
+            or {}
+        )
+        credential_refs = dict(
+            capability_credential_refs.get(provider_id, {}) or {},
+        )
+        if provider_id == DEFAULT_DRIVER_PROVIDER_ID:
+            host = WorkspaceDriverHost(
+                manager,
+                request_context,
+                provider_id,
+                provider_config,
+                credential_refs,
+            )
+        else:
+            credentials = {}
+            for alias in credential_refs:
+                handle = provider_credential_handle(
+                    manager,
+                    credential_refs,
+                    provider_id,
+                    alias,
+                )
+                if handle is not None:
+                    credentials[alias] = handle
+            host = ProviderDriverHost(
+                provider_id=provider_id,
+                provider_config=provider_config,
+                credentials=credentials,
+                approval_context=request_context,
+            )
+        session = await open_session(invocation, host)
+        try:
+            for method_name in (
+                "list_tools",
+                "prompt_fragments",
+                "close",
+            ):
+                if not callable(getattr(session, method_name, None)):
+                    raise TypeError(
+                        f"driver provider '{provider_id}' returned a "
+                        f"session without {method_name}()",
+                    )
+        except BaseException:
+            await close_driver_session(session)
+            raise
+        return session
 
     @staticmethod
     def _build_context_config(agent_config: Any) -> Any:
@@ -1336,6 +1942,11 @@ class AgentBuilder:
         """
         mws: list[Any] = []
 
+        if getattr(ctx, "extras", {}).get("steering_session") is not None:
+            from .interaction_middleware import RuntimeInteractionMiddleware
+
+            mws.append(RuntimeInteractionMiddleware())
+
         pruning_middleware = None
         try:
             pruning_middleware = (
@@ -1374,11 +1985,11 @@ class AgentBuilder:
                     ),
                 )
 
-        memory_manager = AgentBuilder._get_memory_manager(ctx)
-        if memory_manager is not None:
+        memory_session = AgentBuilder._get_memory_session(ctx)
+        if memory_session is not None:
             try:
                 build_middlewares = getattr(
-                    memory_manager,
+                    memory_session,
                     "build_middlewares",
                     None,
                 )

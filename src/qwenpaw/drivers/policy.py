@@ -64,7 +64,7 @@ class DriverInvocationContext:
     target: PolicyTarget = field(default_factory=PolicyTarget)
     subjects: tuple[str, ...] = field(default_factory=tuple)
     workspace_id: str = ""
-    request_context: dict[str, str] = field(default_factory=dict)
+    request_context: dict[str, Any] = field(default_factory=dict)
     now: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc),
     )

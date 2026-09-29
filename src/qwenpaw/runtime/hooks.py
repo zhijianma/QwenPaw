@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from agentscope.agent import Agent
     from agentscope.message import Msg
 
+    from ..kernel.invocation import InvocationScope
     from ..schemas import AgentRequest
 
 logger = logging.getLogger(__name__)
@@ -102,6 +103,7 @@ class HookContext:
     session_state: dict | None = None
     agent: "Agent | None" = None
     error: BaseException | None = None
+    invocation_scope: "InvocationScope | None" = None
 
     # ── Context injections (改动6B) ──
     context_injections: list = field(default_factory=list)
@@ -289,6 +291,22 @@ class HookRegistry:
         ordered = _topo_sort(self._by_phase[phase])
         self._sorted_cache[phase] = ordered
         return ordered
+
+    def snapshot(self) -> "HookRegistry":
+        """Return a fixed shallow copy for one runtime invocation."""
+        snapshot = HookRegistry()
+        snapshot._by_phase = defaultdict(  # pylint: disable=protected-access
+            list,
+            {phase: list(hooks) for phase, hooks in self._by_phase.items()},
+        )
+        return snapshot
+
+    def hook_entries(self) -> tuple[HookBase, ...]:
+        """Return hooks in phase and topological execution order."""
+        entries: list[HookBase] = []
+        for phase in Phase:
+            entries.extend(self.hooks_for(phase))
+        return tuple(entries)
 
     async def run(self, phase: Phase, ctx: HookContext) -> HookResult:
         """Execute all hooks for ``phase`` in topological order.

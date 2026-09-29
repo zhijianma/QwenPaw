@@ -8,7 +8,13 @@
  *   const result = await task.result;
  */
 import { hostFetch } from "../hostSdk/fetch";
-import type { PawTaskEventHandler, PawTaskHandle } from "./types";
+import type {
+  PawTaskEventHandler,
+  PawTaskHandle,
+  PawTaskInteractionAnswer,
+  PawTaskInteractionRequest,
+  PawTaskOptions,
+} from "./types";
 import { normalizeAppId, normalizeAppRelativePath } from "./scope";
 
 /**
@@ -20,8 +26,11 @@ function createPawTaskWithScope(
   path: string,
   params?: unknown,
   strictScope = false,
+  options: PawTaskOptions = {},
 ): PawTaskHandle {
   const listeners = new Map<string, Set<PawTaskEventHandler>>();
+  const chatId =
+    options.chatId ?? window.QwenPaw.host?.getCurrentChatId?.() ?? undefined;
   let taskId = "";
   let abortController: AbortController | null = new AbortController();
 
@@ -46,6 +55,38 @@ function createPawTaskWithScope(
     }
   }
 
+  async function respond(
+    request: PawTaskInteractionRequest,
+    answer: PawTaskInteractionAnswer,
+  ): Promise<unknown> {
+    const response = await hostFetch(
+      `/chats/${encodeURIComponent(request.chat_id)}` +
+        `/interactions/${encodeURIComponent(request.interaction_id)}` +
+        "/response",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Agent-Id": request.agent_id,
+        },
+        body: JSON.stringify({
+          idempotency_key: answer.idempotencyKey ?? crypto.randomUUID(),
+          expected_revision: request.revision,
+          selected_option_ids: [answer.optionId],
+          text: answer.text ?? "",
+          values: answer.values ?? {},
+        }),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Interaction response failed: ${response.status} ` +
+          response.statusText,
+      );
+    }
+    return response.json();
+  }
+
   // Start the task asynchronously
   (async () => {
     try {
@@ -59,7 +100,10 @@ function createPawTaskWithScope(
       // Use unified route: /{appId}/... -> /api/{appId}/... via getApiUrl
       const createRes = await hostFetch(`/${normalizedAppId}${normalized}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(chatId ? { "X-QwenPaw-Chat-Id": chatId } : {}),
+        },
         body: params != null ? JSON.stringify(params) : undefined,
         signal: abortController?.signal,
       });
@@ -120,6 +164,8 @@ function createPawTaskWithScope(
                 emit("error", eventData);
                 rejectResult(err);
                 return;
+              } else if (eventType === "pawapp:confirm_request") {
+                emit(eventType, eventData);
               } else {
                 emit(eventType, eventData.data ?? eventData);
               }
@@ -154,7 +200,15 @@ function createPawTaskWithScope(
       listeners.get(event)?.delete(handler);
       return handle;
     },
+    respond,
     cancel() {
+      if (taskId) {
+        const normalizedAppId = strictScope ? normalizeAppId(appId) : appId;
+        void hostFetch(
+          `/${normalizedAppId}/task/${encodeURIComponent(taskId)}/cancel`,
+          { method: "POST" },
+        ).catch(() => undefined);
+      }
       abortController?.abort();
       abortController = null;
     },
@@ -174,8 +228,9 @@ export function createPawTask(
   appId: string,
   path: string,
   params?: unknown,
+  options?: PawTaskOptions,
 ): PawTaskHandle {
-  return createPawTaskWithScope(appId, path, params, false);
+  return createPawTaskWithScope(appId, path, params, false, options);
 }
 
 /** @internal Strict task factory used by permanent app-scoped handles. */
@@ -183,6 +238,7 @@ export function createScopedPawTask(
   appId: string,
   path: string,
   params?: unknown,
+  options?: PawTaskOptions,
 ): PawTaskHandle {
-  return createPawTaskWithScope(appId, path, params, true);
+  return createPawTaskWithScope(appId, path, params, true, options);
 }

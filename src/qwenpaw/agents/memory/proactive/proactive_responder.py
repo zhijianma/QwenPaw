@@ -3,6 +3,7 @@
 
 import asyncio
 import logging
+import os
 import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional, List, Dict
@@ -16,6 +17,16 @@ from agentscope.state import AgentState
 from agentscope.tool import FunctionTool, Toolkit
 
 from ....config.config import load_agent_config
+from ....editions.resolver import EDITION_ENV
+from ....kernel.models import Proposal, RiskLevel
+from ....runtime.assembly import capability_registry_for
+from ....tasks.bootstrap import task_service_for_workspace
+from ....tasks.sensors import SensorContributionHost
+from ....tasks.system_contributions import (
+    SYSTEM_CAPABILITY_BUNDLE,
+    SYSTEM_PROACTIVE_MEMORY_SENSOR_ID,
+    system_contribution_factory,
+)
 from ....utils.runtime_api import async_api_client
 from ...tools.agent_management import resolve_agent_api_base_url
 from ...tools import (
@@ -45,10 +56,72 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _proactive_permission_mode() -> PermissionMode:
+    """Disable unattended permission bypass in the Lite edition."""
+    if os.environ.get(EDITION_ENV, "").strip().lower() == "lite":
+        return PermissionMode.DEFAULT
+    return PermissionMode.BYPASS
+
+
+def _is_lite_edition() -> bool:
+    return os.environ.get(EDITION_ENV, "").strip().lower() == "lite"
+
+
+def _proposals_from_tasks(tasks: List[ProactiveTask]) -> List[Proposal]:
+    """Convert cognition output into non-executable domain proposals."""
+    return [
+        Proposal(
+            source=SYSTEM_PROACTIVE_MEMORY_SENSOR_ID,
+            objective=task.query,
+            rationale_summary=task.reason or task.task,
+            risk=RiskLevel.MEDIUM,
+            metadata={"priority": task.priority},
+        )
+        for task in tasks
+    ]
+
+
+async def _persist_lite_proposals(
+    workspace: "Workspace",
+    proposals: List[Proposal],
+) -> list[str]:
+    """Persist proactive proposals behind a strict approval boundary."""
+    registry = capability_registry_for(workspace)
+
+    async def resolve_workspace(agent_id: str) -> "Workspace":
+        if agent_id != workspace.agent_id:
+            raise LookupError(agent_id)
+        return workspace
+
+    snapshot = await registry.ensure_bundle(
+        SYSTEM_CAPABILITY_BUNDLE,
+        system_contribution_factory(resolve_workspace),
+    )
+    service = task_service_for_workspace(
+        workspace,
+        registry_generation=snapshot.generation,
+    )
+    tasks = await SensorContributionHost(service, registry).poll(
+        SYSTEM_PROACTIVE_MEMORY_SENSOR_ID,
+        agent_id=workspace.agent_id,
+        trigger_payload={
+            "proposals": [
+                proposal.model_copy(
+                    update={"source": SYSTEM_PROACTIVE_MEMORY_SENSOR_ID},
+                ).model_dump(mode="json")
+                for proposal in proposals
+            ],
+        },
+    )
+    return [str(task.task_id) for task in tasks]
+
+
 async def generate_proactive_response(
     workspace: "Workspace",
 ) -> Optional[Msg]:
     """Main function to generate proactive response based on memory."""
+    # The early returns preserve interruption checks around each async phase.
+    # pylint: disable=too-many-return-statements
     from ....app.agent_context import set_current_agent_id
     from ....config.context import set_current_workspace_dir
 
@@ -74,6 +147,29 @@ async def generate_proactive_response(
         return None
 
     tasks = await _extract_tasks_from_memory(memory_context_str, agent)
+
+    if _is_lite_edition():
+        proposals = _proposals_from_tasks(tasks[:3])
+        if not proposals:
+            return None
+        task_ids = await _persist_lite_proposals(workspace, proposals)
+        summary = "\n".join(
+            f"- {proposal.objective} (task {task_id})"
+            for proposal, task_id in zip(proposals, task_ids)
+        )
+        return Msg(
+            name="ProactiveAssistant",
+            role="assistant",
+            content=[
+                TextBlock(
+                    type="text",
+                    text=(
+                        "[PROACTIVE] Proposed tasks require approval before "
+                        f"execution:\n{summary}"
+                    ),
+                ),
+            ],
+        )
 
     results = []
     for task in tasks[:3]:
@@ -127,17 +223,19 @@ async def _initialize_single_proactive_agent(
         agent_config=agent_config,
     )
 
-    tools = [
-        FunctionTool(web_search),
-        FunctionTool(web_fetch),
-        FunctionTool(read_file),
-        FunctionTool(execute_shell_command),
-        FunctionTool(browser),
-    ]
+    tools = []
+    if not _is_lite_edition():
+        tools = [
+            FunctionTool(web_search),
+            FunctionTool(web_fetch),
+            FunctionTool(read_file),
+            FunctionTool(execute_shell_command),
+            FunctionTool(browser),
+        ]
 
     from ...prompt import get_active_model_supports_multimodal
 
-    if get_active_model_supports_multimodal():
+    if tools and get_active_model_supports_multimodal():
         tools.append(FunctionTool(desktop_screenshot))
 
     toolkit = Toolkit(tools=tools)
@@ -152,7 +250,9 @@ async def _initialize_single_proactive_agent(
             innermost.formatter = formatter
 
     state = AgentState(
-        permission_context=PermissionContext(mode=PermissionMode.BYPASS),
+        permission_context=PermissionContext(
+            mode=_proactive_permission_mode(),
+        ),
     )
     agent = Agent(
         name="ProactiveAssistant",

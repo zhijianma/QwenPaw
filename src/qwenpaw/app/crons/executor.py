@@ -14,6 +14,7 @@ from ..inbox_trace_store import (
     finalize_trace,
     read_session_messages,
 )
+from .conversation_binding import CronConversationBinder
 from .models import CronJobSpec
 from ...security.tool_guard.execution_level import ToolExecutionLevel
 from ...schemas import RunStatus
@@ -51,6 +52,17 @@ def _cron_session_id(
     target = _safe_session_component(target_session_id, fallback="session")
     job = _safe_session_component(job_id, fallback="job")
     return f"cron:{target}:job:{job}"
+
+
+def cron_session_id_for_job(job: CronJobSpec) -> str:
+    """Return the legacy state handle retained by the host adapter."""
+    target_session_id = job.dispatch.target.session_id
+    if job.runtime.share_session:
+        return target_session_id or f"cron:{job.id}"
+    return _cron_session_id(
+        target_session_id=target_session_id,
+        job_id=job.id,
+    )
 
 
 def _bounded_trace_meta(value: str | None) -> str:
@@ -195,36 +207,25 @@ class CronExecutor:
 
         # Determine session_id based on share_session
         share_session = job.runtime.share_session
-        if share_session:
-            req["session_id"] = target_session_id or f"cron:{job.id}"
-        else:
+        req["session_id"] = cron_session_id_for_job(job)
+        if not share_session:
             # Keep one dedicated visible chat per job. Cron hooks isolate the
             # model context for each execution while retaining run history.
-            req["session_id"] = _cron_session_id(
-                target_session_id=target_session_id,
-                job_id=job.id,
-            )
             req["session_source"] = "cron"
         request_context["cron_run_session_id"] = req["session_id"]
 
-        # Register a ChatSpec so the session appears in the frontend list.
-        chat_manager = getattr(self._workspace, "chat_manager", None)
-        _chat_spec = None
-        if chat_manager is not None:
-            try:
-                _chat_spec = await chat_manager.get_or_create_chat(
-                    session_id=req["session_id"],
-                    user_id=req.get("user_id", "cron"),
-                    channel=target_channel,
-                    name=job.name or f"Cron: {job.id}",
-                    source="cron",
-                )
-            except Exception:
-                logger.debug(
-                    "cron: failed to register chat spec for job %s",
-                    job.id,
-                    exc_info=True,
-                )
+        # The compatibility path tolerates an installation without Chat
+        # services. The Scheduler migration uses this Binder in strict mode.
+        conversation_binder = CronConversationBinder(self._workspace)
+        binding = await conversation_binder.bind(
+            job,
+            session_id=req["session_id"],
+            required=False,
+        )
+        if binding is not None:
+            request_context["os_conversation_id"] = (
+                binding.conversation_id
+            )
 
         delivery_error: str | None = None
         baseline_messages = await read_session_messages(
@@ -339,6 +340,9 @@ class CronExecutor:
             return {
                 "task_type": "agent",
                 "run_id": run_id,
+                "conversation_id": request_context.get(
+                    "os_conversation_id",
+                ),
                 "session_id": req["session_id"],
                 "delivery_status": delivery_status,
                 "delivery_error": delivery_error,
@@ -398,12 +402,4 @@ class CronExecutor:
             )
             raise
         finally:
-            if _chat_spec is not None and chat_manager is not None:
-                try:
-                    await chat_manager.touch_chat(_chat_spec.id)
-                except Exception:
-                    logger.debug(
-                        "cron: failed to touch chat for job %s",
-                        job.id,
-                        exc_info=True,
-                    )
+            await conversation_binder.touch(binding, required=False)

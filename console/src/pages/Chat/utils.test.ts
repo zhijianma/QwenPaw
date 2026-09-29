@@ -9,6 +9,7 @@ import {
   getActiveSenderTextarea,
   getSenderTextareaFromTarget,
   clearSubmittedSenderInput,
+  resolveForkSourceMessageId,
 } from "./utils";
 import type { CopyableResponse } from "./utils";
 
@@ -141,6 +142,38 @@ describe("extractCopyableText", () => {
     };
 
     expect(extractCopyableText(response)).toBe("");
+  });
+});
+
+describe("resolveForkSourceMessageId", () => {
+  it("returns the last persisted source message in a completed response", () => {
+    expect(
+      resolveForkSourceMessageId({
+        status: "completed",
+        output: [
+          { source_message_id: "msg-reasoning" },
+          { source_message_id: "msg-answer" },
+        ],
+      }),
+    ).toBe("msg-answer");
+  });
+
+  it("does not treat transient render ids as fork anchors", () => {
+    expect(
+      resolveForkSourceMessageId({
+        status: "completed",
+        output: [{}],
+      }),
+    ).toBeNull();
+  });
+
+  it("hides the action until the response is complete", () => {
+    expect(
+      resolveForkSourceMessageId({
+        status: "in_progress",
+        output: [{ source_message_id: "msg-answer" }],
+      }),
+    ).toBeNull();
   });
 });
 

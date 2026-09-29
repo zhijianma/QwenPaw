@@ -405,7 +405,10 @@ async def lifespan(  # pylint: disable=too-many-statements,too-many-branches
             # Center, hidden from the sidebar.
             plugin_dirs = [get_plugins_dir()]
 
-            plugin_loader = PluginLoader(plugin_dirs)
+            plugin_loader = PluginLoader(
+                plugin_dirs,
+                capability_registry=workspace_registry.capability_registry,
+            )
 
             plugin_loader.registry.set_plugin_http_app(app)
 
@@ -572,7 +575,10 @@ async def lifespan(  # pylint: disable=too-many-statements,too-many-branches
                 result = await asyncio.to_thread(
                     run_pool_automation_pipeline,
                 )
-                await post_pool_automation_inbox(result)
+                await post_pool_automation_inbox(
+                    result,
+                    workspace=default_agent,
+                )
             except Exception:
                 logger.warning(
                     "Skill Pool automation skipped on startup",

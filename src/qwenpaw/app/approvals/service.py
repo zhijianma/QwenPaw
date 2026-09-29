@@ -15,6 +15,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from ...constant import TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS
@@ -95,6 +96,11 @@ class PendingApproval:
     # treated as EXACT by the governance consumer. Only meaningful when the
     # decision is APPROVED.
     scope: ApprovalScope | None = None
+    resolution_hook: Callable[
+        [ApprovalDecision, ApprovalScope | None, ApprovalActor | None],
+        Awaitable[None],
+    ] | None = None
+    interaction_id: uuid.UUID | None = None
 
 
 def _is_spawn_child_approval(pending: PendingApproval) -> bool:
@@ -192,6 +198,11 @@ class ApprovalService:
         timeout_seconds: float = TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS,
         extra: dict[str, Any] | None = None,
         identity_policy: ApprovalIdentityPolicy = ApprovalIdentityPolicy.AGENT,
+        resolution_hook: Callable[
+            [ApprovalDecision, ApprovalScope | None, ApprovalActor | None],
+            Awaitable[None],
+        ]
+        | None = None,
     ) -> PendingApproval:
         """Create a pending approval record and return it."""
         from ...security.tool_guard.approval import (
@@ -219,6 +230,7 @@ class ApprovalService:
             severity=result.max_severity.value,
             extra=dict(extra or {}),
             identity_policy=identity_policy,
+            resolution_hook=resolution_hook,
         )
 
         async with self._lock:
@@ -359,6 +371,32 @@ class ApprovalService:
                     "approval caller does not match the original requester",
                 )
 
+            if pending.status != "pending":
+                return None
+
+            resolution_hook = pending.resolution_hook
+
+            # Reserve this request before crossing the durable hook boundary.
+            # Without this transition, two approval surfaces can both commit
+            # a decision before either one removes the in-memory projection.
+            pending.status = "resolving"
+
+        try:
+            if resolution_hook is not None:
+                await resolution_hook(decision, scope, actor)
+        except BaseException:
+            async with self._lock:
+                current = self._pending.get(request_id)
+                if current is pending and pending.status == "resolving":
+                    pending.status = "pending"
+            raise
+
+        async with self._lock:
+            current = self._pending.get(request_id)
+            if current is None:
+                return pending
+            if current is not pending:
+                return None
             self._pending.pop(request_id)
             pending.status = decision.value
             pending.resolved_at = time.time()
@@ -376,6 +414,49 @@ class ApprovalService:
             pending.tool_name,
         )
 
+        return pending
+
+    async def resolve_from_interaction(
+        self,
+        request_id: str,
+        decision: ApprovalDecision,
+        *,
+        terminal_status: str,
+        scope: ApprovalScope | None = None,
+        downstream_hook: Callable[
+            [ApprovalDecision, ApprovalScope | None, ApprovalActor | None],
+            Awaitable[None],
+        ]
+        | None = None,
+    ) -> PendingApproval | None:
+        """Close a legacy waiter after the unified Interaction is terminal."""
+        async with self._lock:
+            pending = self._pending.get(request_id)
+            if pending is None or pending.status != "pending":
+                return None
+            pending.status = "resolving"
+
+        if downstream_hook is not None:
+            try:
+                await downstream_hook(decision, scope, None)
+            except Exception:  # pylint: disable=broad-except
+                logger.warning(
+                    "Approval downstream cancellation failed: request_id=%s",
+                    request_id[:8],
+                    exc_info=True,
+                )
+
+        async with self._lock:
+            current = self._pending.get(request_id)
+            if current is not pending:
+                return None
+            self._pending.pop(request_id)
+            pending.status = terminal_status
+            pending.resolved_at = time.time()
+            pending.scope = scope
+
+        if not pending.future.done():
+            pending.future.set_result(decision)
         return pending
 
     @staticmethod
@@ -505,13 +586,13 @@ class ApprovalService:
 
     async def wait_for_approval(
         self,
-        request_id: str,
+        request: str | PendingApproval,
         timeout_seconds: float,
     ) -> ApprovalDecision:
         """Block and wait for approval decision with timeout.
 
         Args:
-            request_id: Approval request ID
+            request: Approval request ID or the already-created request
             timeout_seconds: Maximum wait time in seconds
 
         Returns:
@@ -520,11 +601,15 @@ class ApprovalService:
         Raises:
             ValueError: If request_id not found
         """
-        async with self._lock:
-            pending = self._pending.get(request_id)
+        if isinstance(request, PendingApproval):
+            pending = request
+        else:
+            async with self._lock:
+                pending = self._pending.get(request)
 
         if pending is None:
-            raise ValueError(f"Approval request {request_id} not found")
+            raise ValueError(f"Approval request {request} not found")
+        request_id = pending.request_id
 
         try:
             decision = await asyncio.wait_for(
@@ -534,6 +619,17 @@ class ApprovalService:
         except asyncio.TimeoutError:
             decision = ApprovalDecision.TIMEOUT
             await self.resolve_request(request_id, decision)
+        except asyncio.CancelledError:
+            # Cancellation must cross the same durable resolution hook as a
+            # human decision. Otherwise a stopped invocation leaves an
+            # orphaned Task approval while its in-memory waiter disappears.
+            await asyncio.shield(
+                self.resolve_request(
+                    request_id,
+                    ApprovalDecision.DENIED,
+                ),
+            )
+            raise
 
         return decision
 
@@ -551,8 +647,6 @@ class ApprovalService:
 
         Returns the number of records cancelled.
         """
-        now = time.time()
-        cancelled = 0
         async with self._lock:
             to_cancel = [
                 k
@@ -562,12 +656,14 @@ class ApprovalService:
                 and isinstance(p.extra.get("tool_call"), dict)
                 and p.extra["tool_call"].get("id") == tool_call_id
             ]
-            for k in to_cancel:
-                pending = self._pending.pop(k)
-                if not pending.future.done():
-                    pending.future.set_result(ApprovalDecision.TIMEOUT)
+        cancelled = 0
+        for request_id in to_cancel:
+            pending = await self.resolve_request(
+                request_id,
+                ApprovalDecision.TIMEOUT,
+            )
+            if pending is not None:
                 pending.status = "superseded"
-                pending.resolved_at = now
                 cancelled += 1
         if cancelled:
             logger.info(
@@ -595,8 +691,6 @@ class ApprovalService:
         Returns:
             Number of approvals cancelled
         """
-        now = time.time()
-        cancelled = 0
         async with self._lock:
             to_cancel = [
                 k
@@ -604,12 +698,14 @@ class ApprovalService:
                 if p.root_session_id == root_session_id
                 and p.status == "pending"
             ]
-            for k in to_cancel:
-                pending = self._pending.pop(k)
-                if not pending.future.done():
-                    pending.future.set_result(ApprovalDecision.DENIED)
+        cancelled = 0
+        for request_id in to_cancel:
+            pending = await self.resolve_request(
+                request_id,
+                ApprovalDecision.DENIED,
+            )
+            if pending is not None:
                 pending.status = "cancelled"
-                pending.resolved_at = now
                 cancelled += 1
         if cancelled:
             logger.info(
@@ -635,6 +731,7 @@ class ApprovalService:
             k
             for k, v in self._pending.items()
             if now - v.created_at > _GC_PENDING_MAX_AGE_SECONDS
+            and v.resolution_hook is None
         ]
         for k in expired:
             pending = self._pending.pop(k)
@@ -647,7 +744,11 @@ class ApprovalService:
         if overflow <= 0:
             return
         ordered = sorted(
-            self._pending.items(),
+            (
+                item
+                for item in self._pending.items()
+                if item[1].resolution_hook is None
+            ),
             key=lambda item: item[1].created_at,
         )
         for key, pending in ordered[:overflow]:

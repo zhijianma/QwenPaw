@@ -9,9 +9,13 @@ from ...drivers.errors import (
     DriverPermissionDeniedError,
 )
 from ...drivers.policy import DriverInvocationContext
+from ...kernel.models import ApprovalDisplay, ApprovalSource
 from ...security.tool_guard.approval import ApprovalDecision
 
 from .models import ApprovalRequestSummary
+from .interaction_bridge import attach_pending_to_interaction
+from .task_bridge import attach_pending_to_durable_task
+from .timeouts import approval_timeout_seconds
 
 
 class QwenPawDriverApprovalGate:
@@ -25,6 +29,10 @@ class QwenPawDriverApprovalGate:
         # the console or command approval endpoint resolves the pending
         # request.
         ctx = context.request_context
+        timeout_seconds = approval_timeout_seconds(
+            ctx,
+            default=TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS,
+        )
         session_id = str(ctx.get("session_id") or "")
         driver_label = f"driver:{context.protocol}:{context.driver_name}"
         driver_ref = f"{context.protocol}:{context.driver_name}"
@@ -77,7 +85,7 @@ class QwenPawDriverApprovalGate:
                 findings_count=1,
                 result_summary=result_summary,
             ),
-            timeout_seconds=TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS,
+            timeout_seconds=timeout_seconds,
             extra={
                 "display": {
                     "tool_name": display_tool_name,
@@ -107,9 +115,52 @@ class QwenPawDriverApprovalGate:
                 ),
             },
         )
+        bridge_ready = await attach_pending_to_durable_task(
+            ctx,
+            pending,
+            svc,
+            agent_id=str(ctx.get("agent_id") or "unknown"),
+            tool_name=display_tool_name,
+            severity="medium",
+            input_data=dict(context.extras),
+            source=ApprovalSource.DRIVER,
+            action=f"driver.{context.operation}",
+            policy="driver_policy",
+            display=ApprovalDisplay(
+                title=f"Approve {display_tool_name}",
+                summary=result_summary,
+                target=display_tool_name,
+                provider=display_tool_source,
+            ),
+        )
+        if not bridge_ready:
+            raise DriverPermissionDeniedError(
+                context.driver_name,
+                context.subject,
+                context.operation,
+                reason="Driver approval could not be persisted.",
+            )
+        interaction_ready = await attach_pending_to_interaction(
+            ctx,
+            pending,
+            svc,
+            source="driver_policy",
+            input_data=dict(context.extras),
+        )
+        if not interaction_ready:
+            await svc.resolve_request(
+                pending.request_id,
+                ApprovalDecision.DENIED,
+            )
+            raise DriverPermissionDeniedError(
+                context.driver_name,
+                context.subject,
+                context.operation,
+                reason="Driver approval could not be persisted.",
+            )
         decision = await svc.wait_for_approval(
-            pending.request_id,
-            TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS,
+            pending,
+            timeout_seconds,
         )
         if decision == ApprovalDecision.APPROVED:
             return

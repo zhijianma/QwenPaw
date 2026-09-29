@@ -192,6 +192,39 @@ class TestWriteToolConfig:
 
 
 class TestRegisterPromptSection:
+    def test_records_deduplicated_contribution_migration(self):
+        diagnostics = []
+        api = PluginApi(
+            "test-plugin",
+            {},
+            migration_diagnostics=diagnostics,
+        )
+        fake_registry = MagicMock()
+        api.set_registry(fake_registry)
+
+        for _ in range(2):
+            api.register_prompt_section(
+                name="my_section",
+                after="workspace",
+                provider=lambda agent: "text",
+            )
+
+        assert len(diagnostics) == 1
+        diagnostic = diagnostics[0]
+        assert diagnostic.api_name == "register_prompt_section"
+        assert diagnostic.target_slot == "prompt.provider"
+        assert diagnostic.manifest_fragment == {
+            "schema_version": "qwenpaw.plugin.v2",
+            "contributions": [
+                {
+                    "id": "replace-me",
+                    "slot": "prompt.provider",
+                    "entrypoint": "<module>:<factory>",
+                },
+            ],
+        }
+        assert api.migration_diagnostics == (diagnostic,)
+
     def test_without_registry_does_nothing(self):
         api = PluginApi("test-plugin", {})
         api.set_registry(None)

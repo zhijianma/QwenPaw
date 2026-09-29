@@ -229,7 +229,8 @@ class AgentConfigWatcher:
         logger.info(
             f"AgentConfigWatcher ({self._agent_id}): "
             f"config changed, triggering graceful reload "
-            f"(channels: {old_channels_hash} -> {new_channels_hash}, "
+            f"(path={self._config_path}, "
+            f"channels: {old_channels_hash} -> {new_channels_hash}, "
             f"heartbeat: {old_heartbeat_hash} -> {new_heartbeat_hash})",
         )
         try:

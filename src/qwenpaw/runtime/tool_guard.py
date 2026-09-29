@@ -7,6 +7,12 @@ import logging
 import uuid
 from typing import Any
 
+from ..app.approvals.task_bridge import attach_pending_to_durable_task
+from ..app.approvals.interaction_bridge import (
+    attach_pending_to_interaction,
+)
+from ..kernel.models import ApprovalDisplay, ApprovalSource
+
 logger = logging.getLogger(__name__)
 
 
@@ -59,7 +65,7 @@ def _guarded_tool_init(
     func: Any,
     *,
     agent_id: str | None = None,
-    request_context: dict[str, str] | None = None,
+    request_context: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> None:
     from agentscope.tool import FunctionTool
@@ -322,7 +328,7 @@ async def _ask_user_approval(
     tool_name: str,
     input_data: dict[str, Any],
     guard_result: Any,
-    request_context: dict[str, str] | None = None,
+    request_context: dict[str, Any] | None = None,
 ) -> Any:
     """Create a ``PendingApproval`` and block on its Future.
 
@@ -338,6 +344,7 @@ async def _ask_user_approval(
     )
 
     from ..app.approvals import get_approval_service
+    from ..app.approvals.timeouts import approval_timeout_seconds
     from ..constant import TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS
     from ..security.tool_guard.approval import (
         ApprovalDecision,
@@ -345,6 +352,10 @@ async def _ask_user_approval(
     )
 
     ctx = request_context or {}
+    timeout_seconds = approval_timeout_seconds(
+        ctx,
+        default=TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS,
+    )
     session_id = str(ctx.get("session_id") or "")
     user_id = str(ctx.get("user_id") or "")
     channel = str(ctx.get("channel") or "")
@@ -368,7 +379,7 @@ async def _ask_user_approval(
         agent_id=agent_id or "unknown",
         tool_name=tool_name,
         result=guard_result,
-        timeout_seconds=TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS,
+        timeout_seconds=timeout_seconds,
         extra={
             "tool_call": {
                 "id": tool_call_id,
@@ -383,6 +394,50 @@ async def _ask_user_approval(
         },
     )
 
+    bridge_ready = await attach_pending_to_durable_task(
+        ctx,
+        pending,
+        svc,
+        agent_id=agent_id or "unknown",
+        tool_name=tool_name,
+        severity=guard_result.max_severity.value,
+        input_data=dict(input_data or {}),
+        source=ApprovalSource.TOOL,
+        action="tool.execute",
+        policy="tool_guard",
+        display=ApprovalDisplay(
+            title=f"Approve {tool_name}",
+            summary=format_findings_summary(guard_result),
+            target=tool_name,
+            provider="tool_guard",
+        ),
+    )
+    if not bridge_ready:
+        return PermissionDecision(
+            behavior=PermissionBehavior.DENY,
+            message=_with_no_retry_instruction(
+                "Tool approval could not be persisted safely.",
+            ),
+        )
+    interaction_ready = await attach_pending_to_interaction(
+        ctx,
+        pending,
+        svc,
+        source="tool_guard",
+        input_data=dict(input_data or {}),
+    )
+    if not interaction_ready:
+        await svc.resolve_request(
+            pending.request_id,
+            ApprovalDecision.DENIED,
+        )
+        return PermissionDecision(
+            behavior=PermissionBehavior.DENY,
+            message=_with_no_retry_instruction(
+                "Tool approval could not be persisted safely.",
+            ),
+        )
+
     logger.info(
         "GuardedFunctionTool: awaiting approval for tool=%s session=%s "
         "request_id=%s severity=%s",
@@ -394,8 +449,8 @@ async def _ask_user_approval(
 
     try:
         decision = await svc.wait_for_approval(
-            pending.request_id,
-            TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS,
+            pending,
+            timeout_seconds,
         )
     except Exception as exc:
         logger.error(
@@ -422,6 +477,6 @@ async def _ask_user_approval(
         behavior=PermissionBehavior.DENY,
         message=_with_no_retry_instruction(
             f"Approval for '{tool_name}' timed out after "
-            f"{int(TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS)}s.\n{summary}",
+            f"{timeout_seconds:g}s.\n{summary}",
         ),
     )

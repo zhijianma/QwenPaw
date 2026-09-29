@@ -6,7 +6,19 @@ import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Type
 
+from .architecture import PluginMigrationDiagnostic
+
 logger = logging.getLogger(__name__)
+
+_LEGACY_CONTRIBUTION_TARGETS = {
+    "register_memory_backend": "memory.provider",
+    "register_tool": "tool.provider",
+    "register_slash_command": "command.provider",
+    "register_mode": "agent.mode.provider",
+    "register_runtime_hook": "hook.provider",
+    "register_agent_stop_handler": "loop.gate.provider",
+    "register_prompt_section": "prompt.provider",
+}
 
 
 def get_tool_config(tool_name: str) -> Optional[Dict[str, Any]]:
@@ -323,6 +335,7 @@ class PluginApi:  # pylint: disable=too-many-public-methods
         plugin_id: str,
         config: Dict[str, Any],
         manifest: Dict[str, Any] = None,
+        migration_diagnostics: (List[PluginMigrationDiagnostic] | None) = None,
     ):
         """Initialize plugin API.
 
@@ -335,6 +348,48 @@ class PluginApi:  # pylint: disable=too-many-public-methods
         self.config = config
         self.manifest = manifest or {}
         self._registry = None
+        self._migration_diagnostics = (
+            migration_diagnostics if migration_diagnostics is not None else []
+        )
+        self._reported_legacy_apis: set[str] = set()
+
+    @property
+    def migration_diagnostics(
+        self,
+    ) -> tuple[PluginMigrationDiagnostic, ...]:
+        """Return immutable migration guidance recorded for this plugin."""
+        return tuple(self._migration_diagnostics)
+
+    def _record_contribution_migration(self, api_name: str) -> None:
+        """Record one deduplicated legacy-to-Contribution migration hint."""
+        target_slot = _LEGACY_CONTRIBUTION_TARGETS[api_name]
+        if api_name in self._reported_legacy_apis:
+            return
+        self._reported_legacy_apis.add(api_name)
+        diagnostic = PluginMigrationDiagnostic(
+            api_name=api_name,
+            target_slot=target_slot,
+            message=(
+                f"Plugin '{self.plugin_id}' uses legacy "
+                f"PluginApi.{api_name}()."
+            ),
+            recovery=(
+                f"Declare a '{target_slot}' contribution in plugin.json "
+                "and expose its factory through module:attribute."
+            ),
+            manifest_fragment={
+                "schema_version": "qwenpaw.plugin.v2",
+                "contributions": [
+                    {
+                        "id": "replace-me",
+                        "slot": target_slot,
+                        "entrypoint": "<module>:<factory>",
+                    },
+                ],
+            },
+        )
+        self._migration_diagnostics.append(diagnostic)
+        logger.warning("%s %s", diagnostic.message, diagnostic.recovery)
 
     def set_registry(self, registry):
         """Set registry reference (called by loader).
@@ -354,6 +409,7 @@ class PluginApi:  # pylint: disable=too-many-public-methods
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Register a plugin-owned memory backend before workspaces start."""
+        self._record_contribution_migration("register_memory_backend")
         from qwenpaw.memory import memory_registry
 
         memory_registry.register_backend(
@@ -384,6 +440,7 @@ class PluginApi:  # pylint: disable=too-many-public-methods
                 sandbox_required=bool(
                     governance.get("sandbox_required", False),
                 ),
+                effect=governance.get("effect", "none"),
                 owner=self.plugin_id,
             )
         logger.info(
@@ -862,6 +919,8 @@ class PluginApi:  # pylint: disable=too-many-public-methods
             ...     )
         """
 
+        self._record_contribution_migration("register_tool")
+
         def _startup_register():
             # Ownership + governance first: fail closed before exposing
             # the tool in toolkit/UI/runtime (avoids #6114-style
@@ -977,6 +1036,7 @@ class PluginApi:  # pylint: disable=too-many-public-methods
             help_text: Human-readable description shown in menus.
             metadata: Arbitrary key-value metadata.
         """
+        self._record_contribution_migration("register_slash_command")
         from ..runtime.slash_command_registry import CommandSpec
 
         spec = CommandSpec(
@@ -986,6 +1046,7 @@ class PluginApi:  # pylint: disable=too-many-public-methods
             category=category,
             help_text=help_text,
             metadata=metadata or {},
+            owner_id=self.plugin_id,
         )
 
         def _register_to_workspaces():
@@ -1026,6 +1087,7 @@ class PluginApi:  # pylint: disable=too-many-public-methods
             mode_cls: An ``AgentMode`` subclass with a unique
                 ``name`` class attribute.
         """
+        self._record_contribution_migration("register_mode")
         mode_name = getattr(mode_cls, "name", None) or mode_cls.__name__
 
         def _register_mode():
@@ -1067,6 +1129,8 @@ class PluginApi:  # pylint: disable=too-many-public-methods
             hook: A ``HookBase`` subclass instance with ``phase``,
                 ``name``, and ``run()`` defined.
         """
+
+        self._record_contribution_migration("register_runtime_hook")
 
         def _register_hook():
             self._register_hook_to_all_workspaces(hook)
@@ -1111,6 +1175,9 @@ class PluginApi:  # pylint: disable=too-many-public-methods
             priority: Lower number = higher priority.
             name: Human-readable name for debugging.
         """
+        self._record_contribution_migration(
+            "register_agent_stop_handler",
+        )
         from ..loop.gates import (
             StopHandlerRegistration,
         )
@@ -1172,6 +1239,7 @@ class PluginApi:  # pylint: disable=too-many-public-methods
             condition: Optional ``(ctx) -> bool`` gate.
             agent_id: Optional agent filter; None = global.
         """
+        self._record_contribution_migration("register_prompt_section")
         if condition is not None:
             original_provider = provider
 

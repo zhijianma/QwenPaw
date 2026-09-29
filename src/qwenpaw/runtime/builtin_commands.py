@@ -12,11 +12,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ._state_utils import StateProxy
-from .slash_command_registry import CommandSpec, FallbackHandler
+from .slash_command_registry import (
+    CommandSpec,
+    FallbackDispatch,
+    FallbackHandler,
+    SYSTEM_COMMAND_OWNER_ID,
+    SYSTEM_RESERVED_COMMANDS,
+)
 
 if TYPE_CHECKING:
     from agentscope.message import Msg
@@ -297,11 +304,31 @@ async def _request_reme_action_approval(
         ApprovalIdentityPolicy,
         get_approval_service,
     )
+    from ..app.approvals.interaction_bridge import (
+        attach_pending_to_interaction,
+    )
     from ..app.approvals.models import ApprovalRequestSummary
+    from ..app.approvals.task_bridge import (
+        attach_pending_to_durable_task,
+    )
+    from ..app.approvals.timeouts import approval_timeout_seconds
     from ..constant import TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS
+    from ..kernel.models import ApprovalDisplay, ApprovalSource
     from ..security.tool_guard.approval import ApprovalDecision
 
     request = getattr(ctx, "request", None)
+    raw_request_context = getattr(request, "request_context", None)
+    request_context = (
+        raw_request_context if isinstance(raw_request_context, dict) else {}
+    )
+    timeout_seconds = approval_timeout_seconds(
+        request_context,
+        default=TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS,
+    )
+    is_durable = (
+        request_context.get("durable_task") is True
+        and request_context.get("_task_approval_broker") is not None
+    )
     session_id = str(getattr(ctx, "session_id", "") or "")
     agent_id = str(getattr(ctx, "agent_id", "") or "default")
     root_session_id = str(
@@ -353,6 +380,13 @@ async def _request_reme_action_approval(
         ),
         payload={"action": action},
     )
+    actor = ApprovalActor(
+        session_id=session_id,
+        root_session_id=root_session_id,
+        user_id=user_id,
+        channel=channel_name,
+        agent_id=agent_id,
+    )
     service = get_approval_service()
     pending = await service.create_pending_summary(
         session_id=session_id,
@@ -362,7 +396,7 @@ async def _request_reme_action_approval(
         channel=channel_name,
         agent_id=agent_id,
         summary=summary,
-        timeout_seconds=TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS,
+        timeout_seconds=timeout_seconds,
         extra={
             "channel_meta": channel_meta,
             "_channel_instance": channel_instance,
@@ -370,19 +404,50 @@ async def _request_reme_action_approval(
         # These commands originate outside the governed tool loop. Bind the
         # decision to the exact caller so another session on the same Agent
         # cannot authorize its model/network use or persistent writes.
-        identity_policy=ApprovalIdentityPolicy.EXACT_REQUESTER,
+        identity_policy=(
+            ApprovalIdentityPolicy.AGENT
+            if is_durable
+            else ApprovalIdentityPolicy.EXACT_REQUESTER
+        ),
     )
-    actor = ApprovalActor(
-        session_id=session_id,
-        root_session_id=root_session_id,
-        user_id=user_id,
-        channel=channel_name,
-        agent_id=agent_id,
-    )
+    if is_durable:
+        bridge_ready = await attach_pending_to_durable_task(
+            request_context,
+            pending,
+            service,
+            agent_id=agent_id,
+            tool_name=f"reme:{action}",
+            severity="medium",
+            input_data={"action": action, "arguments": arguments},
+            source=ApprovalSource.SYSTEM,
+            action=f"reme.{action}",
+            policy="reme_action",
+            display=ApprovalDisplay(
+                title=f"Approve ReMe {action}",
+                summary=summary.result_summary,
+                target=action,
+                provider="reme",
+            ),
+        )
+        if bridge_ready:
+            bridge_ready = await attach_pending_to_interaction(
+                request_context,
+                pending,
+                service,
+                source="reme_action",
+                input_data={"action": action, "arguments": arguments},
+            )
+        if not bridge_ready:
+            await service.resolve_request(
+                pending.request_id,
+                ApprovalDecision.DENIED,
+                actor=actor,
+            )
+            return False
     try:
         decision = await service.wait_for_approval(
-            pending.request_id,
-            TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS,
+            pending,
+            timeout_seconds,
         )
     except asyncio.CancelledError:
         # A disconnected/cancelled command can no longer consume a decision;
@@ -697,7 +762,7 @@ def _parse_skill_query(query: str) -> tuple[str, str] | None:
 async def _skill_fallback_handler(
     raw_text: str,
     ctx: Any,
-) -> "Msg | None":
+) -> "Msg | FallbackDispatch | None":
     """Fallback handler for ``/<skill_name>`` dispatch.
 
     Resolves skills directly from the filesystem (workspace/skills/
@@ -801,7 +866,7 @@ async def _skill_fallback_handler(
                         post.content,
                     )
                     content[i] = TextBlock(type="text", text=merged)
-                    return None
+                    return FallbackDispatch(handled=True)
             merged = _build_skill_injection(
                 "",
                 display_name,
@@ -818,7 +883,7 @@ async def _skill_fallback_handler(
                 skill_dir,
                 post.content,
             )
-    return None
+    return FallbackDispatch(handled=True)
 
 
 # ======================================================================
@@ -836,7 +901,17 @@ def collect_builtin_command_specs() -> list[CommandSpec]:
     specs.extend(_collect_daemon_specs())
     specs.extend(_collect_control_specs())
     specs.extend(_collect_conversation_specs())
-    return specs
+    protected_specs: list[CommandSpec] = []
+    for spec in specs:
+        names = {name.casefold() for name in (spec.name, *spec.aliases)}
+        if names.intersection(SYSTEM_RESERVED_COMMANDS):
+            spec = replace(
+                spec,
+                owner_id=SYSTEM_COMMAND_OWNER_ID,
+                protected=True,
+            )
+        protected_specs.append(spec)
+    return protected_specs
 
 
 def get_skill_fallback_handler() -> FallbackHandler:

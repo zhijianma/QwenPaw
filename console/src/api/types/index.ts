@@ -14,3 +14,4 @@ export * from "./workspace";
 export * from "./checkpoints";
 export * from "./tokenUsage";
 export * from "./backup";
+export * from "./artifacts";

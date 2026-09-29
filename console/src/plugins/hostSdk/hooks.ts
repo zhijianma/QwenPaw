@@ -62,3 +62,22 @@ export function getCurrentSessionId(): string | null {
     ? sessionId
     : null;
 }
+
+export function getCurrentChatId(): string | null {
+  if (typeof window === "undefined") return null;
+  const routeChatId = getSessionIdFromPath(window.location.pathname);
+  if (routeChatId) {
+    return sessionApi.getPersistedChatId(routeChatId);
+  }
+
+  const appId = getPawAppIdFromPath(window.location.pathname);
+  if (!appId || !sessionApi.lastActiveChatId) return null;
+  const identity = sessionApi.getSessionIdentity(sessionApi.lastActiveChatId);
+  const namespace = `pawapp:${appId}`;
+  const ownsSession =
+    identity.sessionId === namespace ||
+    identity.sessionId.startsWith(`${namespace}:`);
+  return ownsSession
+    ? sessionApi.getPersistedChatId(sessionApi.lastActiveChatId)
+    : null;
+}

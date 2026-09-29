@@ -72,6 +72,11 @@ class ContextVarsSetupHook(LifecycleHook):
             set_current_root_session_id,
             set_current_session_id as _set_app_session_id,
             set_current_user_id,
+            set_current_usage_scope,
+        )
+        from ...tasks.usage_scope import (
+            RECORD_MODEL_USAGE_CONTEXT_KEY,
+            USAGE_SCOPE_CONTEXT_KEY,
         )
 
         set_current_agent_id(ctx.agent_id or "default")
@@ -87,6 +92,16 @@ class ContextVarsSetupHook(LifecycleHook):
         set_current_user_id(ctx.request.user_id)
         set_current_channel(getattr(ctx.request, "channel", None))
         request_context = getattr(ctx.request, "request_context", None)
+        usage_context = (
+            request_context if isinstance(request_context, dict) else {}
+        )
+        set_current_usage_scope(
+            usage_context.get(USAGE_SCOPE_CONTEXT_KEY),
+            usage_context.get("_task_usage_meter"),
+            record_model_usage=(
+                usage_context.get(RECORD_MODEL_USAGE_CONTEXT_KEY) is True
+            ),
+        )
         if isinstance(request_context, dict) and request_context.get(
             "_spawn_subagent",
         ):

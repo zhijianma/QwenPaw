@@ -21,6 +21,8 @@ from fastapi import APIRouter, HTTPException, Request, UploadFile, File
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from ...plugins.contributions import ContributionValidationError
+from ...plugins.migration import build_plugin_migration_plan
 from ..utils import schedule_agent_reload
 
 logger = logging.getLogger(__name__)
@@ -31,6 +33,19 @@ router = APIRouter(prefix="/plugins", tags=["plugins"])
 def _log_safe(value: object) -> str:
     """Strip CR/LF so request-derived values cannot forge log entries."""
     return str(value).replace("\r", "").replace("\n", "")
+
+
+def _ui_contribution_projection(manifest) -> list[dict[str, str]]:
+    """Return the public UI declarations used by the Console loader."""
+    return [
+        {
+            "id": item.contribution_id,
+            "slot": item.slot,
+            "entrypoint": item.entrypoint,
+        }
+        for item in manifest.contributions
+        if item.slot.startswith("ui.")
+    ]
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -85,7 +100,13 @@ def _list_plugins_from_disk() -> list[dict]:
                 "enabled": True,
                 "loaded": False,
                 "plugin_type": disk_manifest.plugin_type,
+                "schema_version": disk_manifest.schema_version,
                 "frontend_entry": frontend_entry,
+                "ui_contributions": _ui_contribution_projection(
+                    disk_manifest,
+                ),
+                "migration_diagnostics": [],
+                "migration_plan": None,
             },
         )
     return result
@@ -538,6 +559,15 @@ async def _load_plugin_with_optional_force_reinstall(
             reload_agents=reload_agents,
         )
 
+    async def _after_rollback(record) -> None:
+        await _finish_plugin_install_after_load(
+            request,
+            record,
+            force=False,
+            old_tools=set(),
+            reload_agents=reload_agents,
+        )
+
     return await loader.load_plugin_from_path(
         source_path=source_path,
         install_dir=get_plugins_dir(),
@@ -545,6 +575,7 @@ async def _load_plugin_with_optional_force_reinstall(
         before_force_unload=_before_force_unload if force else None,
         after_force_unload=_after_force_unload if force else None,
         after_load=_after_load,
+        after_rollback=_after_rollback if force else None,
         pawport_owner=pawport_owner,
         recover_incomplete=recover_incomplete,
     )
@@ -635,7 +666,17 @@ async def list_plugins(request: Request):
                 "enabled": record.enabled,
                 "loaded": True,
                 "plugin_type": manifest.plugin_type,
+                "schema_version": manifest.schema_version,
                 "frontend_entry": manifest.entry.frontend,
+                "ui_contributions": _ui_contribution_projection(manifest),
+                "migration_diagnostics": [
+                    item.model_dump(mode="json")
+                    for item in record.migration_diagnostics
+                ],
+                "migration_plan": build_plugin_migration_plan(
+                    manifest,
+                    record.migration_diagnostics,
+                ),
             },
         )
 
@@ -779,6 +820,11 @@ async def install_plugin(
         )
     except HTTPException:
         raise
+    except ContributionValidationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=exc.response_detail(),
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (FileNotFoundError, RuntimeError) as exc:
@@ -849,6 +895,11 @@ async def upload_plugin(
         )
     except HTTPException:
         raise
+    except ContributionValidationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=exc.response_detail(),
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (FileNotFoundError, RuntimeError) as exc:

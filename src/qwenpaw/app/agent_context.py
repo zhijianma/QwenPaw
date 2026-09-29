@@ -7,7 +7,7 @@ import asyncio
 from contextvars import ContextVar
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 from typing import Optional, TYPE_CHECKING
 from fastapi import Request
 from .multi_agent_manager import MultiAgentManager
@@ -48,6 +48,21 @@ _current_channel: ContextVar[Optional[str]] = ContextVar(
 _current_approval_route: ContextVar[Optional[dict]] = ContextVar(
     "current_approval_route",
     default=None,
+)
+
+_current_usage_scope_id: ContextVar[Optional[str]] = ContextVar(
+    "current_usage_scope_id",
+    default=None,
+)
+
+_current_task_usage_meter: ContextVar[Any] = ContextVar(
+    "current_task_usage_meter",
+    default=None,
+)
+
+_current_record_model_usage: ContextVar[bool] = ContextVar(
+    "current_record_model_usage",
+    default=False,
 )
 
 
@@ -398,3 +413,30 @@ def set_current_approval_route(route: Optional[dict]) -> None:
 def get_current_approval_route() -> Optional[dict]:
     """Return routing metadata used only for spawned-child approvals."""
     return _current_approval_route.get()
+
+
+def set_current_usage_scope(
+    scope_id: Optional[str],
+    meter: Any,
+    *,
+    record_model_usage: bool,
+) -> None:
+    """Expose a server-resolved Task budget to nested Agent operations."""
+    _current_usage_scope_id.set(scope_id)
+    _current_task_usage_meter.set(meter)
+    _current_record_model_usage.set(record_model_usage)
+
+
+def get_current_usage_scope_id() -> Optional[str]:
+    """Return the opaque host-issued budget scope for child dispatch."""
+    return _current_usage_scope_id.get()
+
+
+def get_current_task_usage_meter() -> Any:
+    """Return the resolved in-process meter, never its transport token."""
+    return _current_task_usage_meter.get()
+
+
+def should_record_current_model_usage() -> bool:
+    """Return whether this runtime must account model usage directly."""
+    return _current_record_model_usage.get()

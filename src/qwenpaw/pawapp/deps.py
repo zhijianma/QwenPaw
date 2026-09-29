@@ -89,12 +89,14 @@ def _build_ctx(
     session = _get_session(request)
 
     agent_id = request.query_params.get("agent_id", "default")
+    chat_id = request.headers.get("X-QwenPaw-Chat-Id") or None
 
     return PawAppContext(
         app_id=app_id,
         agent_id=agent_id,
         channel=channel,
         user_id=user_id,
+        chat_id=chat_id,
         _workspace_registry=workspace_registry,
         _app_services=app_services,
         _plugin_registry=plugin_registry,

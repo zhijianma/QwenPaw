@@ -21,11 +21,18 @@ from typing import Any, Literal, Optional, TYPE_CHECKING
 from agentscope.agent import Agent, InjectionConfig, ReActConfig
 from agentscope.event import (
     ModelCallEndEvent,
+    RequireExternalExecutionEvent,
+    RequireUserConfirmEvent,
     TextBlockDeltaEvent,
     TextBlockEndEvent,
     TextBlockStartEvent,
 )
-from agentscope.message import HintBlock, Msg, TextBlock
+from agentscope.message import (
+    HintBlock,
+    Msg,
+    TextBlock,
+    ToolResultState,
+)
 from agentscope.model import FinishedReason
 from agentscope.state import AgentState
 from agentscope.tool import Toolkit
@@ -44,6 +51,7 @@ from ..constant import (
     WORKING_DIR,
 )
 from ..loop.gates import StopAction, StopHandlerResult
+from ..kernel import SteerSafePoint
 from ..providers.error_utils import extract_status_code
 from ..providers.fallback_chat_model import install_fallback_notice_sink
 from ..providers.model_capability_cache import get_capability_cache
@@ -199,6 +207,8 @@ class QwenPawAgent(CodingModeMixin, Agent):
 
         self._governor = governor
         self._gate_pending_stop = None
+        self._stop_gate_session = None
+        self._steer_cancelled_tool_call_ids: set[str] = set()
 
         # Tool name -> parameter schema index for tool-call input
         # coercion (issue #6839); rebuilt by ``_call_model`` from exactly
@@ -1034,6 +1044,10 @@ class QwenPawAgent(CodingModeMixin, Agent):
                 if should_strip_audio:
                     self._set_formatter_audio_strip(False)
 
+        if getattr(self, "_steer_forced_continue", False):
+            self._steer_forced_continue = False
+            return
+
         # ── Stop Hook: run every iteration ──
         stop_result = await self._run_stop_handlers(final_msg)
 
@@ -1078,6 +1092,113 @@ class QwenPawAgent(CodingModeMixin, Agent):
         outgoing_msg = stop_result.final_message or final_msg
         self._attach_fallback_notices(outgoing_msg, fallback_sink)
         yield outgoing_msg
+
+    async def _apply_pending_steers_at_tool_boundary(
+        self,
+        safe_point: SteerSafePoint,
+    ) -> tuple[list[Any], int]:
+        """Invalidate the unadmitted tool remainder before applying steer."""
+        session = (self._request_context or {}).get("_steering_session")
+        if session is None:
+            return [], 0
+
+        from ..invocation_control import SteerDelivery
+
+        emitted_events: list[Any] = []
+        invalidated = False
+
+        async def inject(
+            delivery: SteerDelivery,
+            actual_safe_point: SteerSafePoint,
+        ) -> None:
+            nonlocal invalidated
+            if (
+                safe_point is SteerSafePoint.BEFORE_TOOL_BATCH
+                and not invalidated
+            ):
+                unfinished = self.state.get_unfinished_tool_calls(self.name)
+                for tool_call in unfinished:
+                    async for event in self._handle_error_tool_call(
+                        tool_call,
+                        "Tool call superseded by a user steer command.",
+                        # AgentScope treats INTERRUPTED as invocation-wide
+                        # termination. DENIED closes only this unadmitted
+                        # call so the steered invocation can keep running.
+                        state=ToolResultState.DENIED,
+                    ):
+                        emitted_events.append(event)
+                    self._steer_cancelled_tool_call_ids.add(tool_call.id)
+                invalidated = True
+            from ..runtime.interaction_middleware import (
+                append_steer_delivery,
+            )
+
+            append_steer_delivery(self, delivery, actual_safe_point)
+
+        applied = await session.apply_pending(safe_point, inject)
+        return emitted_events, applied
+
+    async def _execute_sequential_tool_calls(self, tool_calls):
+        """Apply steer before and after one sequential tool batch."""
+        if all(
+            call.id in self._steer_cancelled_tool_call_ids
+            for call in tool_calls
+        ):
+            return
+        events, applied = await self._apply_pending_steers_at_tool_boundary(
+            SteerSafePoint.BEFORE_TOOL_BATCH,
+        )
+        for event in events:
+            yield event
+        if applied:
+            return
+
+        parked = False
+        async for event in super()._execute_sequential_tool_calls(tool_calls):
+            if isinstance(
+                event,
+                (RequireUserConfirmEvent, RequireExternalExecutionEvent),
+            ):
+                parked = True
+            yield event
+        if parked:
+            return
+        events, _ = await self._apply_pending_steers_at_tool_boundary(
+            SteerSafePoint.AFTER_TOOL_BATCH,
+        )
+        for event in events:
+            yield event
+
+    async def _execute_concurrent_tool_calls(self, tool_calls):
+        """Apply steer around one atomically admitted concurrent batch."""
+        if all(
+            call.id in self._steer_cancelled_tool_call_ids
+            for call in tool_calls
+        ):
+            return
+        events, applied = await self._apply_pending_steers_at_tool_boundary(
+            SteerSafePoint.BEFORE_TOOL_BATCH,
+        )
+        for event in events:
+            yield event
+        if applied:
+            return
+
+        parked = False
+        async for event in super()._execute_concurrent_tool_calls(tool_calls):
+            if isinstance(
+                event,
+                (RequireUserConfirmEvent, RequireExternalExecutionEvent),
+            ):
+                parked = True
+            yield event
+        if parked:
+            return
+        events, _ = await self._apply_pending_steers_at_tool_boundary(
+            SteerSafePoint.AFTER_TOOL_BATCH,
+        )
+        for event in events:
+            yield event
 
     @staticmethod
     def _attach_fallback_notices(
@@ -1304,6 +1425,17 @@ class QwenPawAgent(CodingModeMixin, Agent):
         final_msg: Optional[Msg],
     ) -> StopHandlerResult:
         """Run registered stop handlers every iteration."""
+        session = self._stop_gate_session
+        if session is not None:
+            from ..runtime.stop_gate_providers import (
+                decision_to_legacy_result,
+                stop_gate_input,
+            )
+
+            gate_input = stop_gate_input(final_msg, self.state.cur_iter)
+            decision = await session.evaluate(gate_input)
+            return decision_to_legacy_result(decision)
+
         from ..loop.gates.runner import run_stop_handlers
 
         handlers = self._get_stop_handlers()

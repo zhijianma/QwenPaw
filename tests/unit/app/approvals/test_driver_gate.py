@@ -12,6 +12,7 @@ from __future__ import annotations
 # pylint: disable=protected-access,redefined-outer-name,unused-argument,unused-import  # noqa: E501
 
 import asyncio
+from uuid import UUID
 
 import pytest
 
@@ -25,6 +26,9 @@ from qwenpaw.drivers.errors import (
     DriverPermissionDeniedError,
 )
 from qwenpaw.drivers.policy_types import PolicyTarget
+from qwenpaw.kernel.models import ApprovalSource
+from qwenpaw.interactions import InteractionService
+from qwenpaw.kernel import InteractionStatus
 from qwenpaw.drivers.policy import DriverInvocationContext
 from qwenpaw.security.tool_guard.approval import ApprovalDecision
 
@@ -112,6 +116,91 @@ async def test_request_approval_allow_path_resolves_and_returns(
     assert svc._pending == {}
 
 
+async def test_durable_driver_approval_uses_task_bridge(
+    svc: ApprovalService,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+):
+    """Driver requests share the durable Task approval contract."""
+    from qwenpaw.app.approvals import task_bridge
+
+    class _FakeBridge:
+        def __init__(self) -> None:
+            self.requests: list[dict] = []
+            self.decisions: list[ApprovalDecision] = []
+
+        async def request(self, **kwargs):  # noqa: ANN
+            self.requests.append(kwargs)
+
+        async def resolve(
+            self,
+            decision,
+            _scope,
+            _actor,
+        ):  # noqa: ANN
+            self.decisions.append(decision)
+
+    bridge = _FakeBridge()
+
+    async def _bridge_factory(_context, _request_id):  # noqa: ANN
+        return bridge
+
+    monkeypatch.setattr(
+        task_bridge,
+        "task_approval_bridge_from_context",
+        _bridge_factory,
+    )
+    context = _ctx(
+        target_kind="tool",
+        target_name="Read",
+        operation="invoke",
+    )
+    context.request_context["durable_task"] = True
+    interaction_service = InteractionService(
+        tmp_path / "interactions.sqlite3",
+    )
+    invocation_id = UUID("00000000-0000-0000-0000-000000000202")
+    context.request_context.update(
+        {
+            "_interaction_service": interaction_service,
+            "os_conversation_id": "chat-driver-approval",
+            "os_invocation_id": str(invocation_id),
+        },
+    )
+
+    approval_ids: list[str] = []
+
+    async def _approver() -> None:
+        for _ in range(100):
+            await asyncio.sleep(0)
+            if (
+                svc._pending
+                and next(
+                    iter(svc._pending.values()),
+                ).interaction_id
+                is not None
+            ):
+                break
+        approval_ids.append(next(iter(svc._pending)))
+        await svc.resolve_request(
+            approval_ids[0],
+            ApprovalDecision.APPROVED,
+        )
+
+    asyncio.create_task(_approver())
+    await QwenPawDriverApprovalGate().request_approval(context)
+
+    assert bridge.requests[0]["source"] is ApprovalSource.DRIVER
+    assert bridge.requests[0]["action"] == "driver.invoke"
+    assert bridge.requests[0]["policy"] == "driver_policy"
+    assert bridge.decisions == [ApprovalDecision.APPROVED]
+    resolution = await interaction_service.get_resolution(
+        UUID(approval_ids[0]),
+    )
+    assert resolution is not None
+    assert resolution.status is InteractionStatus.RESOLVED
+
+
 async def test_request_approval_deny_path_raises_permission_denied(
     svc: ApprovalService,
 ):
@@ -137,8 +226,7 @@ async def test_request_approval_deny_path_raises_permission_denied(
 async def test_request_approval_missing_session_id_raises_approval_required(
     svc: ApprovalService,
 ):
-    """Without a session_id the gate cannot route the pending — it must
-    fail fast with ApprovalRequiredError and never touch the service."""
+    """Reject requests that cannot be routed to an approval session."""
     gate = QwenPawDriverApprovalGate()
     ctx = _ctx(session_id="")
     with pytest.raises(ApprovalRequiredError):

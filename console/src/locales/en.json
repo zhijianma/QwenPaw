@@ -3675,6 +3675,16 @@
       "recent": "Last 7 days",
       "earlier": "Earlier"
     },
+    "forkFromHere": "Fork from this turn",
+    "forkCreated": "Forked into a new conversation",
+    "forkFailed": "Failed to fork this conversation",
+    "forkUnavailable": "This conversation is not ready to fork yet",
+    "interaction": {
+      "answerPlaceholder": "Type your answer",
+      "dismiss": "Dismiss",
+      "responseFailed": "Could not submit the response",
+      "submit": "Submit"
+    },
     "regenerate": "Regenerate",
     "regenerateUnavailable": "This older turn has no receipt ID. Send a new message to continue.",
     "turnCanceled": "Canceled"

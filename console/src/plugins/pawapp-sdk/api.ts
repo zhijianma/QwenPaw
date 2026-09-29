@@ -12,6 +12,7 @@ import type {
   PawSseEvent,
   PawSseOptions,
   PawTaskHandle,
+  PawTaskOptions,
 } from "./types";
 import { createPawTask, createScopedPawTask } from "./task";
 import { getActivePawAppId } from "./context";
@@ -162,10 +163,10 @@ function createApiNamespaceWithScope(
       streamForApp(appIdProvider, path, body, opts, strictScope),
     events: (path, opts) =>
       eventsForApp(appIdProvider, path, opts, strictScope),
-    task: (path, params) =>
+    task: (path, params, options) =>
       strictScope
-        ? createScopedPawTask(appIdProvider(), path, params)
-        : createPawTask(appIdProvider(), path, params),
+        ? createScopedPawTask(appIdProvider(), path, params, options)
+        : createPawTask(appIdProvider(), path, params, options),
   };
 }
 
@@ -345,9 +346,13 @@ export async function* stream(
  * Create a long-running task with SSE event stream.
  * @deprecated Use `pawSdkFactory.forApp(appId).api.task()`.
  */
-export function task(path: string, params?: unknown): PawTaskHandle {
+export function task(
+  path: string,
+  params?: unknown,
+  options?: PawTaskOptions,
+): PawTaskHandle {
   const appId = getAppId();
-  return createPawTask(appId, path, params);
+  return createPawTask(appId, path, params, options);
 }
 
 /** @deprecated Dynamic path-derived namespace retained for existing apps. */

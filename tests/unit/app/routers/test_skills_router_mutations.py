@@ -8,6 +8,7 @@ skill-config endpoints backed by the workspace manifest, pool
 automation updates, pool download preflight, and the auto-sync /
 pool-automation inbox event builders.
 """
+
 # pylint: disable=protected-access,redefined-outer-name,unused-argument
 from __future__ import annotations
 
@@ -48,7 +49,14 @@ def _clear_install_registries():
 @pytest.fixture
 def app() -> FastAPI:
     application = FastAPI()
-    application.state.multi_agent_manager = MagicMock(name="ManagerStub")
+    manager = MagicMock(name="ManagerStub")
+    manager.get_agent = AsyncMock(
+        return_value=MagicMock(
+            agent_id="default",
+            workspace_dir="/tmp/qwenpaw-skill-router-tests",
+        ),
+    )
+    application.state.multi_agent_manager = manager
     application.include_router(skills_router, prefix="/api")
     return application
 
@@ -98,8 +106,8 @@ def mock_pool_service():
 @pytest.fixture
 def mock_inbox_append():
     with patch(
-        "qwenpaw.app.routers.skills.append_inbox_event",
-        new=AsyncMock(return_value=None),
+        "qwenpaw.app.routers.skills._append_automation_event",
+        new=AsyncMock(return_value=True),
     ) as patched:
         yield patched
 
@@ -127,6 +135,9 @@ def _scan_error() -> SkillScanError:
     return SkillScanError(result)
 
 
+_TEST_WORKSPACE = MagicMock(agent_id="default")
+
+
 # ---------------------------------------------------------------------------
 # automation inbox helpers
 # ---------------------------------------------------------------------------
@@ -134,16 +145,34 @@ def _scan_error() -> SkillScanError:
 
 class TestPostAutoSyncInbox:
     async def test_none_result_posts_nothing(self, mock_inbox_append):
-        assert await skills_module.post_auto_sync_inbox(None) is False
+        assert (
+            await skills_module.post_auto_sync_inbox(
+                None,
+                workspace=_TEST_WORKSPACE,
+            )
+            is False
+        )
         mock_inbox_append.assert_not_awaited()
 
     async def test_empty_result_posts_nothing(self, mock_inbox_append):
-        assert await skills_module.post_auto_sync_inbox({}) is False
+        assert (
+            await skills_module.post_auto_sync_inbox(
+                {},
+                workspace=_TEST_WORKSPACE,
+            )
+            is False
+        )
         mock_inbox_append.assert_not_awaited()
 
     async def test_synced_without_agents_is_ignored(self, mock_inbox_append):
         result = {"synced": [{"skill": "s1", "agents": []}]}
-        assert await skills_module.post_auto_sync_inbox(result) is False
+        assert (
+            await skills_module.post_auto_sync_inbox(
+                result,
+                workspace=_TEST_WORKSPACE,
+            )
+            is False
+        )
         mock_inbox_append.assert_not_awaited()
 
     async def test_success_event_for_synced_items(self, mock_inbox_append):
@@ -153,7 +182,13 @@ class TestPostAutoSyncInbox:
             ],
             "failed": [],
         }
-        assert await skills_module.post_auto_sync_inbox(result) is True
+        assert (
+            await skills_module.post_auto_sync_inbox(
+                result,
+                workspace=_TEST_WORKSPACE,
+            )
+            is True
+        )
         kwargs = mock_inbox_append.await_args.kwargs
         assert kwargs["status"] == "success"
         assert kwargs["severity"] == "info"
@@ -165,7 +200,13 @@ class TestPostAutoSyncInbox:
             "synced": [],
             "failed": [{"skill": "s2", "agents": []}],
         }
-        assert await skills_module.post_auto_sync_inbox(result) is True
+        assert (
+            await skills_module.post_auto_sync_inbox(
+                result,
+                workspace=_TEST_WORKSPACE,
+            )
+            is True
+        )
         kwargs = mock_inbox_append.await_args.kwargs
         assert kwargs["status"] == "error"
         assert kwargs["severity"] == "error"
@@ -173,16 +214,28 @@ class TestPostAutoSyncInbox:
 
     async def test_inbox_error_returns_false(self):
         with patch(
-            "qwenpaw.app.routers.skills.append_inbox_event",
+            "qwenpaw.app.routers.skills.publish_operational_event",
             new=AsyncMock(side_effect=RuntimeError("inbox down")),
         ):
             result = {"synced": [{"skill": "s1", "agents": ["a"]}]}
-            assert await skills_module.post_auto_sync_inbox(result) is False
+            assert (
+                await skills_module.post_auto_sync_inbox(
+                    result,
+                    workspace=_TEST_WORKSPACE,
+                )
+                is False
+            )
 
 
 class TestPostPoolAutomationInbox:
     async def test_none_result_posts_nothing(self, mock_inbox_append):
-        assert await skills_module.post_pool_automation_inbox(None) is False
+        assert (
+            await skills_module.post_pool_automation_inbox(
+                None,
+                workspace=_TEST_WORKSPACE,
+            )
+            is False
+        )
         mock_inbox_append.assert_not_awaited()
 
     async def test_without_pool_fields_delegates_to_auto_sync(
@@ -193,7 +246,13 @@ class TestPostPoolAutomationInbox:
             "synced": [{"skill": "s1", "agents": ["a"]}],
             "sync_failed": [],
         }
-        assert await skills_module.post_pool_automation_inbox(result) is True
+        assert (
+            await skills_module.post_pool_automation_inbox(
+                result,
+                workspace=_TEST_WORKSPACE,
+            )
+            is True
+        )
         kwargs = mock_inbox_append.await_args.kwargs
         assert kwargs["event_type"] == "auto_sync"
 
@@ -206,7 +265,13 @@ class TestPostPoolAutomationInbox:
             "synced": [],
             "sync_failed": [],
         }
-        assert await skills_module.post_pool_automation_inbox(result) is True
+        assert (
+            await skills_module.post_pool_automation_inbox(
+                result,
+                workspace=_TEST_WORKSPACE,
+            )
+            is True
+        )
         kwargs = mock_inbox_append.await_args.kwargs
         assert kwargs["event_type"] == "auto_update"
         assert kwargs["status"] == "success"
@@ -219,7 +284,13 @@ class TestPostPoolAutomationInbox:
             "synced": [],
             "sync_failed": [],
         }
-        assert await skills_module.post_pool_automation_inbox(result) is True
+        assert (
+            await skills_module.post_pool_automation_inbox(
+                result,
+                workspace=_TEST_WORKSPACE,
+            )
+            is True
+        )
         kwargs = mock_inbox_append.await_args.kwargs
         assert kwargs["status"] == "error"
         assert "0 updated, 1 failed" in kwargs["title"]
@@ -359,12 +430,15 @@ class TestSavePoolSkill:
             "success": True,
             "name": "renamed",
         }
-        with patch(
-            "qwenpaw.app.routers.skills.run_pool_auto_sync",
-            return_value=None,
-        ) as sync_mock, patch(
-            "qwenpaw.app.routers.skills.append_inbox_event",
-            new=AsyncMock(return_value=None),
+        with (
+            patch(
+                "qwenpaw.app.routers.skills.run_pool_auto_sync",
+                return_value=None,
+            ) as sync_mock,
+            patch(
+                "qwenpaw.app.routers.skills._append_automation_event",
+                new=AsyncMock(return_value=True),
+            ),
         ):
             response = client.put(
                 "/api/skills/pool/save",
@@ -600,12 +674,15 @@ class TestUploadPoolSkillZip:
             "count": 1,
             "skills": ["p1"],
         }
-        with patch(
-            "qwenpaw.app.routers.skills.run_pool_auto_sync",
-            return_value=None,
-        ) as sync_mock, patch(
-            "qwenpaw.app.routers.skills.append_inbox_event",
-            new=AsyncMock(return_value=None),
+        with (
+            patch(
+                "qwenpaw.app.routers.skills.run_pool_auto_sync",
+                return_value=None,
+            ) as sync_mock,
+            patch(
+                "qwenpaw.app.routers.skills._append_automation_event",
+                new=AsyncMock(return_value=True),
+            ),
         ):
             response = client.post(
                 "/api/skills/pool/upload-zip",
@@ -926,8 +1003,8 @@ class TestUpdatePoolSkillAutomation:
             },
         }
         with patch(
-            "qwenpaw.app.routers.skills.append_inbox_event",
-            new=AsyncMock(return_value=None),
+            "qwenpaw.app.routers.skills._append_automation_event",
+            new=AsyncMock(return_value=True),
         ):
             response = client.put(
                 "/api/skills/pool/s1/automation",
@@ -977,8 +1054,8 @@ class TestUpdatePoolSkillAutomation:
             "automation": {},
         }
         with patch(
-            "qwenpaw.app.routers.skills.append_inbox_event",
-            new=AsyncMock(return_value=None),
+            "qwenpaw.app.routers.skills._append_automation_event",
+            new=AsyncMock(return_value=True),
         ):
             response = client.put(
                 "/api/skills/pool/s1/automation",
@@ -1055,15 +1132,19 @@ class TestDownloadPoolSkill:
         client,
         mock_pool_service,
     ):
-        with patch(
-            "qwenpaw.app.routers.skills.list_workspaces",
-            return_value=[{"agent_id": "default"}, {"agent_id": "work"}],
-        ), patch(
-            "qwenpaw.app.routers.skills._preflight_download_conflicts",
-            return_value=[],
-        ), patch(
-            "qwenpaw.app.routers.skills._build_download_plan",
-            return_value=[],
+        with (
+            patch(
+                "qwenpaw.app.routers.skills.list_workspaces",
+                return_value=[{"agent_id": "default"}, {"agent_id": "work"}],
+            ),
+            patch(
+                "qwenpaw.app.routers.skills._preflight_download_conflicts",
+                return_value=[],
+            ),
+            patch(
+                "qwenpaw.app.routers.skills._build_download_plan",
+                return_value=[],
+            ),
         ):
             response = client.post(
                 "/api/skills/pool/download",

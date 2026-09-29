@@ -390,6 +390,41 @@ class TestRegistryCleanup:
 
 class TestLoadAllPluginsIsolation:
     @pytest.mark.asyncio
+    async def test_legacy_registration_diagnostic_reaches_record(
+        self,
+        loader,
+        tmp_path,
+    ):
+        plugin_dir = tmp_path / "legacy-prompt"
+        _write_plugin(
+            plugin_dir,
+            "class P:\n"
+            "    def register(self, api):\n"
+            "        for index in range(2):\n"
+            "            api.register_prompt_section(\n"
+            "                name=f'legacy-{index}',\n"
+            "                after='workspace',\n"
+            "                provider=lambda agent: 'text',\n"
+            "            )\n"
+            "\n"
+            "plugin = P()\n",
+        )
+
+        from qwenpaw.plugins.architecture import PluginManifest
+
+        manifest = PluginManifest.from_dict(
+            json.loads(
+                (plugin_dir / "plugin.json").read_text(encoding="utf-8"),
+            ),
+        )
+        record = await loader.load_plugin(manifest, plugin_dir)
+
+        assert len(record.migration_diagnostics) == 1
+        diagnostic = record.migration_diagnostics[0]
+        assert diagnostic.api_name == "register_prompt_section"
+        assert diagnostic.target_slot == "prompt.provider"
+
+    @pytest.mark.asyncio
     async def test_bad_plugin_does_not_block_good_plugin(
         self,
         loader,

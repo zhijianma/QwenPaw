@@ -1,9 +1,14 @@
 # -*- coding: utf-8 -*-
 """Backend-neutral declarations for service-contributed cron jobs."""
+
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Literal, Protocol
+
+from .models import CronJobSpec, CronRuntimeDecision
 
 
 @dataclass(frozen=True)
@@ -19,3 +24,47 @@ class ServiceCronJob:
     callback: Callable[[], Awaitable[None]]
     misfire_grace_seconds: int = 600
     jitter_seconds: int = 0
+
+
+class CronTaskRuntime(Protocol):
+    """Optional durable runtime used during the Cron migration."""
+
+    def decision(self, job: CronJobSpec) -> CronRuntimeDecision:
+        """Explain whether the job can migrate without semantic loss."""
+
+    def supports(self, job: CronJobSpec) -> bool:
+        """Compatibility alias for older host integrations."""
+
+    async def execute(
+        self,
+        job: CronJobSpec,
+        *,
+        trigger: Literal["scheduled", "manual"],
+        scheduled_for: datetime,
+    ) -> dict[str, Any]:
+        """Wait through Task and Delivery terminal accounting."""
+
+
+@dataclass(frozen=True, slots=True)
+class HeartbeatExecutionRequest:
+    """Validated compatibility inputs for one Heartbeat occurrence."""
+
+    query_text: str
+    every: str
+    target: str
+    timeout_seconds: int
+    trigger: Literal["scheduled", "manual"]
+    scheduled_for: datetime
+    channel: str
+    user_id: str
+    transport_context: str
+
+
+class HeartbeatTaskRuntime(Protocol):
+    """Durable runtime used by scheduled and manual Heartbeat triggers."""
+
+    async def execute(
+        self,
+        request: HeartbeatExecutionRequest,
+    ) -> dict[str, Any]:
+        """Run one Heartbeat through Schedule, Task, and Delivery."""

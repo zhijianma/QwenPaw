@@ -21,6 +21,9 @@ def _manager() -> ReMeLightMemoryManager:
         auto_dream_inbox_push_enabled=True,
         auto_fin_inbox_push_enabled=True,
     )
+    manager._operational_event_publisher = AsyncMock(
+        return_value={"id": "event-1", "status": "success"},
+    )
     return manager
 
 
@@ -170,19 +173,14 @@ async def test_memory_inbox_only_suppresses_successful_noops(
     """Only definitive successful no-ops should stay out of the inbox."""
     manager = _manager()
 
-    with patch(
-        "qwenpaw.agents.memory.reme_light_memory_manager.append_inbox_event",
-        new_callable=AsyncMock,
-        return_value={"id": "event-1", "status": "success"},
-    ) as append_event:
-        emitted = await manager._append_reme_job_result_to_inbox(
-            job_name,
-            response=response,
-            kwargs={},
-        )
+    emitted = await manager._append_reme_job_result_to_inbox(
+        job_name,
+        response=response,
+        kwargs={},
+    )
 
     assert emitted is expected
-    assert append_event.await_count == int(expected)
+    assert manager._operational_event_publisher.await_count == int(expected)
 
 
 @pytest.mark.asyncio

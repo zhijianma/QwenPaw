@@ -77,6 +77,49 @@ def test_workspace_prompt_files_preserves_configured_order_and_custom_files(
     assert fragment.index("# CUSTOM.md") < fragment.index("# AGENTS.md")
 
 
+def test_workspace_prompt_uses_stable_memory_session_contract(tmp_path):
+    """Memory guidance comes from ``MemorySession.get_prompt`` once."""
+    (tmp_path / "AGENTS.md").write_text("agents body", encoding="utf-8")
+    context = _ctx(tmp_path, ["AGENTS.md"])
+    context.extras["memory_session"] = SimpleNamespace(
+        get_prompt=lambda: "memory guidance",
+    )
+
+    prompt = build_default_prompt_manager().build_sync(context)
+
+    assert "agents body" in prompt
+    assert prompt.count("memory guidance") == 1
+
+
+def test_memory_guidance_does_not_require_workspace_prompt_files(tmp_path):
+    """Memory remains active when workspace markdown is disabled."""
+    context = _ctx(tmp_path, [])
+    context.extras["memory_session"] = SimpleNamespace(
+        get_prompt=lambda: "memory guidance without AGENTS.md",
+    )
+
+    prompt = build_default_prompt_manager().build_sync(context)
+
+    assert "memory guidance without AGENTS.md" in prompt
+
+
+def test_legacy_memory_section_is_replaced_by_session_guidance(tmp_path):
+    """A stale embedded section cannot duplicate provider guidance."""
+    (tmp_path / "AGENTS.md").write_text(
+        "before\n<!-- memory:start -->old guidance<!-- memory:end -->\nafter",
+        encoding="utf-8",
+    )
+    context = _ctx(tmp_path, ["AGENTS.md"])
+    context.extras["memory_session"] = SimpleNamespace(
+        get_prompt=lambda: "current guidance",
+    )
+
+    prompt = build_default_prompt_manager().build_sync(context)
+
+    assert "old guidance" not in prompt
+    assert prompt.count("current guidance") == 1
+
+
 def test_workspace_prompt_files_skips_parent_traversal(tmp_path):
     """Configured prompt files cannot escape the workspace via ``..``."""
     outside = tmp_path.parent / f"{tmp_path.name}_secret.md"

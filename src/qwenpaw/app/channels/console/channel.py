@@ -275,6 +275,9 @@ class ConsoleChannel(BaseChannel):
         message_metadata = payload.get("message_metadata")
         if isinstance(message_metadata, dict) and request.input:
             request.input[0].metadata = message_metadata
+        message_id = payload.get("message_id")
+        if message_id and request.input:
+            request.input[0].id = str(message_id)
         request.channel_meta = meta
         rc = meta.get("request_context")
         if isinstance(rc, dict) and rc:

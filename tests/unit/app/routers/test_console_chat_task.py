@@ -23,6 +23,8 @@ from qwenpaw.agents.fork_project import (
 )
 from qwenpaw.app.routers import console
 from qwenpaw.app.task_tracker import TaskTracker
+from qwenpaw.kernel.models import TaskStatus
+from qwenpaw.tasks.bootstrap import task_service_for_workspace
 
 
 @dataclass(frozen=True)
@@ -142,6 +144,7 @@ async def _submit_forked_task(
     branch: str,
     scope: str | None = None,
     timeout: float | None = None,
+    execution_contract: dict[str, Any] | None = None,
 ) -> tuple[str, asyncio.Task]:
     async def _get_workspace(_request):
         return _Workspace(Path(worktree))
@@ -172,6 +175,8 @@ async def _submit_forked_task(
     }
     if timeout is not None:
         payload["timeout"] = timeout
+    if execution_contract is not None:
+        payload["execution_contract"] = execution_contract
 
     submitted = await console.post_console_chat_task(payload, None)
     task_id = submitted["task_id"]
@@ -217,6 +222,68 @@ async def _wait_for_thread_event(event: threading.Event) -> None:
             return
         await asyncio.sleep(0.05)
     raise TimeoutError("threading event was not set")
+
+
+@pytest.mark.asyncio
+async def test_legacy_chat_task_is_visible_in_durable_ledger(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The compatibility task endpoint must feed the Agent OS ledger."""
+    task_id, background_task = await _submit_forked_task(
+        monkeypatch,
+        worktree=tmp_path,
+        branch="",
+    )
+    await asyncio.wait_for(background_task, timeout=10)
+    workspace = SimpleNamespace(
+        agent_id="test-agent",
+        workspace_dir=tmp_path,
+    )
+    service = task_service_for_workspace(workspace)
+
+    tasks = await service.list_tasks()
+    events = await service.list_events(tasks[0].task_id)
+
+    assert len(tasks) == 1
+    assert tasks[0].status is TaskStatus.COMPLETED
+    assert tasks[0].metadata["compatibility_task_id"] == task_id
+    assert [event.event_type for event in events] == [
+        "task.created",
+        "task.planned",
+        "run.started",
+        "run.completed",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_chat_upgrade_task_preserves_execution_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = {
+        "goal": "run",
+        "acceptance": ["Agent run completes"],
+        "autonomy_level": "l2",
+        "budget": {"max_duration_seconds": 120},
+    }
+    _, background_task = await _submit_forked_task(
+        monkeypatch,
+        worktree=tmp_path,
+        branch="",
+        execution_contract=contract,
+    )
+
+    await asyncio.wait_for(background_task, timeout=10)
+    workspace = SimpleNamespace(
+        agent_id="test-agent",
+        workspace_dir=tmp_path,
+    )
+    tasks = await task_service_for_workspace(workspace).list_tasks()
+
+    assert tasks[0].execution_contract is not None
+    assert tasks[0].execution_contract.goal == "run"
+    assert tasks[0].acceptance_criteria == ("Agent run completes",)
 
 
 @pytest.mark.asyncio

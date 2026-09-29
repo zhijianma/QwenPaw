@@ -1,13 +1,16 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { routeRegistry } from "./registry/store";
+import { buildSlotNamespace } from "./registry/sdk";
+import { routeRegistry, slotRegistry } from "./registry/store";
 import {
   loadAllPlugins,
   loadPawApp,
+  reloadFrontendPlugin,
   reloadPawApp,
   resetPawAppLoaderForTests,
 } from "./usePluginLoader";
+import { resetUiContributionActivationForTests } from "./uiContributionActivation";
 
 const originalCreateObjectUrl = URL.createObjectURL;
 const originalRevokeObjectUrl = URL.revokeObjectURL;
@@ -28,10 +31,24 @@ function plugin(id: string, type: string) {
   };
 }
 
+function strictUiPlugin(id: string, slots: string[]) {
+  return {
+    ...plugin(id, "frontend"),
+    schema_version: "qwenpaw.plugin.v2",
+    ui_contributions: slots.map((slot, index) => ({
+      id: `ui-${index}`,
+      slot,
+      entrypoint: "dist/index.js",
+    })),
+  };
+}
+
 describe("frontend plugin loader", () => {
   beforeEach(() => {
     resetPawAppLoaderForTests();
+    resetUiContributionActivationForTests();
     routeRegistry.__resetForTests();
+    slotRegistry.__resetForTests();
     vi.restoreAllMocks();
     URL.createObjectURL = vi.fn(
       () => `data:text/javascript,${encodeURIComponent("export default true")}`,
@@ -44,6 +61,14 @@ describe("frontend plugin loader", () => {
     URL.revokeObjectURL = originalRevokeObjectUrl;
     delete (globalThis as typeof globalThis & { __registerNotes?: () => void })
       .__registerNotes;
+    delete (
+      globalThis as typeof globalThis & { __registerUiSlots?: () => void }
+    ).__registerUiSlots;
+    delete (
+      globalThis as typeof globalThis & {
+        __registerQueuedUi?: (pluginId: string) => void;
+      }
+    ).__registerQueuedUi;
   });
 
   it("loads every installed frontend plugin during startup", async () => {
@@ -62,6 +87,133 @@ describe("frontend plugin loader", () => {
       failed: [],
     });
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("loads declared UI slots through the scoped host activation", async () => {
+    const runtimeGlobal = globalThis as typeof globalThis & {
+      __registerUiSlots?: () => void;
+    };
+    runtimeGlobal.__registerUiSlots = () => {
+      buildSlotNamespace().fill(
+        "insights",
+        "ui.task.inspector",
+        () => null,
+      );
+    };
+    URL.createObjectURL = vi.fn(
+      () =>
+        `data:text/javascript,${encodeURIComponent(
+          "globalThis.__registerUiSlots(); export const version = 2",
+        )}`,
+    );
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse([
+          strictUiPlugin("insights", ["ui.task.inspector"]),
+        ]),
+      )
+      .mockResolvedValueOnce(
+        new Response("globalThis.__registerUiSlots()"),
+      );
+
+    await expect(loadAllPlugins()).resolves.toEqual({
+      loaded: 1,
+      failed: [],
+    });
+    expect(slotRegistry.snapshotAll()).toMatchObject([
+      {
+        name: "ui.task.inspector",
+        source: "insights",
+      },
+    ]);
+  });
+
+  it("keeps the old UI generation when replacement violates its manifest", async () => {
+    slotRegistry.fill("insights", "ui.task.inspector", () => null, {
+      id: "old-generation",
+    });
+    const runtimeGlobal = globalThis as typeof globalThis & {
+      __registerUiSlots?: () => void;
+    };
+    runtimeGlobal.__registerUiSlots = () => {
+      buildSlotNamespace().fill(
+        "insights",
+        "ui.task.toolbar",
+        () => null,
+      );
+    };
+    URL.createObjectURL = vi.fn(
+      () =>
+        `data:text/javascript,${encodeURIComponent(
+          "globalThis.__registerUiSlots()",
+        )}`,
+    );
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse([
+          strictUiPlugin("insights", ["ui.task.inspector"]),
+        ]),
+      )
+      .mockResolvedValueOnce(
+        new Response("globalThis.__registerUiSlots()"),
+      );
+
+    await expect(reloadFrontendPlugin("insights")).rejects.toThrow(
+      "did not declare UI slot",
+    );
+    expect(slotRegistry.snapshotAll()).toMatchObject([
+      {
+        name: "ui.task.inspector",
+        source: "insights",
+        id: "old-generation",
+      },
+    ]);
+  });
+
+  it("serializes concurrent strict UI activations", async () => {
+    const runtimeGlobal = globalThis as typeof globalThis & {
+      __registerQueuedUi?: (pluginId: string) => void;
+    };
+    runtimeGlobal.__registerQueuedUi = (pluginId) => {
+      buildSlotNamespace().fill(
+        pluginId,
+        "ui.task.inspector",
+        () => null,
+      );
+    };
+    let bundleIndex = 0;
+    URL.createObjectURL = vi.fn(() => {
+      const pluginId = bundleIndex === 0 ? "one" : "two";
+      bundleIndex += 1;
+      return `data:text/javascript,${encodeURIComponent(
+        `globalThis.__registerQueuedUi("${pluginId}")`,
+      )}`;
+    });
+    const plugins = [
+      strictUiPlugin("one", ["ui.task.inspector"]),
+      strictUiPlugin("two", ["ui.task.inspector"]),
+    ];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      return url.endsWith("/frontend_plugin")
+        ? jsonResponse(plugins)
+        : new Response("bundle");
+    });
+
+    await expect(
+      Promise.all([
+        reloadFrontendPlugin("one"),
+        reloadFrontendPlugin("two"),
+      ]),
+    ).resolves.toEqual([true, true]);
+    expect(
+      slotRegistry
+        .snapshotAll()
+        .map((item) => item.source)
+        .sort(),
+    ).toEqual(["one", "two"]);
   });
 
   it("loads a newly installed PawApp and exposes its route immediately", async () => {

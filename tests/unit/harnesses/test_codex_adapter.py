@@ -653,6 +653,11 @@ async def test_codex_approval_uses_qwenpaw_service(
         "agent_id": "agent-1",
         "user_id": "user-1",
         "channel": "console",
+        "durable_task": True,
+        "_task_approval_broker": object(),
+        "execution_contract": {
+            "timeout_policy": {"approval_seconds": 11},
+        },
     }
     pending = MagicMock(request_id="approval-1", timeout_seconds=30)
     service = MagicMock()
@@ -660,10 +665,29 @@ async def test_codex_approval_uses_qwenpaw_service(
     service.wait_for_approval = AsyncMock(
         return_value=ApprovalDecision.APPROVED,
     )
+    approval_path = "qwenpaw.harnesses.codex.adapter.get_approval_service"
+    task_path = (
+        "qwenpaw.harnesses.codex.adapter.attach_pending_to_durable_task"
+    )
+    interaction_path = (
+        "qwenpaw.harnesses.codex.adapter.attach_pending_to_interaction"
+    )
 
-    with patch(
-        "qwenpaw.harnesses.codex.adapter.get_approval_service",
-        return_value=service,
+    with (
+        patch(
+            approval_path,
+            return_value=service,
+        ),
+        patch(
+            task_path,
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as attach_pending,
+        patch(
+            interaction_path,
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as attach_interaction,
     ):
         result = await adapter._handle_server_request(
             {
@@ -681,6 +705,12 @@ async def test_codex_approval_uses_qwenpaw_service(
     assert create_call["session_id"] == "chat-1"
     assert create_call["agent_id"] == "agent-1"
     assert create_call["summary"].payload["command"] == "pytest -q"
+    assert create_call["timeout_seconds"] == 11
+    attach_call = attach_pending.await_args.kwargs
+    assert attach_call["source"].value == "harness"
+    assert attach_call["policy"] == "codex"
+    attach_interaction.assert_awaited_once()
+    assert service.wait_for_approval.await_args.args == (pending, 11.0)
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,80 @@
+{
+  "schema_version": "qwenpaw.plugin.v2",
+  "id": "runtime-provider-kit",
+  "name": "Runtime Provider Kit",
+  "version": "1.0.0",
+  "restart_policy": "hot",
+  "contributions": [
+    {
+      "id": "project-memory",
+      "slot": "memory.provider",
+      "entrypoint": "runtime_provider_kit.memory:create_provider",
+      "config_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "prompt_prefix": {
+            "type": "string",
+            "maxLength": 64
+          }
+        }
+      }
+    },
+    {
+      "id": "echo-harness",
+      "slot": "harness.runner",
+      "entrypoint": "runtime_provider_kit.harness:create_runner"
+    },
+    {
+      "id": "example-driver",
+      "slot": "driver.provider",
+      "entrypoint": "runtime_provider_kit.driver:create_provider",
+      "config_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "echo_prefix": {
+            "type": "string",
+            "maxLength": 64
+          }
+        }
+      }
+    },
+    {
+      "id": "project-prompt",
+      "slot": "prompt.provider",
+      "entrypoint": "runtime_provider_kit.prompt:create_provider"
+    },
+    {
+      "id": "project-commands",
+      "slot": "command.provider",
+      "entrypoint": "runtime_provider_kit.command:create_provider"
+    },
+    {
+      "id": "project-hooks",
+      "slot": "hook.provider",
+      "entrypoint": "runtime_provider_kit.hook:create_provider"
+    },
+    {
+      "id": "review-gates",
+      "slot": "loop.gate.provider",
+      "entrypoint": "runtime_provider_kit.stop_gate:create_provider"
+    },
+    {
+      "id": "review-mode",
+      "slot": "agent.mode.provider",
+      "entrypoint": "runtime_provider_kit.mode:create_provider",
+      "config_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "mode_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        }
+      }
+    }
+  ]
+}

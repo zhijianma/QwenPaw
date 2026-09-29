@@ -58,6 +58,7 @@ export interface HostExternals {
   useSelectedAgent?: () => HostAgentInfo;
   useCurrentSession?: () => HostSessionInfo | null;
   getSelectedAgentId?: () => string;
+  getCurrentChatId?: () => string | null;
   getCurrentSessionId?: () => string | null;
   fetch?: (path: string, init?: RequestInit) => Promise<Response>;
 }

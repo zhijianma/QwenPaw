@@ -1,0 +1,14 @@
+{
+  "schema_version": "qwenpaw.plugin.v2",
+  "id": "delivery-provider",
+  "name": "Local JSONL Delivery",
+  "version": "1.0.0",
+  "restart_policy": "hot",
+  "contributions": [
+    {
+      "id": "local-jsonl",
+      "slot": "delivery.adapter",
+      "entrypoint": "delivery_provider.provider:create_adapter"
+    }
+  ]
+}

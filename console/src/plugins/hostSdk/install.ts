@@ -40,6 +40,7 @@ import {
   useHostSelectedAgent,
   useHostCurrentSession,
   getSelectedAgentId,
+  getCurrentChatId,
   getCurrentSessionId,
 } from "./hooks";
 import { hostFetch } from "./fetch";
@@ -403,6 +404,7 @@ export function installHostSdk(): void {
   if (!host.useSelectedAgent) host.useSelectedAgent = useHostSelectedAgent;
   if (!host.useCurrentSession) host.useCurrentSession = useHostCurrentSession;
   if (!host.getSelectedAgentId) host.getSelectedAgentId = getSelectedAgentId;
+  if (!host.getCurrentChatId) host.getCurrentChatId = getCurrentChatId;
   if (!host.getCurrentSessionId) host.getCurrentSessionId = getCurrentSessionId;
   if (!host.fetch) host.fetch = hostFetch;
 }

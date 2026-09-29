@@ -18,6 +18,13 @@ export type CopyableResponse = {
   output?: CopyableMessage[];
 };
 
+export type ForkableResponse = {
+  status?: string;
+  output?: Array<{
+    source_message_id?: unknown;
+  }>;
+};
+
 export type RuntimeLoadingBridgeApi = {
   getLoading?: () => boolean | string;
   setLoading?: (loading: boolean | string) => void;
@@ -59,6 +66,24 @@ export function extractCopyableText(response: CopyableResponse): string {
   });
 
   return chunks.filter(Boolean).join("\n\n").trim();
+}
+
+/** Return the persisted AgentScope message that closes a completed response. */
+export function resolveForkSourceMessageId(
+  response: ForkableResponse,
+): string | null {
+  if (response.status !== "completed" || !Array.isArray(response.output)) {
+    return null;
+  }
+
+  for (let index = response.output.length - 1; index >= 0; index -= 1) {
+    const candidate = response.output[index]?.source_message_id;
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 /** Extract plain text from user message content. */

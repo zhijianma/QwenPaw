@@ -24,6 +24,11 @@ from ..utils.runtime_api import api_client, read_runtime_api
 from ..plugins.validation import (
     validate_plugin_module as _validate_plugin_module,
 )
+from ..plugins.architecture import PluginManifest
+from ..plugins.contributions import (
+    ContributionValidationError,
+    validate_contributions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -688,6 +693,63 @@ def list():  # pylint: disable=redefined-builtin
         click.echo()
 
 
+@plugin.command("migration-plan")
+@click.argument("plugin_id")
+@click.option(
+    "output_format",
+    "--format",
+    type=click.Choice(("text", "json")),
+    default="text",
+    show_default=True,
+)
+def migration_plan(plugin_id: str, output_format: str) -> None:
+    """Show a safe v2 Contribution migration plan for a loaded plugin."""
+    base = _get_api_base()
+    if base is None:
+        raise click.ClickException(
+            "QwenPaw must be running to observe legacy registration calls.",
+        )
+
+    try:
+        with api_client(base) as client:
+            response = client.get("plugins")
+            response.raise_for_status()
+            plugins = response.json()
+    except Exception as exc:
+        raise click.ClickException(
+            f"Failed to read plugin migration state: {exc}",
+        ) from exc
+
+    record = next(
+        (item for item in plugins if item.get("id") == plugin_id),
+        None,
+    )
+    if record is None:
+        raise click.ClickException(f"Plugin '{plugin_id}' is not loaded.")
+
+    plan = record.get("migration_plan")
+    if not isinstance(plan, dict):
+        raise click.ClickException(
+            "The running QwenPaw version does not expose migration plans.",
+        )
+    if output_format == "json":
+        click.echo(json.dumps(plan, ensure_ascii=False, indent=2))
+        return
+
+    click.echo(f"Plugin: {plugin_id}")
+    click.echo(f"Status: {plan.get('status', 'unknown')}")
+    for action in plan.get("actions", []):
+        click.echo(
+            f"- {action['api_name']} -> {action['target_slot']} "
+            f"({action['state']})",
+        )
+    patch = plan.get("manifest_patch", {})
+    click.echo("Manifest patch draft:")
+    click.echo(json.dumps(patch, ensure_ascii=False, indent=2))
+    for blocker in plan.get("blockers", []):
+        click.echo(f"Blocked: {blocker}")
+
+
 @plugin.command()
 @click.argument("plugin_id")
 def info(plugin_id: str):
@@ -862,12 +924,15 @@ def validate(path: str):
         with open(manifest_path, encoding="utf-8") as f:
             manifest = json.load(f)
 
-        # Validate required fields
-        required_fields = ["id", "name", "version"]
-        for field in required_fields:
+        for field in ("id", "name", "version"):
             if field not in manifest:
-                click.echo(f"❌ Missing required field: {field}", err=True)
+                click.echo(
+                    f"❌ Missing required field: {field}",
+                    err=True,
+                )
                 return
+        parsed_manifest = PluginManifest.from_dict(manifest)
+        validate_contributions(parsed_manifest)
 
         # Check entry points
         entry = manifest.get("entry", {})
@@ -885,10 +950,24 @@ def validate(path: str):
                 )
 
         click.echo("✅ Plugin validation passed")
-        click.echo(f"\nPlugin: {manifest['name']} (v{manifest['version']})")
-        click.echo(f"ID: {manifest['id']}")
+        click.echo(
+            f"\nPlugin: {parsed_manifest.name} "
+            f"(v{parsed_manifest.version})",
+        )
+        click.echo(f"ID: {parsed_manifest.id}")
+        if parsed_manifest.contributions:
+            click.echo(
+                f"Contributions: {len(parsed_manifest.contributions)}",
+            )
 
     except json.JSONDecodeError as e:
         click.echo(f"❌ Invalid JSON in plugin.json: {e}", err=True)
+    except ContributionValidationError as e:
+        for diagnostic in e.diagnostics:
+            click.echo(
+                f"❌ {diagnostic.field}: {diagnostic.message}",
+                err=True,
+            )
+            click.echo(f"   Recovery: {diagnostic.recovery}", err=True)
     except Exception as e:
         click.echo(f"❌ Validation failed: {e}", err=True)

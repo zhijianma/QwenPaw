@@ -114,18 +114,11 @@ def _process_heartbeat_section(content: str, enabled: bool) -> str:
     return _HEARTBEAT_PATTERN.sub("", content).strip()
 
 
-def _process_memory_section(
-    content: str,
-    memory_manager: Any | None,
-) -> str:
+def _strip_legacy_memory_section(content: str) -> str:
+    """Remove memory guidance embedded by the legacy prompt assembler."""
     if "<!-- memory:start -->" in content:
         content = _MEMORY_PATTERN.sub("", content).strip()
-    memory_section = ""
-    if memory_manager is not None:
-        memory_section = memory_manager.get_memory_prompt()
-    if content and memory_section:
-        return (content + "\n\n" + memory_section).strip()
-    return (content or memory_section).strip()
+    return content
 
 
 # ---------------------------------------------------------------------------
@@ -162,12 +155,8 @@ class AgentsMdContributor(SyncPromptContributor):
             content = _process_heartbeat_section(content, heartbeat_enabled)
         except Exception as e:
             logger.warning("Failed to process heartbeat: %s", e)
-        memory_manager = extras.get("memory_manager")
         try:
-            content = _process_memory_section(
-                content,
-                memory_manager,
-            )
+            content = _strip_legacy_memory_section(content)
         except Exception as e:
             logger.warning("Failed to process memory section: %s", e)
         if not content:
@@ -239,15 +228,31 @@ class WorkspacePromptFilesContributor(SyncPromptContributor):
             content = _process_heartbeat_section(content, heartbeat_enabled)
         except Exception as e:
             logger.warning("Failed to process heartbeat: %s", e)
-        memory_manager = extras.get("memory_manager")
         try:
-            content = _process_memory_section(
-                content,
-                memory_manager,
-            )
+            content = _strip_legacy_memory_section(content)
         except Exception as e:
             logger.warning("Failed to process memory section: %s", e)
         return content
+
+
+class MemoryGuidanceContributor(SyncPromptContributor):
+    """Inject guidance from the invocation-scoped Memory Session."""
+
+    name = "memory_guidance"
+    priority = 15
+
+    def contribute_sync(self, ctx: "HookContext") -> str | None:
+        extras = getattr(ctx, "extras", {}) or {}
+        session = extras.get("memory_session")
+        if session is None:
+            session = extras.get("memory_manager")
+        get_prompt = getattr(session, "get_prompt", None)
+        if not callable(get_prompt):
+            get_prompt = getattr(session, "get_memory_prompt", None)
+        if not callable(get_prompt):
+            return None
+        prompt = get_prompt()
+        return str(prompt).strip() or None
 
 
 class MultimodalHintContributor(SyncPromptContributor):
@@ -492,6 +497,7 @@ class PreloadedSkillsContributor(SyncPromptContributor):
 _ALL_CONTRIBUTORS = (
     ProtectedExecutionContractContributor,
     WorkspacePromptFilesContributor,
+    MemoryGuidanceContributor,
     MultimodalHintContributor,
     DirectoryContextContributor,
     CodingModeContributor,
@@ -516,6 +522,7 @@ __all__ = [
     "SoulMdContributor",
     "ProfileMdContributor",
     "WorkspacePromptFilesContributor",
+    "MemoryGuidanceContributor",
     "MultimodalHintContributor",
     "DirectoryContextContributor",
     "CodingModeContributor",

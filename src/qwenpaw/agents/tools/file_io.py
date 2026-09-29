@@ -291,6 +291,7 @@ async def read_file(  # pylint: disable=too-many-return-statements
     tool_type="file",
     target_param="file_path",
     policy_name="Write",
+    effect="local_write",
     ui_description="Write content to file",
     ui_icon="✍️",
 )
@@ -361,6 +362,7 @@ async def write_file(
     tool_type="file",
     target_param="file_path",
     policy_name="Edit",
+    effect="local_write",
     ui_description="Edit file using find-and-replace",
     ui_icon="🖊️",
 )
@@ -491,6 +493,7 @@ async def edit_file(
     tool_type="file",
     target_param="file_path",
     policy_name="Append",
+    effect="local_write",
     ui_description="Append content to a file",
     ui_icon="📎",
 )

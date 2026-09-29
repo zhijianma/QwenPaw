@@ -140,6 +140,8 @@ const getChannelType = (sourceType: string): PushMessage["channelType"] => {
       return "wechat";
     case "skill_autoupdate":
       return "skill";
+    case "task":
+      return "task";
     default:
       return "email";
   }
@@ -159,6 +161,8 @@ const getChannelName = (event: InboxEvent, t: TFunction): string => {
         : t("skillPool.autoSync");
     case "mail":
       return "Mail";
+    case "task":
+      return "Task";
     default:
       return "System";
   }

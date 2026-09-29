@@ -1,0 +1,882 @@
+# QwenPaw OS 基建迁移执行计划
+
+- 日期：2026-09-24
+- 状态：实施中
+- 当前产品基线：Lite / Chat-first
+- UI 冻结：暂停 Task Workbench 功能开发，仅保留既有回归验证
+
+## 1. 本阶段目标
+
+先完成 OS R0 的基础设施契约、运行装配和兼容迁移，再恢复 Task 页面开发。
+Chat 是当前唯一真实交互验收入口。Lite 提供本地实现；Workstation 与 Hub 在
+本阶段只冻结公共 Port 和 Profile 组合边界，不提前实现分布式能力。
+
+本阶段完成后，业务代码不再直接依赖旧 Workspace Registry、具体存储、具体
+AgentBuilder、DriverManager、Harness 或 Scheduler；这些实现只能作为系统
+Contribution 或 Port Adapter 存在。
+
+`docs/share/qwenpaw-detailed-solution.md` 已完成差异审计。其 Reliable Work、
+Causal Event、Side Effect、Verification、Inbox Delivery 与 Artifact Registry
+语义纳入本计划；代码继续以 `Task` 作为唯一持久目标聚合，不新增平行 `Work`
+模型。详细裁决见
+`docs/analysis/qwenpaw-detailed-solution-gap-analysis-2026-09-24.md`。
+
+## 2. 强制边界
+
+1. `kernel` 不依赖 FastAPI、AgentScope、SQLite、文件系统、插件加载器或 UI。
+2. 内置能力与插件能力使用相同 Descriptor、Slot、Generation 和 Lease。
+3. 每个系统能力域使用独立 provider namespace，禁止不同 bundle 相互覆盖。
+4. 每次 Invocation 固定 generation；热安装只影响后续 Invocation。
+5. 高风险动作统一经过 Approval Broker、Policy 与 Sandbox，失败关闭。
+6. Artifact、Evidence、Conversation 和 Approval 只有一个事实源。
+7. 旧 API 只能通过兼容适配器进入新契约，并标明弃用与删除门槛。
+8. 每个模块同时交付契约、系统适配器、插件路径、兼容测试和真实 Chat 验收。
+9. 执行成功、Artifact 生成与 Acceptance 验证通过是三个独立事实。
+10. 外部副作用使用独立 Side Effect 幂等记录，不能只依赖 API 幂等键。
+11. Inbox 是领域事件的 Delivery Projection，不复制或改写事实源。
+
+## 3. 模块分类
+
+| 层级 | 模块 | 定位 | 本阶段结果 |
+|---|---|---|---|
+| K0 | Domain Models / Ports / State Machines | 核心基建 | 冻结稳定 API 与依赖纯度 |
+| K1 | Capability Catalog / Generation / Lease | 核心基建 | provider 隔离、热替换、回滚、排空 |
+| K2 | Invocation Scope / Runtime Assembly | 核心基建 | 所有运行能力从固定 generation 装配 |
+| K3 | Approval / Policy / Sandbox / Audit | 核心基建 | 单一治理入口和可追溯决策 |
+| K4 | Execution Contract / Invocation Control | 核心基建 | 可靠运行约束、统一因果身份与服务端运行控制 |
+| K5 | Ledger / Artifact / Evidence / Verification | 核心基建 | Port、Lite adapter、完整性与验收 |
+| R1 | Agent / Mode / Prompt / Command / Hook / Gate | 运行基建 | 完成旧 Runtime 的 Contribution 迁移 |
+| R2 | Tool / MCP / Memory / Driver | 运行外设 | 类型化 Provider、治理身份和生命周期 |
+| R3 | Harness / Strategy / Scheduler | 执行外设 | Native/Codex/Qoder/策略/调度同一协议 |
+| E1 | Plugin SDK / Manifest / Migration Tooling | 扩展基建 | 安装即生效、开发者只依赖公开 SDK |
+| A1 | Chat / Channel / Cron Compatibility | 应用适配 | 旧入口复用 Kernel，不产生第二事实源 |
+| X1 | Task Workbench | Experience | 暂停新增，基建完成后恢复 |
+
+## 4. 分阶段 Checklist
+
+### I0：Catalog 所有权与命名空间收口
+
+- [x] Task 系统 bundle 使用独立 `qwenpaw.system.tasks` namespace。
+- [x] 修复 Chat `qwenpaw.system` bundle 覆盖 Task bundle 的根因。
+- [x] 每次取得 Task resolver 时使用幂等 `ensure_bundle()` 自愈。
+- [x] 保留旧 Task capability ID 到新 ID 的启动兼容映射。
+- [x] 为所有系统 bundle 增加 provider namespace 唯一性测试。
+- [x] 增加热替换失败、旧 lease 重入、排空和 cleanup 顺序综合测试。
+
+验收：连续执行 Chat Assembly、Task Assembly、插件安装与卸载后，各 Slot 的系统
+能力仍完整；运行中的 lease 不漂移。
+
+### I1：Kernel 与 Runtime Assembly 冻结
+
+- [x] 审计 Kernel 依赖纯度并补自动门禁；递归禁止产品、框架、数据库和文件系统
+  实现反向进入 Kernel。
+- [x] 支持 Task Run 固定 generation 进入嵌套 Chat Invocation，外部请求不能
+  伪造 generation；旧 generation 仅在 lease 保留期间可重入。
+- [x] 冻结 InvocationScope、CapabilitySelection 与 Provider Session 基础生命周期：
+  Invocation 建立时完整校验选择，FINALLY 在 Session 存活时运行，资源逆序关闭，
+  单个 close 失败不泄漏后续 Session 或 generation lease。
+- [x] 保持 Task Strategy 与 Chat Agent Mode 分离；Task Strategy 固定在 Task
+  generation，参数只通过类型化 RuntimeContext 传入 Chat Invocation。
+- [x] 统一 Session close、异常清理、取消与 timeout 顺序；FINALLY 保持 Session
+  存活，二次取消不能打断排空，部分 Provider 装配失败会逆序回滚已打开 Session。
+- [x] 以机器可读 SlotContract 明确所有现有 Slot 的输入、输出、生命周期、失败
+  语义和稳定性；未知 Slot 失败关闭。
+
+验收：Chat 的 Agent、Mode、Prompt、Command、Hook、Gate 来自同一 generation；
+Task Strategy 来自同一 Task Run 固定的 generation，并以有界参数进入 Chat。
+任一缺失或 Slot 不匹配时准确 fail closed。
+
+### I2：治理基建收口
+
+- [x] Approval Broker 成为 Tool、Driver、Harness、Proposal 的唯一 durable 审批
+  入口；旧 ApprovalService 仅保留交互投影和 Future 唤醒职责。
+- [x] Policy 决策、Sandbox escalation、durable Approval 与 Audit Record 使用
+  Runtime 所有的 Invocation/Correlation 身份；外部请求不能伪造内部身份。
+- [x] Side Effect Record 使用独立幂等键并关联 Policy、Approval 与执行事件；
+  `ToolEffect` 由内置工具、Plugin API 与 Tool Provider 显式声明，durable Task
+  在执行前后向同一 Ledger 写入 prepared/terminal 事件，普通 Chat 保持兼容。
+- [x] 并行审批、拒绝、超时、取消和恢复具有确定状态机；审批请求同步生成
+  安全 Checkpoint，Runtime 丢失时旧 Run 失败化、pending approval 取消、未决
+  Side Effect 转 uncertain，用户明确授权重试前禁止创建新 attempt。
+- [x] 内置与插件 Runner 通过同一 `RuntimeContext.checkpoint_broker` 保存运行中安全
+  边界；宿主绑定 Task/Run/sequence、限制 32 KiB、提供幂等写入，并以
+  `checkpoint.created` 与 `run.suspended` 区分“可恢复”与“已暂停”。
+- [x] Resume 的领域提交与 Runner 启动具有统一幂等边界；并发重试或完成后的响应
+  重放只返回同一持久化 Run，不再启动第二个执行协程。恢复命令按 Task 串行化，
+  新 attempt 仍从当前 generation 解析原 runner ID，热替换不会复用旧实现。
+- [x] 清除绕过 Broker 的遗留直接审批调用；源码中仅 TaskApprovalBroker adapter
+  可以调用 `TaskService.request_approval()`。
+
+验收：严格模式真实 Chat 中，所有高风险操作先持久化审批，再执行或拒绝；取消
+不会遗留等待者或孤立审批。
+
+### I3：Execution Contract 与因果事件
+
+- [x] 冻结自治级别、预算、重试、超时、退出条件、必需产物和验证策略的
+  类型化契约；L3 缺少 Acceptance、Permission、四类资源上限、退出条件或验证
+  策略时 fail closed，副作用自动重试策略不一致时拒绝创建。
+  - [x] `max_duration_seconds` 与 attempt/host timeout 取最严格边界，耗尽时以
+    `TaskExecutionBudgetExceededError` 失败化 Run。
+  - [x] Token、工具调用和重试次数进入统一 Usage Meter；实际用量先入 Ledger，
+    越界后以 `TaskExecutionBudgetExceededError` 失败化 Run，恢复 attempt 延续累计。
+  - [x] Cost delta 与 `max_cost_micros` 已冻结并可执行；Runner 明确报告费用时
+    统一累计和阻断。
+  - [x] `max_concurrency` 已进入 Tool Coordinator 的真实 handler
+    acquire/release 边界；前台、后台 offload、内置工具和插件工具使用同一槽位，
+    计量失败时工具 handler 不会启动。
+  - [x] Runner 通过公开 `CostAccountingMode` 声明 `reported/zero/unknown`；Console
+    usage 缺少价格字段时持久化 `cost_unknown`，配置成本上限的 Run 在任何 Provider
+    调用前写入证据并 fail closed，不再把未知费用当作零费用。
+  - [x] Lite 跨 HTTP 的 subagent/fork 通过宿主签发的 opaque Usage Scope 继承
+    根 Task 的同一个 Usage Meter；HTTP 不序列化进程对象，scope 按 `agent_id`
+    绑定并以引用计数租约覆盖后台子孙生命周期。子模型 Token/未知费用和工具调用
+    写回根 Ledger，根 Run 完成前再次校验累计预算，不能把子任务越界降级为普通
+    工具错误。
+  - [ ] Workstation/Hub 跨进程部署需将 Lite 进程内 Usage Scope Registry 替换为
+    具备签名或服务端持久化租约的分布式适配器；公开 HTTP 契约仍只传 opaque scope。
+- [x] Task、Scheduler、Proposal 与 Chat 升级 Task 共用同一 Execution Contract。
+  - [x] Task API、TaskService、TaskOrder、RuntimeContext 使用同一领域对象。
+  - [x] Proposal/Sensor 审批转换和旧 `/console/chat/task` 升级路径保留契约。
+  - [x] Kernel `ScheduleDefinition` 直接引用同一 `ExecutionContract`，Dispatcher
+    原样写入 Task；Schedule 自身的 Fire 并发与重试只约束触发租约，不复制 Task
+    执行预算。尚未无损迁移的旧 Cron 类型继续留在 I6 兼容清单。
+  - [x] required `acceptance_met`、`artifact_emitted` 与 `explicit_signal` 进入
+    completion gate；`max_iterations` 下推 Console ReAct，并由
+    `runner.iteration` 为插件/Harness 提供宿主兜底。未满足时 Run fail closed。
+  - [x] optional Result-bound Exit Condition 在持久化信号后由宿主投影判定；仅当
+    完整 completion gate 同时通过时才关闭 Runner，并写入带直接 cause 的
+    `exit_condition.triggered`。`max_iterations` 仍是失败关闭的硬边界。
+- [x] Execution Event 增加兼容的 invocation、step、cause、correlation 与
+  source identity；
+  旧事件缺少新增字段时仍可 replay。
+- [x] Invocation、Policy、Approval、Sandbox、Side Effect、Artifact 与 Verification
+  共享 invocation/correlation identity。
+  - [x] Runner Signal、Approval 与 Side Effect 写入顶层
+    invocation/correlation/source。
+  - [x] Artifact/Evidence/Verification Registry 由宿主事件信封派生 event、step、
+    cause、source 与 correlation identity；插件 metadata 不作为审计来源。
+- [x] 旧事件可无损 replay；每个新 Run 建立根 correlation，恢复 attempt 延续
+  同一根 identity；Ledger 拒绝不存在、跨 Task 或指向未来的 cause_event_id。
+
+验收：任一受治理动作可从 Invocation 追溯到 Policy、Approval、执行、副作用、
+Artifact 与 Verification；预算或退出条件触发可解释且 fail closed。
+
+### I3A：API 与 Application 边界迁移
+
+- [x] Task HTTP 输入模型移出路由，使用严格、可版本演进的公开契约。
+- [x] Create、List、Detail 进入与 FastAPI 无关的 `TaskApplicationService`。
+- [x] Start、Cancel、Resume 进入独立执行应用服务；Runner 选择、孤儿恢复和
+  执行结果聚合不再由 route 实现。
+- [x] 执行应用服务只依赖最小 Runtime Port；FastAPI 入口负责装配具体
+  Orchestrator、Capability Resolver 与 Supervisor。
+- [x] Projection、Approval、Artifact、Sensor 和 Event Stream 逐批迁入对应
+  Application Query/Command，route 最终只做协议解析、序列化和错误映射。
+  - [x] Projection 与 Artifact 已切换到 `TaskWorkbenchReadModel` 和完整
+    Result Projection；route 不再以 1000 条事件上限拼装产物事实。
+  - [x] Conversation 消息合并、Tool activity 筛选、pending Approval 与最近决策
+    已下沉为强类型 Workbench 投影；HTTP route 只做公开结构序列化，不再解释
+    Execution Event 或审批状态。
+  - [x] Approval 决策、并行取消、运行时续接和 Proposal 调度已进入
+    `TaskApprovalApplicationService`。
+  - [x] Event Page 与 SSE follow 生命周期已进入
+    `TaskEventApplicationService`，route 不再直接轮询 Ledger。
+  - [x] Sensor Poll 已进入 `TaskSensorApplicationService`，Agent identity
+    和 approval-gated host 调用不再由 route 编排。
+  - [x] Sensor 轮询上下文已冻结为 `SensorContext`：Host 注入可信
+    `agent_id + registry_generation` 与 32 KiB JSON trigger，限制单次 25 个
+    Proposal，并强制 `Proposal.source` 等于 capability ID。旧无上下文
+    `propose()` 通过兼容路径保留；新插件使用 `propose_context()`。
+  - [x] 内置 proactive memory 已迁入
+    `qwenpaw.system.tasks.proactive-memory-sensor`，不再直接调用 Proposal
+    persistence；system/plugin Sensor 均写入同一 Task、Run、Approval Ledger，
+    并记录 `sensor_registry_generation`。共同合同验证 pending Approval、请求者
+    身份、事件顺序和 generation 固定。
+  - [x] Registry 准备、Edition 选择、Supervisor、Task Application Services 与
+    Proposal 后台生命周期已收口到进程级 `TaskApplicationHost`；同一 HTTP request
+    只组合一次绑定，route 不再持有 Runtime 或后台 Task 集合。
+  - [x] Artifact ownership、Edition Store 选择、兼容读取、预览预算和 generation
+    固定 Renderer 已进入 `TaskArtifactApplicationService`；HTTP 只保留状态码和
+    安全响应头映射。
+  - [x] Capability Catalog 的 generation lease 生命周期，以及 Side Effect 查询和
+    人工重试授权已进入独立 Application Service；route 不再穿透
+    `EditionRuntimeBindings` 或 `TaskService`。
+- [x] 冻结错误码、分页、幂等 Header 与响应投影兼容矩阵，并补契约测试。
+- [x] 删除 route 中完成迁移后的私有业务 helper 与重复 runtime 装配；当前仅保留
+  HTTP problem 映射、协议解析、序列化和安全响应头。
+
+迁移期间继续使用当前 `/api/tasks` 作为唯一外部 HTTP 契约，不建立长期并行的
+`/v2` 路由，也不复制 Task/Run 状态。所谓“重构版本”是内部模块边界：
+`HTTP Contract -> Route Adapter -> Application Command/Query -> Kernel Port ->
+Domain Service`。旧实现按 endpoint 逐批切换，已迁移接口不得再直接访问存储或
+拼装运行策略。
+
+验收：Application 层可以脱离 FastAPI 定点测试；HTTP 集成测试证明迁移前后
+状态码、错误码和响应字段兼容；同一命令只有一个 Task 事实源和一个执行入口。
+
+### I3B：Queue / Steer / Interrupt 运行控制面
+
+定位：这是 Chat-first Runtime 核心基建，不属于前端状态管理，也不依赖 Task
+Workbench。前端只能提交命令、订阅事件和展示服务端投影；不得使用
+`localStorage`、Web Locks、组件生命周期或浏览器 `AbortController` 充当队列、
+运行所有权或取消事实源。
+
+当前审计：
+
+- [x] 已确认旧 Channel 具有进程内 `UnifiedQueueManager`，但队列按
+  `(channel, session, priority)` 拆分，不同优先级可并行消费；它不持久化、没有
+  command identity、revision、重连投影或 Steer 语义，不能作为新控制面的最终实现。
+- [x] 已确认 Console Chat 具有 `TaskTracker.request_stop()`、Tool Coordinator
+  cancellation 与 Runtime cancel-save，可停止当前生成、传播到工具并保存部分输出；
+  但它们尚未通过统一 Kernel Port 暴露，`/stop` 还会隐式清空普通消息队列。
+- [x] 已确认浏览器 `messageQueueStore` 当前承担持久化、排序、暂停、重试、
+  跨标签所有权和后台发送；这是需要迁出的旧兼容实现，不是 OS 架构目标。
+- [x] 已确认 Steer 尚无一等领域命令；Stop Gate 的
+  `INTERRUPT_AND_CONTINUE` 是 Agent 内部循环决策，不能冒充用户 Steer。
+
+实施 Checklist：
+
+- [x] 冻结 `InvocationControlPort` 与服务端领域模型：`TurnSubmission`、
+  `ControlCommand`、`QueueProjection`、`ControlReceipt`；所有对象携带 agent、
+  conversation、invocation、command、correlation、idempotency 和 revision 身份。
+- [x] 冻结单会话调度不变量：同一 Conversation 最多一个 active Invocation；
+  不可变 `sequence` 只负责审计顺序，可变 `queue_position` 负责用户重排；priority
+  只影响尚未开始的 admission，不能启动第二个并行消费者绕过当前 Invocation。
+- [x] Lite 使用可恢复的本地持久化 Adapter 保存 queued/admitted/running/terminal
+  状态与控制命令；`asyncio.Queue` 只作唤醒器，不作事实源。Workstation/Hub 只冻结
+  等价 Port、lease 与 revision 语义，本阶段不实现远程队列。
+  - [x] SQLite WAL Adapter 已建立独立 schema，原子分配 sequence/revision，持久化
+    Submission 与 accepted Control Command，并支持进程重建后的 Queue 读取。
+  - [x] Admission、运行态转换和命令应用回执已接入 Runtime Dispatcher；启动恢复会
+    原子终止旧 generation 的 active Submission、结算 accepted command，再继续同
+    Conversation 的 queued turn，且不会自动重放可能已产生副作用的运行中输入。
+- [x] `enqueue` 支持幂等提交、查询、取消未运行项和受 revision 保护的重排；服务
+  重启或页面关闭后仍可恢复，重复请求不得重复执行。
+  - [x] 提交、查询、乐观 revision 和重建请求幂等回放已由 SQLite Adapter 实现。
+  - [x] `cancel_queued` 与完整集合 `reorder` 已由 Application Service 在 SQLite
+    命令事务中原子应用并返回 applied receipt；审计 `sequence` 不随重排改变。
+- [x] `steer` 只针对 active Invocation，在明确的模型/工具迭代安全点应用，并写入
+  有序事件；已完成的输出和工具结果不可改写。高风险副作用处于 prepared/running/
+  uncertain 时必须等待安全点或返回冲突，不能用取消伪装为 Steer。
+  - [x] 已冻结 `BEFORE/AFTER_REASONING` 与 `BEFORE/AFTER_TOOL_BATCH` 安全点、
+    applied receipt 证据和 reasoning/tool/approval 竞态规则；详细设计见
+    `docs/design/qwenpaw-invocation-control.md`。
+  - [x] workspace 级 `InvocationControlService` 已绑定 live Invocation；
+    AgentScope `RuntimeInteractionMiddleware` 承担 reasoning 前/后安全点。
+    AgentScope 未暴露整批 tool admission middleware，因此仅保留一层极薄
+    batch bridge 承担工具批次前/后原子失效。
+  - [x] SQLite accepted Steer 到 live mailbox 的恢复型 Dispatcher 已接入；
+    只有写入 Agent 上下文后才持久化 applied receipt 和实际
+    safe point，Runtime 晚于命令绑定时可恢复投递。
+  - [x] `BEFORE_TOOL_BATCH` 仅撤销尚未 admission 的完整工具批次；
+    `AFTER_TOOL_BATCH` 只追加 Steer，不读取或重写已完成 Tool Result。审批暂停、
+    运行中 Side Effect 与 uncertain 状态不会被 Steer 当作取消处理。
+  - [x] Console 以服务端 `ChatSpec.id` 作为 Conversation identity，
+    以 Message identity 作为 submission 幂等键；控制面领域模型不再包含
+    `session_id`，该字段仅由渠道和旧历史模块自行兼容。
+  - [x] `InvocationScope.conversation_id` 已冻结为可空的一等 `ChatSpec.id`；Chat
+    Adapter 在装配时只写入一次，Memory Host、Interaction 和控制面从固定 Scope
+    传播。没有 Conversation 的 transport 保持 `None`，禁止回退到 `session_id`。
+    固定 Chat 执行 `/clear` 后通过真实 durable Submission 返回
+    `CONVERSATION_SCOPE_OK`，Queue 回到 idle，消息级 Fork 入口正常呈现。
+  - [x] invocation-bound `RuntimeInteractionBroker` 已冻结 Ask User 与
+    Suggestion 的生产者 API；插件通过公开 `ToolHost` 获取，阻塞等待、非阻塞
+    建议、超时与 Runtime 终止取消共用 workspace `InteractionService`。
+  - [x] 内置 `suggest_user_action` 已与插件共用 Broker 和系统 Tool Provider；
+    Runtime 终态只释放 blocking waiter，不撤回已持久化的 non-blocking Suggestion，
+    Chat 权威投影可展示并关闭建议。
+  - [x] 内置 `ask_user` 工具和 Chat Interaction Adapter 已贯通：服务端按
+    `ChatSpec.id` 投递和校验响应，Console 只呈现 open projection；真实 Chat
+    已验证选项回答后工具返回、reasoning 继续并形成最终消息。
+  - [x] Chat Runtime 已进入 queued -> admitted -> running -> terminal
+    Submission 生命周期；如果存在更早 queued turn，当前 HTTP 输入
+    不会被错配执行。
+  - [x] reasoning 流使用 provider cooperative cancel；Interrupt 在取消 Runtime
+    owner 前，先通过同一 cancellation root 事务撤销该 Invocation 的 blocking
+    Approval/Ask User，再取消前台工具。终态清理保持幂等重试，non-blocking
+    Suggestion 不随运行结束消失。
+- [x] `interrupt` 已通过 invocation cancellation root 传播到 Runtime owner、前台
+  Tool Coordinator（含 root-owned child-agent 工具）与 Interaction waiter，保存
+  部分输出并提交唯一 `interrupted` 终态；显式 offload 后台任务不属于当前前台
+  Invocation。
+- [x] Provider 模型流具备有界 cooperative cancel；Codex/Qoder Harness 公开统一
+  `cancel_turn()`，并在 OS Interrupt cancellation root 中精确中止活动 turn/session。
+  外部 Harness 请求已进入 durable Submission 终态与 Interaction 收尾，真实外部
+  进程的浏览器链路仍需验收。
+- [x] 分离三个用户意图：`interrupt_current` 只打断当前 Invocation；
+  `cancel_queued` 只撤销指定待执行项；`stop_and_clear` 必须显式组合，禁止沿用旧
+  `/stop` 的隐式清队列行为。
+  `stop_and_clear` 在同一事务中取消 queued Submission，并捕获当时的
+  `invocation_id` 后复用 Runtime cancellation tree，晚绑定不会误伤后续运行。
+- [x] Chat HTTP/SSE 仅作为 Control Plane Adapter，按 `ChatSpec.id` 返回权威 Queue
+  projection、open Interaction 与 receipt/revision；过期 revision、跨 Chat target
+  和幂等冲突由服务端关闭失败。SSE 使用完整快照 cursor 做 current-state recovery，
+  不冒充不可丢审计日志。
+- [ ] 前端迁移为薄投影：移除本地发送者、跨标签锁和本地权威 runState；允许保留
+  未提交输入草稿，但提交后的 Queue、Steer、Interrupt 状态只读服务端。
+  - [x] 前置门禁：workspace-owned Submission Dispatcher 原子持久化版本化输入
+    envelope，并能在无浏览器 subscriber 和服务重启后消费 queued Submission；
+    generation 丢失的 active Submission 会先安全进入 interrupted，`TaskTracker` 只
+    保留单次 SSE 回放兼容，不再拥有排队顺序。
+  - [x] 已分配 `ChatSpec.id` 的 QwenPaw Chat 在运行中或多标签场景直接提交完整
+    durable envelope，不再经过浏览器 Web Lock/localStorage admission；Queue 面板
+    订阅服务端 Runtime Projection，并以权威 revision 执行 cancel/reorder。
+  - [x] QwenPaw 首轮发送先通过现有 Session singleflight 分配真实
+    `ChatSpec.id`，再提交 durable envelope；普通 Enter 和空白页 Ctrl/Command+Enter
+    均不再创建 `agent:new` 本地 Queue。页面切换后的旧草稿失败关闭，遗留本地草稿
+    Queue 只保留兼容读取，不再承担新 admission；已有 Chat 在提交期间切换页面时
+    继续按不可变 route 进入原 Conversation 的服务端 Queue。
+  - [ ] 外部 backend 仍使用本地兼容队列；待其公开 Conversation/Queue capability
+    明确后删除跨标签发送状态机。
+- [x] Console 与 Channel `/stop` 已按 `ChatSpec.id` 优先使用统一 Interrupt，旧路径
+  仅作无 binding 回退，且不再隐式清 Queue；现有前端发送队列仍需逐步切到同一
+  Port。迁移完成前保持旧路径可用，但不得让新旧消费者同时执行同一 submission。
+
+验收：固定 Chat 在两个浏览器标签中连续排队仍只执行一次且顺序一致；关闭页面和
+重启服务后待执行项可恢复；运行中 Steer 在下一个安全点生效且不丢失既有输出；
+Interrupt 能终止模型、工具与子运行，保存部分消息、解除审批等待并产生唯一终态；
+三个控制命令均通过幂等、竞态、重连、崩溃恢复和跨平台定点测试。浏览器存储全部
+清空后，服务端 Queue 与运行控制状态仍保持正确。
+
+### I4：存储、产物与验证基建收口
+
+- [x] Execution Ledger Port 与 SQLite Lite Adapter 明确分层。
+- [x] Artifact Store Port 与文件系统 Lite Adapter 明确分层。
+- [x] Conversation、Artifact、Evidence 引用统一 ownership 与 integrity 校验。
+- [x] 冻结 Conversation Fork 身份契约：子分支创建新 `ChatSpec.id`，
+  以持久化 `source_message_id` 为包含式锚点；不继承 Queue、Invocation 或
+  pending Interaction。详细设计见 `docs/design/qwenpaw-conversation-fork.md`。
+- [x] Conversation Fork 已提升为 Kernel `ConversationForkPort` 与稳定 SDK 模型；
+  Lite 通过 JSON Adapter 兼容旧 AgentState 存储，外部契约只使用
+  `agent_id + ChatSpec.id + source_message_id`，HTTP 不再直接操作 Session snapshot。
+- [x] 实现原子 Conversation snapshot store、Chat Fork HTTP 适配器和
+  Console API Client；并发幂等、运行中冲突及失败回滚已通过定点测试。
+- [x] Chat 持久化消息 Fork 操作已接入，两个消息对锚点的历史截断与新
+  `ChatSpec.id` 导航已通过浏览器验收；领域服务已验证父子 Queue、Interaction
+  隔离、OS Queue 运行中门禁和 Artifact/Evidence lineage 只读授权；父子并行
+  Ask User、Steer/Interrupt、严格审批及继承附件预览均已通过真实浏览器验收。
+- [x] Plugin/PawApp Host 新增 `getCurrentChatId()`，只返回已进入 Chat registry 的
+  `ChatSpec.id`；`getCurrentSessionId()` 降为传输兼容入口。PawTask 默认携带当前
+  Chat identity，也可显式传入 Fork 子 Chat，并由 Host 校验用户、渠道和 PawApp
+  namespace，防止二次开发继续把 runtime `session_id` 当作 Conversation identity。
+- [x] Artifact Registry 投影支持版本、状态、supersedes 与 Verification 引用。
+- [x] Verification 依据 Acceptance 与 Evidence 形成独立、可追溯的判定。
+- [x] Artifact、Evidence 与 Verification Registry 保留宿主可信的事件因果身份；
+  HTTP 保留旧引用数组并以新增 registry 字段兼容扩展。
+- [x] Result Package 由权威引用组装，不复制事实内容。
+- [x] Renderer、下载、预览与大内容边界统一。
+- [ ] 为 Workstation/Hub 冻结数据库与对象存储 Adapter contract。
+
+验收：Chat 产物可刷新恢复、跨会话读取失败关闭、摘要和哈希可校验；Kernel 不
+引用 SQLite 或文件路径实现。
+
+### I5：运行外设迁移
+
+- [x] Tool/MCP Provider 完成公开配置与选择契约。
+  - [x] `tool.provider` 使用 Agent Profile 的显式多 Provider 选择；缺省时自动发现，
+    空列表明确关闭，Invocation 固定 registry generation，热替换不漂移旧运行。
+  - [x] `config_schema` 随 Descriptor 固定；Runtime 在调用 `list_tools()` 前校验
+    JSON 与 64 KiB 边界。公开 `ToolHost` 只暴露 detached config、alias-scoped
+    credential handle 和统一 Interaction Broker，不泄漏 Workspace、request context、
+    governor 或凭据 Store；无效配置 fail closed，未绑定 alias 返回 `None`。
+  - [x] 系统与插件工具统一转换为 `ToolDefinition` 并进入 Tool Guard，名称碰撞拒绝
+    装配；内置 Workspace Tool 仅通过私有兼容 Host 访问旧实现。
+  - [x] MCP 明确作为 Driver 的具体协议，经选中的 `driver.provider` 转换为
+    `DriverToolDefinition`，复用同一治理、审批、凭据和 Invocation 生命周期；不再
+    建立平行 MCP Tool Provider，避免一个服务被双重暴露和双重持有生命周期。
+- [x] Memory Provider 完成 Session 生命周期与持久化边界：公开 `MemoryHost` 只提供
+  schema 校验后的 detached config snapshot 与 `MemoryStateStore`，第三方不再取得
+  Workspace 私有 backend。Lite SQLite Adapter 按 capability provider、Agent 或
+  `ChatSpec.id` 隔离，绝不回退 `session_id`；写入/删除强制 revision CAS，单值限制
+  256 KiB JSON。内置 Memory 通过非 SDK 兼容入口继续复用既有 backend，生命周期仍
+  归 Workspace。重开恢复、并发冲突、跨 provider/owner 隔离、删除竞态、配置接线、
+  generation 替换与示例 SDK 共 58 项相关定点测试通过，并通过全部文件级静态门禁。
+- [x] Agent Profile 冻结 `CapabilitySelectionOverrides`：新 Invocation 从当前
+  Profile 读取显式选择，多值 Slot 未覆盖时保持自动发现；空列表明确关闭，多值
+  与系统 Provider 可组合。可选标量 Slot 通过 `disabled_optional_slots` 明确关闭，
+  `null`/缺省保持自动选择。不存在或 Slot 不匹配的 Provider fail closed 并释放
+  generation lease；运行中 Invocation 继续固定原 selection 与 generation。配置
+  JSON 往返、插件 Driver 选择、自动 Tool 保留、关闭语义、错误释放和 Runtime
+  Profile 接线共 40 项相关定点测试通过。
+- [x] Driver Provider 冻结第三方类型化工具、配置与 policy hint 契约。
+  - [x] 内置与插件统一返回框架无关 `DriverToolDefinition` 和带 ownership 的
+    `PromptFragment`；AgentScope 转换集中在唯一 Adapter，发布 Toolkit 前校验
+    provider/capability/tool/prompt 身份、重复项和数量/字节边界。调用选择继续固定在
+    Invocation generation 的 `driver_provider_id`。
+  - [x] 公开 `DriverHost.require_approval()` 复用内置 Driver Gate、durable Task
+    Approval Bridge 和 blocking Interaction；批准后继续，拒绝/超时/持久化失败通过
+    `DriverApprovalRejectedError` 关闭，Invocation 取消保持取消语义。公开 SDK 示例
+    已验证 approve、deny、参数脱敏和统一 Interaction 投影。
+  - [x] `config_schema` 随 CapabilityDescriptor 固定在 registry generation；
+    Agent Profile 将非秘密 `capability_configs` 与 alias -> credential ref 分离保存。
+    Runtime 在 `DriverProvider.open()` 前完成 JSON schema 与 64 KiB 边界校验，Host
+    只返回 detached config snapshot 和当前 capability 自己的 alias-scoped
+    `DriverCredentialHandle`。handle 不暴露 Store 或任意 ref，repr 不包含 ref/secret，
+    缺失记录/字段通过公开 `DriverCredentialUnavailableError` fail closed。示例插件
+    仅引用公开 SDK；配置、隔离、脱敏、无效配置不调用 provider 及 Profile 接线已纳入
+    57 项相关定点测试，并通过 manifest 校验与全部文件级静态门禁。
+  - [x] 真实固定 Chat 先执行 `/clear`，再经内置 Workspace Driver 的新定义管线
+    构建 Agent 并完成 `DRIVER_CONTRACT_SMOKE -> DRIVER_OK`；服务端 Queue 回到
+    idle，浏览器刷新后显示完成步骤、持久化回复和消息级 Fork 入口。
+- [x] Harness Runner 统一 Native Agent、Codex、Qoder 输入输出与取消语义。
+  - [x] Codex/Qoder 已共享 Harness Event 翻译、OS durable Submission、统一
+    `cancel_turn()` 和 blocking Interaction 收尾。
+  - [x] `harness.runner` Contribution 已与 `runner` 共用公开 `TaskRunner`、
+    `RuntimeContext`、generation lease、监督执行和 `RunnerSignal` 持久化管线；公开
+    SDK 示例已经通过真实 `TaskExecutionCoordinator` 执行。
+  - [x] 内置 Codex/Qoder 分别发布为
+    `qwenpaw.system.tasks.codex-harness` 与 `qwenpaw.system.tasks.qoder-harness`，
+    Slot 均为 `harness.runner`。系统 Adapter 直接消费同一 `TaskOrder`、`Run` 和
+    `RuntimeContext`，把 Harness reasoning/tool/text/terminal 事件投影为统一
+    `RunnerSignal`，最终回复通过同一 Artifact/Evidence Emitter 产出。
+  - [x] Task Harness 不创建第二个 Chat Submission/Queue lease；取消由 Task
+    Supervisor 的 cancellation root 传播到精确 provider turn，Codex/Qoder 的
+    `cancel_turn()` 仍是唯一外部进程中止入口。错误、缺少 terminal、无 tool identity
+    和 terminal 后继续输出全部 fail closed。
+  - [x] 运行中的本地服务已热发布 1.3.0 generation，`/api/tasks/capabilities` 可发现
+    两个 system Harness Runner；系统 Runner 经 `execute_selected()` 的真实 Ledger
+    管线完成 conversation、reasoning、tool、Artifact/Evidence 与 `run.completed`。
+  - [ ] 外部 provider 成功链路仍需环境验收：当前 Qoder runtime 已安装但未认证；
+    唯一 Codex 可执行文件位于 ChatGPT.app 内，按隔离策略被判定为 embedded runtime，
+    不作为 QwenPaw 子进程启动。取得已认证 Qoder 或独立 Codex CLI 后再做真实进程
+    成功、审批与取消演示；当前不伪造通过状态。
+- [x] Coding、Goal、Mission Strategy 完成安全激活与会话生命周期适配。
+  - [x] `planner` 与 `strategy` 已补齐 system/plugin 共享行为合同：示例插件仅从
+    `qwenpaw.plugins.sdk` 导入 `PlanStep`、`TaskOrder`、`RuntimeContext` 与
+    `JsonObject`，经 manifest → generation → `TaskRuntimeOrchestrator` 真实生成
+    Plan、固定 Strategy 和 Runner，并产出 Artifact/Evidence。Strategy 参数经过
+    JSON/32 KiB 门禁后进入 Runner 的不可变 Context，插件不能旁路宿主执行管线。
+  - [x] Default、Coding、Goal、Mission 均发布为 `strategy` Contribution；参数先
+    进入不可变 `RuntimeStrategyDirective` 并受 JSON/32 KiB 边界约束。Console
+    兼容 Runner 只桥接精确匹配的系统指令：Coding 仅修改本次 Invocation 的配置
+    副本，Goal/Mission 只通过固定 `/goal`、`/mission` Command 激活。
+  - [x] Agent Mode 与 Task Strategy 保持分层：Mode Session、Command、Prompt、
+    Tool 和 Stop Gate 来自同一 Chat generation；`/clear`、`/new` 通过当前
+    invocation 固定的 `AgentModeSession.reset_conversation()` 清理会话态，不改写
+    Workspace 配置，也不会清理其他 Conversation 的 Goal 状态。
+  - [x] Task resume 默认继承上一 Run 的 `runner_id + strategy_id`；显式
+    `RuntimeLaunchConfig.strategy_id` 才能替换 Strategy。新 attempt 从新固定的
+    generation 重新解析该 ID，缺失时 fail closed，不复用旧实现，也不静默降级到
+    Default。相关 Runtime、系统 Contribution、Directive、Mode 与 `/clear` 生命周期
+    94 项定点测试及所改文件静态门禁已通过。Resume 并发幂等和完成后重放另有
+    Orchestrator 回归测试，确保同一 Run 不会被二次执行。
+  - [x] 真实 Runtime 验收使用 generation 11 的系统 Contribution：Coding Task
+    `da282534-fc0c-4dda-867c-bdfe086613d0` 零工具返回
+    `CODING_STRATEGY_OK`；Goal Task
+    `e5742b64-bd5c-4eae-a211-914f2f2c4eba` 实际调用 `update_goal` 并在第 1
+    次迭代完成；Mission Task `daef6d8c-a21a-48cc-9ce7-b01bfbd5889a`
+    以 `--max-iterations 1` 返回 `MISSION_STRATEGY_OK`。三者均通过同一 Console
+    Runner、Conversation、Artifact/Evidence 与 Run Projection 管线完成，无待审批。
+    固定 Chat `1ee31988-b37a-48b9-b6ce-423c52f6a3a9` 另完成 Goal 激活、
+    `update_goal(complete)`、`/clear` 和普通消息 `POST_CLEAR_OK` 复验；清理后 Loop
+    回到 Default、上下文为 0.0%，未继承 Goal 会话态。
+
+验收：系统实现和示例插件分别通过相同契约套件；卸载新插件不影响已固定的旧
+Invocation，新 Invocation 自动使用新 generation。
+
+### I6：Scheduler、入口与 Delivery 兼容迁移
+
+- [x] 冻结 Scheduler Port、Trigger、Lease、Retry 与 Idempotency 契约。
+  - [x] system 与 plugin Scheduler 通过同一真实调度行为合同：Fire 先固定
+    registry generation，再以 CAS lease 创建唯一 `TaskSource.SCHEDULE` Task，
+    同一 generation 解析 Planner/Strategy/Runner，完成 Artifact/Evidence 后对重复
+    Fire 幂等 replay。新 Store 实例可读取相同 definition，证明不是内存假象。
+  - [x] 新增纯 Kernel `ScheduleTrigger / ScheduleDefinition / ScheduleFire /
+    ScheduleLease`，严格区分 cron/once/interval payload，并以
+    `owner_id + revision + expires_at` 冻结 claim/renew/terminal 所有权。
+  - [x] `SchedulerPort` 公开 upsert/remove/list、claim、renew、complete、fail 和
+    recover-expired；复用现有 `ExecutionContract` 与 `RetryPolicy`，不在调度层复制
+    Budget、Approval、Artifact 或 Delivery 状态机。
+  - [x] 公开 fail-closed、process 生命周期 `scheduler` Slot，并从
+    `qwenpaw.plugins.sdk` 导出所有契约。详细设计见
+    `docs/design/qwenpaw-scheduler-contract.md`。
+  - [x] Lite `SQLiteSchedulerStore` 已实现 Definition 持久化、并发幂等 claim、
+    owner/revision CAS、renew、complete、fail 与 expired recovery；移除 Definition
+    不删除 Fire 历史，重复键不同 Fire 内容 fail closed。Scheduler 身份已收口为
+    `agent_id + schedule_id`，Fire 幂等域为
+    `agent_id + schedule_id + idempotency_key`；SQLite 支持旧单 Agent 表事务迁移，
+    两个 Agent 的同名计划通过隔离验证。Kernel、SDK、Store 与架构边界共 19 项
+    定点测试及所改文件静态门禁通过。
+  - [x] `qwenpaw.system.tasks.local-durable-scheduler` 已通过全局 Registry 发布；默认
+    绑定应用级 `WORKING_DIR/scheduler.db`，不会闭包捕获首个 Workspace。插件
+    `scheduler` Slot 也已加入同一 `SchedulerPort` 激活门禁，缺失方法时 generation
+    发布前 fail closed。Scheduler、系统装配、插件契约与依赖边界共 34 项定点测试
+    通过。
+- [x] 建立 `ScheduledTaskDispatcher`：Fire claim 后以确定性 Task 幂等键创建
+  `TaskSource.SCHEDULE`，绑定 Planner/Runner/Strategy，并强制 Task Runtime 使用
+  Fire 创建时固定的 registry generation；并发 Worker 对同一逻辑 Fire 只会启动
+  一个 Task。Task 创建后的启动失败保留可恢复 Task 事实，不伪造 Scheduler 失败为
+  “从未创建”。
+  - [x] terminal Fire 回放会根据持久化 `task_id` 恢复尚处于 created/planned 的
+    绑定 Task；恢复仍使用 Fire 固定 generation。并发恢复通过 Ledger sequence、
+    Task version 与状态转换 CAS 选出唯一 Run，输家只回放胜者事实；回放异常不会
+    反向把已 completed 的 Scheduler lease 错写为 failed。
+- [ ] Cron/Heartbeat 通过 Scheduler Port 创建或恢复执行，不直连旧 Runtime。
+  - [x] APScheduler Trigger Adapter 为已迁移 Cron 与 Heartbeat 保存真实
+    `scheduled_for` 并生成稳定 Fire 幂等键；手动触发使用独立操作键，不与定时槽
+    竞争。尚未迁移的 Cron 类型继续走显式兼容路径。
+  - [ ] 先实现 `Task Event → Delivery Projection → Channel Adapter`，再迁移
+    `dispatch.mode=stream/final`；迁移前旧 Agent Cron 继续作为显式兼容路径，避免
+    统一执行后丢失外部频道实时回复。
+    - [x] final/silent 已迁移；stream 已冻结 completed Reply 与 Tool Activity 公共
+      事件：Console/Harness 在终态提交 `conversation.assistant.completed`，Projector
+      不外发 reasoning/token delta，Channel Adapter 输出 completed function call/
+      output Message，工具参数与结果预览有 8 KiB 上限。
+    - [x] image/audio/video/file 内联字节先进入内容寻址 Artifact Store，Ledger
+      只保存有序 descriptor 与 ArtifactRef；Adapter 校验 Task 事件所有权和内容哈希
+      后恢复 Channel Message。嵌入媒体与 `task-result.md` 不产生重复通知。
+    - [x] 持久化 Ledger → Worker → generation Registry → System Adapter → 实际
+      ConsoleChannel 串联通过；修复 Adapter Message 缺少 `object="message"` 导致
+      Channel 静默丢弃但 Receipt 误报 delivered，并验证后台 Cron 不写 Console push。
+    - [ ] 完成浏览器与至少一个外部媒体 Channel 的等价验收后，才允许
+      `LiteCronTaskRuntime.supports(stream)`；当前仍显式回退旧 Executor。
+  - [x] Heartbeat 默认复用同一 Dispatcher；`HEARTBEAT_OK` 由
+    `DeliveryPolicy.suppress_exact_text` 表达为不生成投影，Task 结果仍完整留在 Ledger。
+    `target=last` 使用 Channel Adapter，`target=inbox` 使用 system Inbox Adapter，
+    `target=main` 不请求 Delivery；Scheduler 和 Runner 不复制 Inbox 状态机。
+- [x] Chat、Channel、Schedule 共享 Invocation 与 Artifact/Evidence 引用。
+  - [x] 每个 Run attempt 持久化独立 `invocation_id`，恢复 attempt 创建新
+    Invocation 但保留原根 `correlation_id`；`RuntimeContext` 将两者交给
+    system/plugin/Harness Runner。Console 只在存在内部 Task Approval Broker
+    时允许固定 Runtime Assembly 身份，外部 payload 伪造无效。
+  - [x] Execution Event、DeliveryRequest、Channel Message metadata 和 InboxItem
+    只读传递相同 Invocation/Correlation；ArtifactRef/EvidenceRef 仍由已提交
+    事件投影，Channel/Inbox 不复制事实源。
+- [x] Reply、Result、Approval、Exception 与 Artifact Ready 进入统一 Delivery
+  Projection；普通 Timeline 事件不进入 Inbox。
+  - [x] 冻结 `DeliveryRequest / DeliveryDestination / DeliveryReceipt` 与
+    `DeliveryAdapter`，核心契约不含 `session_id`；新增 public
+    `delivery.adapter` Slot，并在 generation 发布前校验 Protocol 与 namespaced
+    identity。详细设计见 `docs/design/qwenpaw-delivery-contract.md`。
+  - [x] Lite SQLite Projection 以确定性 Delivery ID、显式 attempt、owner/revision
+    CAS 和 lease expiry 提供并发幂等；只有明确 failed 才允许下一 attempt，过期、
+    Adapter 异常或无效 Receipt 均 fail closed 为 uncertain。Dispatcher 固定 Request
+    generation 并校验 Adapter/Receipt identity。Delivery Kernel、Store、Dispatcher、
+    Slot 与插件门禁共 24 项定点测试通过。
+  - [x] Task Event Projector 只从已提交 Ledger Event 派生 Reply、Result、Approval、
+    Activity、Exception 与 Artifact Ready；system Channel Adapter 通过 opaque address 兼容旧
+    transport 参数，并输出现有 Channel 可消费的 completed Message。Task Delivery
+    Worker 支持 cursor replay 到终态，普通 Timeline 不产生外部投递。
+    Artifact-only 插件 Runner 没有 Conversation delta 时，Result 使用稳定非空完成
+    文本并保留 Artifact/Evidence 引用；`suppress_empty_text` 仍可明确保持静默。
+    Adapter 超时只写 Delivery uncertain receipt，不改写 Task/Run/Event 源事实。
+  - [x] system Inbox Adapter 与示例
+    `delivery-provider.local-jsonl` 通过同一真实 Worker 行为合同：从已提交
+    Task Event 投影 Request，按 Request 固定 generation 解析 Adapter，持久化
+    Receipt 后重放不再执行副作用。示例插件仅依赖公共 SDK，并通过
+    production Loader 的热安装/卸载验证；旧 generation lease 在卸载后仍可完成
+    已固定的投递。
+  - [x] Inbox Projection 接线，以及 Scheduled Task 的正式 `ChatSpec.id`
+    Conversation 绑定；禁止为了迁移 Cron 把 `session_id/share_session` 提升为新领域
+    身份。
+    - [x] `ScheduleDefinition → RuntimeLaunchConfig → RuntimeContext →
+      os_conversation_id` 已支持可选 `ChatSpec.id` 透传；未绑定 Chat 的后台 Task
+      保持 `None`，不会用 Task ID 或兼容 `session_id` 伪造 Conversation。
+    - [x] 宿主 Trigger Adapter 创建或解析 Chat，并在写入 Definition 前校验 Agent
+      ownership；旧 `session_id/share_session` 只留在兼容 Adapter。
+    - [x] 旧 `CronExecutor` 注册/复用 `ChatSpec` 后，把真实 `ChatSpec.id` 注入
+      `os_conversation_id`；Runtime Assembly 不再只看到 Cron `session_id`。无法注册
+      Chat 的旧安装仍保持显式兼容路径，正式 Scheduler Adapter 将改为 fail closed。
+    - [x] 新增宿主侧 `CronConversationBinder` 与 `CronScheduleAdapter`：严格模式校验
+      Chat 的 session/user/channel ownership，并把 agent Cron 的 Trigger、执行超时、
+      Approval policy 和 Delivery policy 无损映射到 Kernel Definition。纯文本 Cron
+      明确留在 Delivery；repeating-once 已通过带 `start_at/end_at` 的 Kernel interval
+      保留首次执行时间以及 count/until/never 终止语义。
+    - [x] `CronManager` 已通过 `CronTaskRuntime` Port 支持显式双路径路由；只有 Runtime
+      声明可无损承接的 Job 才进入新管线，其余继续旧 Executor。Port 要求实现等待
+      Task 与 Delivery 终态，禁止把 Dispatcher 的“已启动”误记为 Cron“已完成”。
+    - [x] 装配 Lite `CronTaskRuntime`：Workspace 默认注入实现，严格绑定 Chat，调用
+      `ScheduledTaskDispatcher`，跟随 Task Event 到终态并结算 Delivery Receipt 后
+      才返回 Cron history 结果。同一 scheduled slot 重放复用 Task 且不重复投递。
+      当前接管可无损表示的 final/silent（含 repeating-once）agent Cron；stream 与
+      文本显式保留旧路径。`tool_safety=True` 使用 AUTO Approval，Definition 写入短于
+      attempt 的 approval deadline；Tool/Driver waiter 只信任带内部 Broker 的 Host
+      `ExecutionContract`，审批请求和异常进入 Delivery/Inbox，silent job 不投递普通
+      Result。旧 `interactive_tool_safety` 原因码仅用于读取历史记录。per-job model
+      已通过 Kernel `ModelSelection` 进入 Definition、Task metadata、
+      `RuntimeLaunchConfig` 和 Console 兼容边界，重启/重试不会偷换默认模型。
+      RuntimeConfig 同时传播已验证的 Cron approval level；普通 final policy 只投递
+      Result，受保护任务额外投递 Approval/Exception；两者都不会因 Runner 生成
+      response Artifact 而额外发送 Artifact Ready 通知。
+      真实浏览器批准、拒绝、超时与外部通知验收仍是 I8 门禁，当前不以单元链路代替。
+    - [x] 新增公共 `LiteScheduledTaskRuntime`，Cron 与 Heartbeat 共用 Scheduler claim、
+      Task Runtime、Delivery Receipt 和 Inbox Projection 结算。Heartbeat 在执行前创建
+      或解析正式 Chat，并只把兼容 transport context 留在 Channel Adapter 地址中；
+      相同定时槽重放复用 Task，手动运行使用独立 Fire。
+    - [x] HTTP Task、Cron 与 Heartbeat 已按同一 Capability Registry 复用
+      `TaskApplicationHost`、Workspace bindings、Orchestrator 和 Supervisor；新
+      generation 刷新 TaskService 事件身份，但不会替换仍在运行的应用宿主或另建
+      Schedule 专用执行所有权。
+- [x] 冻结 `InboxItem / InboxProjectionPort` 并实现 Lite SQLite Projection；Item
+  以 Delivery ID 幂等、按 Agent 隔离，read/handled 通过 revision CAS 更新。Task
+  Delivery Worker 已在 Receipt 终态后投影，Cron scheduled replay 不重复通知；真实
+  测试证明标记已读前后 Task Event 完全不变。
+- [x] Console Inbox API 合并读取 SQLite Projection 与旧 JSON 兼容来源，统一排序、
+  分页、筛选和未读计数；新 Item 以 `source_type=task` 进入现有前端。read 操作按
+  来源写入，delete 对新 Projection 转为 handled，不删除源事实。
+- [x] 历史 Mail / Skill / Heartbeat / ReMe / Cron JSON 数据已通过 Workspace 启动时的
+  非破坏、幂等 Migration 重放为 `OperationalEvent → Delivery → Inbox`；只有新投影
+  存在时 Console 才抑制旧行，单行失败继续显示旧数据，原 JSON 暂留作为回滚来源。
+  新 Heartbeat 已通过 Task Delivery，新 Skill Auto Sync / Auto Update、Mail
+  Monitor、ReMe 以及 Cron / Heartbeat 兼容回退已通过
+  `OperationalEvent → Delivery → Inbox`。仓库内已无旧 JSON Store 生产调用。Memory
+  插件通过 `MemoryBackendContext.operational_event_publisher` 获得同一 Host Service。
+- [ ] 经过只读观察期并验证回滚后，归档并删除旧 JSON Store 及 Console 双读适配层；
+  在此之前禁止物理删除历史文件。
+- [ ] 旧入口建立兼容矩阵、弃用告警和删除门槛。
+  - [x] 冻结 Chat、Queue、Approval、Cron、Inbox、Plugin、Capability、Artifact 与
+    transport 身份的兼容状态、事实源和删除门槛；详见
+    `docs/design/qwenpaw-compatibility-matrix.md`。
+  - [x] 可替换 Plugin 注册入口提供结构化迁移诊断，不只写日志。
+  - [x] 运行时 `/api/plugins` 已将诊断聚合为去重的 v2 manifest
+    patch、逐项 action 和 blocker；`qwenpaw plugin migration-plan` 提供
+    text/JSON 投影。计划固定 `safe_to_apply=false`，不会把 legacy
+    handler 误当 Provider factory，也不覆写第三方源码。
+  - [x] Cron Runtime 选择使用结构化 decision；Job 详情、最近状态、历史和日志
+    共享稳定 fallback 原因码与删除门槛，旧 `supports()` Runtime 显式标记兼容状态。
+  - [x] 旧 Inbox Migration 将 agent-scoped 观察起点、扫描与成功/失败计数、源指纹、
+    连续稳定扫描和脱敏错误持久化到新 SQLite 表；只读 API 以 7 天、3 次稳定干净扫描
+    作为关闭双读门槛，但不授权物理删除旧 JSON。
+  - [ ] Inbox、旧 capability ID 与外部 backend Queue 仍需完成真实观察期、归档和
+    恢复演练；在完成前顶层门禁保持未通过。
+    旧 Task capability ID 已具备 agent-scoped 持久化命中计数、精确替换建议和
+    命中即重置的 7 天零使用门禁；持久化引用迁移保持独立阻塞，不由观察结果代替。
+    外部 backend 已冻结 `conversation_queue` 能力位；Console 在唯一 legacy admission
+    点发送不含消息内容的幂等诊断，服务端核对 agent 当前 backend 后按 agent/backend
+    汇总，并通过只读 API 暴露替代能力和删除门槛。Codex/Qoder 当前仍明确为 false。
+
+验收：进程内 Lite Scheduler 可持久化触发、重启后恢复且不重复执行；Channel 和
+Cron 不形成独立审批或产物事实源。
+
+### I7：插件 SDK 与二次开发体验
+
+- [x] Manifest 覆盖全部公开 Slot；公开后端 Slot 与 Protocol 门禁具有完整性测试，
+  `config_schema` 在安装前按 JSON Schema 校验并返回精确字段、错误码和恢复建议。
+- [x] 激活前按 Slot 校验实现 Port 与 capability identity；UI Slot 校验入口
+  描述，错误实现不得发布新 generation。
+- [x] 已有等价 Slot 的旧 `register_*` API 在实际调用时生成结构化迁移诊断，包含
+  目标 Slot、恢复说明与 v2 manifest 骨架，并通过 `/api/plugins` 暴露；无等价
+  public Slot 的 Host 生命周期 API 保持兼容且不生成误导性迁移建议。
+- [x] 提供 Tool、Memory、Driver、Harness、Scheduler、Delivery 最小示例。
+  - [x] Tool、Memory、Driver 与 Harness 示例只引用 `qwenpaw.plugins.sdk`，并通过
+    manifest 激活、能力 ID、session/runner 调用和 generation 固定验证；Driver
+    示例中的 Driver 通过公开 Host 产生真实统一审批，不实现私有 waiter 或状态机。
+  - [x] Scheduler 示例只引用公开 SDK，以可配置 SQLite 路径实现完整
+    Port/Trigger/Lease/Retry 契约，并通过真实持久化定义验证。
+  - [x] Delivery 示例只引用公开 SDK，通过稳定 `delivery_id` 记录
+    JSONL 副作用，并与 system Inbox Adapter 共享 Task Event、generation、
+    Receipt 和 replay 行为合同。
+- [x] 插件安装、替换、失败回滚、卸载与 cleanup 全链路无需服务重启；替换时旧
+  capability 保持可解析，新 bundle 通过门禁后只发布一个 generation，失败会恢复旧
+  manifest、文件、注册和实现，更新不会误执行永久 uninstall hook。
+- [x] SDK 文档与所有参考插件只使用 `qwenpaw.plugins.sdk` 稳定导入路径，并由 AST
+  契约测试防止示例回退到 App、Loader、Registry 或 Store 内部模块。
+
+验收：新开发者不阅读内部源码即可完成插件开发、校验、安装、热替换和卸载；
+错误插件不会污染当前 generation。
+
+### I8：基建完成门禁
+
+- [x] 每个公开扩展模块均有 system/plugin contract tests；system-only 模块具有
+  核心激活、固定 generation、失败关闭和代际排空合同。
+  - [x] Capability Registry 对 system 与 plugin 的每次 bundle activation 使用同一份
+    Slot Protocol、capability identity、UI entrypoint 与兼容 Slot 实现门禁；错误实现
+    在发布新 generation 前失败，两个 provider kind 共享同一负向合同测试。
+  - [x] `agent.factory` 明确为 system-only 核心 Slot：仍由 Registry 固定 generation、
+    校验 identity/protocol 并等待 lease 排空，但不再从 Plugin SDK 导出；第三方
+    manifest 在实现加载前以 `system_slot` fail closed，避免完整 HookContext、
+    AppServices 与 AgentScope event object 成为伪公共 API。Agent 行为扩展使用下层
+    Mode/Prompt/Tool/Command/Hook/Gate/Memory/Driver 公共 Slot。
+  - [x] UI experience Slot 已接入真实 Console bundle loader：后端只发布通过
+    generation 门禁的 `ui.*` 声明，前端顺序建立宿主激活事务，校验
+    plugin identity、声明 Slot、必须注册及禁止延迟注册。替换 bundle
+    失败时保留旧 UI generation；V1 bundle 仍走显式兼容模式。
+  - [x] `planner`、`strategy` 与 `runner` 的系统/插件实现通过同一真实 Orchestrator
+    行为合同；Plan 持久化、Run Strategy 身份、Context 参数以及
+    Artifact/Evidence producer 均按固定 generation 验证。
+  - [x] `sensor` 的 system/plugin 实现通过同一 Context、Proposal ownership 与
+    durable Approval 行为合同；内置 proactive cognition 已使用 system Adapter，
+    旧插件保持兼容但不能伪造 Proposal source 或绕过 payload/batch 门禁。
+  - [x] `prompt.provider` 具有 system/plugin 行为合同：稳定 identity、健康检查、
+    deterministic provider-owned fragments、非空内容和不可变 InvocationScope；参考插件
+    通过 manifest、固定 generation、RuntimeAssembly 与 AgentBuilder 真实合并链路。
+  - [x] `command.provider` 具有 system/plugin 行为合同：固定目录、Provider
+    所有权、稳定 ID、系统保留名和冲突关闭失败；插件不能拥有动态
+    fallback。参考插件通过 manifest、固定 generation、RuntimeAssembly、
+    Runtime 会话打开与 CommandRouterSession 真实分发链路。
+  - [x] `hook.provider` 具有 system/plugin 行为合同：固定目录、Provider
+    所有权、跨 Provider 确定性排序、sticky `SKIP_AGENT`、立即
+    `SHORT_CIRCUIT` 和有来源的上下文注入。参考插件通过 manifest、
+    固定 generation、RuntimeAssembly、Runtime 会话打开与真实生命周期执行链路。
+  - [x] `loop.gate.provider` 具有 system/plugin 行为合同：固定目录、
+    Provider 所有权、scope 选择、稳定优先级、turn/conversation reset 和
+    第一个 actionable decision。工具调用轮次的继续指令在工具完成后的下一个
+    reasoning safe-point 消费，不替代 Queue Interrupt 或 Steer。
+  - [x] `tool.provider` 具有 system/plugin 行为合同：共享
+    `InvocationScope`/`ToolSelection`/`ToolHost`/`ToolDefinition`，经过同一
+    AgentBuilder 收集、名称冲突闭合、Tool Guard、Approval、Sandbox 与 Side
+    Effect 管线。每个已包装工具固定 generation 内的治理元数据；热替换只更新
+    新 Invocation，不改变运行中工具的 type/target/sandbox/effect。
+  - [x] `memory.provider` 具有 system/plugin 行为合同：单选 Provider 通过固定
+    generation 打开 invocation-scoped Session，Prompt 进入共享 Contributor，类型化
+    Memory Tool 进入同一 Tool Guard。状态按 provider + Agent/`ChatSpec.id` 命名空间
+    隔离并使用 revision CAS；插件 Host 不包含系统兼容 backend，Session 仅关闭自有资源。
+  - [x] `driver.provider` 具有 system/plugin 行为合同：单选 Provider 通过 manifest、
+    固定 generation、RuntimeAssembly 和 Builder 打开 Session；类型化 Tool 经唯一
+    AgentScope Adapter，Prompt 进入共享 Contributor，高风险调用通过统一 Interaction
+    审批后继续。第三方 Host 不包含 DriverManager、request context 或系统 `load()`；
+    热替换只影响新 Invocation，旧 Session 的工具行为保持原 generation。
+  - [x] `harness.runner` 具有 system/plugin 行为合同：内置 Codex Adapter 与公开 SDK
+    Runner 共享 `TaskRunner`/`ContextualTaskRunner`、固定 generation、类型化
+    `RuntimeContext` 和 `TaskExecutionCoordinator`。两者的信号进入同一 Ledger，
+    Run/Task 使用同一终态；最终结果通过注入的内容寻址 Emitter 生成 Artifact 与
+    Evidence，插件不写私有结果路径或另建执行状态机。
+  - [x] `agent.mode.provider` 具有 system/plugin 行为合同：单选 Provider 经 manifest、
+    固定 generation、RuntimeAssembly 打开 invocation-scoped Session，Builder 只从
+    Session 获取 active names，Runtime 统一执行 turn start，`/clear` 与 `/new` 统一
+    reset。插件 Host 仅提供 schema 校验后的 detached config，不含 Workspace context、
+    系统 Mode snapshot 或兼容 lifecycle；热替换后的旧 Session 行为不漂移。
+  - [x] `scheduler` 具有 system/plugin 行为合同：从 generation-pinned Fire
+    lease 创建唯一 Task，继续进入 Planner/Strategy/Runner 与 Artifact/Evidence
+    管线，持久化重开与重复 Fire 均不重复执行。
+  - [x] `delivery.adapter` 具有 system/plugin 行为合同：已提交 Task Event
+    经 Projector/Worker/Dispatcher 生成固定 generation 的 Request 和持久化
+    Receipt，重放不重复副作用，热卸载不破坏已 pin 的旧 lease。
+  - [x] `artifact.renderer` 具有 system/plugin 行为合同：共享 ArtifactRef、
+    EvidenceRef、内容哈希、MIME/大小门禁、固定 generation 和安全
+    fallback-next 语义，Chat 与 Task 使用同一渲染服务。
+  - [x] Runtime 不再在 Workspace 缺失 Host-owned Capability Registry 时创建
+    隐式本地 Registry；错误产品装配直接 fail closed，防止 Chat、Task
+    和 Plugin Loader 分裂为不同 generation 事实源。
+  - [ ] 仍需按模块完成行为级同契约矩阵，不能仅以 activation 结构校验替代运行语义。
+- [ ] Python 定点测试、pre-commit 与前端 Chat 定点测试通过。
+- [ ] 真实固定 Chat 先 `/clear`，再逐模块完成可见验收。
+- [ ] 架构文档、API 规范、迁移表和未覆盖边界同步更新。
+- [ ] 完成主要功能 Code Review，Blocking finding 为零。
+- [ ] 达到门禁后再恢复 Task Workbench 开发。
+
+## 5. 实施节奏
+
+每个模块按同一节奏独立闭环：
+
+1. 盘点旧生产者、消费者和状态所有权。
+2. 冻结 Kernel Port、schema、错误和生命周期。
+3. 实现系统 Adapter，并让 Chat 走新路径。
+4. 接入 Plugin Contribution 与 generation。
+5. 保留最小兼容桥，记录弃用与删除条件。
+6. 运行定点契约测试和固定 Chat `/clear` 实测。
+7. 更新状态矩阵后进入下一个模块。
+
+当前执行点：I0、I1 已完成。Kernel 递归纯度门禁、SlotContract Registry、统一
+Session 回滚和抗二次取消清理已经通过定点验证。I2 审批状态机已完成首个收口：
+并发决策只提交一次，等待取消与批量取消均通过 durable resolution hook，带持久化
+投影的审批不会被内存 GC 静默删除；Tool、Governance Tool、Driver、Codex 与
+Qoder 已复用同一 Task bridge。后续又将 ReMe 副作用命令和
+Codex/Qoder Harness 收敛到 Task + Interaction 双桥，所有上述路径共用
+`ExecutionContract.timeout_policy.approval_seconds`，并按 broker 创建时间
+持久化 `expires_at`。任一桥接失败都 fail closed。PawApp
+`UIBridge.confirm()` 现已持久化由 `ChatSpec.id + invocation_id` 归属的通用
+`USER_INPUT` Interaction；SSE 只作为投递 Adapter，Task 取消会关闭该 invocation
+的未决交互。它仍是应用确认，不冒充策略 Approval 事实。浏览器断线重连与热替换
+验收仍待完成。Task Workbench 不参与当前开发验收。
+I7 已建立插件激活门禁：公共执行 Slot 在 shadow generation 阶段校验公开 Port
+和 namespaced identity，UI Slot 校验非空 entrypoint；兼容 Slot 保持最小校验。
+任何契约、身份或健康检查失败均在原子发布前终止，当前 generation 及其 lease
+保持可用。
+Side Effect 已新增独立 projection 与 task-scoped 幂等键；同一 tool-call 成功结果
+直接 replay，prepared/failed/uncertain 记录默认阻止盲目重放，Policy 决策、
+Approval ID、Invocation/Correlation 与执行结果摘要可在同一记录中关联。
+I2 状态机随后补齐进程丢失恢复：审批边界成为可恢复 Checkpoint；Task API 在
+发现 durable approval 已失去进程内 waiter 时返回 `task_runtime_lost`，不会提交
+一个无人消费的“批准”；`side_effect_recovery_required` 与显式 retry authorization
+构成恢复前安全门。插件与内置 Runner 现已通过同一个 run-scoped Checkpoint Broker
+主动保存安全 cursor；Runner 失败后新 attempt 可读取该 checkpoint，不要求先把 Run
+伪装成 suspended。
+I3 已完成 Execution Contract 类型冻结及 Task、Proposal/Sensor、Chat 后台入口
+贯通；契约随 Task 持久化，经 TaskOrder 进入 RuntimeContext。Scheduler 已拥有
+统一 Port、SQLite Store 与 generation-pinned Task Dispatcher；Heartbeat 和可无损
+表示的 final/silent agent Cron 已迁移，其他 Cron 类型仍保留显式兼容路径，因此入口
+对齐尚未全部完成。Execution Event 已增加向后兼容的
+step/source/cause/correlation 字段，Runner、Approval 和 Side Effect 新事件开始写入
+已有身份；每个 Run 建立根 correlation，恢复不会更换业务链路 identity，Ledger
+拒绝伪造或倒序的直接原因。持续时间、Token、工具调用和重试预算已进入真实
+执行边界；Console `turn_usage` 和 Tool Call 被转为 durable usage event，Workbench
+Projection 返回跨 attempt 累计值。Cost delta 已可执行，但缺少价格信息的 Provider
+现在显式记录 `cost_unknown`；带成本上限的 Run 会在 Provider 启动前失败关闭，
+不再伪装为可计量。并行度已进入 Tool Coordinator 的实际 handler 边界，
+后台 offload 在真实完成前不会释放槽。Lite 的跨 HTTP subagent/fork 已通过
+host-issued opaque scope 解析回根 Usage Meter，子孙共享并发槽与累计账本；根先
+结束时，后台子租约仍保持 scope 存活。Workstation/Hub 的跨进程 scope registry
+仍需通过部署适配器落地，不把 Python 对象或可伪造的预算值放入 HTTP。Required
+Exit Condition 已进入 completion gate：Acceptance、Artifact 和显式 Signal 从完整
+Ledger 投影求值，最大迭代边界同时覆盖 Console 与发布 iteration signal 的插件
+Runner；optional 条件已在结果信号持久化后通过宿主 safe completion gate 主动停止，
+不会绕过 required Artifact、Evidence 或 Verification。
+I4 已建立 Artifact Registry、Acceptance Verification 与 Result Package：Artifact
+具备版本、状态和显式 supersedes，Evidence/Verification 引用会在投影时做归属与
+完整性校验，`run.completed` 只有在必需产物和验证策略满足后才能提交。Artifact、
+Evidence 与 Verification 的 provenance 已由宿主事件信封派生并共享根 correlation；
+Workbench 通过完整分页回放读取结果，避免默认事件窗口截断长期任务；结果包只包含
+引用，不复制内容。I4 剩余项是 Workstation/Hub 数据库与对象存储 Adapter contract。
+API 迁移已完成 Create/List/Detail、Start/Cancel/Resume、Projection/Artifact、
+Approval，以及 Event Page/SSE 批次；现有 `/api/tasks` 保持唯一公开入口，内部按
+`HTTP -> Application -> Kernel Port` 渐进替换。Approval 的持久化决策、进程内
+Runtime 唤醒、并行取消和 Proposal 调度已成为同一应用用例；Event Stream 的
+回放、游标和终态退出也不再由 FastAPI route 判断。Sensor Poll 同样由 Application
+绑定 Agent identity 并调用 approval-gated Contribution Host，不建立平行 `/v2`
+事实源。I3A 已移除 Conversation/Tool/Approval 的 route 私有投影逻辑，并将
+Registry、Edition、Supervisor、Application 与 Proposal 执行统一迁入
+`TaskApplicationHost`。Cron 与 Heartbeat 也已复用该 Host，不再创建第二套
+Supervisor/Orchestrator。Artifact ownership、Store lookup、完整性读取、预览与
+Renderer generation，Capability Catalog lease，以及 Side Effect 恢复命令均已进入
+Application Service；Task route 不再直接访问 Runtime、TaskService、Ledger 或
+Artifact Store。I3A 的内部边界迁移已完成，后续只允许新增协议适配，不得把业务
+编排重新放回 HTTP route。
+I3B 审计确认 Queue、Steer、Interrupt 尚未形成统一服务端控制面：旧 Channel 队列
+是非持久化的按优先级并行队列，Chat Interrupt 分散在 TaskTracker、Tool
+Coordinator 与 Runtime cancel-save，Steer 尚不存在；浏览器队列反而承担了发送
+所有权和恢复。后续先冻结 Invocation Control Port 与状态机，再让 Chat 切换；在
+该模块完成前，不把前端队列现状计为 OS 基建完成，也不开展 Task 页面开发。
+I3B 第一批实现已经冻结不可变 Kernel 模型、命令载荷互斥规则、Submission 状态
+转换表和 `InvocationControlPort`。Lite SQLite Adapter 已以服务端事务分配 Queue
+sequence/revision，支持提交与控制命令幂等、乐观并发、重启读取和待应用命令恢复；
+已建立 workspace live mailbox、AgentScope reasoning middleware、批次级 tool
+bridge 与 SQLite 恢复型 dispatcher。Console 只服务端注入 `ChatSpec.id`
+作为 Conversation identity，Message identity 作为 submission 幂等键；
+Runtime 会提交 active/terminal Submission 事实。持久化 accepted Steer
+只在真正写入 Agent 上下文后转为 applied。
+Codex/Qoder 的旧 Workspace 旁路已接入同一 Invocation Control：每次 Harness turn
+在有 OS identity 时创建 durable Submission、绑定精确取消回调，并在成功、失败或
+中断后提交唯一终态和释放 blocking Interaction。适配器层的主动中断与 Runtime
+task cancellation 双向收口，相关 57 项 Harness 定点测试及静态检查已通过；真实
+外部进程和浏览器路径仍保留为 I8 验收项。
+Chat Control HTTP Adapter 已把 Queue 查询及五类控制意图直接投影为 Kernel
+`QueueProjection/ControlReceipt`，写操作强制携带客户端观察到的 revision 与幂等键；
+过期投影、重复键冲突和跨 Chat 目标均由服务端关闭失败。
+`ConversationRuntimeProjection` 已把 Queue 与 open Interaction 聚合为稳定 cursor
+的当前状态 SSE；断线可恢复最新完整快照，中间审计历史仍由 durable ledger 承担。
+QwenPaw Chat 已迁出浏览器 admission：首轮发送先分配真实 `ChatSpec.id`，运行中的
+后续输入直接进入 workspace Submission Dispatcher；页面只订阅、取消和排序服务端
+投影。旧本地队列仅保留历史草稿恢复和外部 backend 兼容，不再接收新的 QwenPaw
+Submission。
+
+2026-09-28 真实浏览器验收使用 Chat
+`22642923-1fe3-4749-9b05-4ef587951eb1`：第一轮阻塞于 Ask User 时，服务端连续接收
+两条 queued Submission，页面显示“消息队列 · 2”；从 UI 取消第二条后立即变为 1，
+刷新页面仍只恢复第三条。回答 Ask User 后第三条自动执行并返回 `THIRD_DONE`，最终
+Queue revision 10、active 和 Interaction 均为空。请求扩展
+`plugin_option.format=brief` 在 durable input envelope 中保留；伪造保留身份字段
+则由 HTTP 契约返回 422。
+
+2026-09-29 补齐 QwenPaw 首轮浏览器验收：从空白 `/chat` 以
+`Ctrl/Command+Enter` 提交后，先导航到服务端分配的 Chat
+`54d10df6-2195-4c89-92e1-bd4d2ca679d8`，再进入 durable Submission 管线。
+最终回复为 `FIRST_TURN_DURABLE_OK`，Runtime Projection revision 4 且
+active/queue/interaction 均为空；页面刷新后用户消息、回复和 Fork 入口均
+从持久化历史恢复。详细证据见
+`docs/design/qwenpaw-invocation-control.md` 第 6.9 节。
+
+2026-09-29 审批 deadline 复验：Policy Guard、ReMe 与 Codex/Qoder
+Harness 的定点契约测试已验证“创建超时 = 等待超时 = durable
+`expires_at`”，以及 Task/Interaction 双桥 fail-closed。真实
+`tool_safety=True` Cron 复验在 90 秒内停留于模型生成阶段，未产生
+Tool Call，因此不将该次运行记为真实 Approval E2E 通过。

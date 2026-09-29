@@ -37,13 +37,13 @@ from tests.unit.app.conftest import (
 def _no_real_inbox_writes(monkeypatch):
     """Prevent cron tests from writing to the real inbox store.
 
-    CronManager._execute_once calls append_inbox_event on success,
-    which writes to WORKING_DIR/inbox_events.json.  Without this
+    CronManager._execute_once publishes an operational event on success.
+    Without this
     guard any test that exercises _execute_once (directly or via
     the scheduler) would leak real data to disk.
     """
     monkeypatch.setattr(
-        "qwenpaw.app.crons.manager.append_inbox_event",
+        "qwenpaw.app.crons.manager.publish_cron_event",
         AsyncMock(),
     )
 

@@ -1,0 +1,165 @@
+# -*- coding: utf-8 -*-
+"""Tests for Chat-owned runtime interaction delivery endpoints."""
+
+from types import SimpleNamespace
+from uuid import uuid4
+
+import pytest
+from fastapi import HTTPException
+from pydantic import ValidationError
+
+from qwenpaw.app.chats.api import (
+    list_chat_interactions,
+    respond_chat_interaction,
+)
+from qwenpaw.app.chats.manager import ChatManager
+from qwenpaw.app.chats.models import (
+    ChatInteractionDecisionRequest,
+    ChatSpec,
+)
+from qwenpaw.app.chats.repo import JsonChatRepository
+from qwenpaw.interactions import InteractionService
+from qwenpaw.kernel import (
+    InteractionKind,
+    InteractionMode,
+    InteractionOption,
+    InteractionRequest,
+    InteractionStatus,
+)
+
+
+async def _context(tmp_path):
+    manager = ChatManager(
+        repo=JsonChatRepository(tmp_path / "chats.json"),
+    )
+    chat = await manager.create_chat(
+        ChatSpec(
+            id="chat-spec-1",
+            session_id="console:chat-spec-1",
+            user_id="local-user",
+            channel="console",
+        ),
+    )
+    service = InteractionService(tmp_path / "interactions.sqlite3")
+    workspace = SimpleNamespace(
+        agent_id="default",
+        interaction_service=service,
+    )
+    request = InteractionRequest(
+        kind=InteractionKind.USER_INPUT,
+        mode=InteractionMode.BLOCKING,
+        agent_id="default",
+        conversation_id=chat.id,
+        invocation_id=uuid4(),
+        title="Choose output",
+        prompt="Which format?",
+        options=(
+            InteractionOption(option_id="md", label="Markdown"),
+            InteractionOption(option_id="html", label="HTML"),
+        ),
+    )
+    await service.open(request)
+    return manager, workspace, request
+
+
+@pytest.mark.asyncio
+async def test_list_and_resolve_chat_owned_interaction(tmp_path) -> None:
+    manager, workspace, interaction = await _context(tmp_path)
+    http_request = SimpleNamespace(
+        state=SimpleNamespace(user={"username": "console-admin"}),
+    )
+
+    opened = await list_chat_interactions(
+        "chat-spec-1",
+        manager,
+        workspace,
+    )
+    resolution = await respond_chat_interaction(
+        "chat-spec-1",
+        interaction.interaction_id,
+        ChatInteractionDecisionRequest(
+            idempotency_key="choose-html",
+            expected_revision=1,
+            selected_option_ids=("html",),
+        ),
+        http_request,
+        manager,
+        workspace,
+    )
+
+    assert opened == [interaction]
+    assert resolution.status is InteractionStatus.RESOLVED
+    assert resolution.response is not None
+    assert resolution.response.actor.id == "console-admin"
+    assert (
+        await list_chat_interactions(
+            "chat-spec-1",
+            manager,
+            workspace,
+        )
+        == []
+    )
+
+
+@pytest.mark.asyncio
+async def test_response_rejects_cross_chat_interaction(tmp_path) -> None:
+    manager, workspace, interaction = await _context(tmp_path)
+    await manager.create_chat(
+        ChatSpec(
+            id="another-chat",
+            session_id="console:another",
+            user_id="local-user",
+            channel="console",
+        ),
+    )
+
+    with pytest.raises(HTTPException) as rejected:
+        await respond_chat_interaction(
+            "another-chat",
+            interaction.interaction_id,
+            ChatInteractionDecisionRequest(
+                idempotency_key="cross-chat",
+                expected_revision=1,
+                text="forged",
+            ),
+            SimpleNamespace(state=SimpleNamespace()),
+            manager,
+            workspace,
+        )
+
+    assert rejected.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_response_maps_stale_revision_to_conflict(tmp_path) -> None:
+    manager, workspace, interaction = await _context(tmp_path)
+
+    with pytest.raises(HTTPException) as conflict:
+        await respond_chat_interaction(
+            "chat-spec-1",
+            interaction.interaction_id,
+            ChatInteractionDecisionRequest(
+                idempotency_key="stale",
+                expected_revision=2,
+                text="answer",
+            ),
+            SimpleNamespace(state=SimpleNamespace()),
+            manager,
+            workspace,
+        )
+
+    assert conflict.value.status_code == 409
+
+
+def test_response_model_rejects_empty_or_duplicate_answers() -> None:
+    with pytest.raises(ValidationError):
+        ChatInteractionDecisionRequest(
+            idempotency_key="empty",
+            expected_revision=1,
+        )
+    with pytest.raises(ValidationError):
+        ChatInteractionDecisionRequest(
+            idempotency_key="duplicates",
+            expected_revision=1,
+            selected_option_ids=("md", "md"),
+        )

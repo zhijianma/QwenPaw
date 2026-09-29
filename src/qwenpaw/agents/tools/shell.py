@@ -1332,6 +1332,7 @@ async def _execute_posix_host(
     tool_type="shell",
     target_param="command",
     policy_name="Bash",
+    effect="process",
     ui_description="Execute shell commands",
     ui_icon="💻",
 )

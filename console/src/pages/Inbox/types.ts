@@ -23,7 +23,8 @@ export interface PushMessage {
     | "email"
     | "memory"
     | "heartbeat"
-    | "skill";
+    | "skill"
+    | "task";
   channelName: string;
   title: string;
   content: string;

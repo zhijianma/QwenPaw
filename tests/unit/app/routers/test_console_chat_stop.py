@@ -5,12 +5,14 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from qwenpaw.app.routers import console as console_mod
+from qwenpaw.kernel import ControlCommandStatus
 from qwenpaw.tool_calls import CancelReason
 
 
@@ -20,6 +22,7 @@ def fixture_stop_workspace(workspace_mock):
     workspace_mock.task_tracker = MagicMock()
     workspace_mock.task_tracker.request_stop = AsyncMock(return_value=True)
     workspace_mock.chat_manager = MagicMock()
+    workspace_mock.invocation_control = None
     return workspace_mock
 
 
@@ -125,6 +128,48 @@ async def test_stop_runtime_session_resolves_uuid_and_reports_tool_stop(
     stop_workspace.task_tracker.request_stop.assert_awaited_once_with(
         "chat-uuid",
     )
+
+
+@pytest.mark.asyncio
+async def test_stop_prefers_os_interrupt_without_legacy_cancellation(
+    app,
+    stop_workspace,
+    coordinator,
+) -> None:
+    control = SimpleNamespace(
+        interrupt_current=AsyncMock(
+            return_value=SimpleNamespace(
+                status=ControlCommandStatus.APPLIED,
+                command_id=uuid4(),
+            ),
+        ),
+    )
+    stop_workspace.invocation_control = control
+    stop_workspace.chat_manager.get_chat = AsyncMock(
+        return_value=SimpleNamespace(
+            id="chat-uuid",
+            session_id="runtime-session",
+        ),
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.post(
+            "/api/console/chat/stop",
+            params={"chat_id": "chat-uuid"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"stopped": True}
+    control.interrupt_current.assert_awaited_once()
+    interrupt_args = control.interrupt_current.await_args.kwargs
+    assert interrupt_args["agent_id"] == "agent-a"
+    assert interrupt_args["conversation_id"] == "chat-uuid"
+    assert interrupt_args["idempotency_key"].startswith("console-stop:")
+    coordinator.cancel_running_for_session.assert_not_awaited()
+    stop_workspace.task_tracker.request_stop.assert_not_awaited()
 
 
 @pytest.mark.asyncio

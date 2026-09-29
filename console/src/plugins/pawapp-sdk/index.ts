@@ -119,6 +119,9 @@ export type {
   PawTaskEventHandler,
   PawTaskEvents,
   PawTaskHandle,
+  PawTaskInteractionAnswer,
+  PawTaskInteractionRequest,
+  PawTaskOptions,
 } from "./types";
 
 export { createPawTask } from "./task";

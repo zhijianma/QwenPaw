@@ -7,7 +7,13 @@ The /stop command immediately terminates an ongoing agent task.
 from __future__ import annotations
 
 import logging
+from uuid import uuid4
 
+from ....invocation_control import (
+    QueueCommandConflictError,
+    QueueRevisionConflictError,
+)
+from ....kernel import ControlCommandStatus
 from .base import BaseControlCommandHandler, ControlContext
 
 logger = logging.getLogger(__name__)
@@ -18,9 +24,11 @@ class StopCommandHandler(BaseControlCommandHandler):
 
     Features:
     - Immediate response (priority level 0)
-    - Stops task via TaskTracker.request_stop (native cancellation)
+    - Submits ``interrupt_current`` through the OS control plane
+    - Falls back to TaskTracker only for a legacy run without a live binding
     - Default: stops current session
     - Optional: specify target session_id
+    - Never clears queued messages; that is a separate user intent
 
     Usage:
         /stop                  # Stop current session
@@ -72,36 +80,91 @@ class StopCommandHandler(BaseControlCommandHandler):
                 f"`{target_session_id[:40]}`."
             )
 
-        stopped = await workspace.task_tracker.request_stop(chat_id)
-
-        cleared = await workspace.channel_manager.clear_queue(
-            channel_id,
-            target_session_id,
-            20,
-        )
-
-        if stopped or cleared > 0:
+        control = getattr(workspace, "invocation_control", None)
+        receipt = None
+        if control is not None:
+            try:
+                receipt = await control.interrupt_current(
+                    agent_id=workspace.agent_id,
+                    conversation_id=chat_id,
+                    idempotency_key=(
+                        f"channel-stop:{_message_identity(context.payload)}"
+                    ),
+                )
+            except (QueueCommandConflictError, QueueRevisionConflictError):
+                logger.info(
+                    "/stop: invocation changed before interrupt applied "
+                    "chat_id=%s",
+                    chat_id,
+                )
+        if (
+            receipt is not None
+            and receipt.status is ControlCommandStatus.APPLIED
+        ):
             logger.info(
-                f"/stop: stopped={stopped} cleared={cleared} "
-                f"chat_id={chat_id} session={target_session_id[:30]}",
+                "/stop: OS interrupt applied chat_id=%s session=%s",
+                chat_id,
+                target_session_id[:30],
             )
-            status_parts = []
-            if stopped:
-                status_parts.append("running task stopped")
-            if cleared > 0:
-                status_parts.append(f"{cleared} queued message(s) cleared")
-            status_text = " and ".join(status_parts)
             return (
                 f"**Task Stopped**\n\n"
-                f"Session `{target_session_id[:40]}`: {status_text}."
+                f"Session `{target_session_id[:40]}`: "
+                f"running invocation interrupted."
             )
-        else:
-            logger.warning(
-                f"/stop: Nothing to stop: "
-                f"chat_id={chat_id} session={target_session_id[:30]}",
+
+        stopped = await workspace.task_tracker.request_stop(chat_id)
+        if receipt is not None and receipt.command_id is not None:
+            await control.acknowledge_interrupt(
+                receipt.command_id,
+                applied=stopped,
+                detail=(
+                    "channel compatibility cancellation applied"
+                    if stopped
+                    else "runtime binding and compatibility run unavailable"
+                ),
+            )
+        if stopped:
+            logger.info(
+                "/stop: compatibility cancellation applied chat_id=%s "
+                "session=%s",
+                chat_id,
+                target_session_id[:30],
             )
             return (
-                f"**Task Not Running**\n\n"
-                f"No active task or queued messages for session "
-                f"`{target_session_id[:40]}`."
+                f"**Task Stopped**\n\n"
+                f"Session `{target_session_id[:40]}`: "
+                f"running invocation interrupted."
             )
+
+        logger.warning(
+            "/stop: Nothing to stop: chat_id=%s session=%s",
+            chat_id,
+            target_session_id[:30],
+        )
+        return (
+            f"**Task Not Running**\n\n"
+            f"No active invocation for session "
+            f"`{target_session_id[:40]}`."
+        )
+
+
+def _message_identity(payload) -> str:
+    """Return a stable channel message identity when the adapter has one."""
+    if isinstance(payload, dict):
+        meta = payload.get("meta")
+        candidates = (
+            payload.get("message_id"),
+            payload.get("id"),
+            meta.get("message_id") if isinstance(meta, dict) else None,
+        )
+    else:
+        inputs = getattr(payload, "input", None) or ()
+        first = inputs[0] if inputs else None
+        candidates = (
+            getattr(payload, "message_id", None),
+            getattr(first, "id", None),
+        )
+    return next(
+        (str(candidate) for candidate in candidates if candidate),
+        str(uuid4()),
+    )

@@ -34,6 +34,51 @@ class ContractBackend(BaseMemoryManager):
         return ""
 
 
+@pytest.mark.asyncio
+async def test_plugin_context_exposes_operational_publisher(
+    tmp_path: Path,
+) -> None:
+    """A third-party backend can publish without importing App stores."""
+
+    async def publish(**kwargs):
+        return kwargs
+
+    context = MemoryBackendContext(
+        agent_id="agent",
+        working_dir=tmp_path,
+        host_working_dir=tmp_path,
+        backend_config={},
+        operational_event_publisher=publish,
+    )
+    backend = ContractBackend(context)
+
+    async def replacement_publish(**kwargs):
+        return {"replacement": kwargs}
+
+    replacement = MemoryBackendContext(
+        agent_id="agent",
+        working_dir=tmp_path,
+        host_working_dir=tmp_path,
+        backend_config={},
+        operational_event_publisher=replacement_publish,
+    )
+
+    assert backend.context is not None
+    assert replacement == context
+    publisher = backend.context.operational_event_publisher
+    assert publisher is not None
+    result = await publisher(event_type="memory.completed")
+    assert result == {"event_type": "memory.completed"}
+    backend.rebind_host_services(replacement)
+    assert backend.context is replacement
+    replacement_result = await backend.context.operational_event_publisher(
+        event_type="memory.reloaded",
+    )
+    assert replacement_result == {
+        "replacement": {"event_type": "memory.reloaded"},
+    }
+
+
 def test_plugin_registration_is_owned_and_unregistered(tmp_path: Path) -> None:
     backend_id = "contract-memory"
     owner = "contract-plugin"

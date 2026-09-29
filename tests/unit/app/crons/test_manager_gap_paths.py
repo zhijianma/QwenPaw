@@ -44,7 +44,7 @@ from tests.unit.app.conftest import (
 def _no_real_inbox_writes(monkeypatch):
     """Keep cron tests from writing to the real inbox store."""
     monkeypatch.setattr(
-        "qwenpaw.app.crons.manager.append_inbox_event",
+        "qwenpaw.app.crons.manager.publish_cron_event",
         AsyncMock(),
     )
 
@@ -479,6 +479,8 @@ class TestHeartbeatCallback:
         monkeypatch,
     ):
         runner = AsyncMock()
+        scheduled_for = datetime(2030, 1, 1, tzinfo=timezone.utc)
+        manager._heartbeat_next_run_at = scheduled_for
         monkeypatch.setattr(
             "qwenpaw.app.crons.manager.run_heartbeat_once",
             runner,
@@ -489,6 +491,8 @@ class TestHeartbeatCallback:
         assert kwargs["workspace"] is manager._workspace
         assert kwargs["channel_manager"] is manager._channel_manager
         assert kwargs["agent_id"] is manager._agent_id
+        assert kwargs["trigger"] == "scheduled"
+        assert kwargs["scheduled_for"] == scheduled_for
 
     async def test_exception_is_swallowed(self, manager, monkeypatch):
         runner = AsyncMock(side_effect=RuntimeError("hb failed"))
@@ -727,7 +731,7 @@ class TestExecuteOnceBranches:
         monkeypatch.setattr(manager._executor, "execute", execute)
         inbox = AsyncMock()
         monkeypatch.setattr(
-            "qwenpaw.app.crons.manager.append_inbox_event",
+            "qwenpaw.app.crons.manager.publish_cron_event",
             inbox,
         )
 
@@ -779,7 +783,7 @@ class TestExecuteOnceBranches:
         monkeypatch.setattr(manager._executor, "execute", execute)
         inbox = AsyncMock()
         monkeypatch.setattr(
-            "qwenpaw.app.crons.manager.append_inbox_event",
+            "qwenpaw.app.crons.manager.publish_cron_event",
             inbox,
         )
 
@@ -815,7 +819,7 @@ async def test_timeout_enters_inbox(
     monkeypatch.setattr(manager._executor, "execute", execute)
     inbox = AsyncMock()
     monkeypatch.setattr(
-        "qwenpaw.app.crons.manager.append_inbox_event",
+        "qwenpaw.app.crons.manager.publish_cron_event",
         inbox,
     )
     with pytest.raises(asyncio.TimeoutError):

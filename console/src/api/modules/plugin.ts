@@ -27,8 +27,16 @@ export interface PluginInfo {
   loaded: boolean;
   /** Primary capability type declared in plugin.json. */
   plugin_type: PluginType;
+  /** Manifest contract version used for contribution enforcement. */
+  schema_version?: string;
   /** Frontend JS entry-point path (if any). */
   frontend_entry?: string;
+  /** Host-validated UI slots declared by a v2 plugin. */
+  ui_contributions?: Array<{
+    id: string;
+    slot: string;
+    entrypoint: string;
+  }>;
 }
 
 export interface InstallPluginResult {

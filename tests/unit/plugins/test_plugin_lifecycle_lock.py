@@ -12,6 +12,7 @@ import pytest
 
 from qwenpaw.app.routers.plugins import (
     _finish_plugin_install_after_load,
+    _load_plugin_with_optional_force_reinstall,
     _tool_names_from_meta,
 )
 from qwenpaw.governance.tool_registry import (
@@ -136,6 +137,62 @@ async def test_force_reinstall_removes_obsolete_tools_before_reload():
         "remove:old_tool",
         "schedule_reload",
     ]
+
+
+@pytest.mark.asyncio
+async def test_force_reinstall_rollback_restores_post_load_registrations(
+    tmp_path: Path,
+):
+    """A restored plugin must rebuild compatibility registrations."""
+    order: list[str] = []
+    restored = MagicMock()
+    restored.manifest.id = "plug"
+    restored.manifest.meta = {}
+
+    async def _load_plugin_from_path(**kwargs):
+        await kwargs["after_rollback"](restored)
+        raise RuntimeError("replacement activation failed")
+
+    async def _fake_post_load(_request, plugin_id):
+        order.append(f"post_load:{plugin_id}")
+
+    async def _fake_reload(_request):
+        order.append("schedule_reload")
+
+    loader = MagicMock()
+    loader.load_plugin_from_path = AsyncMock(
+        side_effect=_load_plugin_from_path,
+    )
+    request = MagicMock()
+
+    with (
+        patch(
+            "qwenpaw.config.utils.get_plugins_dir",
+            return_value=tmp_path / "plugins",
+        ),
+        patch(
+            "qwenpaw.app.routers.plugins._post_load_setup",
+            new=AsyncMock(side_effect=_fake_post_load),
+        ),
+        patch(
+            "qwenpaw.app.routers.plugins._schedule_all_agents_reload",
+            new=AsyncMock(side_effect=_fake_reload),
+        ),
+    ):
+        with pytest.raises(
+            RuntimeError,
+            match="replacement activation failed",
+        ):
+            await _load_plugin_with_optional_force_reinstall(
+                loader,
+                request,
+                tmp_path / "replacement",
+                force=True,
+            )
+
+    assert order == ["post_load:plug", "schedule_reload"]
+    kwargs = loader.load_plugin_from_path.await_args.kwargs
+    assert kwargs["after_rollback"] is not None
 
 
 def test_norm_realpath_applies_normcase(tmp_path: Path):

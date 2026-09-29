@@ -40,6 +40,7 @@ class ToolGovernanceSpec:
     fail_without_sandbox: bool = False
     default_policy: str = ""  # allow | ask | deny; empty = no auto rule
     policy_reason: str = ""
+    effect: str = "none"
 
 
 @dataclass(frozen=True)
@@ -231,6 +232,7 @@ def tool_descriptor(
     fail_without_sandbox: bool = False,
     default_policy: str = "",
     policy_reason: str = "",
+    effect: str = "none",
     # UI (packed into ToolUISpec)
     ui_description: str = "",
     ui_icon: str = "",
@@ -257,6 +259,7 @@ def tool_descriptor(
 
         from ..governance.tool_registry import (
             validate_default_policy,
+            validate_tool_effect,
             validate_tool_type,
         )
 
@@ -272,6 +275,7 @@ def tool_descriptor(
         if resolved_tool_type:
             resolved_tool_type = validate_tool_type(resolved_tool_type)
         resolved_default_policy = validate_default_policy(default_policy)
+        resolved_effect = validate_tool_effect(effect)
         # pylint: disable=protected-access
         fn._tool_descriptor = ToolDescriptor(  # type: ignore[attr-defined]
             name=resolved_name,
@@ -296,6 +300,7 @@ def tool_descriptor(
                 fail_without_sandbox=fail_without_sandbox,
                 default_policy=resolved_default_policy,
                 policy_reason=policy_reason,
+                effect=resolved_effect,
             ),
             ui=ToolUISpec(
                 description=ui_description,

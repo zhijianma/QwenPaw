@@ -29,6 +29,11 @@ from ...app.approvals import (
     ApprovalRequestSummary,
     get_approval_service,
 )
+from ...app.approvals.interaction_bridge import attach_pending_to_interaction
+from ...app.approvals.task_bridge import attach_pending_to_durable_task
+from ...app.approvals.timeouts import approval_timeout_seconds
+from ...constant import TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS
+from ...kernel.models import ApprovalDisplay, ApprovalSource
 from ...security.tool_guard.approval import ApprovalDecision
 from ...utils.io_utils import (
     read_bytes_async,
@@ -287,7 +292,12 @@ class QoderAdapter(HarnessAdapter):
                 for event in mapper.convert(message):
                     yield event
         except asyncio.CancelledError:
-            await asyncio.shield(client.interrupt())
+            await asyncio.shield(
+                self.cancel_turn(
+                    session_id,
+                    reason="QwenPaw invocation cancelled",
+                ),
+            )
             raise
 
     async def _attachment_input(
@@ -400,6 +410,20 @@ class QoderAdapter(HarnessAdapter):
                 self._session_path,
                 self._sessions,
             )
+
+    async def cancel_turn(
+        self,
+        session_id: str,
+        *,
+        reason: str,
+    ) -> bool:
+        """Interrupt one active Qoder SDK query without disconnecting it."""
+        del reason
+        client = self._clients.get(session_id)
+        if client is None:
+            return False
+        await client.interrupt()
+        return True
 
     async def stop(self) -> None:
         """Disconnect every Qoder SDK client owned by this adapter."""
@@ -538,6 +562,10 @@ class QoderAdapter(HarnessAdapter):
                 "blocked_path": context.blocked_path,
             },
         )
+        timeout_seconds = approval_timeout_seconds(
+            request_context,
+            default=TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS,
+        )
         service = get_approval_service()
         pending = await service.create_pending_summary(
             session_id=session_id,
@@ -549,10 +577,45 @@ class QoderAdapter(HarnessAdapter):
             channel=str(request_context.get("channel") or "console"),
             agent_id=str(request_context.get("agent_id") or "default"),
             summary=summary,
+            timeout_seconds=timeout_seconds,
         )
+        bridge_ready = await attach_pending_to_durable_task(
+            request_context,
+            pending,
+            service,
+            agent_id=str(request_context.get("agent_id") or "default"),
+            tool_name=tool_name,
+            severity=summary.severity,
+            input_data=input_data,
+            source=ApprovalSource.HARNESS,
+            action="harness.tool.execute",
+            policy="qoder",
+            display=ApprovalDisplay(
+                title=f"Approve {summary.name}",
+                summary=detail,
+                target=tool_name,
+                provider="qoder",
+            ),
+        )
+        if bridge_ready:
+            bridge_ready = await attach_pending_to_interaction(
+                request_context,
+                pending,
+                service,
+                source="qoder",
+                input_data=input_data,
+            )
+        if not bridge_ready:
+            await service.resolve_request(
+                pending.request_id,
+                ApprovalDecision.DENIED,
+            )
+            return PermissionResultDeny(
+                message="Approval could not be persisted.",
+            )
         decision = await service.wait_for_approval(
-            pending.request_id,
-            pending.timeout_seconds,
+            pending,
+            timeout_seconds,
         )
         if decision == ApprovalDecision.APPROVED:
             return PermissionResultAllow(updated_input=input_data)

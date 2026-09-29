@@ -86,6 +86,9 @@ async def test_runtime_keeps_old_history_on_disk(
             pass
 
         async def build(self, ctx):
+            assert ctx.invocation_scope is not None
+            assert ctx.invocation_scope.session_id == "cron:test"
+            assert not hasattr(ctx.invocation_scope, "task_id")
             return Agent(AgentState.model_validate(ctx.session_state["state"]))
 
     class Executor:

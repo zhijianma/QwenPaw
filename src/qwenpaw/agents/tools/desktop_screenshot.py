@@ -145,6 +145,7 @@ async def _capture_macos_screencapture(
     tool_type="file",
     target_param="path",
     policy_name="DesktopScreenshot",
+    effect="local_write",
     ui_description="Capture desktop screenshots",
     ui_icon="📸",
 )

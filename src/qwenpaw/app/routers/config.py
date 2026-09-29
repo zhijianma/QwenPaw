@@ -782,18 +782,22 @@ async def run_heartbeat_now(request: Request) -> Any:
     import logging
 
     from ..agent_context import get_agent_for_request
-    from ..crons.heartbeat import run_heartbeat_once
-
     workspace = await get_agent_for_request(request)
 
     async def _run_once_bg() -> None:
         try:
-            await run_heartbeat_once(
-                workspace=workspace,
-                channel_manager=workspace.channel_manager,
-                agent_id=workspace.agent_id,
-                workspace_dir=workspace.workspace_dir,
-            )
+            manager = getattr(workspace, "cron_manager", None)
+            if manager is None:
+                from ..crons.heartbeat import run_heartbeat_once
+
+                await run_heartbeat_once(
+                    workspace=workspace,
+                    channel_manager=workspace.channel_manager,
+                    agent_id=workspace.agent_id,
+                    workspace_dir=workspace.workspace_dir,
+                )
+            else:
+                await manager.run_heartbeat_now()
         except Exception as e:  # pylint: disable=broad-except
             logging.getLogger(__name__).exception(
                 "manual heartbeat run failed: %s",

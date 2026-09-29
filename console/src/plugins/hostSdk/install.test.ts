@@ -163,6 +163,7 @@ describe("window.QwenPaw.host.* hooks attached", () => {
     expect(typeof window.QwenPaw.host.useCurrentSession).toBe("function");
     expect(typeof window.QwenPaw.host.getSelectedAgentId).toBe("function");
     expect(typeof window.QwenPaw.host.getCurrentSessionId).toBe("function");
+    expect(typeof window.QwenPaw.host.getCurrentChatId).toBe("function");
     expect(typeof window.QwenPaw.host.fetch).toBe("function");
   });
 });

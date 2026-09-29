@@ -35,6 +35,7 @@ from ...constant import (
     SCROLL_MEMORY_MESSAGE_TAG,
     SYNTHETIC_USER_MESSAGE_TAGS,
 )
+from ...kernel.models import ArtifactRef, EvidenceRef
 
 logger = logging.getLogger(__name__)
 
@@ -526,6 +527,28 @@ def _original_user_message(msg: Msg, metadata: dict) -> Message | None:
         for part in message.content
         if not (isinstance(part, TextContent) and not part.text)
     ]
+    artifacts: dict[str, ArtifactRef] = {}
+    evidence: dict[str, EvidenceRef] = {}
+    try:
+        for part in message.content:
+            raw_artifact = getattr(part, "artifact_ref", None)
+            raw_evidence = getattr(part, "evidence_ref", None)
+            if raw_artifact is None or raw_evidence is None:
+                continue
+            artifact = ArtifactRef.model_validate(raw_artifact)
+            evidence_ref = EvidenceRef.model_validate(raw_evidence)
+            if evidence_ref.artifact_id != artifact.artifact_id:
+                raise ValueError("artifact and evidence identity mismatch")
+            artifacts[str(artifact.artifact_id)] = artifact
+            evidence[str(evidence_ref.evidence_id)] = evidence_ref
+    except (ValidationError, ValueError):
+        logger.debug(
+            "Invalid conversation artifact links for message %s",
+            msg.id,
+        )
+        return None
+    message.artifact_refs = list(artifacts.values())
+    message.evidence_refs = list(evidence.values())
     return message
 
 
@@ -563,6 +586,7 @@ def agentscope_msg_to_message(
         user_tz = timezone.utc
 
     for msg in msgs:
+        result_start = len(results)
         if _is_scroll_memory_placeholder(msg):
             continue
         if _is_synthetic_user_message(msg):
@@ -599,6 +623,8 @@ def agentscope_msg_to_message(
         original_message = _original_user_message(msg, metadata)
         if original_message is not None:
             results.append(original_message)
+            for rendered in results[result_start:]:
+                rendered.source_message_id = msg.id
             continue
 
         if isinstance(msg.content, str):
@@ -611,6 +637,8 @@ def agentscope_msg_to_message(
             )
             message.add_content(new_content=text_content)
             results.append(message)
+            for rendered in results[result_start:]:
+                rendered.source_message_id = msg.id
             continue
 
         current_message = None
@@ -941,5 +969,7 @@ def agentscope_msg_to_message(
 
         if current_message:
             results.append(current_message.completed())
+        for rendered in results[result_start:]:
+            rendered.source_message_id = msg.id
 
     return results

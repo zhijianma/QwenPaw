@@ -94,6 +94,7 @@ class HarnessCapabilities(BaseModel):
     reasoning_stream: bool = False
     tool_stream: bool = False
     session_resume: bool = False
+    conversation_queue: bool = False
     workspace_ui: bool = False
     native_skills_ui: bool = False
     native_tools_ui: bool = False

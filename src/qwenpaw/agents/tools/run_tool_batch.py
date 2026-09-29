@@ -1098,6 +1098,7 @@ def _validate_maxstep(maxstep: int) -> int:
     async_execution=True,
     tool_type="internal",
     policy_name="RunToolBatch",
+    effect="process",
 )
 async def run_tool_batch(  # pylint: disable=too-many-return-statements
     actions: list[dict[str, Any]] | str | None = None,

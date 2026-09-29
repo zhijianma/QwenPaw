@@ -65,6 +65,7 @@ async def get_current_time() -> ToolChunk:
     tool_type="internal",
     target_param="timezone_name",
     policy_name="SetUserTimezone",
+    effect="local_write",
     ui_description="Set user timezone",
     ui_icon="🌍",
 )

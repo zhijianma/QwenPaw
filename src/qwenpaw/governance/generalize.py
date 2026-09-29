@@ -308,6 +308,7 @@ async def generalize_rule_match(
     tool_name: str,
     target: str,
     agent_id: Optional[str] = None,
+    tool_type: str = "",
 ) -> str:
     """Return a generalized ``ToolName(pattern)`` match for an approved rule.
 
@@ -332,7 +333,7 @@ async def generalize_rule_match(
     if not target or not target.strip():
         return exact
 
-    tool_type = DEFAULT_REGISTRY.get_type(tool_name)
+    tool_type = tool_type or DEFAULT_REGISTRY.get_type(tool_name)
     if tool_type not in _GENERALIZABLE_TOOL_TYPES:
         return exact
 
@@ -391,6 +392,7 @@ async def generalize_target_for_approval(
     target: str,
     source: str,
     agent_id: Optional[str] = None,
+    tool_type: str = "",
 ) -> str:
     """Generalize the approved target for the approval card + persistence.
 
@@ -407,6 +409,7 @@ async def generalize_target_for_approval(
             tool_name,
             target,
             agent_id=agent_id,
+            tool_type=tool_type,
         )
         _, pattern = _parse_match(match_str)
         return pattern

@@ -9,6 +9,7 @@ import os
 import re
 import logging
 import shutil
+from contextlib import AsyncExitStack
 
 from pathlib import Path, PurePosixPath
 from typing import Union, Sequence
@@ -26,6 +27,26 @@ logger = logging.getLogger(__name__)
 
 # Characters forbidden in Windows filenames
 _UNSAFE_FILENAME_RE = re.compile(r'[\\/:*?"<>|]')
+
+
+class SessionForkError(RuntimeError):
+    """Base class for safe Conversation snapshot failures."""
+
+
+class SessionForkSourceNotFoundError(SessionForkError):
+    """Raised when the parent Conversation has no persisted state."""
+
+
+class SessionForkAnchorNotFoundError(SessionForkError):
+    """Raised when the requested source message is not persisted."""
+
+
+class SessionForkInvalidAnchorError(SessionForkError):
+    """Raised when a message cannot close a completed Conversation turn."""
+
+
+class SessionForkDestinationExistsError(SessionForkError):
+    """Raised before a Fork would overwrite another Conversation."""
 
 
 def sanitize_filename(name: str) -> str:
@@ -95,6 +116,34 @@ def _read_session_json(path: str) -> dict:
         errors="surrogatepass",
     )
     return _safe_json_loads(content, path)
+
+
+def _is_completed_turn_anchor(context: Sequence[object], index: int) -> bool:
+    """Return whether ``index`` closes one stable user/assistant turn.
+
+    New snapshots carry ``finished_at`` on the final assistant reply. Older
+    snapshots predate that marker, so they remain forkable only when the
+    selected assistant is structurally the last message before the next user
+    input (or the end of the persisted context).
+    """
+    anchor = context[index]
+    if getattr(anchor, "role", None) != "assistant":
+        return False
+    if getattr(anchor, "finished_at", None):
+        return True
+
+    has_completion_markers = any(
+        getattr(message, "role", None) == "assistant"
+        and bool(getattr(message, "finished_at", None))
+        for message in context
+    )
+    if has_completion_markers:
+        return False
+
+    following = context[index + 1 :]
+    if not following:
+        return True
+    return getattr(following[0], "role", None) == "user"
 
 
 def migrate_legacy_weixin_session_files(save_dir: str) -> None:
@@ -471,3 +520,110 @@ class SafeJSONSession:
                 f"because it does not exist"
             ),
         )
+
+    async def fork_session_state(
+        self,
+        *,
+        source_session_id: str,
+        source_user_id: str,
+        source_channel: str,
+        destination_session_id: str,
+        destination_user_id: str,
+        destination_channel: str,
+        source_message_id: str,
+    ) -> int:
+        """Create an isolated AgentState snapshot through one message."""
+        source_path = await run_sync_io(
+            self._get_save_path,
+            source_session_id,
+            source_user_id,
+            source_channel,
+        )
+        destination_path = await run_sync_io(
+            self._get_save_path,
+            destination_session_id,
+            destination_user_id,
+            destination_channel,
+        )
+        ordered_paths = sorted({source_path, destination_path})
+        async with AsyncExitStack() as stack:
+            for path in ordered_paths:
+                await stack.enter_async_context(get_path_lock(path))
+            try:
+                states = await run_sync_io(_read_session_json, source_path)
+            except FileNotFoundError as exc:
+                raise SessionForkSourceNotFoundError(
+                    "parent session state does not exist: "
+                    f"{source_session_id}",
+                ) from exc
+            if await run_sync_io(os.path.exists, destination_path):
+                raise SessionForkDestinationExistsError(
+                    "fork destination session already exists",
+                )
+
+            from agentscope.state import AgentState
+
+            agent_raw = states.get("agent")
+            state_raw = (
+                agent_raw.get("state") if isinstance(agent_raw, dict) else None
+            )
+            if not isinstance(state_raw, dict):
+                raise SessionForkSourceNotFoundError(
+                    "parent session has no modern AgentState",
+                )
+            parent_state = AgentState.model_validate(state_raw)
+            anchor_index = next(
+                (
+                    index
+                    for index, message in enumerate(parent_state.context)
+                    if message.id == source_message_id
+                ),
+                None,
+            )
+            if anchor_index is None:
+                raise SessionForkAnchorNotFoundError(source_message_id)
+            if not _is_completed_turn_anchor(
+                parent_state.context,
+                anchor_index,
+            ):
+                raise SessionForkInvalidAnchorError(
+                    "fork anchor must be a completed assistant reply: "
+                    f"{source_message_id}",
+                )
+            inherited_context = list(
+                parent_state.context[: anchor_index + 1],
+            )
+            child_state = AgentState(
+                session_id=destination_session_id,
+                summary=parent_state.summary,
+                context=inherited_context,
+            )
+            await write_json_atomic_async(
+                destination_path,
+                {
+                    "agent": {
+                        "state": child_state.model_dump(mode="json"),
+                    },
+                },
+                indent=None,
+            )
+        return len(inherited_context)
+
+    async def delete_session_state(
+        self,
+        session_id: str,
+        user_id: str = "",
+        channel: str = "",
+    ) -> None:
+        """Remove one exact session snapshot for transactional rollback."""
+        path = await run_sync_io(
+            self._get_save_path,
+            session_id,
+            user_id,
+            channel,
+        )
+        async with get_path_lock(path):
+            try:
+                await run_sync_io(os.remove, path)
+            except FileNotFoundError:
+                return

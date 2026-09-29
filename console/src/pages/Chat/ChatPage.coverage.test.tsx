@@ -25,7 +25,11 @@ const {
   mockGetActiveModels,
   mockUploadFile,
   mockFilePreviewUrl,
+  mockGetChat,
   mockGetChatStatus,
+  mockGetQueue,
+  mockGetRuntime,
+  mockSubmitTurn,
   mockRuntimeSubmit,
   mockGetApiUrl,
   mockSelectedAgent,
@@ -44,7 +48,11 @@ const {
   mockGetActiveModels: vi.fn(),
   mockUploadFile: vi.fn(),
   mockFilePreviewUrl: vi.fn((f: string) => `/preview/${f}`),
+  mockGetChat: vi.fn(),
   mockGetChatStatus: vi.fn(),
+  mockGetQueue: vi.fn(),
+  mockGetRuntime: vi.fn(),
+  mockSubmitTurn: vi.fn(),
   mockRuntimeSubmit: vi.fn(),
   mockGetApiUrl: vi.fn((p: string) => `http://localhost:3000${p}`),
   mockSelectedAgent: vi.fn(() => "default"),
@@ -159,7 +167,11 @@ vi.mock("@/api/modules/chat", () => ({
   chatApi: {
     uploadFile: mockUploadFile,
     filePreviewUrl: mockFilePreviewUrl,
+    getChat: mockGetChat,
     getChatStatus: mockGetChatStatus,
+    getQueue: mockGetQueue,
+    getRuntime: mockGetRuntime,
+    submitTurn: mockSubmitTurn,
     stopChat: vi.fn(() => Promise.resolve()),
   },
 }));
@@ -404,6 +416,10 @@ vi.mock("./components/ChatSenderTabsPanel", () => ({
   default: () => <div data-testid="sender-tabs" />,
 }));
 
+vi.mock("./components/ServerRuntimeQueue", () => ({
+  default: () => null,
+}));
+
 vi.mock("./components/ApprovalLevelToggle", () => ({
   default: () => <div data-testid="approval-toggle" />,
 }));
@@ -598,6 +614,61 @@ describe("ChatPage coverage", () => {
     });
     mockGetTranscriptionProviderType.mockResolvedValue({
       transcription_provider_type: "disabled",
+    });
+    mockGetChat.mockResolvedValue({ messages: [], status: "idle" });
+    mockGetQueue.mockResolvedValue({
+      agent_id: "default",
+      conversation_id: "test-session",
+      revision: 1,
+      active_submission_id: null,
+      submissions: [],
+      updated_at: "2026-09-28T00:00:00Z",
+    });
+    mockSubmitTurn.mockResolvedValue({
+      receipt_id: "receipt-1",
+      submission_id: "00000000-0000-4000-8000-000000000001",
+      kind: "enqueue",
+      status: "accepted",
+      agent_id: "default",
+      conversation_id: "test-session",
+      revision: 2,
+      detail: "",
+      recorded_at: "2026-09-28T00:00:00Z",
+    });
+    mockGetRuntime.mockResolvedValue({
+      agent_id: "default",
+      conversation_id: "test-session",
+      queue: {
+        agent_id: "default",
+        conversation_id: "test-session",
+        revision: 3,
+        active_submission_id: "00000000-0000-4000-8000-000000000001",
+        submissions: [
+          {
+            agent_id: "default",
+            conversation_id: "test-session",
+            priority: 20,
+            content: "test",
+            artifact_refs: [],
+            request_context: {},
+            input_envelope: null,
+            idempotency_key: "message-1",
+            correlation_id: "correlation-1",
+            submission_id: "00000000-0000-4000-8000-000000000001",
+            sequence: 1,
+            queue_position: 1,
+            invocation_id: "00000000-0000-4000-8000-000000000002",
+            status: "running",
+            revision: 3,
+            created_at: "2026-09-28T00:00:00Z",
+            updated_at: "2026-09-28T00:00:00Z",
+          },
+        ],
+        updated_at: "2026-09-28T00:00:00Z",
+      },
+      interactions: [],
+      cursor: "v1-3-test",
+      observed_at: "2026-09-28T00:00:00Z",
     });
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -1048,6 +1119,13 @@ describe("ChatPage coverage", () => {
 
   // ── customFetch: no active model → shows model prompt ─────────────────
   it("customFetch shows model prompt when no active model", async () => {
+    vi.mocked(sessionApi.getSessionIdentity).mockReturnValue({
+      sessionId: "test-session",
+      sdkSessionId: "test-session",
+      chatId: undefined,
+      userId: "test-user",
+      channel: "console",
+    });
     mockGetActiveModels.mockResolvedValueOnce({
       active_llm: { provider_id: null, model: null },
     });
@@ -1069,6 +1147,13 @@ describe("ChatPage coverage", () => {
 
   // ── customFetch: getActiveModels throws → shows model prompt ──────────
   it("customFetch shows model prompt when getActiveModels throws", async () => {
+    vi.mocked(sessionApi.getSessionIdentity).mockReturnValue({
+      sessionId: "test-session",
+      sdkSessionId: "test-session",
+      chatId: undefined,
+      userId: "test-user",
+      channel: "console",
+    });
     mockGetActiveModels.mockRejectedValueOnce(new Error("network error"));
     renderWithProviders(<ChatPage />, {
       initialEntries: ["/chat/test-session"],
@@ -1307,7 +1392,7 @@ describe("ChatPage coverage", () => {
     expect(mockBeginLoopModeSubmission).not.toHaveBeenCalled();
   });
 
-  it("queues an attachment submission while the backend chat is running", async () => {
+  it("admits an attachment through the server while Chat is running", async () => {
     const chatId = "11111111-1111-4111-8111-111111111111";
     mockGetChatStatus.mockResolvedValue({ status: "running" });
     renderWithProviders(<ChatPage />, {
@@ -1330,29 +1415,48 @@ describe("ChatPage coverage", () => {
       ],
     });
 
-    expect(result).toEqual({ proceed: false, clear: true });
+    expect(result).toMatchObject({
+      proceed: true,
+      query: "inspect this file",
+    });
     expect(mockGetChatStatus).toHaveBeenCalledWith(chatId, {
       agentId: "default",
     });
-    expect(useMessageQueueStore.getState().getQueue(chatId)).toEqual([
+    expect(useMessageQueueStore.getState().getQueue(chatId)).toEqual([]);
+  });
+
+  it("enqueues from a reloaded stable Chat before session identity hydrates", async () => {
+    const chatId = "11111111-1111-4111-8111-111111111112";
+    vi.mocked(sessionApi.getSessionIdentity).mockReturnValue({
+      sdkSessionId: chatId,
+      userId: "test-user",
+      channel: "console",
+    });
+    renderWithProviders(<ChatPage />, {
+      initialEntries: [`/chat/${chatId}`],
+    });
+    await screen.findByTestId("chat-ui");
+    await act(async () => {});
+
+    await capturedOptions.api.fetch({
+      input: [{ role: "user", content: "queued after reload" }],
+      clientRequestId: "reload-message",
+    });
+
+    expect(mockGetChat).toHaveBeenCalledWith(chatId, {
+      agentId: "default",
+      include_app_owned: false,
+      signal: undefined,
+    });
+    expect(mockSubmitTurn).toHaveBeenCalledWith(
+      chatId,
       expect.objectContaining({
-        text: "inspect this file",
-        attachments: [
-          {
-            url: "/files/evidence.txt",
-            name: "evidence.txt",
-            type: "text/plain",
-            size: 42,
-          },
-        ],
-        bizParams: expect.objectContaining({
-          session_id: "test-session",
-          user_id: "test-user",
-          channel: "console",
-        }),
+        idempotency_key: "reload-message",
+        content_parts: [{ type: "text", text: "queued after reload" }],
       }),
-    ]);
-    act(() => useMessageQueueStore.getState().clear(chatId));
+      "default",
+    );
+    expect(useMessageQueueStore.getState().getQueue(chatId)).toEqual([]);
   });
 
   it("allows a submission when the backend chat is idle", async () => {
@@ -1374,7 +1478,7 @@ describe("ChatPage coverage", () => {
     expect(useMessageQueueStore.getState().getQueue(chatId)).toEqual([]);
   });
 
-  it("rechecks the host queue after a pending idle status result", async () => {
+  it("ignores a legacy host queue for stable server admission", async () => {
     const chatId = "33322222-2222-4222-8222-222222222222";
     let resolveStatus!: (value: { status: "idle" }) => void;
     mockGetChatStatus.mockImplementationOnce(
@@ -1401,13 +1505,16 @@ describe("ChatPage coverage", () => {
       resolveStatus({ status: "idle" });
       result = await admission;
     });
-    expect(result).toEqual({ proceed: false, clear: true });
+    expect(result).toMatchObject({
+      proceed: true,
+      query: "after existing queue",
+    });
     expect(
       useMessageQueueStore
         .getState()
         .getQueue(chatId)
         .map((item) => item.text),
-    ).toEqual(["already queued", "after existing queue"]);
+    ).toEqual(["already queued"]);
     act(() => useMessageQueueStore.getState().clear(chatId));
   });
 
@@ -1508,57 +1615,10 @@ describe("ChatPage coverage", () => {
     expect(post?.[1]?.headers).toMatchObject({ "X-Agent-Id": "default" });
   });
 
-  it("issue 7559: persists the follow-up while backend cleanup is running and sends it once idle", async () => {
+  it("issue 7559: delegates cleanup-race admission to the server", async () => {
     const chatId = "75590000-0000-4000-8000-000000000001";
     const storageKey = `qwenpaw:message-queue:${chatId}`;
-    let statusChecks = 0;
-
-    mockGetChatStatus.mockImplementation(async () => {
-      statusChecks += 1;
-      return { status: statusChecks < 3 ? "running" : "idle" };
-    });
-    global.fetch = vi.fn(
-      async (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = String(input);
-        if (url.endsWith("/console/chat") && init?.method === "POST") {
-          return { ok: true, status: 200, body: null } as Response;
-        }
-        return {
-          ok: true,
-          status: 200,
-          headers: new Headers({ "Content-Type": "application/json" }),
-          json: async () => {
-            if (url.includes(`/chats/${chatId}`)) {
-              statusChecks += 1;
-              return {
-                status: statusChecks < 3 ? "running" : "idle",
-                messages: [],
-              };
-            }
-            return {};
-          },
-        } as Response;
-      },
-    );
-    mockRuntimeSubmit.mockImplementation(async (data: any, options: any) => {
-      const lifecycle = new ChatRunLifecycle({
-        runId: "queue-run",
-        source: "host-queue",
-        sessionId: options.sessionId,
-        cancel: vi.fn(),
-      });
-      await capturedOptions.api.fetch({
-        ...data,
-        chatSessionId: options.sessionId,
-        submission: {
-          source: "host-queue",
-          queueItemId: options.clientRequestId,
-        },
-        input: [{ role: "user", content: data.query }],
-      });
-      lifecycle.markAccepted(options.sessionId);
-      return lifecycle.handle;
-    });
+    mockGetChatStatus.mockResolvedValue({ status: "running" });
 
     renderWithProviders(<ChatPage />, {
       initialEntries: [`/chat/${chatId}`],
@@ -1566,8 +1626,6 @@ describe("ChatPage coverage", () => {
     await screen.findByTestId("chat-ui");
     await act(async () => {});
 
-    // This is the exact race from #7559: the SDK input is already enabled,
-    // while TaskTracker still reports the previous run as active.
     let result: unknown;
     await act(async () => {
       result = await capturedOptions.sender.beforeSubmit({
@@ -1583,59 +1641,10 @@ describe("ChatPage coverage", () => {
       });
     });
 
-    expect(result).toEqual({ proceed: false, clear: true });
-    expect(
-      vi
-        .mocked(fetch)
-        .mock.calls.filter(
-          ([url, init]) =>
-            String(url).endsWith("/console/chat") && init?.method === "POST",
-        ),
-    ).toHaveLength(0);
-    expect(
-      JSON.parse(localStorage.getItem(storageKey) || "null"),
-    ).toMatchObject({
-      items: [
-        {
-          text: "follow-up during cleanup",
-          bizParams: expect.objectContaining({
-            session_id: "test-session",
-          }),
-          attachments: [{ url: "/files/race.txt", name: "race.txt" }],
-        },
-      ],
+    expect(result).toMatchObject({
+      proceed: true,
+      query: "follow-up during cleanup",
     });
-
-    // The production Zustand store notifies ChatPage. The drain first sees
-    // running, polls again, then submits only after the backend becomes idle.
-
-    await waitFor(
-      () => {
-        const posts = vi
-          .mocked(fetch)
-          .mock.calls.filter(
-            ([url, init]) =>
-              String(url).endsWith("/console/chat") && init?.method === "POST",
-          );
-        expect(posts).toHaveLength(1);
-      },
-      { timeout: 4_000 },
-    );
-
-    const post = vi
-      .mocked(fetch)
-      .mock.calls.find(
-        ([url, init]) =>
-          String(url).endsWith("/console/chat") && init?.method === "POST",
-      );
-    const body = JSON.parse(String(post?.[1]?.body));
-    expect(statusChecks).toBeGreaterThanOrEqual(3);
-    expect(body).toMatchObject({
-      session_id: "test-session",
-      user_id: "test-user",
-      channel: "console",
-    });
-    expect(mockRuntimeSubmit).toHaveBeenCalledTimes(1);
     expect(localStorage.getItem(storageKey)).toBeNull();
   });
 
@@ -1819,20 +1828,74 @@ describe("ChatPage coverage", () => {
           body: expect.any(String),
         }),
       );
-      // Verify the body contains expected fields
-      const callArgs = (fetch as any).mock.calls.find(
-        (c: any) =>
-          c[0]?.includes?.("/console/chat") && c[1]?.method === "POST",
+      expect(mockSubmitTurn).toHaveBeenCalledWith(
+        "test-session",
+        expect.objectContaining({
+          content_parts: [{ type: "text", text: "hello world" }],
+        }),
+        "default",
       );
-      if (callArgs) {
-        const body = JSON.parse(callArgs[1].body);
-        expect(body.stream).toBe(true);
-        expect(body.input).toBeDefined();
-      }
     }
   });
 
+  it("lets a stable Chat use server model resolution across tabs", async () => {
+    const chatId = "11111111-1111-4111-8111-111111111113";
+    mockGetActiveModels.mockRejectedValue(new Error("tab-local lookup failed"));
+    renderWithProviders(<ChatPage />, {
+      initialEntries: [`/chat/${chatId}`],
+    });
+    await screen.findByTestId("chat-ui");
+    await act(async () => {});
+
+    await capturedOptions.api.fetch({
+      input: [{ role: "user", content: "second tab" }],
+      clientRequestId: "second-tab-message",
+    });
+
+    expect(mockSubmitTurn).toHaveBeenCalledWith(
+      chatId,
+      expect.objectContaining({
+        idempotency_key: "second-tab-message",
+        content_parts: [{ type: "text", text: "second tab" }],
+      }),
+      "default",
+    );
+  });
+
   // ── customFetch: with biz_params ───────────────────────────────────────
+  it.each(["queue", "host-queue"] as const)(
+    "routes a stable Chat SDK %s submission through the server queue",
+    async (source) => {
+      const chatId = "11111111-1111-4111-8111-111111111114";
+      mockGetActiveModels.mockRejectedValue(
+        new Error("tab-local lookup must not own admission"),
+      );
+      renderWithProviders(<ChatPage />, {
+        initialEntries: [`/chat/${chatId}`],
+      });
+      await screen.findByTestId("chat-ui");
+      await act(async () => {});
+
+      await capturedOptions.api.fetch({
+        input: [{ role: "user", content: `${source} message` }],
+        clientRequestId: `${source}-request`,
+        submission: {
+          source,
+          queueItemId: `${source}-request`,
+        },
+      });
+
+      expect(mockSubmitTurn).toHaveBeenCalledWith(
+        chatId,
+        expect.objectContaining({
+          idempotency_key: `${source}-request`,
+          content_parts: [{ type: "text", text: `${source} message` }],
+        }),
+        "default",
+      );
+    },
+  );
+
   it("customFetch merges biz_params into request body", async () => {
     const mockResponse = { ok: true, status: 200, body: null };
     global.fetch = vi.fn().mockResolvedValue(mockResponse) as any;
@@ -1849,14 +1912,15 @@ describe("ChatPage coverage", () => {
         biz_params: { custom_field: "custom_value" },
         signal: undefined,
       });
-      const callArgs = (fetch as any).mock.calls.find(
-        (c: any) =>
-          c[0]?.includes?.("/console/chat") && c[1]?.method === "POST",
+      expect(mockSubmitTurn).toHaveBeenCalledWith(
+        "test-session",
+        expect.objectContaining({
+          request_extensions: expect.objectContaining({
+            custom_field: "custom_value",
+          }),
+        }),
+        "default",
       );
-      if (callArgs) {
-        const body = JSON.parse(callArgs[1].body);
-        expect(body.custom_field).toBe("custom_value");
-      }
     }
   });
 

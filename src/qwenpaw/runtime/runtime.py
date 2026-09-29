@@ -7,9 +7,9 @@ Delegates to:
 * ``AgentBuilder``   — per-request agent assembly
 * ``AgentExecutor``  — heartbeat-wrapped reply stream
 
-All insertable features live in ``LifecycleHook`` / ``AgentMode``
-instances registered in the per-workspace ``HookRegistry``.  The two
-fixed steps (build + execute) are the only agent-touching code.
+Insertable features are resolved from generation-pinned Provider sessions.
+Compatibility providers adapt the per-workspace Hook Registry and Agent Modes.
+The fixed build and execute steps are the only agent-touching code.
 """
 
 from __future__ import annotations
@@ -22,11 +22,19 @@ from typing import Any, AsyncGenerator
 from ..agents.acp.meta import ACP_EPHEMERAL_META_KEY
 from ..exceptions import ConfigurationException
 from ..utils.daily_telemetry import record_agent_activity
-from .builder import AgentBuilder
+from .builder import AgentBuilder  # pylint: disable=unused-import
+from .assembly import RuntimeAssemblyFactory, capability_registry_for
 from .envelope import Envelope
 from .executor import AgentExecutor
-from .hooks import HookAction, HookContext
+from .hooks import HookContext
 from .message_convert import _get_last_user_text, _request_input_to_msgs
+from ..kernel.models import (
+    CommandDisposition,
+    HookDisposition,
+    HookOutcome,
+    LifecyclePhase,
+)
+from ..kernel import SubmissionStatus, TurnSubmissionRequest
 from .phases import Phase
 
 logger = logging.getLogger(__name__)
@@ -56,68 +64,165 @@ class Runtime:
         """8-phase lifecycle orchestration."""
         request = self._normalize(request)
         ctx = self._build_context(request)
-        hooks = self.workspace.plugins.hook_registry
-
         envelope = Envelope(session_id=ctx.session_id)
         ctx._envelope = envelope  # pylint: disable=protected-access
         skip_agent = False
+        assembly = None
+        ctx.extras["invocation_terminal_status"] = SubmissionStatus.FAILED
 
         try:
+            (
+                task_invocation_id,
+                task_correlation_id,
+            ) = self._task_causal_identity(request)
+            assembly = await RuntimeAssemblyFactory(
+                capability_registry_for(self.workspace),
+            ).open(
+                agent_id=ctx.agent_id,
+                conversation_id=self._conversation_id(request),
+                session_id=ctx.session_id,
+                root_agent_id=ctx.root_agent_id,
+                root_session_id=ctx.root_session_id,
+                workspace_dir=ctx.workspace_dir or ".",
+                selection_overrides=getattr(
+                    getattr(self.workspace, "config", None),
+                    "capability_selection",
+                    None,
+                ),
+                registry_generation=self._task_registry_generation(request),
+                invocation_id=task_invocation_id,
+                correlation_id=task_correlation_id,
+            )
+            ctx.invocation_scope = assembly.scope
+            ctx.extras["runtime_assembly"] = assembly
+            control_service = getattr(
+                self.workspace,
+                "invocation_control",
+                None,
+            )
+            interaction_service = getattr(
+                self.workspace,
+                "interaction_service",
+                None,
+            )
+            if interaction_service is not None:
+                ctx.extras["interaction_service"] = interaction_service
+            if control_service is not None:
+                ctx.extras["invocation_control_service"] = control_service
+                await self._open_invocation_control(
+                    ctx,
+                    request,
+                    assembly.scope.invocation_id,
+                    control_service,
+                )
+            ctx.extras["hook_session"] = await self._open_hook_session(
+                ctx,
+                assembly,
+            )
+            ctx.extras[
+                "stop_gate_session"
+            ] = await self._open_stop_gate_session(ctx, assembly)
+            ctx.extras[
+                "agent_mode_session"
+            ] = await self._open_agent_mode_session(ctx, assembly)
+            ctx.extras["command_session"] = await self._open_command_session(
+                ctx,
+                assembly,
+            )
+
             # --- [phase 1] PRE_DISPATCH ---
-            r = await hooks.run(Phase.PRE_DISPATCH, ctx)
-            if r.action == HookAction.SHORT_CIRCUIT:
-                async for ev in envelope.from_msg(r.payload):
+            r = await self._run_hook_phase(ctx, Phase.PRE_DISPATCH)
+            if r.disposition == HookDisposition.SHORT_CIRCUIT:
+                async for ev in envelope.from_msg(self._hook_message(r)):
                     yield ev
+                ctx.extras[
+                    "invocation_terminal_status"
+                ] = SubmissionStatus.SUCCEEDED
                 return
-            if r.action == HookAction.SKIP_AGENT:
+            if r.disposition == HookDisposition.SKIP_AGENT:
                 skip_agent = True
 
             # --- [fixed 1] slash command dispatch ---
             text = _get_last_user_text(ctx.input_msgs)
-            cmd_registry = self.workspace.plugins.slash_command_registry
-            cmd_msg = await cmd_registry.dispatch(text or "", ctx)
-            if cmd_msg is not None:
-                async for ev in envelope.from_msg(cmd_msg):
+            command_session = ctx.extras["command_session"]
+            command_result = await command_session.dispatch(text or "")
+            if command_result.disposition == CommandDisposition.RESPOND:
+                from agentscope.message import Msg, TextBlock
+
+                message = command_result.message
+                if message is None:
+                    raise TypeError("respond command result has no message")
+                command_msg = Msg(
+                    name="assistant",
+                    role="assistant",
+                    content=[TextBlock(type="text", text=message.text)],
+                    metadata=message.metadata,
+                )
+                async for ev in envelope.from_msg(command_msg):
                     yield ev
                 skip_agent = True
             else:
                 # --- [phase 2] POST_DISPATCH ---
-                r = await hooks.run(Phase.POST_DISPATCH, ctx)
-                if r.action == HookAction.SHORT_CIRCUIT:
-                    async for ev in envelope.from_msg(r.payload):
+                r = await self._run_hook_phase(ctx, Phase.POST_DISPATCH)
+                if r.disposition == HookDisposition.SHORT_CIRCUIT:
+                    async for ev in envelope.from_msg(self._hook_message(r)):
                         yield ev
                     skip_agent = True
-                elif r.action == HookAction.SKIP_AGENT:
+                elif r.disposition == HookDisposition.SKIP_AGENT:
                     skip_agent = True
 
             if not skip_agent:
                 # --- [phase 3] PRE_AGENT_BUILD ---
-                r = await hooks.run(Phase.PRE_AGENT_BUILD, ctx)
-                if r.action == HookAction.SHORT_CIRCUIT:
-                    async for ev in envelope.from_msg(r.payload):
+                r = await self._run_hook_phase(ctx, Phase.PRE_AGENT_BUILD)
+                if r.disposition == HookDisposition.SHORT_CIRCUIT:
+                    async for ev in envelope.from_msg(self._hook_message(r)):
                         yield ev
                     skip_agent = True
-                elif r.action == HookAction.SKIP_AGENT:
+                elif r.disposition == HookDisposition.SKIP_AGENT:
                     skip_agent = True
 
             if not skip_agent:
                 # --- [fixed 2] build agent ---
-                builder = AgentBuilder(
-                    app_services=self.app_services,
+                factory_id = assembly.scope.selection.agent_factory_id
+                agent_factory = assembly.require(
+                    factory_id,
+                    "agent.factory",
                 )
-                ctx.agent = await builder.build(ctx)
+                if getattr(agent_factory, "factory_id", None) != factory_id:
+                    raise TypeError(
+                        f"agent factory '{factory_id}' returned an "
+                        "implementation with a mismatched identity",
+                    )
+                build_agent = getattr(agent_factory, "build", None)
+                if not callable(build_agent):
+                    raise TypeError(
+                        f"agent factory '{factory_id}' does not implement "
+                        "build()",
+                    )
+                ctx.agent = await build_agent(ctx, self.app_services)
+                try:
+                    setattr(
+                        ctx.agent,
+                        "_stop_gate_session",
+                        ctx.extras["stop_gate_session"],
+                    )
+                except (AttributeError, TypeError):
+                    logger.debug(
+                        "runtime: agent does not accept stop-gate session",
+                    )
                 await self._start_modes(ctx)
+                await self._start_stop_gates(ctx)
 
                 # --- [phase 4] POST_AGENT_BUILD ---
-                await hooks.run(Phase.POST_AGENT_BUILD, ctx)
+                await self._run_hook_phase(ctx, Phase.POST_AGENT_BUILD)
 
                 # --- [phase 5] PRE_EXECUTE ---
-                r = await hooks.run(Phase.PRE_EXECUTE, ctx)
-                if r.action == HookAction.SHORT_CIRCUIT:
-                    async for ev in envelope.from_msg(r.payload):
+                r = await self._run_hook_phase(ctx, Phase.PRE_EXECUTE)
+                if r.disposition == HookDisposition.SHORT_CIRCUIT:
+                    async for ev in envelope.from_msg(self._hook_message(r)):
                         yield ev
                     skip_agent = True
-                elif r.action == HookAction.SKIP_AGENT:
+                elif r.disposition == HookDisposition.SKIP_AGENT:
                     skip_agent = True
 
             if not skip_agent:
@@ -138,14 +243,20 @@ class Runtime:
                     yield ev
 
             # --- [phase 6] POST_RESPONSE ---
-            await hooks.run(Phase.POST_RESPONSE, ctx)
+            await self._run_hook_phase(ctx, Phase.POST_RESPONSE)
 
             # Finalize envelope (complete message + response).
             async for ev in envelope.finalize():
                 yield ev
+            ctx.extras[
+                "invocation_terminal_status"
+            ] = SubmissionStatus.SUCCEEDED
 
         except (asyncio.CancelledError, KeyboardInterrupt) as e:
             ctx.error = e
+            ctx.extras[
+                "invocation_terminal_status"
+            ] = SubmissionStatus.INTERRUPTED
             # The Task's _must_cancel flag may still be True after
             # catching CancelledError, causing the next await to raise
             # CancelledError again.  Wrap ON_ERROR hooks so that
@@ -153,7 +264,7 @@ class Runtime:
             # needs a terminal {object:response} event to
             # exit loading state.
             try:
-                await hooks.run(Phase.ON_ERROR, ctx)
+                await self._run_hook_phase(ctx, Phase.ON_ERROR)
             except asyncio.CancelledError:
                 logger.debug(
                     "ON_ERROR hooks skipped due to asyncio "
@@ -190,7 +301,7 @@ class Runtime:
                 e,
                 exc_info=True,
             )
-            await hooks.run(Phase.ON_ERROR, ctx)
+            await self._run_hook_phase(ctx, Phase.ON_ERROR)
             err_text = ctx.extras.get(
                 "_error_text",
                 str(e) or e.__class__.__name__,
@@ -206,32 +317,558 @@ class Runtime:
                 yield ev
             raise
         finally:
-            # Close agent first so governor can flush audit log and persist
-            # policy before downstream FINALLY hooks observe the context.
-            # See ``QwenPawAgent.close`` (agents/react_agent.py).
-            agent = getattr(ctx, "agent", None)
-            if agent is not None and hasattr(agent, "close"):
-                try:
-                    await agent.close()
-                except Exception:  # pylint: disable=broad-except
-                    logger.warning(
-                        "runtime: agent.close() failed session=%s",
-                        getattr(ctx, "session_id", ""),
-                        exc_info=True,
-                    )
-            await hooks.run(Phase.FINALLY, ctx)
+            await self._finalize_runtime(ctx, assembly)
 
     # ----------------------------------------------------------------- helpers
 
-    async def _start_modes(self, ctx: HookContext) -> None:
-        """Prepare every registered mode for the current user turn."""
-        for mode in self.workspace.plugins.modes:
+    @staticmethod
+    async def _open_invocation_control(
+        ctx: HookContext,
+        request: Any,
+        invocation_id: uuid.UUID,
+        control_service: Any,
+    ) -> None:
+        """Open durable Chat control only with a server ChatSpec identity."""
+        request_context = getattr(request, "request_context", None) or {}
+        scope = getattr(ctx, "invocation_scope", None)
+        conversation_id = getattr(scope, "conversation_id", None)
+        idempotency_key = request_context.get(
+            "os_submission_idempotency_key",
+        )
+        if not conversation_id or not idempotency_key:
+            ctx.extras[
+                "steering_session"
+            ] = await control_service.open_steering(invocation_id)
+            return
+
+        raw_priority = request_context.get("os_submission_priority", 20)
+        priority = (
+            raw_priority
+            if isinstance(raw_priority, int)
+            and not isinstance(raw_priority, bool)
+            else 20
+        )
+        input_messages = getattr(request, "input", None) or []
+        latest = input_messages[-1] if input_messages else None
+        artifact_refs = tuple(getattr(latest, "artifact_refs", None) or ())
+        content = _get_last_user_text(ctx.input_msgs)
+        if not content:
+            content = "[non-text user input]"
+        submission = TurnSubmissionRequest(
+            agent_id=ctx.agent_id,
+            conversation_id=str(conversation_id),
+            priority=priority,
+            content=content,
+            artifact_refs=artifact_refs,
+            request_context={
+                "channel": str(getattr(request, "channel", "") or ""),
+            },
+            idempotency_key=str(idempotency_key),
+        )
+        raw_submission_id = request_context.get("os_submission_id")
+        if raw_submission_id:
             try:
-                await mode.on_turn_start(ctx)
-            except Exception:
+                submission_id = uuid.UUID(str(raw_submission_id))
+            except ValueError as exc:
+                raise ValueError(
+                    "invalid prequeued submission identity",
+                ) from exc
+            lease = await control_service.begin_submitted_turn(
+                submission_id,
+                invocation_id=invocation_id,
+                agent_id=ctx.agent_id,
+                conversation_id=str(conversation_id),
+            )
+        else:
+            lease = await control_service.begin_turn(
+                submission,
+                invocation_id=invocation_id,
+            )
+        ctx.extras["invocation_control_lease"] = lease
+        ctx.extras["steering_session"] = lease.steering
+        runtime_task = asyncio.current_task()
+        if runtime_task is None:
+            raise RuntimeError("runtime invocation has no owning asyncio task")
+
+        async def cancel_runtime_children() -> int:
+            interaction_service = ctx.extras.get("interaction_service")
+            interaction_error: Exception | None = None
+            if interaction_service is not None:
+                try:
+                    await interaction_service.cancel_invocation(
+                        invocation_id,
+                        detail="invocation interrupt requested",
+                        include_non_blocking=False,
+                    )
+                except Exception as error:  # pylint: disable=broad-except
+                    interaction_error = error
+
+            coordinator = getattr(ctx.app_services, "tool_coordinator", None)
+            cancel = getattr(coordinator, "cancel_running_for_session", None)
+            cancelled_tools = 0
+            if callable(cancel):
+                from ..tool_calls import CancelReason
+
+                cancelled_tools = int(
+                    await cancel(
+                        ctx.session_id,
+                        agent_id=ctx.agent_id,
+                        reason=CancelReason.USER,
+                    )
+                    or 0,
+                )
+            if interaction_error is not None:
+                raise RuntimeError(
+                    "failed to cancel invocation interactions",
+                ) from interaction_error
+            return cancelled_tools
+
+        ctx.extras["interrupt_session"] = await control_service.bind_interrupt(
+            invocation_id,
+            runtime_task,
+            lease=lease,
+            agent_id=ctx.agent_id,
+            conversation_id=str(conversation_id),
+            cancel_children=cancel_runtime_children,
+        )
+
+    async def _finalize_runtime(
+        self,
+        ctx: HookContext,
+        assembly: Any,
+    ) -> None:
+        """Drain cleanup even when the caller receives another cancellation."""
+        cleanup = asyncio.create_task(
+            self._finalize_runtime_resources(ctx, assembly),
+        )
+        cancellation: asyncio.CancelledError | None = None
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError as error:
+                cancellation = error
+                current = asyncio.current_task()
+                if current is not None:
+                    current.uncancel()
+        if cancellation is not None:
+            try:
+                cleanup.result()
+            except BaseException:  # noqa: BLE001
                 logger.warning(
-                    "mode '%s' turn start raised",
-                    getattr(mode, "name", "?"),
+                    "runtime: cleanup failed while cancellation was pending "
+                    "session=%s",
+                    getattr(ctx, "session_id", ""),
+                    exc_info=True,
+                )
+            raise cancellation
+        cleanup.result()
+
+    # pylint: disable=too-many-branches,too-many-statements
+    async def _finalize_runtime_resources(
+        self,
+        ctx: HookContext,
+        assembly: Any,
+    ) -> None:
+        """Run FINALLY while sessions are live, then close in reverse order."""
+        await self._close_interrupt_session(ctx)
+        steering_session = ctx.extras.get("steering_session")
+        if steering_session is not None:
+            try:
+                await steering_session.close()
+            except Exception:  # pylint: disable=broad-except
+                logger.warning(
+                    "runtime: steering session close failed session=%s",
+                    getattr(ctx, "session_id", ""),
+                    exc_info=True,
+                )
+        agent = getattr(ctx, "agent", None)
+        if agent is not None and callable(getattr(agent, "close", None)):
+            try:
+                await agent.close()
+            except Exception:  # pylint: disable=broad-except
+                logger.warning(
+                    "runtime: agent close failed session=%s",
+                    getattr(ctx, "session_id", ""),
+                    exc_info=True,
+                )
+
+        finally_error: BaseException | None = None
+        try:
+            await self._run_hook_phase(ctx, Phase.FINALLY)
+        except BaseException as error:  # noqa: BLE001
+            finally_error = error
+
+        from .command_providers import close_command_session
+        from .driver_providers import close_driver_session
+        from .hook_providers import close_hook_session
+        from .memory_providers import close_memory_session
+        from .mode_providers import close_agent_mode_session
+        from .stop_gate_providers import close_stop_gate_session
+
+        resources = (
+            ("memory", close_memory_session, "memory_session"),
+            ("driver", close_driver_session, "driver_session"),
+            ("command", close_command_session, "command_session"),
+            ("agent mode", close_agent_mode_session, "agent_mode_session"),
+            ("stop-gate", close_stop_gate_session, "stop_gate_session"),
+            ("hook", close_hook_session, "hook_session"),
+        )
+        for label, close_resource, key in resources:
+            try:
+                await close_resource(ctx.extras.get(key))
+            except Exception:  # pylint: disable=broad-except
+                logger.warning(
+                    "runtime: %s session close failed session=%s",
+                    label,
+                    getattr(ctx, "session_id", ""),
+                    exc_info=True,
+                )
+        if assembly is not None:
+            try:
+                await assembly.close()
+            except Exception:  # pylint: disable=broad-except
+                logger.warning(
+                    "runtime: assembly close failed session=%s",
+                    getattr(ctx, "session_id", ""),
+                    exc_info=True,
+                )
+        lease = ctx.extras.get("invocation_control_lease")
+        control_service = ctx.extras.get("invocation_control_service")
+        if lease is not None and control_service is not None:
+            terminal_status = ctx.extras.get(
+                "invocation_terminal_status",
+                SubmissionStatus.FAILED,
+            )
+            if finally_error is not None:
+                terminal_status = SubmissionStatus.FAILED
+            await self._cancel_open_interactions(
+                ctx,
+                lease.steering.invocation_id,
+                terminal_status,
+            )
+            try:
+                await control_service.finish_turn(lease, terminal_status)
+            except Exception:  # pylint: disable=broad-except
+                logger.warning(
+                    "runtime: durable invocation finalization failed "
+                    "session=%s",
+                    getattr(ctx, "session_id", ""),
+                    exc_info=True,
+                )
+        request = getattr(ctx, "request", None)
+        request_context = getattr(request, "request_context", None)
+        from ..tasks.usage_scope import close_usage_scope_in_context
+
+        close_usage_scope_in_context(request_context)
+        if finally_error is not None:
+            raise finally_error
+
+    @staticmethod
+    async def _close_interrupt_session(ctx: HookContext) -> None:
+        """Remove the live cancellation root before async cleanup begins."""
+        interrupt_session = ctx.extras.get("interrupt_session")
+        if interrupt_session is None:
+            return
+        try:
+            await interrupt_session.close()
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "runtime: interrupt session close failed session=%s",
+                getattr(ctx, "session_id", ""),
+                exc_info=True,
+            )
+
+    @staticmethod
+    async def _cancel_open_interactions(
+        ctx: HookContext,
+        invocation_id: uuid.UUID,
+        terminal_status: SubmissionStatus,
+    ) -> None:
+        """Release every unresolved interaction owned by a terminal run."""
+        interaction_service = ctx.extras.get("interaction_service")
+        if interaction_service is None:
+            return
+        try:
+            await interaction_service.cancel_invocation(
+                invocation_id,
+                detail=f"invocation finished as {terminal_status.value}",
+                include_non_blocking=False,
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "runtime: interaction finalization failed session=%s",
+                getattr(ctx, "session_id", ""),
+                exc_info=True,
+            )
+
+    async def _start_modes(self, ctx: HookContext) -> None:
+        """Prepare modes through the pinned invocation provider."""
+        session = ctx.extras.get("agent_mode_session")
+        if session is None:
+            return
+        await session.start_turn()
+
+    async def _start_stop_gates(self, ctx: HookContext) -> None:
+        """Prepare provider-owned stop-gate state after Agent Modes."""
+        session = ctx.extras.get("stop_gate_session")
+        if session is not None:
+            await session.start_turn()
+
+    async def _open_hook_session(
+        self,
+        ctx: HookContext,
+        assembly: Any,
+    ) -> Any:
+        """Open and merge selected Hook Providers from one generation."""
+        from .hook_providers import HookRouterSession, WorkspaceHookHost
+
+        sessions = []
+        try:
+            for provider_id in assembly.scope.selection.hook_provider_ids:
+                provider = assembly.require(provider_id, "hook.provider")
+                if getattr(provider, "provider_id", None) != provider_id:
+                    raise TypeError(
+                        f"hook provider '{provider_id}' returned an "
+                        "implementation with a mismatched identity",
+                    )
+                open_session = getattr(provider, "open", None)
+                if not callable(open_session):
+                    raise TypeError(
+                        f"hook provider '{provider_id}' does not implement "
+                        "open()",
+                    )
+                session = await open_session(
+                    assembly.scope,
+                    WorkspaceHookHost.capture(ctx, provider_id),
+                )
+                sessions.append(session)
+                for member_name in (
+                    "provider_id",
+                    "list_hooks",
+                    "run_hook",
+                    "close",
+                ):
+                    if not hasattr(session, member_name):
+                        raise TypeError(
+                            f"hook provider '{provider_id}' returned a "
+                            f"session without {member_name}",
+                        )
+            return HookRouterSession(sessions)
+        except BaseException:
+            await self._close_opened_sessions(sessions, "hook")
+            raise
+
+    async def _open_stop_gate_session(
+        self,
+        ctx: HookContext,
+        assembly: Any,
+    ) -> Any:
+        """Open and merge selected loop Stop Gate Providers."""
+        from .stop_gate_providers import (
+            StopGateRouterSession,
+            WorkspaceStopGateHost,
+        )
+
+        sessions = []
+        try:
+            for provider_id in assembly.scope.selection.stop_gate_provider_ids:
+                provider = assembly.require(
+                    provider_id,
+                    "loop.gate.provider",
+                )
+                if getattr(provider, "provider_id", None) != provider_id:
+                    raise TypeError(
+                        f"stop-gate provider '{provider_id}' returned an "
+                        "implementation with a mismatched identity",
+                    )
+                open_session = getattr(provider, "open", None)
+                if not callable(open_session):
+                    raise TypeError(
+                        f"stop-gate provider '{provider_id}' does not "
+                        "implement open()",
+                    )
+                session = await open_session(
+                    assembly.scope,
+                    WorkspaceStopGateHost.capture(ctx, provider_id),
+                )
+                sessions.append(session)
+                for member_name in (
+                    "provider_id",
+                    "list_gates",
+                    "is_active",
+                    "evaluate",
+                    "start_turn",
+                    "reset_conversation",
+                    "close",
+                ):
+                    if not hasattr(session, member_name):
+                        raise TypeError(
+                            f"stop-gate provider '{provider_id}' returned a "
+                            f"session without {member_name}",
+                        )
+            return StopGateRouterSession(sessions)
+        except BaseException:
+            await self._close_opened_sessions(sessions, "stop-gate")
+            raise
+
+    async def _run_hook_phase(
+        self,
+        ctx: HookContext,
+        phase: Phase,
+    ) -> HookOutcome:
+        """Run a pinned phase, with bootstrap fallback before session open."""
+        session = ctx.extras.get("hook_session")
+        if session is not None:
+            return await session.run(LifecyclePhase(phase.value))
+        from .hook_providers import run_legacy_phase
+
+        return await run_legacy_phase(
+            self.workspace.plugins.hook_registry,
+            phase,
+            ctx,
+        )
+
+    @staticmethod
+    def _hook_message(outcome: HookOutcome) -> Any:
+        """Convert one public short-circuit response for the SSE envelope."""
+        from agentscope.message import Msg, TextBlock
+
+        message = outcome.message
+        if message is None:
+            raise TypeError("short-circuit hook outcome has no message")
+        return Msg(
+            name="assistant",
+            role="assistant",
+            content=[TextBlock(type="text", text=message.text)],
+            metadata=message.metadata,
+        )
+
+    async def _open_agent_mode_session(
+        self,
+        ctx: HookContext,
+        assembly: Any,
+    ) -> Any:
+        """Open the selected Agent Mode Provider from the pinned assembly."""
+        provider_id = assembly.scope.selection.agent_mode_provider_id
+        provider = assembly.require(provider_id, "agent.mode.provider")
+        if getattr(provider, "provider_id", None) != provider_id:
+            raise TypeError(
+                f"agent mode provider '{provider_id}' returned an "
+                "implementation with a mismatched identity",
+            )
+        open_session = getattr(provider, "open", None)
+        if not callable(open_session):
+            raise TypeError(
+                f"agent mode provider '{provider_id}' does not implement "
+                "open()",
+            )
+        from ..kernel.invocation import DEFAULT_AGENT_MODE_PROVIDER_ID
+        from .mode_providers import (
+            ProviderAgentModeHost,
+            WorkspaceAgentModeHost,
+        )
+        from .provider_config import validate_provider_config
+
+        profile = getattr(self.workspace, "config", None)
+        capability_configs = getattr(profile, "capability_configs", {}) or {}
+        provider_config = dict(capability_configs.get(provider_id, {}) or {})
+        descriptor = assembly.descriptor(provider_id)
+        provider_config = validate_provider_config(
+            provider_id,
+            provider_config,
+            descriptor.config_schema,
+        )
+        if provider_id == DEFAULT_AGENT_MODE_PROVIDER_ID:
+            host = WorkspaceAgentModeHost.capture(ctx, provider_config)
+        else:
+            host = ProviderAgentModeHost(provider_config)
+
+        session = await open_session(
+            assembly.scope,
+            host,
+        )
+        try:
+            for method_name in (
+                "active_mode_names",
+                "start_turn",
+                "reset_conversation",
+                "close",
+            ):
+                if not callable(getattr(session, method_name, None)):
+                    raise TypeError(
+                        f"agent mode provider '{provider_id}' returned a "
+                        f"session without {method_name}()",
+                    )
+        except BaseException:
+            await self._close_opened_sessions([session], "agent mode")
+            raise
+        return session
+
+    async def _open_command_session(
+        self,
+        ctx: HookContext,
+        assembly: Any,
+    ) -> Any:
+        """Open and merge selected providers from the pinned assembly."""
+        from .command_providers import (
+            CommandRouterSession,
+            WorkspaceCommandHost,
+        )
+
+        sessions = []
+        try:
+            for provider_id in assembly.scope.selection.command_provider_ids:
+                provider = assembly.require(provider_id, "command.provider")
+                if getattr(provider, "provider_id", None) != provider_id:
+                    raise TypeError(
+                        f"command provider '{provider_id}' returned an "
+                        "implementation with a mismatched identity",
+                    )
+                open_session = getattr(provider, "open", None)
+                if not callable(open_session):
+                    raise TypeError(
+                        f"command provider '{provider_id}' does not implement "
+                        "open()",
+                    )
+                session = await open_session(
+                    assembly.scope,
+                    WorkspaceCommandHost.capture(ctx, provider_id),
+                )
+                sessions.append(session)
+                for member_name in (
+                    "provider_id",
+                    "allows_dynamic_fallback",
+                    "list_commands",
+                    "dispatch",
+                    "fallback",
+                    "close",
+                ):
+                    if not hasattr(session, member_name):
+                        raise TypeError(
+                            f"command provider '{provider_id}' returned a "
+                            f"session without {member_name}",
+                        )
+            return CommandRouterSession(sessions)
+        except BaseException:
+            await self._close_opened_sessions(sessions, "command")
+            raise
+
+    @staticmethod
+    async def _close_opened_sessions(
+        sessions: list[Any],
+        label: str,
+    ) -> None:
+        """Rollback sessions that were opened before assembly failed."""
+        for session in reversed(sessions):
+            close = getattr(session, "close", None)
+            if not callable(close):
+                continue
+            try:
+                await close()
+            except BaseException:  # noqa: BLE001
+                logger.warning(
+                    "runtime: %s session rollback failed",
+                    label,
                     exc_info=True,
                 )
 
@@ -509,6 +1146,55 @@ class Runtime:
         if not getattr(request, "user_id", None):
             request.user_id = request.session_id
         return request
+
+    @staticmethod
+    def _task_registry_generation(request: Any) -> int | None:
+        """Trust a pinned generation only from the internal Task bridge."""
+        request_context = getattr(request, "request_context", None)
+        if not isinstance(request_context, dict):
+            return None
+        if request_context.get("durable_task") is not True:
+            return None
+        if request_context.get("_task_approval_broker") is None:
+            return None
+        generation = request_context.get("os_registry_generation")
+        if isinstance(generation, bool) or not isinstance(generation, int):
+            return None
+        return generation if generation >= 1 else None
+
+    @staticmethod
+    def _task_causal_identity(
+        request: Any,
+    ) -> tuple[uuid.UUID | None, uuid.UUID | None]:
+        """Trust Task causal identity only from the internal broker bridge."""
+        request_context = getattr(request, "request_context", None)
+        if not isinstance(request_context, dict):
+            return None, None
+        if request_context.get("durable_task") is not True:
+            return None, None
+        if request_context.get("_task_approval_broker") is None:
+            return None, None
+        raw_invocation = request_context.get("os_invocation_id")
+        raw_correlation = request_context.get("os_correlation_id")
+        try:
+            invocation_id = uuid.UUID(str(raw_invocation))
+            correlation_id = uuid.UUID(str(raw_correlation))
+        except (TypeError, ValueError, AttributeError) as exc:
+            raise ValueError(
+                "internal Task bridge has invalid causal identity",
+            ) from exc
+        return invocation_id, correlation_id
+
+    @staticmethod
+    def _conversation_id(request: Any) -> str | None:
+        """Read the Chat adapter's stable Conversation identity once."""
+        request_context = getattr(request, "request_context", None)
+        if not isinstance(request_context, dict):
+            return None
+        conversation_id = request_context.get("os_conversation_id")
+        if not isinstance(conversation_id, str) or not conversation_id:
+            return None
+        return conversation_id
 
     def _build_context(self, request: Any) -> HookContext:
         workspace_dir = getattr(self.workspace, "workspace_dir", None)

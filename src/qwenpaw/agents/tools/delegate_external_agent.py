@@ -990,6 +990,7 @@ async def _run_streaming_agent_action(
     tool_type="internal",
     target_param="runner",
     policy_name="DelegateExternalAgent",
+    effect="external_write",
     ui_description="Delegate work to an external ACP agent runner",
     ui_icon="📡",
 )

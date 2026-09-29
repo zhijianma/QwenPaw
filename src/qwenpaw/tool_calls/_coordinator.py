@@ -13,6 +13,7 @@ from typing import Any, AsyncGenerator, Awaitable, Callable
 from agentscope.message import TextBlock, ToolResultState
 from agentscope.tool import ToolChunk, ToolResponse
 
+from ..kernel.models import UsageDelta, UsageMeter
 from ._context import CancelReason, OffloadReason, ToolCallContext
 from ._ctxvars import reset_call_context, set_call_context
 from ._entry import ToolCallEntry, ToolCallStatus
@@ -104,6 +105,7 @@ class ToolCoordinator:
         agent_id: str,
         root_session_id: str,
         root_agent_id: str = "",
+        usage_meter: UsageMeter | None = None,
         deadline_override: float | None = None,
         background_result_processor: BackgroundResultProcessor | None = None,
     ) -> AsyncGenerator[Any, None]:
@@ -116,6 +118,8 @@ class ToolCoordinator:
             root_agent_id,
         )
         ctx = entry.ctx
+        if usage_meter is not None:
+            ctx.extra["usage_meter"] = usage_meter
 
         async with self._entries_lock:
             self._entries[ctx.tool_call_id] = entry
@@ -783,7 +787,16 @@ class ToolCoordinator:
     ) -> None:
         hooks = self.hooks.get(entry.ctx.tool_name)
         token = set_call_context(entry.ctx)
+        usage_meter = entry.ctx.extra.get("usage_meter")
+        concurrency_acquired = False
         try:
+            if isinstance(usage_meter, UsageMeter):
+                await usage_meter.record(
+                    UsageDelta(tool_calls=1),
+                    source="qwenpaw.system.tool-coordinator",
+                )
+                await usage_meter.acquire_concurrency()
+                concurrency_acquired = True
             if hooks.before:
                 try:
                     modified = await hooks.before(
@@ -842,7 +855,12 @@ class ToolCoordinator:
                         exc,
                         exc_info=True,
                     )
+        except Exception:
+            await entry.stream.close()
+            raise
         finally:
+            if concurrency_acquired:
+                usage_meter.release_concurrency()
             reset_call_context(token)
 
     async def _supervise(

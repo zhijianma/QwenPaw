@@ -79,6 +79,8 @@ function seedLegacyDraft(id = "1788430000000-legacy1") {
 
 beforeEach(() => {
   sessionApi.resetForTests();
+  localStorage.clear();
+  sessionStorage.clear();
   useAgentStore.setState({ lastChatIdByAgent: {} });
   useSessionListStore.setState({ _setLibrarySessions: null });
 });
@@ -86,6 +88,8 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   sessionApi.resetForTests();
+  localStorage.clear();
+  sessionStorage.clear();
   useSessionListStore.setState({ _setLibrarySessions: null });
 });
 
@@ -299,6 +303,73 @@ describe("agent session ownership epochs", () => {
     sessionApi.triggerResolve(tempId);
     await flush();
     expect(onSessionIdResolved).toHaveBeenCalledWith(tempId, B_CHAT);
+  });
+
+  it("migrates pending content to the UUID before refresh recovery", async () => {
+    const listSpy = vi.spyOn(api, "listChats");
+    const getSpy = vi.spyOn(api, "getChat").mockResolvedValue({
+      messages: [],
+      status: "running",
+    } as ChatHistory);
+    sessionApi.setActiveAgent("agent-a");
+    const tempId = seedLegacyDraft().session.id;
+    sessionApi.setLastUserMessage(
+      tempId,
+      "pending with attachment",
+      [
+        { type: "text", text: "pending with attachment" },
+        {
+          type: "file",
+          file_url: "report.pdf",
+          file_name: "report.pdf",
+        },
+      ],
+      "client-pending",
+    );
+    listSpy.mockResolvedValueOnce([
+      makeChatSpec(B_CHAT, tempId, "pending", "running"),
+    ]);
+
+    sessionApi.triggerResolve(tempId);
+    await flush();
+
+    const tempKey = `qwenpaw_pending_user_msg_${tempId}`;
+    const uuidKey = `qwenpaw_pending_user_msg_${B_CHAT}`;
+    expect(localStorage.getItem(tempKey)).toBeNull();
+    expect(localStorage.getItem(uuidKey)).toContain("client-pending");
+    const restored = await sessionApi.getSession(B_CHAT);
+    expect(JSON.stringify(restored.messages)).toContain(
+      "pending with attachment",
+    );
+    expect(JSON.stringify(restored.messages)).toContain("report.pdf");
+    expect(getSpy).toHaveBeenCalledWith(B_CHAT, {
+      signal: undefined,
+      include_app_owned: false,
+    });
+  });
+
+  it("keeps the temp pending entry when UUID resolution fails", async () => {
+    const listSpy = vi.spyOn(api, "listChats").mockResolvedValueOnce([]);
+    const onResolved = vi.fn();
+    sessionApi.onSessionIdResolved = onResolved;
+    sessionApi.setActiveAgent("agent-a");
+    const tempId = seedLegacyDraft().session.id;
+    sessionApi.setLastUserMessage(
+      tempId,
+      "must survive failed resolution",
+      undefined,
+      "client-failed-resolution",
+    );
+
+    sessionApi.triggerResolve(tempId);
+    await flush();
+
+    const tempKey = `qwenpaw_pending_user_msg_${tempId}`;
+    expect(listSpy).toHaveBeenCalledTimes(1);
+    expect(onResolved).not.toHaveBeenCalled();
+    expect(localStorage.getItem(tempKey)).toContain(
+      "client-failed-resolution",
+    );
   });
 
   it("keeps the created UUID stable when sidebar polling observes the new Chat", async () => {

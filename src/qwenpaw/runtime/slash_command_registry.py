@@ -21,7 +21,53 @@ if TYPE_CHECKING:
 
 
 CommandHandler = Callable[["HookContext", str], Awaitable["Msg | None"]]
-FallbackHandler = Callable[[str, "HookContext"], Awaitable["Msg | None"]]
+
+SYSTEM_COMMAND_OWNER_ID = "qwenpaw.system.commands.workspace-commands"
+SYSTEM_RESERVED_COMMANDS = frozenset(
+    {
+        "approval",
+        "approve",
+        "auto_memory_status",
+        "checkpoint",
+        "clear",
+        "compact",
+        "compact_str",
+        "daemon",
+        "deny",
+        "dump_history",
+        "history",
+        "load_history",
+        "logs",
+        "message",
+        "model",
+        "new",
+        "plan",
+        "proactive",
+        "reload-config",
+        "reload_config",
+        "reme",
+        "restart",
+        "skills",
+        "status",
+        "stop",
+        "system_prompt",
+        "version",
+    },
+)
+
+
+@dataclass(frozen=True)
+class FallbackDispatch:
+    """Explicit result for a dynamic fallback handler."""
+
+    handled: bool
+    response: "Msg | None" = None
+
+
+FallbackHandler = Callable[
+    [str, "HookContext"],
+    Awaitable["Msg | FallbackDispatch | None"],
+]
 
 
 @dataclass(frozen=True)
@@ -40,6 +86,8 @@ class CommandSpec:
     category: str = "user"
     help_text: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
+    owner_id: str = "qwenpaw.legacy.commands"
+    protected: bool = False
 
 
 class SlashCommandRegistry:
@@ -58,8 +106,20 @@ class SlashCommandRegistry:
     # ---------------------------------------------------------------- register
     def register(self, spec: CommandSpec) -> None:
         names = (spec.name, *spec.aliases)
+        normalized = tuple(name.casefold() for name in names)
+        if spec.protected and spec.owner_id != SYSTEM_COMMAND_OWNER_ID:
+            raise ValueError(
+                "only the system command provider may protect names",
+            )
+        if not spec.protected:
+            reserved = SYSTEM_RESERVED_COMMANDS.intersection(normalized)
+            if reserved:
+                names_text = ", ".join(f"/{name}" for name in sorted(reserved))
+                raise ValueError(
+                    f"reserved system command names: {names_text}",
+                )
         for nm in names:
-            key = nm.lower()
+            key = nm.casefold()
             if not key:
                 raise ValueError(
                     f"command spec has empty name in {names!r}",
@@ -71,7 +131,7 @@ class SlashCommandRegistry:
                     f"by {existing.category} ({existing.name})",
                 )
         for nm in names:
-            self._by_name[nm.lower()] = spec
+            self._by_name[nm.casefold()] = spec
 
     def register_fallback(self, handler: FallbackHandler) -> None:
         if self._fallback is not None:
@@ -96,13 +156,34 @@ class SlashCommandRegistry:
         if not body:
             return None
         name, _, rest = body.partition(" ")
-        spec = self._by_name.get(name.lower())
+        spec = self._by_name.get(name.casefold())
         if spec is None:
             return None
         return spec, rest.lstrip()
 
     def names(self) -> list[str]:
         return sorted(self._by_name.keys())
+
+    def snapshot(self) -> "SlashCommandRegistry":
+        """Return an immutable-by-convention copy for one invocation."""
+        snapshot = SlashCommandRegistry()
+        snapshot._by_name = dict(  # pylint: disable=protected-access
+            self._by_name,
+        )
+        snapshot._fallback = self._fallback  # pylint: disable=protected-access
+        return snapshot
+
+    def command_specs(self) -> tuple[CommandSpec, ...]:
+        """Return de-duplicated specs in deterministic name order."""
+        seen: set[int] = set()
+        specs: list[CommandSpec] = []
+        for name in sorted(self._by_name):
+            spec = self._by_name[name]
+            if id(spec) in seen:
+                continue
+            seen.add(id(spec))
+            specs.append(spec)
+        return tuple(specs)
 
     def advertisable_commands(
         self,
@@ -143,22 +224,38 @@ class SlashCommandRegistry:
         ctx: "HookContext",
     ) -> "Msg | None":
         """Resolve and execute. Returns ``None`` if nothing matched."""
+        _, response = await self.dispatch_detailed(raw_text, ctx)
+        return response
+
+    async def dispatch_detailed(
+        self,
+        raw_text: str,
+        ctx: "HookContext",
+    ) -> tuple[bool, "Msg | None"]:
+        """Execute and distinguish no-match from handled-without-response."""
         match = self.resolve(raw_text)
         if match is not None:
             spec, args = match
-            return await spec.handler(ctx, args)
+            return True, await spec.handler(ctx, args)
         if (
             self._fallback is not None
             and raw_text
             and raw_text.lstrip().startswith("/")
         ):
-            return await self._fallback(raw_text, ctx)
-        return None
+            result = await self._fallback(raw_text, ctx)
+            if isinstance(result, FallbackDispatch):
+                return result.handled, result.response
+            if result is not None:
+                return True, result
+        return False, None
 
 
 __all__ = [
     "CommandHandler",
     "CommandSpec",
+    "FallbackDispatch",
     "FallbackHandler",
+    "SYSTEM_COMMAND_OWNER_ID",
+    "SYSTEM_RESERVED_COMMANDS",
     "SlashCommandRegistry",
 ]

@@ -5,8 +5,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -20,6 +22,16 @@ from qwenpaw.harnesses.events import (
     HarnessProvider,
 )
 from qwenpaw.harnesses.runtime import HarnessRuntime
+from qwenpaw.interactions import InteractionService
+from qwenpaw.invocation_control import (
+    InvocationControlService,
+    SQLiteInvocationControl,
+)
+from qwenpaw.kernel import (
+    ControlCommandStatus,
+    SubmissionStatus,
+    TurnSubmissionRequest,
+)
 from qwenpaw.schemas import (
     AgentRequest,
     FileContent,
@@ -156,6 +168,41 @@ class CommandAdapter(FakeAdapter):
 
     async def reset_session(self, session_id: str) -> None:
         self.reset_session_id = session_id
+
+
+class BlockingAdapter(FakeAdapter):
+    """Keep one external turn alive until OS Interrupt reaches it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.cancelled = False
+
+    async def run_turn(  # pylint: disable=invalid-overridden-method
+        self,
+        *,
+        session_id: str,
+        prompt: str,
+        cwd: Path,
+        settings: dict,
+        attachments: list[HarnessAttachment] | None = None,
+    ) -> AsyncIterator[HarnessEvent]:
+        del session_id, prompt, cwd, settings, attachments
+        self.started.set()
+        await self.release.wait()
+        yield HarnessEvent(kind=HarnessEventKind.COMPLETED)
+
+    async def cancel_turn(
+        self,
+        session_id: str,
+        *,
+        reason: str,
+    ) -> bool:
+        del session_id, reason
+        self.cancelled = True
+        self.release.set()
+        return True
 
 
 @pytest.mark.asyncio
@@ -396,3 +443,196 @@ async def test_runtime_handles_host_clear_for_every_backend(
 
     assert adapter.reset_session_id == "chat-1"
     assert output[-1].output[-1].metadata["clear_history"] is True
+
+
+def _os_request() -> AgentRequest:
+    return AgentRequest(
+        session_id="chat-1",
+        channel="console",
+        request_context={
+            "os_conversation_id": "chat-spec-1",
+            "os_submission_idempotency_key": "message-1",
+        },
+        input=[
+            Message(
+                role=Role.USER,
+                content=[TextContent(text="Run through Harness")],
+            ),
+        ],
+    )
+
+
+def _prequeued_os_request(submission_id: str) -> AgentRequest:
+    request = _os_request()
+    request.request_context["os_submission_id"] = submission_id
+    return request
+
+
+@pytest.mark.asyncio
+async def test_harness_turn_uses_os_invocation_lifecycle(
+    tmp_path: Path,
+) -> None:
+    control = InvocationControlService(
+        store=SQLiteInvocationControl(tmp_path / "control.sqlite3"),
+    )
+    workspace = SimpleNamespace(
+        workspace_dir=tmp_path,
+        invocation_control=control,
+        interaction_service=InteractionService(
+            tmp_path / "interactions.sqlite3",
+        ),
+    )
+    runtime = HarnessRuntime(tmp_path, workspace=workspace)
+    runtime._adapters["codex"] = FakeAdapter()
+
+    output = [
+        item
+        async for item in runtime.stream(
+            backend="codex",
+            request=_os_request(),
+            cwd=tmp_path.resolve(),
+        )
+    ]
+    queue = await control.read_queue(
+        agent_id="default",
+        conversation_id="chat-spec-1",
+    )
+
+    assert output[-1].status == "completed"
+    assert queue.active_submission_id is None
+    assert queue.submissions == ()
+
+
+@pytest.mark.asyncio
+async def test_harness_turn_adopts_prequeued_submission(
+    tmp_path: Path,
+) -> None:
+    control = InvocationControlService(
+        store=SQLiteInvocationControl(tmp_path / "control.sqlite3"),
+    )
+    receipt = await control.enqueue_turn(
+        TurnSubmissionRequest(
+            agent_id="default",
+            conversation_id="chat-spec-1",
+            content="Run through Harness",
+            idempotency_key="message-1",
+        ),
+    )
+    assert receipt.submission_id is not None
+    workspace = SimpleNamespace(
+        workspace_dir=tmp_path,
+        invocation_control=control,
+        interaction_service=InteractionService(
+            tmp_path / "interactions.sqlite3",
+        ),
+    )
+    runtime = HarnessRuntime(tmp_path, workspace=workspace)
+    runtime._adapters["codex"] = FakeAdapter()
+
+    output = [
+        item
+        async for item in runtime.stream(
+            backend="codex",
+            request=_prequeued_os_request(str(receipt.submission_id)),
+            cwd=tmp_path.resolve(),
+        )
+    ]
+    stored = await control.get_submission(receipt.submission_id)
+
+    assert output[-1].status == "completed"
+    assert stored is not None
+    assert stored.submission_id == receipt.submission_id
+    assert stored.status is SubmissionStatus.SUCCEEDED
+    queue = await control.read_queue(
+        agent_id="default",
+        conversation_id="chat-spec-1",
+    )
+    assert queue.active_submission_id is None
+    assert queue.submissions == ()
+
+
+@pytest.mark.asyncio
+async def test_os_interrupt_cancels_active_harness_turn(
+    tmp_path: Path,
+) -> None:
+    control = InvocationControlService(
+        store=SQLiteInvocationControl(tmp_path / "control.sqlite3"),
+    )
+    workspace = SimpleNamespace(
+        workspace_dir=tmp_path,
+        invocation_control=control,
+        interaction_service=InteractionService(
+            tmp_path / "interactions.sqlite3",
+        ),
+    )
+    runtime = HarnessRuntime(tmp_path, workspace=workspace)
+    adapter = BlockingAdapter()
+    runtime._adapters["codex"] = adapter
+
+    async def consume() -> list[object]:
+        return [
+            item
+            async for item in runtime.stream(
+                backend="codex",
+                request=_os_request(),
+                cwd=tmp_path.resolve(),
+            )
+        ]
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(adapter.started.wait(), timeout=2)
+    active_queue = await control.read_queue(
+        agent_id="default",
+        conversation_id="chat-spec-1",
+    )
+    assert active_queue.active_submission_id is not None
+    receipt = await control.interrupt_current(
+        agent_id="default",
+        conversation_id="chat-spec-1",
+        idempotency_key="interrupt-harness-1",
+    )
+
+    assert receipt is not None
+    assert receipt.status is ControlCommandStatus.APPLIED
+    assert adapter.cancelled is True
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    queue = await control.read_queue(
+        agent_id="default",
+        conversation_id="chat-spec-1",
+    )
+    assert queue.active_submission_id is None
+    assert queue.submissions == ()
+
+
+@pytest.mark.asyncio
+async def test_task_event_stream_cancels_exact_harness_turn(
+    tmp_path: Path,
+) -> None:
+    runtime = HarnessRuntime(tmp_path)
+    adapter = BlockingAdapter()
+    runtime._adapters["codex"] = adapter
+
+    async def consume() -> list[HarnessEvent]:
+        return [
+            event
+            async for event in runtime.task_events(
+                backend="codex",
+                session_id="task-session-1",
+                prompt="Run through Task Runner",
+                cwd=tmp_path.resolve(),
+                settings={
+                    "_request_context": {
+                        "cancellation_reason": "Task cancelled by user",
+                    },
+                },
+            )
+        ]
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(adapter.started.wait(), timeout=2)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert adapter.cancelled is True

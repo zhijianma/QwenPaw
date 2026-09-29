@@ -171,6 +171,50 @@ async def test_clear_resets_stop_gates_and_pending_gate_state() -> None:
 
 
 @pytest.mark.asyncio
+async def test_clear_uses_pinned_agent_mode_session() -> None:
+    """Conversation reset uses the invocation's fixed mode snapshot."""
+    agent = _make_agent()
+    agent._gate_pending_stop = object()
+    session = MagicMock()
+    session.reset_conversation = AsyncMock()
+    ctx = SimpleNamespace(
+        extras={"agent_mode_session": session},
+        agent=agent,
+    )
+    handler = CommandHandler(
+        agent_name="QwenPaw",
+        agent=agent,
+        prompt_context=ctx,
+    )
+
+    await handler.handle_command("/clear")
+
+    session.reset_conversation.assert_awaited_once_with()
+    assert agent._gate_pending_stop is None
+
+
+@pytest.mark.asyncio
+async def test_clear_resets_pinned_stop_gate_session() -> None:
+    """Conversation reset reaches the invocation's stop-gate session."""
+    agent = _make_agent()
+    session = MagicMock()
+    session.reset_conversation = AsyncMock()
+    ctx = SimpleNamespace(
+        extras={"stop_gate_session": session},
+        agent=agent,
+    )
+    handler = CommandHandler(
+        agent_name="QwenPaw",
+        agent=agent,
+        prompt_context=ctx,
+    )
+
+    await handler.handle_command("/clear")
+
+    session.reset_conversation.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
 async def test_clear_resets_pending_gate_state_without_context() -> None:
     """Conversation reset owns deferred state even without mode context."""
     agent = _make_agent()

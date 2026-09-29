@@ -155,11 +155,13 @@ async def mark_read(event_ids: list[str]) -> int:
     return updated
 
 
-async def mark_all_read() -> int:
+async def mark_all_read(*, agent_id: str | None = None) -> int:
     updated = 0
     async with _LOCK:
         events = await run_sync_io(_load_events)
         for event in events:
+            if agent_id and event.get("agent_id") != agent_id:
+                continue
             if not bool(event.get("read")):
                 event["read"] = True
                 updated += 1

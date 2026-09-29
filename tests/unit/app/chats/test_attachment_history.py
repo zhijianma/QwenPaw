@@ -2,6 +2,7 @@
 """Console attachment execution and saved transcript regression tests."""
 
 # pylint: disable=protected-access
+import hashlib
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -19,6 +20,7 @@ from qwenpaw.constant import (
     QWENPAW_CLIENT_MESSAGE_ID_KEY,
     QWENPAW_USER_CONTENT_KEY,
 )
+from qwenpaw.kernel.models import ArtifactRef, EvidenceRef
 from qwenpaw.runtime._state_utils import StateProxy
 from qwenpaw.runtime.message_convert import _request_input_to_msgs
 from qwenpaw.schemas import ContentType, Event, FileContent, TextContent
@@ -65,11 +67,27 @@ async def test_console_file_survives_agent_ingestion_and_disk_history(
         media_dir=str(tmp_path / "media"),
     )
     file_path = str(tmp_path / "media" / "input.txt")
+    digest = hashlib.sha256(b"attachment").hexdigest()
+    artifact = ArtifactRef(
+        kind="chat.attachment",
+        uri=f"qwenpaw-artifact://sha256/{digest}",
+        media_type="text/plain",
+        content_hash=f"sha256:{digest}",
+        size_bytes=10,
+    )
+    evidence = EvidenceRef(
+        artifact_id=artifact.artifact_id,
+        claim="Uploaded attachment",
+        producer="test",
+    )
     content = [
         FileContent(
             file_url=file_path,
             file_name="input.txt",
             file_size=24,
+            artifact_ref=artifact.model_dump(mode="json"),
+            evidence_ref=evidence.model_dump(mode="json"),
+            artifact_receipt="d6e30ad1-a243-41f7-ab95-859ed6b3d276",
         ),
     ]
     content.insert(
@@ -120,6 +138,8 @@ async def test_console_file_survives_agent_ingestion_and_disk_history(
     assert attachment.file_url == file_path
     assert attachment.file_name == "input.txt"
     assert attachment.file_size == 24
+    assert message.artifact_refs == [artifact]
+    assert message.evidence_refs == [evidence]
     if with_text:
         assert message.content[0].text == "read this file"
     assert message.metadata["metadata"][QWENPAW_CLIENT_MESSAGE_ID_KEY] == (

@@ -129,6 +129,11 @@ export interface PawChatSessionsApi {
 /** PawTask event handler. */
 export type PawTaskEventHandler<T = unknown> = (data: T) => void;
 
+export interface PawTaskOptions {
+  /** ChatSpec.id that owns this task and all of its interactions. */
+  chatId?: string;
+}
+
 /** PawTask events. */
 export interface PawTaskEvents {
   progress: { step: number; total?: number; message?: string };
@@ -173,7 +178,11 @@ export interface PawApiNamespace {
   ): AsyncGenerator<string>;
   /** Standards-compliant SSE reader with event names and multiline data. */
   events(path: string, opts?: PawSseOptions): AsyncGenerator<PawSseEvent>;
-  task(path: string, params?: unknown): PawTaskHandle;
+  task(
+    path: string,
+    params?: unknown,
+    options?: PawTaskOptions,
+  ): PawTaskHandle;
 }
 
 /** Host capabilities namespace. */
@@ -187,6 +196,8 @@ export interface PawHostNamespace {
   chatSessions: PawChatSessionsApi;
   storage: PawStorageApi;
   getSelectedAgentId(): string;
+  getCurrentChatId(): string | null;
+  /** @deprecated Use getCurrentChatId() for conversation ownership. */
   getCurrentSessionId(): string | null;
   toast(
     message: string,
@@ -421,9 +432,36 @@ export interface PawDependenciesNamespace {
 }
 
 /** Handle to a running PawTask. */
+export interface PawTaskInteractionRequest {
+  interaction_id: string;
+  agent_id: string;
+  chat_id: string;
+  invocation_id: string;
+  revision: number;
+  message: string;
+  data?: unknown;
+  options: Array<{
+    option_id: string;
+    label: string;
+    description?: string;
+    value?: Record<string, unknown>;
+  }>;
+}
+
+export interface PawTaskInteractionAnswer {
+  optionId: string;
+  text?: string;
+  values?: Record<string, unknown>;
+  idempotencyKey?: string;
+}
+
 export interface PawTaskHandle {
   on<K extends string>(event: K, handler: PawTaskEventHandler): PawTaskHandle;
   off(event: string, handler: PawTaskEventHandler): PawTaskHandle;
+  respond(
+    request: PawTaskInteractionRequest,
+    answer: PawTaskInteractionAnswer,
+  ): Promise<unknown>;
   cancel(): void;
   readonly result: Promise<unknown>;
   readonly taskId: string;

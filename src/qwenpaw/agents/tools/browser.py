@@ -22,6 +22,7 @@ from ...browser.tool_entrypoint import (
     description=_BROWSER_TOOL_DESCRIPTION,
     tool_type="network",
     policy_name="Browser",
+    effect="external_write",
     default_policy="allow",
     policy_reason="Allow all browser access",
     ui_description="Browser automation and web interaction",

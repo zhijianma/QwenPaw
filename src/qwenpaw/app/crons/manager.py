@@ -23,10 +23,15 @@ from apscheduler.triggers.interval import IntervalTrigger
 from qwenpaw.exceptions import ConfigurationException
 
 from ...config import get_heartbeat_config
-from ..inbox_store import append_event as append_inbox_event
-
 from ..console_push_store import append as push_store_append
-from .contracts import ServiceCronJob
+from ..operational_delivery import (
+    operational_event_publisher_for_workspace,
+)
+from .contracts import (
+    CronTaskRuntime,
+    HeartbeatTaskRuntime,
+    ServiceCronJob,
+)
 from .executor import CronExecutor
 from .heartbeat import (
     is_cron_expression,
@@ -38,6 +43,9 @@ from .models import (
     CronExecutionRecord,
     CronJobSpec,
     CronJobState,
+    CronRuntimeDecision,
+    CronRuntimeDecisionCode,
+    CronRuntimePath,
 )
 from .repo.base import BaseJobRepository
 from ...api_action import ManagerBase, api_action
@@ -59,6 +67,37 @@ CRON_KEEPALIVE_INTERVAL_SECONDS = 60
 logger = logging.getLogger(__name__)
 
 
+async def publish_cron_event(
+    workspace: Any,
+    *,
+    agent_id: str | None,
+    source_id: str,
+    event_type: str,
+    status: str,
+    severity: str,
+    title: str,
+    body: str,
+    payload: dict[str, Any],
+) -> None:
+    """Publish one legacy Cron fact through shared Delivery."""
+    owner_id = agent_id or workspace.agent_id
+    publisher = operational_event_publisher_for_workspace(
+        workspace,
+        producer_id="qwenpaw.system.cron",
+    )
+    await publisher(
+        agent_id=owner_id,
+        source_type="cron",
+        source_id=source_id,
+        event_type=event_type,
+        status=status,
+        severity=severity,
+        title=title,
+        body=body,
+        payload=payload,
+    )
+
+
 @dataclass
 class _Runtime:
     sem: asyncio.Semaphore
@@ -75,11 +114,16 @@ class CronManager(ManagerBase):
         channel_manager: Any,
         timezone: str = "UTC",  # pylint: disable=redefined-outer-name
         agent_id: Optional[str] = None,
+        task_runtime: CronTaskRuntime | None = None,
+        heartbeat_task_runtime: HeartbeatTaskRuntime | None = None,
     ):
         self._repo = repo
         self._workspace = workspace
         self._channel_manager = channel_manager
         self._agent_id = agent_id
+        self._task_runtime = task_runtime
+        self._heartbeat_task_runtime = heartbeat_task_runtime
+        self._heartbeat_next_run_at: datetime | None = None
         self._scheduler = AsyncIOScheduler(timezone=timezone)
         self._executor = CronExecutor(
             workspace=workspace,
@@ -156,6 +200,12 @@ class CronManager(ManagerBase):
                     misfire_grace_time=HEARTBEAT_MISFIRE_GRACE_SECONDS,
                     replace_existing=True,
                 )
+                heartbeat_job = self._scheduler.get_job(HEARTBEAT_JOB_ID)
+                self._heartbeat_next_run_at = (
+                    getattr(heartbeat_job, "next_run_time", None)
+                    if heartbeat_job
+                    else None
+                )
                 logger.info(
                     "Heartbeat job scheduled for agent %s: every=%s",
                     self._agent_id,
@@ -228,6 +278,37 @@ class CronManager(ManagerBase):
         if job_id not in self._history:
             self._history[job_id] = await self._repo.get_history(job_id)
         return self._history[job_id]
+
+    def runtime_decision(self, job: CronJobSpec) -> CronRuntimeDecision:
+        """Return the authoritative execution-path decision for a job."""
+        runtime = self._task_runtime
+        if runtime is None:
+            return CronRuntimeDecision(
+                path=CronRuntimePath.LEGACY_EXECUTOR,
+                reason_code=(CronRuntimeDecisionCode.TASK_RUNTIME_UNAVAILABLE),
+                reason="No durable Cron Task Runtime is installed.",
+                removal_gates=(
+                    "Install a Cron Task Runtime for this workspace.",
+                ),
+            )
+        decision_method = getattr(runtime, "decision", None)
+        if callable(decision_method):
+            return decision_method(job)  # pylint: disable=not-callable
+        supported = runtime.supports(job)
+        return CronRuntimeDecision(
+            path=(
+                CronRuntimePath.DURABLE_TASK
+                if supported
+                else CronRuntimePath.LEGACY_EXECUTOR
+            ),
+            reason_code=(
+                CronRuntimeDecisionCode.RUNTIME_DECISION_UNAVAILABLE
+                if supported
+                else CronRuntimeDecisionCode.RUNTIME_DECLINED
+            ),
+            reason=("The injected runtime only exposes legacy supports()."),
+            removal_gates=("Implement CronTaskRuntime.decision().",),
+        )
 
     def validate_job_spec(self, spec: CronJobSpec) -> None:
         """Fully validate scheduler registration without changing state."""
@@ -587,6 +668,7 @@ class CronManager(ManagerBase):
             # Remove existing heartbeat job if present
             if self._scheduler.get_job(HEARTBEAT_JOB_ID):
                 self._scheduler.remove_job(HEARTBEAT_JOB_ID)
+            self._heartbeat_next_run_at = None
 
             # Add heartbeat job if enabled
             if getattr(hb, "enabled", False):
@@ -597,6 +679,12 @@ class CronManager(ManagerBase):
                     id=HEARTBEAT_JOB_ID,
                     misfire_grace_time=HEARTBEAT_MISFIRE_GRACE_SECONDS,
                     replace_existing=True,
+                )
+                heartbeat_job = self._scheduler.get_job(HEARTBEAT_JOB_ID)
+                self._heartbeat_next_run_at = (
+                    getattr(heartbeat_job, "next_run_time", None)
+                    if heartbeat_job
+                    else None
                 )
                 logger.info(
                     "heartbeat rescheduled: every=%s",
@@ -980,6 +1068,9 @@ class CronManager(ManagerBase):
         await self._execute_once(
             job,
             trigger="scheduled",
+            scheduled_for=(
+                self._states.get(job_id, CronJobState()).next_run_at
+            ),
         )
 
         # refresh next_run
@@ -1006,23 +1097,50 @@ class CronManager(ManagerBase):
     async def _heartbeat_callback(self) -> None:
         """Run one heartbeat (HEARTBEAT.md as query, optional dispatch)."""
         try:
-            workspace_dir = getattr(
-                self._workspace,
-                "workspace_dir",
-                None,
+            scheduled_for = self._heartbeat_next_run_at
+            heartbeat_job = self._scheduler.get_job(HEARTBEAT_JOB_ID)
+            self._heartbeat_next_run_at = (
+                getattr(heartbeat_job, "next_run_time", None)
+                if heartbeat_job
+                else None
             )
-
-            await run_heartbeat_once(
-                workspace=self._workspace,
-                channel_manager=self._channel_manager,
-                agent_id=self._agent_id,
-                workspace_dir=workspace_dir,
+            await self._run_heartbeat(
+                trigger="scheduled",
+                scheduled_for=(scheduled_for or datetime.now(timezone.utc)),
             )
         except asyncio.CancelledError:
             logger.info("heartbeat cancelled")
             raise
         except Exception:  # pylint: disable=broad-except
             logger.exception("heartbeat run failed")
+
+    async def run_heartbeat_now(self) -> None:
+        """Run one manual Heartbeat with an independent Fire identity."""
+        await self._run_heartbeat(
+            trigger="manual",
+            scheduled_for=datetime.now(timezone.utc),
+        )
+
+    async def _run_heartbeat(
+        self,
+        *,
+        trigger: Literal["scheduled", "manual"],
+        scheduled_for: datetime,
+    ) -> None:
+        workspace_dir = getattr(
+            self._workspace,
+            "workspace_dir",
+            None,
+        )
+        await run_heartbeat_once(
+            workspace=self._workspace,
+            channel_manager=self._channel_manager,
+            agent_id=self._agent_id,
+            workspace_dir=workspace_dir,
+            task_runtime=self._heartbeat_task_runtime,
+            trigger=trigger,
+            scheduled_for=scheduled_for,
+        )
 
     async def _run_service_job(
         self,
@@ -1059,6 +1177,7 @@ class CronManager(ManagerBase):
         job: CronJobSpec,
         *,
         trigger: Literal["scheduled", "manual"] = "scheduled",
+        scheduled_for: datetime | None = None,
     ) -> None:
         assert job.id is not None, "Job must have an id"
         self._assert_review_complete(job)
@@ -1069,14 +1188,33 @@ class CronManager(ManagerBase):
 
         async with rt.sem:
             st = self._states.get(job.id, CronJobState())
+            runtime_decision = self.runtime_decision(job)
             st.last_status = "running"
+            st.runtime_decision = runtime_decision
             self._states[job.id] = st
             execution_result: dict[str, Any] = {}
             execution_succeeded = False
             delivery_failed = False
 
             try:
-                execution_result = await self._executor.execute(job)
+                if runtime_decision.uses_durable_runtime:
+                    assert self._task_runtime is not None
+                    execution_result = await self._task_runtime.execute(
+                        job,
+                        trigger=trigger,
+                        scheduled_for=(
+                            scheduled_for or self._now_in_job_timezone(job)
+                        ),
+                    )
+                else:
+                    logger.warning(
+                        "cron runtime fallback: job_id=%s code=%s "
+                        "reason=%s",
+                        job.id,
+                        runtime_decision.reason_code.value,
+                        runtime_decision.reason,
+                    )
+                    execution_result = await self._executor.execute(job)
                 execution_succeeded = True
                 delivery_failed = (
                     execution_result.get("delivery_status") == "failed"
@@ -1115,9 +1253,9 @@ class CronManager(ManagerBase):
                     st.last_error,
                 )
                 try:
-                    await append_inbox_event(
+                    await publish_cron_event(
+                        self._workspace,
                         agent_id=self._agent_id,
-                        source_type="cron",
                         source_id=job.id,
                         event_type="cron_timeout",
                         status="error",
@@ -1158,6 +1296,7 @@ class CronManager(ManagerBase):
                     status=st.last_status or "error",
                     error=st.last_error,
                     trigger=trigger,
+                    runtime_decision=runtime_decision,
                 )
                 records = await self._repo.append_history(
                     job.id,
@@ -1168,9 +1307,9 @@ class CronManager(ManagerBase):
                 if execution_succeeded:
                     if delivery_failed:
                         try:
-                            await append_inbox_event(
+                            await publish_cron_event(
+                                self._workspace,
                                 agent_id=self._agent_id,
-                                source_type="cron",
                                 source_id=job.id,
                                 event_type="cron_delivery_failed_fallback",
                                 status="error",
@@ -1201,9 +1340,9 @@ class CronManager(ManagerBase):
                         else:
                             body = "Agent cron task finished successfully."
                         try:
-                            await append_inbox_event(
+                            await publish_cron_event(
+                                self._workspace,
                                 agent_id=self._agent_id,
-                                source_type="cron",
                                 source_id=job.id,
                                 event_type="cron_result",
                                 status="success",

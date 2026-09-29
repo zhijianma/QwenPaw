@@ -5046,6 +5046,7 @@ def _workspace_dir_key(workspace_dir: str | Path) -> str:
     # Only one browser implementation is imported at a time, so both paths
     # can map to the same policy name without registering a collision.
     policy_name="Browser",
+    effect="external_write",
     default_policy="allow",
     policy_reason="Allow all browser access",
     ui_description="Browser automation and web interaction",

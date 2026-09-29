@@ -1,0 +1,24 @@
+{
+  "schema_version": "qwenpaw.plugin.v2",
+  "id": "chat-tool-provider",
+  "name": "Chat Tool Provider",
+  "version": "1.0.0",
+  "restart_policy": "hot",
+  "contributions": [
+    {
+      "id": "workspace-info",
+      "slot": "tool.provider",
+      "entrypoint": "chat_tool_provider.provider:create_provider",
+      "config_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string",
+            "maxLength": 200
+          }
+        }
+      }
+    }
+  ]
+}

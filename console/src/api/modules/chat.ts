@@ -2,20 +2,39 @@ import { request } from "../request";
 import { getApiUrl, getApiToken } from "../config";
 import { buildAuthHeaders } from "../authHeaders";
 import type {
+  ArtifactRef,
   ChatSpec,
   ChatHistory,
   ChatDeleteResponse,
   ChatUpdateRequest,
   ChatGroup,
+  ChatForkRequest,
+  ChatInteraction,
+  ChatInteractionDecisionRequest,
+  ChatInteractionResolution,
+  ChatControlRequest,
+  ChatQueueReorderRequest,
+  ChatSteerRequest,
+  ChatSubmissionRequest,
+  ControlReceipt,
+  ConversationRuntimeProjection,
+  QueueProjection,
   BatchArchiveResult,
   Session,
+  EvidenceRef,
+  ExternalQueueFallbackRequest,
+  ExternalQueueFallbackReceipt,
 } from "../types";
 
 /** Response from POST /console/upload. url = filename only; agent_id from header. */
 export interface ChatUploadResponse {
   url: string;
   file_name: string;
+  size: number;
   stored_name?: string;
+  artifact_ref: ArtifactRef;
+  evidence_ref: EvidenceRef;
+  artifact_receipt: string;
 }
 
 export interface ChatStatusResponse {
@@ -25,6 +44,19 @@ export interface ChatStatusResponse {
 const FILES_PREVIEW = "/files/preview";
 
 export const chatApi = {
+  recordExternalQueueFallback: (
+    payload: ExternalQueueFallbackRequest,
+    agentId: string,
+  ) =>
+    request<ExternalQueueFallbackReceipt>(
+      "/chats/compatibility/external-queue/hits",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+        headers: { "X-Agent-Id": agentId },
+      },
+    ),
+
   /** Upload a file for chat attachment. Returns URL path for content. */
   uploadFile: async (file: File): Promise<ChatUploadResponse> => {
     const formData = new FormData();
@@ -49,7 +81,7 @@ export const chatApi = {
     if (!filename) return "";
     if (filename.startsWith("http://") || filename.startsWith("https://"))
       return filename;
-    let cleaned = filename.replace(/^\/+/, "");
+    const cleaned = filename.replace(/^\/+/, "");
     const path = `${FILES_PREVIEW}/${cleaned}`;
     const url = getApiUrl(path);
 
@@ -60,6 +92,16 @@ export const chatApi = {
 
     return url;
   },
+  artifactContentUrl: (
+    chatId: string,
+    artifactId: string,
+    disposition: "inline" | "attachment" = "inline",
+  ): string =>
+    getApiUrl(
+      `/chats/${encodeURIComponent(chatId)}/artifacts/${encodeURIComponent(
+        artifactId,
+      )}/content?disposition=${disposition}`,
+    ),
   listChats: (params?: {
     user_id?: string;
     channel?: string;
@@ -92,9 +134,137 @@ export const chatApi = {
       body: JSON.stringify(chat),
     }),
 
+  forkChat: (parentChatId: string, payload: ChatForkRequest) =>
+    request<ChatSpec>(`/chats/${encodeURIComponent(parentChatId)}/fork`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  submitTurn: (
+    chatId: string,
+    payload: ChatSubmissionRequest,
+    agentId?: string,
+  ) =>
+    request<ControlReceipt>(
+      `/chats/${encodeURIComponent(chatId)}/submissions`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+        headers: agentId ? { "X-Agent-Id": agentId } : undefined,
+      },
+    ),
+
+  getQueue: (chatId: string, agentId?: string) =>
+    request<QueueProjection>(`/chats/${encodeURIComponent(chatId)}/queue`, {
+      headers: agentId ? { "X-Agent-Id": agentId } : undefined,
+    }),
+
+  getRuntime: (
+    chatId: string,
+    options?: { signal?: AbortSignal; agentId?: string },
+  ) =>
+    request<ConversationRuntimeProjection>(
+      `/chats/${encodeURIComponent(chatId)}/runtime`,
+      {
+        signal: options?.signal,
+        headers: options?.agentId
+          ? { "X-Agent-Id": options.agentId }
+          : undefined,
+      },
+    ),
+
+  steer: (chatId: string, payload: ChatSteerRequest, agentId?: string) =>
+    request<ControlReceipt>(
+      `/chats/${encodeURIComponent(chatId)}/control/steer`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+        headers: agentId ? { "X-Agent-Id": agentId } : undefined,
+      },
+    ),
+
+  interrupt: (chatId: string, payload: ChatControlRequest, agentId?: string) =>
+    request<ControlReceipt>(
+      `/chats/${encodeURIComponent(chatId)}/control/interrupt`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+        headers: agentId ? { "X-Agent-Id": agentId } : undefined,
+      },
+    ),
+
+  stopAndClear: (
+    chatId: string,
+    payload: ChatControlRequest,
+    agentId?: string,
+  ) =>
+    request<ControlReceipt>(
+      `/chats/${encodeURIComponent(chatId)}/control/stop-and-clear`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+        headers: agentId ? { "X-Agent-Id": agentId } : undefined,
+      },
+    ),
+
+  cancelQueued: (
+    chatId: string,
+    submissionId: string,
+    payload: ChatControlRequest,
+    agentId?: string,
+  ) =>
+    request<ControlReceipt>(
+      `/chats/${encodeURIComponent(chatId)}/queue/${encodeURIComponent(
+        submissionId,
+      )}/cancel`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+        headers: agentId ? { "X-Agent-Id": agentId } : undefined,
+      },
+    ),
+
+  reorderQueue: (
+    chatId: string,
+    payload: ChatQueueReorderRequest,
+    agentId?: string,
+  ) =>
+    request<ControlReceipt>(
+      `/chats/${encodeURIComponent(chatId)}/queue/reorder`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+        headers: agentId ? { "X-Agent-Id": agentId } : undefined,
+      },
+    ),
+
+  listInteractions: (chatId: string) =>
+    request<ChatInteraction[]>(
+      `/chats/${encodeURIComponent(chatId)}/interactions`,
+    ),
+
+  respondToInteraction: (
+    chatId: string,
+    interactionId: string,
+    payload: ChatInteractionDecisionRequest,
+  ) =>
+    request<ChatInteractionResolution>(
+      `/chats/${encodeURIComponent(chatId)}/interactions/${encodeURIComponent(
+        interactionId,
+      )}/response`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    ),
+
   getChat: (
     chatId: string,
-    options?: { signal?: AbortSignal; include_app_owned?: boolean },
+    options?: {
+      signal?: AbortSignal;
+      include_app_owned?: boolean;
+      agentId?: string;
+    },
   ) => {
     const searchParams = new URLSearchParams();
     if (options?.include_app_owned !== undefined)
@@ -107,6 +277,9 @@ export const chatApi = {
       `/chats/${encodeURIComponent(chatId)}${query ? `?${query}` : ""}`,
       {
         signal: options?.signal,
+        headers: options?.agentId
+          ? { "X-Agent-Id": options.agentId }
+          : undefined,
       },
     );
   },

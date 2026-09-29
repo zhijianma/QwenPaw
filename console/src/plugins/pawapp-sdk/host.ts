@@ -397,6 +397,8 @@ export function createHostNamespace(
     storage: scopedStorage,
     getSelectedAgentId: () =>
       window.QwenPaw.host?.getSelectedAgentId?.() ?? "default",
+    getCurrentChatId: () =>
+      window.QwenPaw.host?.getCurrentChatId?.() ?? null,
     getCurrentSessionId: () =>
       window.QwenPaw.host?.getCurrentSessionId?.() ?? null,
     async toast(message, kind = "info") {
@@ -424,6 +426,8 @@ export const hostNamespace = {
   storage,
   getSelectedAgentId: () =>
     window.QwenPaw.host?.getSelectedAgentId?.() ?? "default",
+  getCurrentChatId: () =>
+    window.QwenPaw.host?.getCurrentChatId?.() ?? null,
   getCurrentSessionId: () =>
     window.QwenPaw.host?.getCurrentSessionId?.() ?? null,
   toast,

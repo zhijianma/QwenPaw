@@ -48,6 +48,7 @@ import {
   SparkWifiLine,
 } from "@agentscope-ai/icons";
 import i18next from "i18next";
+import { ClipboardList } from "lucide-react";
 import { menuRegistry } from "../../plugins/registry/store";
 import type { MenuItem } from "../../plugins/registry/types";
 
@@ -64,6 +65,14 @@ export const BUILTIN_MENU: MenuItem[] = [
     icon: SparkEmailLine,
     route: "core.inbox",
     order: 10,
+  },
+  {
+    id: "core.tasks",
+    location: "primary.agentScoped",
+    label: navLabel("nav.tasks", "Tasks"),
+    icon: ClipboardList,
+    route: "core.tasks",
+    order: 12,
   },
 
   {

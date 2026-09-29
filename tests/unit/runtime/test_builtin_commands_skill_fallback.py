@@ -286,7 +286,8 @@ class TestSkillFallbackHandlerInjection:
             "skill body",
         )
         result = await _skill_fallback_handler("/deploy run now", ctx)
-        assert result is None  # injection mutates the message in place
+        assert result is not None and result.handled
+        assert result.response is None
         merged = ctx.input_msgs[0].content[0].text
         assert merged.startswith("/deploy run now")
         assert "<skill>" in merged
@@ -304,7 +305,7 @@ class TestSkillFallbackHandlerInjection:
             "skill body",
         )
         result = await _skill_fallback_handler("/deploy run", ctx)
-        assert result is None
+        assert result is not None and result.handled
         content = ctx.input_msgs[0].content
         assert len(content) == 2
         assert "<skill>" in content[0].text
@@ -318,7 +319,7 @@ class TestSkillFallbackHandlerInjection:
             "skill body",
         )
         result = await _skill_fallback_handler("/deploy run", ctx)
-        assert result is None
+        assert result is not None and result.handled
         assert "<skill>" in ctx.input_msgs[0].content
 
     async def test_no_input_msgs_returns_none(self, tmp_path):
@@ -330,4 +331,4 @@ class TestSkillFallbackHandlerInjection:
             "skill body",
         )
         result = await _skill_fallback_handler("/deploy run", ctx)
-        assert result is None
+        assert result is not None and result.handled

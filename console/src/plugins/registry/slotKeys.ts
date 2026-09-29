@@ -57,3 +57,11 @@ export const ChatList = {
 } as const;
 
 export type ChatListField = (typeof ChatList)[keyof typeof ChatList];
+
+/** Stable host slots available to task and artifact plugins. */
+export const TaskSlots = {
+  toolbar: "ui.task.toolbar",
+  tab: "ui.task.tab",
+  inspector: "ui.task.inspector",
+  artifactPreview: "ui.artifact.preview",
+} as const;

@@ -3,6 +3,7 @@ import {
   createClientMessageId,
   extractClientMessageId,
 } from "../utils/clientMessageId";
+import type { ConversationArtifactLink } from "../api/types";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -13,7 +14,7 @@ export type QueueItemStatus = "pending" | "sending" | "failed" | "sent";
 export type QueueRunState = "idle" | "running" | "paused" | "error";
 
 /** Attachment reference (URL only, binary not stored in queue) */
-export interface QueueAttachment {
+export interface QueueAttachment extends Partial<ConversationArtifactLink> {
   url: string;
   name?: string;
   type?: string;

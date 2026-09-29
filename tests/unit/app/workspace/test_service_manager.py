@@ -16,7 +16,10 @@ from qwenpaw.app.workspace.service_manager import (
     ServiceManager,
 )
 from qwenpaw.app.workspace.workspace import Workspace
-from qwenpaw.app.workspace.workspace import _memory_manager_reuse_compatible
+from qwenpaw.app.workspace.workspace import (
+    _memory_manager_reuse_compatible,
+    _reload_memory_manager_services,
+)
 from qwenpaw.constant import WORKING_DIR
 from qwenpaw.memory import MemoryBackendContext
 
@@ -245,6 +248,30 @@ def test_memory_reuse_requires_identical_runtime_context(
     )
 
     assert not _memory_manager_reuse_compatible(workspace, instance)
+
+
+def test_memory_reload_rebinds_workspace_host_services(tmp_path) -> None:
+    contexts: list[MemoryBackendContext] = []
+    instance = SimpleNamespace(rebind_host_services=contexts.append)
+    workspace = SimpleNamespace(
+        agent_id="agent-1",
+        workspace_dir=tmp_path,
+        config=SimpleNamespace(
+            language="en",
+            running=SimpleNamespace(
+                memory_manager_backend="remelight",
+                memory_backend_configs={"remelight": {}},
+                light_context_config=SimpleNamespace(
+                    token_count_estimate_divisor=4.0,
+                ),
+            ),
+        ),
+    )
+
+    _reload_memory_manager_services(workspace, instance)
+
+    assert len(contexts) == 1
+    assert contexts[0].operational_event_publisher is not None
 
 
 @pytest.mark.asyncio

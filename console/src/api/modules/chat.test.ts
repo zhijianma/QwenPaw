@@ -180,6 +180,131 @@ describe("chatApi CRUD", () => {
   beforeEach(() => vi.mocked(request).mockResolvedValue(undefined));
   afterEach(() => vi.clearAllMocks());
 
+  it("records external queue fallback without message content", async () => {
+    await chatApi.recordExternalQueueFallback(
+      {
+        observation_id: "enqueue-1",
+        backend_id: "codex",
+      },
+      "agent-2",
+    );
+    expect(request).toHaveBeenCalledWith(
+      "/chats/compatibility/external-queue/hits",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          observation_id: "enqueue-1",
+          backend_id: "codex",
+        }),
+        headers: { "X-Agent-Id": "agent-2" },
+      },
+    );
+  });
+
+  it("forkChat posts a stable source message and idempotency key", async () => {
+    await chatApi.forkChat("parent/chat", {
+      source_message_id: "message-7",
+      idempotency_key: "fork-click-1",
+      name: "Alternative",
+    });
+    expect(request).toHaveBeenCalledWith("/chats/parent%2Fchat/fork", {
+      method: "POST",
+      body: JSON.stringify({
+        source_message_id: "message-7",
+        idempotency_key: "fork-click-1",
+        name: "Alternative",
+      }),
+    });
+  });
+
+  it("lists and resolves Chat-owned interactions", async () => {
+    await chatApi.listInteractions("chat/one");
+    expect(request).toHaveBeenCalledWith("/chats/chat%2Fone/interactions");
+
+    await chatApi.respondToInteraction("chat/one", "interaction/1", {
+      idempotency_key: "decision-1",
+      expected_revision: 1,
+      selected_option_ids: ["approve_exact"],
+    });
+    expect(request).toHaveBeenCalledWith(
+      "/chats/chat%2Fone/interactions/interaction%2F1/response",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          idempotency_key: "decision-1",
+          expected_revision: 1,
+          selected_option_ids: ["approve_exact"],
+        }),
+      },
+    );
+  });
+
+  it("submits a complete turn through the durable Chat dispatcher", async () => {
+    const payload = {
+      idempotency_key: "message-1",
+      expected_revision: 3,
+      content_parts: [{ type: "text", text: "Continue" }],
+      request_context: { approval_level: "strict" },
+    };
+
+    await chatApi.submitTurn("chat/one", payload, "agent-2");
+
+    expect(request).toHaveBeenCalledWith("/chats/chat%2Fone/submissions", {
+      method: "POST",
+      body: JSON.stringify(payload),
+      headers: { "X-Agent-Id": "agent-2" },
+    });
+  });
+
+  it("reads the unified runtime projection with cancellation", async () => {
+    const controller = new AbortController();
+
+    await chatApi.getRuntime("chat/one", {
+      signal: controller.signal,
+      agentId: "agent-2",
+    });
+
+    expect(request).toHaveBeenCalledWith("/chats/chat%2Fone/runtime", {
+      signal: controller.signal,
+      headers: { "X-Agent-Id": "agent-2" },
+    });
+  });
+
+  it("exposes revision-aware queue control operations", async () => {
+    const control = {
+      idempotency_key: "control-1",
+      expected_revision: 4,
+    };
+
+    await chatApi.interrupt("chat/one", control, "agent-2");
+    expect(request).toHaveBeenCalledWith(
+      "/chats/chat%2Fone/control/interrupt",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify(control),
+        headers: { "X-Agent-Id": "agent-2" },
+      }),
+    );
+
+    await chatApi.cancelQueued("chat/one", "submission/2", control);
+    expect(request).toHaveBeenCalledWith(
+      "/chats/chat%2Fone/queue/submission%2F2/cancel",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify(control),
+      }),
+    );
+
+    await chatApi.reorderQueue("chat/one", {
+      ...control,
+      ordered_submission_ids: ["submission-3", "submission-2"],
+    });
+    expect(request).toHaveBeenCalledWith(
+      "/chats/chat%2Fone/queue/reorder",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
   it("getChat encodes chatId and sends GET", async () => {
     await chatApi.getChat("chat/1");
     expect(request).toHaveBeenCalledWith(
@@ -193,6 +318,16 @@ describe("chatApi CRUD", () => {
     expect(request).toHaveBeenCalledWith(
       "/chats/chat-1?include_app_owned=false",
       expect.objectContaining({ signal: undefined }),
+    );
+  });
+
+  it("getChat scopes ownership verification to one Agent", async () => {
+    await chatApi.getChat("chat-1", { agentId: "agent-2" });
+    expect(request).toHaveBeenCalledWith(
+      "/chats/chat-1",
+      expect.objectContaining({
+        headers: { "X-Agent-Id": "agent-2" },
+      }),
     );
   });
 

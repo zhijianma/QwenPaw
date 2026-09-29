@@ -35,6 +35,8 @@ from qwenpaw.exceptions import (
     AgentConfigConflictError,
     ConfigurationException,
 )
+from qwenpaw.kernel.invocation import CapabilitySelectionOverrides
+from qwenpaw.kernel.models import JsonObject, NamespacedId, NonEmptyStr
 
 from .timezone import detect_system_timezone
 from ..constant import (
@@ -2319,6 +2321,29 @@ class AgentProfileConfig(BaseModel):
     backend_settings: dict[str, Any] = Field(
         default_factory=dict,
         description="Configuration validated and consumed by the backend",
+    )
+    capability_selection: CapabilitySelectionOverrides = Field(
+        default_factory=CapabilitySelectionOverrides,
+        description=(
+            "Explicit OS capability overrides for new invocations. "
+            "Unset fields retain automatic Slot selection."
+        ),
+    )
+    capability_configs: dict[NamespacedId, JsonObject] = Field(
+        default_factory=dict,
+        description=(
+            "Non-secret configuration keyed by capability ID. Values are "
+            "validated against the pinned contribution schema."
+        ),
+    )
+    capability_credential_refs: dict[
+        NamespacedId,
+        dict[NonEmptyStr, NonEmptyStr],
+    ] = Field(
+        default_factory=dict,
+        description=(
+            "Credential-store references keyed by capability ID and alias."
+        ),
     )
     template_id: Optional[str] = Field(
         default=None,

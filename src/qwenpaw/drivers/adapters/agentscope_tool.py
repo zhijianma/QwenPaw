@@ -22,6 +22,8 @@ from agentscope.message import (
 from agentscope.permission import PermissionBehavior, PermissionDecision
 from agentscope.tool import ToolBase, ToolChunk
 
+from ...kernel.invocation import DEFAULT_DRIVER_PROVIDER_ID
+from ...kernel.models import DriverToolDefinition, PromptFragment
 from ..capabilities import (
     DriverCapability,
     DriverInvocation,
@@ -177,6 +179,118 @@ class DriverCapabilityTool(ToolBase):
             ),
         )
         return _tool_chunk_from_driver_result(result)
+
+
+class DriverDefinitionTool(ToolBase):
+    """Adapt one public Driver definition to AgentScope at the edge."""
+
+    name = ""
+    description = ""
+    input_schema: dict[str, Any] = {}
+    is_concurrency_safe = False
+    is_read_only = False
+    is_external_tool = False
+    is_state_injected = False
+    is_mcp = False
+    mcp_name = None
+
+    def __init__(self, definition: DriverToolDefinition) -> None:
+        self.name = definition.name
+        self.description = definition.description
+        self.input_schema = dict(definition.input_schema)
+        self._definition = definition
+
+    async def check_permissions(
+        self,
+        *_args: Any,
+        **_kwargs: Any,
+    ) -> Any:
+        return PermissionDecision(
+            behavior=PermissionBehavior.ALLOW,
+            message="Driver capability policy is handled by Driver.",
+        )
+
+    async def __call__(self, **kwargs: Any) -> Any:
+        result = await self._definition.invoke(dict(kwargs))
+        if isinstance(result, DriverInvocationResult):
+            return _tool_chunk_from_driver_result(result)
+        return ToolChunk(
+            content=_blocks_from_value(result),
+            state=ToolResultState.SUCCESS,
+            is_last=True,
+        )
+
+
+def adapt_driver_definitions(
+    definitions: list[DriverToolDefinition],
+) -> list[ToolBase]:
+    """Convert public Driver definitions at the AgentScope boundary."""
+    return [DriverDefinitionTool(definition) for definition in definitions]
+
+
+async def build_driver_definitions(
+    driver_manager: Any | None,
+    request_context: dict[str, str],
+) -> tuple[list[DriverToolDefinition], list[PromptFragment]]:
+    """Build framework-neutral definitions from configured Drivers."""
+    if driver_manager is None:
+        return [], []
+
+    try:
+        capabilities = await driver_manager.list_capabilities(
+            kind="tool",
+            request_context=request_context,
+        )
+    except Exception:
+        logger.debug(
+            "Failed to build definitions from Driver capabilities",
+            exc_info=True,
+        )
+        return [], []
+
+    definitions: list[DriverToolDefinition] = []
+    for capability in capabilities:
+        if not getattr(capability.exposure, "as_tool", False):
+            continue
+        if not getattr(capability, "enabled", True):
+            continue
+
+        async def invoke(
+            payload: dict[str, Any],
+            *,
+            capability_id: str = capability.capability_id,
+        ) -> object:
+            return await driver_manager.invoke_capability(
+                DriverInvocation(
+                    capability_id=capability_id,
+                    payload=payload,
+                    request_context=dict(request_context),
+                ),
+            )
+
+        definitions.append(
+            DriverToolDefinition(
+                provider_id=DEFAULT_DRIVER_PROVIDER_ID,
+                capability_id=capability.capability_id,
+                name=capability.exposure.tool_name or capability.name,
+                description=capability.description,
+                input_schema=dict(capability.input_schema or {}),
+                invoke=invoke,
+            ),
+        )
+
+    if not definitions:
+        return [], []
+
+    from ...agents.prompt import build_driver_policy_recheck_hint
+
+    return definitions, [
+        PromptFragment(
+            fragment_id=(f"{DEFAULT_DRIVER_PROVIDER_ID}.policy-recheck"),
+            content=build_driver_policy_recheck_hint(),
+            priority=88,
+        ),
+    ]
 
 
 async def build_driver_agent_tools(

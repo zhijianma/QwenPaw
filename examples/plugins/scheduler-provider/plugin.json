@@ -1,0 +1,14 @@
+{
+  "schema_version": "qwenpaw.plugin.v2",
+  "id": "scheduler-provider",
+  "name": "Scheduler Provider",
+  "version": "1.0.0",
+  "restart_policy": "hot",
+  "contributions": [
+    {
+      "id": "local-durable",
+      "slot": "scheduler",
+      "entrypoint": "scheduler_provider.provider:create_scheduler"
+    }
+  ]
+}

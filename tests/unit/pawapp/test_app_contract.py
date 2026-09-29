@@ -377,6 +377,8 @@ def test_pawapp_delegates_extensions_through_plugin_api(
         "/chat/sessions/{chat_id}",
         "/chat/sessions/{chat_id}/archive",
         "/chat/stream",
+        "/task/{task_id}/cancel",
+        "/task/{task_id}/stream",
         "/storage",
         "/storage/{key}",
         "/dependencies",
@@ -395,6 +397,98 @@ def test_pawapp_delegates_extensions_through_plugin_api(
         callback=service.stop,
         priority=130,
     )
+
+
+def test_pawapp_task_decorator_exposes_unified_task_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = PawApp("Fixture", app_id="fixture")
+
+    @app.task("/translate")
+    async def translate(ctx, language: str):
+        return {"language": language, "app_id": ctx.app_id}
+
+    api = MagicMock()
+    app.register(api)
+    router = api.register_http_router.call_args.args[0]
+    assert "/translate" in _route_paths(router)
+    assert "/task/{task_id}/stream" in _route_paths(router)
+
+    record = SimpleNamespace(chat_id="chat-child")
+
+    class Manager:
+        def __init__(self):
+            self.created = None
+
+        async def create_task(
+            self,
+            app_id,
+            handler,
+            ctx,
+            params,
+        ):
+            self.created = (app_id, handler, ctx, params)
+            return "11111111-1111-4111-8111-111111111111"
+
+        def get_task(self, task_id):
+            assert task_id == "11111111-1111-4111-8111-111111111111"
+            return record
+
+    manager = Manager()
+    monkeypatch.setattr(
+        "qwenpaw.pawapp.app.get_task_manager",
+        lambda: manager,
+    )
+    context = SimpleNamespace(
+        app_id="fixture",
+        agent_id="default",
+        user_id="tester",
+    )
+    fixture = FastAPI()
+    fixture.include_router(router, prefix="/fixture")
+    fixture.dependency_overrides[get_scoped_ctx] = lambda: context
+    client = TestClient(fixture)
+
+    response = client.post(
+        "/fixture/translate",
+        json={"language": "it"},
+    )
+    invalid_shape = client.post("/fixture/translate", json=["it"])
+    missing_parameter = client.post("/fixture/translate", json={})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "task_id": "11111111-1111-4111-8111-111111111111",
+        "chat_id": "chat-child",
+        "invocation_id": "11111111-1111-4111-8111-111111111111",
+    }
+    assert manager.created == (
+        "fixture",
+        translate,
+        context,
+        {"language": "it"},
+    )
+    assert invalid_shape.status_code == 422
+    assert missing_parameter.status_code == 422
+
+
+def test_pawapp_task_decorator_rejects_invalid_handlers_and_paths() -> None:
+    app = PawApp("Fixture", app_id="fixture")
+
+    with pytest.raises(ValueError, match="reserved prefix"):
+        app.task("/task/unsafe")
+
+    with pytest.raises(TypeError, match="must be async"):
+
+        @app.task("/sync")
+        def sync_task(ctx):
+            return ctx
+
+    with pytest.raises(TypeError, match="receive ctx first"):
+
+        @app.task("/missing-context")
+        async def missing_context(value):
+            return value
 
 
 @pytest.mark.asyncio
@@ -699,12 +793,20 @@ def test_scoped_ctx_binds_identity_to_the_authenticated_principal() -> None:
     async def probe(ctx=Depends(get_scoped_ctx)):
         captured["user_id"] = ctx.user_id
         captured["channel"] = ctx.channel
+        captured["chat_id"] = ctx.chat_id
         return {"ok": True}
 
     client = TestClient(fixture)
 
-    bound = client.get("/probe")
-    matching_claim = client.get("/probe", params={"user_id": "alice"})
+    bound = client.get(
+        "/probe",
+        headers={"X-QwenPaw-Chat-Id": "chat-child"},
+    )
+    matching_claim = client.get(
+        "/probe",
+        params={"user_id": "alice"},
+        headers={"X-QwenPaw-Chat-Id": "chat-child"},
+    )
     forged_claim = client.get("/probe", params={"user_id": "bob"})
 
     assert bound.status_code == 200
@@ -712,6 +814,7 @@ def test_scoped_ctx_binds_identity_to_the_authenticated_principal() -> None:
     assert forged_claim.status_code == 403
     assert captured["user_id"] == "alice"
     assert captured["channel"] == "console"
+    assert captured["chat_id"] == "chat-child"
 
 
 def test_chat_session_routes_delegate_to_the_app_scoped_catalog() -> None:

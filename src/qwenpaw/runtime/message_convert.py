@@ -32,8 +32,14 @@ def _request_message_metadata(
     result.pop(QWENPAW_USER_CONTENT_KEY, None)
     result.pop("qwenpaw_turn_state", None)
     if any(
-        getattr(part, "type", None) == "file"
-        and getattr(part, "file_url", None)
+        (
+            getattr(part, "type", None) == "file"
+            and getattr(part, "file_url", None)
+        )
+        or (
+            getattr(part, "artifact_ref", None) is not None
+            and getattr(part, "artifact_receipt", None)
+        )
         for part in content
     ):
         result[QWENPAW_USER_CONTENT_KEY] = [

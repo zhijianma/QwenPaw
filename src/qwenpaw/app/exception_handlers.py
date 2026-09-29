@@ -10,6 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from ..exceptions import AgentConfigConflictError
+from .task_api_errors import TaskApiError
 
 
 def _replace_non_finite_numbers(value: Any) -> Any:
@@ -53,6 +54,24 @@ async def agent_config_conflict_handler(
     )
 
 
+async def task_api_error_handler(
+    _request: Request,
+    exc: TaskApiError,
+) -> JSONResponse:
+    """Render stable task errors as problem details."""
+    return JSONResponse(
+        status_code=exc.status,
+        media_type="application/problem+json",
+        content={
+            "type": f"urn:qwenpaw:task-error:{exc.code}",
+            "title": "Task operation failed",
+            "status": exc.status,
+            "code": exc.code,
+            "detail": exc.detail,
+        },
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Register application-specific exception mappings."""
     app.add_exception_handler(
@@ -63,3 +82,4 @@ def register_exception_handlers(app: FastAPI) -> None:
         AgentConfigConflictError,
         agent_config_conflict_handler,
     )
+    app.add_exception_handler(TaskApiError, task_api_error_handler)

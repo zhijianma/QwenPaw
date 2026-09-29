@@ -5,6 +5,7 @@ discovery, disk-based plugin listing, and plugin UI file serving.
 These cover the path-traversal guards and the pre-loader fallback
 paths that previously had no test coverage.
 """
+
 # pylint: disable=protected-access,redefined-outer-name,unused-argument,use-implicit-booleaness-not-comparison  # noqa: E501
 from __future__ import annotations
 
@@ -12,16 +13,31 @@ import io
 import json
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from qwenpaw.app.routers.plugins import (
+    InstallPluginRequest,
     _find_plugin_dir,
     _list_plugins_from_disk,
     _safe_extract_zip,
+    install_plugin,
+    list_plugins,
     router as plugins_router,
+)
+from qwenpaw.app.routers.frontend_plugin import list_frontend_plugins
+from qwenpaw.plugins.architecture import (
+    PluginManifest,
+    PluginMigrationDiagnostic,
+    PluginRecord,
+)
+from qwenpaw.plugins.contributions import (
+    ContributionDiagnostic,
+    ContributionValidationError,
 )
 
 
@@ -136,6 +152,9 @@ class TestListPluginsFromDisk:
         assert entry["version"] == "1.2.3"
         assert entry["enabled"] is True
         assert entry["loaded"] is False
+        assert entry["schema_version"] == "qwenpaw.plugin.v1"
+        assert not entry["ui_contributions"]
+        assert entry["migration_plan"] is None
 
     def test_skips_disabled_and_hidden_dirs(self, tmp_path, monkeypatch):
         plugins_dir = tmp_path / "plugins"
@@ -249,7 +268,6 @@ class TestServePluginUiFile:
         """Call the handler directly: the HTTP layer normalizes '..'
         segments before routing, so traversal is probed at the function."""
         import asyncio
-        from types import SimpleNamespace
 
         from qwenpaw.app.routers.plugins import serve_plugin_ui_file
 
@@ -276,8 +294,6 @@ class TestServePluginUiFile:
         assert response.status_code == 404
 
     def test_loader_mode_unknown_plugin_404(self, tmp_path):
-        from types import SimpleNamespace
-
         app = FastAPI()
         loader = SimpleNamespace()
         loader.get_loaded_plugin = lambda plugin_id: None
@@ -286,3 +302,147 @@ class TestServePluginUiFile:
         client = TestClient(app)
         response = client.get("/api/plugins/ghost/files/ui/app.js")
         assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_install_returns_structured_contribution_diagnostics():
+    diagnostic = ContributionDiagnostic(
+        field="contributions[0].config_schema",
+        code="invalid_config_schema",
+        message="The configuration schema is invalid.",
+        recovery="Provide a valid JSON Schema object.",
+    )
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(plugin_loader=object()),
+        ),
+    )
+    error = ContributionValidationError((diagnostic,))
+
+    with patch(
+        "qwenpaw.app.routers.plugins.install_plugin_source",
+        new=AsyncMock(side_effect=error),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await install_plugin(
+                InstallPluginRequest(source="/tmp/example"),
+                request,
+            )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == error.response_detail()
+
+
+@pytest.mark.asyncio
+async def test_list_plugins_exposes_migration_diagnostics(tmp_path):
+    diagnostic = PluginMigrationDiagnostic(
+        api_name="register_tool",
+        target_slot="tool.provider",
+        message="Legacy tool registration detected.",
+        recovery="Declare a tool.provider contribution.",
+        manifest_fragment={
+            "schema_version": "qwenpaw.plugin.v2",
+            "contributions": [],
+        },
+    )
+    record = PluginRecord(
+        manifest=PluginManifest.from_dict(
+            {
+                "id": "legacy-tool",
+                "version": "1.0.0",
+            },
+        ),
+        source_path=tmp_path,
+        enabled=True,
+        migration_diagnostics=[diagnostic],
+    )
+    loader = SimpleNamespace(
+        get_all_loaded_plugins=lambda: {"legacy-tool": record},
+    )
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(plugin_loader=loader),
+        ),
+    )
+
+    result = await list_plugins(request)
+
+    assert result[0]["migration_diagnostics"] == [
+        diagnostic.model_dump(mode="json"),
+    ]
+    assert result[0]["schema_version"] == "qwenpaw.plugin.v1"
+    assert not result[0]["ui_contributions"]
+    assert result[0]["migration_plan"] == {
+        "plugin_id": "legacy-tool",
+        "status": "manual_changes_required",
+        "target_schema_version": "qwenpaw.plugin.v2",
+        "manifest_patch": {
+            "schema_version": "qwenpaw.plugin.v2",
+            "contributions_to_add": [
+                {
+                    "id": "legacy-tool-provider",
+                    "slot": "tool.provider",
+                    "entrypoint": "<module>:<provider_factory>",
+                },
+            ],
+        },
+        "actions": [
+            {
+                "api_name": "register_tool",
+                "target_slot": "tool.provider",
+                "state": "provider_scaffold_required",
+                "recovery": "Declare a tool.provider contribution.",
+            },
+        ],
+        "blockers": [
+            "Replace every provider factory placeholder with a module-level "
+            "factory implementing the public Slot protocol.",
+            "Remove legacy registration calls only after the v2 provider "
+            "passes validation and hot-activation tests.",
+        ],
+        "safe_to_apply": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_frontend_plugin_list_exposes_ui_contribution_contract(
+    tmp_path,
+):
+    record = PluginRecord(
+        manifest=PluginManifest.from_dict(
+            {
+                "schema_version": "qwenpaw.plugin.v2",
+                "id": "task-insights",
+                "version": "1.0.0",
+                "contributions": [
+                    {
+                        "id": "inspector",
+                        "slot": "ui.task.inspector",
+                        "entrypoint": "frontend/inspector.js",
+                    },
+                ],
+            },
+        ),
+        source_path=tmp_path,
+        enabled=True,
+    )
+    loader = SimpleNamespace(
+        get_all_loaded_plugins=lambda: {"task-insights": record},
+    )
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(plugin_loader=loader),
+        ),
+    )
+
+    result = await list_frontend_plugins(request)
+
+    assert result[0]["schema_version"] == "qwenpaw.plugin.v2"
+    assert result[0]["frontend_entry"] == "frontend/inspector.js"
+    assert result[0]["ui_contributions"] == [
+        {
+            "id": "inspector",
+            "slot": "ui.task.inspector",
+            "entrypoint": "frontend/inspector.js",
+        },
+    ]

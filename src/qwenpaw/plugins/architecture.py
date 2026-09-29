@@ -8,6 +8,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ..kernel.models import PluginContribution, RestartPolicy
+
 
 class PluginType(str, Enum):
     """Canonical plugin type identifiers.
@@ -105,6 +107,24 @@ def _infer_type_from_meta(  # pylint: disable=too-many-return-statements
     return PluginType.GENERAL
 
 
+def _derive_v2_frontend_entry(
+    data: Dict[str, Any],
+    entry_data: Dict[str, Any],
+) -> None:
+    """Expose the first UI bundle through the legacy frontend loader."""
+    contributions = data.get("contributions")
+    if not isinstance(contributions, list) or entry_data.get("frontend"):
+        return
+    for contribution in contributions:
+        if not isinstance(contribution, dict):
+            continue
+        slot = str(contribution.get("slot") or "")
+        entrypoint = str(contribution.get("entrypoint") or "")
+        if slot.startswith("ui.") and entrypoint.endswith(".js"):
+            entry_data["frontend"] = entrypoint
+            return
+
+
 class QwenPawVersionConstraint(BaseModel):
     """QwenPaw version compatibility range (left-closed, right-open).
 
@@ -138,6 +158,7 @@ class PluginManifest(BaseModel):
     )
 
     id: str = Field(..., min_length=1)
+    schema_version: str = "qwenpaw.plugin.v1"
     version: str = Field(..., min_length=1)
     name: str = ""
     description: str = ""
@@ -152,6 +173,8 @@ class PluginManifest(BaseModel):
     qwenpaw_version: Optional[QwenPawVersionConstraint] = None
     meta: Dict[str, Any] = Field(default_factory=dict)
     plugin_type: PluginType = PluginType.GENERAL
+    restart_policy: RestartPolicy = RestartPolicy.HOT
+    contributions: List[PluginContribution] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod
@@ -196,6 +219,7 @@ class PluginManifest(BaseModel):
         legacy_entry_point = data.get("entry_point")
         if legacy_entry_point and not entry_data.get("backend"):
             entry_data["backend"] = legacy_entry_point
+        _derive_v2_frontend_entry(data, entry_data)
         data["entry"] = entry_data
 
         # Resolve ``type``: explicit value wins; otherwise infer.  We
@@ -209,6 +233,18 @@ class PluginManifest(BaseModel):
             data["plugin_type"] = _infer_type_from_meta(tmp_meta, tmp_entry)
 
         return data
+
+    @model_validator(mode="after")
+    def _validate_contributions(self) -> "PluginManifest":
+        """Reject ambiguous v2 contributions while preserving v1 inputs."""
+        identifiers = [item.contribution_id for item in self.contributions]
+        if len(identifiers) != len(set(identifiers)):
+            raise ValueError("contribution ids must be unique per plugin")
+        if self.contributions and self.schema_version != "qwenpaw.plugin.v2":
+            raise ValueError(
+                "contributions require schema_version qwenpaw.plugin.v2",
+            )
+        return self
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "PluginManifest":
@@ -230,6 +266,19 @@ class PluginManifest(BaseModel):
         return cls.model_validate(data)
 
 
+class PluginMigrationDiagnostic(BaseModel):
+    """Actionable guidance for one replaceable legacy registration API."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = "legacy_registration_api"
+    api_name: str
+    target_slot: str
+    message: str
+    recovery: str
+    manifest_fragment: Dict[str, Any]
+
+
 @dataclass
 class PluginRecord:
     """Plugin record for loaded plugins."""
@@ -238,4 +287,8 @@ class PluginRecord:
     source_path: Path
     enabled: bool
     instance: Optional[Any] = None
+    config: Dict[str, Any] = field(default_factory=dict, repr=False)
     diagnostics: List[str] = field(default_factory=list)
+    migration_diagnostics: List[PluginMigrationDiagnostic] = field(
+        default_factory=list,
+    )

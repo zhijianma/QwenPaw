@@ -4,6 +4,7 @@ Heartbeat: run agent with HEARTBEAT.md as query at interval.
 Uses config functions (get_heartbeat_config, get_heartbeat_query_path,
 load_config) for paths and settings.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -13,7 +14,7 @@ import uuid
 from datetime import datetime, time, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional
 
 from ...agents.utils.file_handling import read_text_file_with_encoding_fallback
 from ...config import (
@@ -28,14 +29,17 @@ from ...constant import (
     HEARTBEAT_TARGET_LAST,
 )
 from ..channels.schema import DEFAULT_CHANNEL
-from ..inbox_store import append_event as append_inbox_event
 from ..inbox_trace_store import (
     append_trace_from_session_delta,
     create_trace,
     finalize_trace,
     read_session_messages,
 )
+from ..operational_delivery import (
+    operational_event_publisher_for_workspace,
+)
 from ..crons.models import _crontab_dow_to_name
+from .contracts import HeartbeatExecutionRequest, HeartbeatTaskRuntime
 from ...utils.io_utils import run_sync_io
 
 logger = logging.getLogger(__name__)
@@ -59,6 +63,36 @@ _DOW_FIELD_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _HEARTBEAT_SOURCE_ID = "_heartbeat"
+
+
+async def publish_heartbeat_event(
+    workspace: Any,
+    *,
+    agent_id: str | None,
+    event_type: str,
+    status: str,
+    severity: str,
+    title: str,
+    body: str,
+    payload: dict[str, Any],
+) -> None:
+    """Publish one legacy Heartbeat fact through shared Delivery."""
+    owner_id = agent_id or workspace.agent_id
+    publisher = operational_event_publisher_for_workspace(
+        workspace,
+        producer_id="qwenpaw.system.heartbeat",
+    )
+    await publisher(
+        agent_id=owner_id,
+        source_type="heartbeat",
+        source_id=_HEARTBEAT_SOURCE_ID,
+        event_type=event_type,
+        status=status,
+        severity=severity,
+        title=title,
+        body=body,
+        payload=payload,
+    )
 
 
 def is_cron_expression(every: str) -> bool:
@@ -192,6 +226,9 @@ async def run_heartbeat_once(
     channel_manager: Any,
     agent_id: Optional[str] = None,
     workspace_dir: Optional[Path] = None,
+    task_runtime: HeartbeatTaskRuntime | None = None,
+    trigger: Literal["scheduled", "manual"] = "manual",
+    scheduled_for: datetime | None = None,
 ) -> None:
     """Run one heartbeat: read HEARTBEAT.md, run agent, optionally
     dispatch to last channel (target=last).
@@ -243,6 +280,38 @@ async def run_heartbeat_once(
         last_dispatch = config.last_dispatch
 
     target = (hb.target or "").strip().lower()
+    selected_target = target
+    delivery_channel = DEFAULT_CHANNEL
+    delivery_user = "main"
+    transport_context = "main"
+    if target == HEARTBEAT_TARGET_LAST:
+        if (
+            last_dispatch
+            and last_dispatch.channel
+            and (last_dispatch.user_id or last_dispatch.session_id)
+        ):
+            delivery_channel = last_dispatch.channel
+            delivery_user = last_dispatch.user_id or "main"
+            transport_context = last_dispatch.session_id or delivery_user
+        else:
+            selected_target = "main"
+
+    if task_runtime is not None:
+        await task_runtime.execute(
+            HeartbeatExecutionRequest(
+                query_text=query_text,
+                every=hb.every,
+                target=selected_target,
+                timeout_seconds=timeout_seconds,
+                trigger=trigger,
+                scheduled_for=(scheduled_for or datetime.now(timezone.utc)),
+                channel=delivery_channel,
+                user_id=delivery_user,
+                transport_context=transport_context,
+            ),
+        )
+        return
+
     if target == HEARTBEAT_TARGET_LAST and last_dispatch:
         ld = last_dispatch
         if ld.channel and (ld.user_id or ld.session_id):
@@ -310,10 +379,9 @@ async def run_heartbeat_once(
             body = _last_preview_from_delta(delta) or (
                 "Heartbeat task finished successfully."
             )
-            await append_inbox_event(
+            await publish_heartbeat_event(
+                workspace,
                 agent_id=agent_id,
-                source_type="heartbeat",
-                source_id=_HEARTBEAT_SOURCE_ID,
                 event_type="heartbeat_result",
                 status="success",
                 severity="info",
@@ -343,10 +411,9 @@ async def run_heartbeat_once(
                 status="timeout",
                 error=f"timed out after {timeout_seconds}s",
             )
-            await append_inbox_event(
+            await publish_heartbeat_event(
+                workspace,
                 agent_id=agent_id,
-                source_type="heartbeat",
-                source_id=_HEARTBEAT_SOURCE_ID,
                 event_type="heartbeat_timeout",
                 status="error",
                 severity="error",
@@ -369,10 +436,9 @@ async def run_heartbeat_once(
                 baseline_count=baseline_count,
             )
             await finalize_trace(run_id, status="error", error=repr(e))
-            await append_inbox_event(
+            await publish_heartbeat_event(
+                workspace,
                 agent_id=agent_id,
-                source_type="heartbeat",
-                source_id=_HEARTBEAT_SOURCE_ID,
                 event_type="heartbeat_error",
                 status="error",
                 severity="error",

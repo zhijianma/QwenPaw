@@ -209,6 +209,14 @@ async def test_non_shared_job_reuses_its_dedicated_session(
     assert len(first_session) <= 115
     assert re.fullmatch(r"[A-Za-z0-9:._-]+", first_session)
     assert workspace.requests[0]["session_source"] == "cron"
+    assert workspace.requests[0]["request_context"][
+        "os_conversation_id"
+    ] == "chat-1"
+    assert workspace.requests[1]["request_context"][
+        "os_conversation_id"
+    ] == "chat-2"
+    assert first["conversation_id"] == "chat-1"
+    assert second["conversation_id"] == "chat-2"
 
     chat_calls = workspace.chat_manager.get_or_create_chat.await_args_list
     assert [call.kwargs["session_id"] for call in chat_calls] == [

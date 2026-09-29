@@ -299,6 +299,18 @@ async def test_mark_all_read(inbox_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_mark_all_read_can_be_agent_scoped(inbox_path: Path):
+    await _seed_events(inbox_path)
+
+    assert await inbox_store.mark_all_read(agent_id="A") == 2
+    remaining = await inbox_store.list_events(
+        agent_id="B",
+        unread_only=True,
+    )
+    assert len(remaining) == 1
+
+
+@pytest.mark.asyncio
 async def test_mark_read_by_acl_sender_uses_agent_and_exact_address(
     inbox_path: Path,
 ):

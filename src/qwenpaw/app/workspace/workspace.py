@@ -101,6 +101,10 @@ def _memory_backend_context(
         )
     except (AttributeError, TypeError, ValueError):
         estimate_divisor = 4.0
+    from ..operational_delivery import (
+        operational_event_publisher_for_workspace,
+    )
+
     return MemoryBackendContext(
         agent_id=ws.agent_id,
         working_dir=ws.workspace_dir,
@@ -109,6 +113,12 @@ def _memory_backend_context(
         language=getattr(config, "language", "zh") or "zh",
         token_estimate_divisor=(
             estimate_divisor if estimate_divisor > 0 else 4.0
+        ),
+        operational_event_publisher=(
+            operational_event_publisher_for_workspace(
+                ws,
+                producer_id="qwenpaw.system.memory",
+            )
         ),
     )
 
@@ -134,7 +144,20 @@ def _memory_manager_reuse_compatible(
     )
 
 
-class Workspace:
+def _reload_memory_manager_services(
+    workspace: "Workspace",
+    instance: Any,
+) -> None:
+    """Rebind Host services without restarting a compatible backend."""
+    instance.rebind_host_services(
+        _memory_backend_context(
+            workspace,
+            _effective_memory_backend_id(workspace),
+        ),
+    )
+
+
+class Workspace:  # pylint: disable=too-many-public-methods
     """Single agent workspace with complete runtime components.
 
     Each Workspace is an independent agent instance with its own:
@@ -148,7 +171,12 @@ class Workspace:
     to ``Runtime.run()``.
     """
 
-    def __init__(self, agent_id: str, workspace_dir: str):
+    def __init__(
+        self,
+        agent_id: str,
+        workspace_dir: str,
+        capability_registry: Any | None = None,
+    ):
         """Initialize agent instance.
 
         Args:
@@ -161,6 +189,14 @@ class Workspace:
 
         # Per-workspace pluggable registries (tools, hooks, commands, prompts)
         self.plugins = WorkspacePlugins()
+        from ...capabilities import GenerationRegistry
+
+        if capability_registry is not None and not isinstance(
+            capability_registry,
+            GenerationRegistry,
+        ):
+            raise TypeError("registry must be a GenerationRegistry")
+        self._capability_registry = capability_registry or GenerationRegistry()
         self._local_workspace = QwenPawLocalWorkspace(
             tool_registry=self.plugins.tool_registry,
             workdir=str(self.workspace_dir),
@@ -212,6 +248,21 @@ class Workspace:
         return self._service_manager.services.get("chat_manager")
 
     @property
+    def invocation_control(self):
+        """Get the server-authoritative invocation control service."""
+        return self._service_manager.services.get("invocation_control")
+
+    @property
+    def interaction_service(self):
+        """Get the shared approval, input, and suggestion broker."""
+        return self._service_manager.services.get("interaction_service")
+
+    @property
+    def submission_dispatcher(self):
+        """Get the workspace-owned durable Chat submission consumer."""
+        return self._service_manager.services.get("submission_dispatcher")
+
+    @property
     def channel_manager(self):
         """Get channel manager instance from ServiceManager."""
         return self._service_manager.services.get("channel_manager")
@@ -220,6 +271,11 @@ class Workspace:
     def cron_manager(self):
         """Get cron manager instance from ServiceManager."""
         return self._service_manager.services.get("cron_manager")
+
+    @property
+    def capability_registry(self):
+        """Return the provider-neutral OS capability catalog."""
+        return self._capability_registry
 
     @property
     def mail_monitor(self):
@@ -528,6 +584,49 @@ class Workspace:
             ),
         )
 
+        from ...invocation_control import InvocationControlService
+        from ...interactions import InteractionService
+
+        sm.register(
+            ServiceDescriptor(
+                name="invocation_control",
+                service_class=InvocationControlService,
+                init_args=lambda ws: {
+                    "database_path": (
+                        ws.workspace_dir
+                        / ".qwenpaw"
+                        / "runtime"
+                        / "invocation-control.sqlite3"
+                    ),
+                },
+                start_method="start",
+                stop_method="close",
+                require_clean_stop=True,
+                priority=10,
+                concurrent_init=False,
+            ),
+        )
+
+        sm.register(
+            ServiceDescriptor(
+                name="interaction_service",
+                service_class=InteractionService,
+                init_args=lambda ws: {
+                    "database_path": (
+                        ws.workspace_dir
+                        / ".qwenpaw"
+                        / "runtime"
+                        / "interactions.sqlite3"
+                    ),
+                },
+                start_method="start",
+                stop_method="close",
+                require_clean_stop=True,
+                priority=10,
+                concurrent_init=False,
+            ),
+        )
+
         # Priority 20: Core services (concurrent)
         sm.register(
             ServiceDescriptor(
@@ -537,6 +636,7 @@ class Workspace:
                 start_method="start",
                 stop_method="close",
                 reusable=True,
+                reload_func=_reload_memory_manager_services,
                 reuse_compatibility=_memory_manager_reuse_compatible,
                 require_clean_stop=True,
                 priority=20,
@@ -587,7 +687,32 @@ class Workspace:
             ),
         )
 
+        from ..chats.submission_dispatcher import (
+            WorkspaceChatSubmissionDispatcher,
+        )
+
+        sm.register(
+            ServiceDescriptor(
+                name="submission_dispatcher",
+                service_class=WorkspaceChatSubmissionDispatcher,
+                init_args=lambda ws: {
+                    "workspace": ws,
+                    "control": ws._service_manager.services[
+                        "invocation_control"
+                    ],
+                },
+                start_method="start",
+                stop_method="stop",
+                require_clean_stop=True,
+                priority=35,
+                concurrent_init=False,
+            ),
+        )
+
         # Priority 40: Cron manager
+        from ..crons.heartbeat_task_runtime import LiteHeartbeatTaskRuntime
+        from ..crons.task_runtime import LiteCronTaskRuntime
+
         sm.register(
             ServiceDescriptor(
                 name="cron_manager",
@@ -605,6 +730,8 @@ class Workspace:
                     )
                     or "UTC",
                     "agent_id": ws.agent_id,
+                    "task_runtime": LiteCronTaskRuntime(ws),
+                    "heartbeat_task_runtime": LiteHeartbeatTaskRuntime(ws),
                 },
                 start_method="start",
                 stop_method="stop",
@@ -650,6 +777,21 @@ class Workspace:
                 stop_method="stop",
                 priority=51,
                 concurrent_init=False,
+            ),
+        )
+
+        # Priority 55: non-destructive legacy Inbox replay.
+        from ..legacy_inbox_migration import LegacyInboxMigration
+
+        sm.register(
+            ServiceDescriptor(
+                name="legacy_inbox_migration",
+                service_class=LegacyInboxMigration,
+                init_args=lambda ws: {"workspace": ws},
+                start_method="start",
+                priority=55,
+                concurrent_init=False,
+                optional=True,
             ),
         )
 

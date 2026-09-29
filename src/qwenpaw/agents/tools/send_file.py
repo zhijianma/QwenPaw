@@ -20,6 +20,7 @@ from .file_io import _resolve_file_path, _path_to_file_url
     tool_type="file",
     target_param="file_path",
     policy_name="SendFileToUser",
+    effect="external_write",
     default_policy="allow",
     policy_reason="File send to user (global)",
     ui_description="Send files to user",

@@ -25,7 +25,9 @@ import json
 import logging
 import time
 import uuid
+from contextlib import suppress
 from typing import Any, AsyncIterator, Callable, Dict, Optional
+from uuid import UUID
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +105,11 @@ class TaskRecord:
         self.error: Optional[str] = None
         self.done = False
         self.created_at: float = time.monotonic()
+        self.chat_id: Optional[str] = None
+        self.agent_id: str = ""
+        self.user_id: str = ""
+        self.cancel_runtime: Optional[Callable] = None
+        self.runner: Optional[asyncio.Task] = None
 
 
 class TaskManager:
@@ -127,11 +134,26 @@ class TaskManager:
         channel = SSEChannel()
 
         record = TaskRecord(task_id=task_id, app_id=app_id, channel=channel)
+        record.agent_id = str(getattr(ctx, "agent_id", ""))
+        record.user_id = str(getattr(ctx, "user_id", ""))
+        record.cancel_runtime = getattr(ctx, "_cancel_task_runtime", None)
         self._tasks[task_id] = record
 
-        # Inject SSE channel into ctx so ctx.ui.push() works
-        # pylint: disable-next=protected-access
-        ctx._sse_channel = channel
+        bind_runtime = getattr(ctx, "bind_task_runtime", None)
+        try:
+            if callable(bind_runtime):
+                record.chat_id = await bind_runtime(
+                    sse_channel=channel,
+                    invocation_id=UUID(task_id),
+                )
+            else:
+                # Compatibility for contexts created before the OS runtime.
+                # pylint: disable-next=protected-access
+                ctx._sse_channel = channel
+        except Exception:
+            self._tasks.pop(task_id, None)
+            channel.close()
+            raise
 
         async def _run():
             try:
@@ -156,7 +178,7 @@ class TaskManager:
                 record.done = True
                 channel.close()
 
-        asyncio.create_task(_run())
+        record.runner = asyncio.create_task(_run())
         return task_id
 
     def get_task(self, task_id: str) -> Optional[TaskRecord]:
@@ -179,6 +201,42 @@ class TaskManager:
     def cleanup_task(self, task_id: str) -> None:
         """Remove a completed task from memory."""
         self._tasks.pop(task_id, None)
+
+    async def cancel_task(
+        self,
+        task_id: str,
+        *,
+        app_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> bool:
+        """Cancel one app-owned task and its pending interactions."""
+        record = self._tasks.get(task_id)
+        if record is None:
+            return False
+        if app_id is not None and record.app_id != app_id:
+            return False
+        if agent_id is not None and record.agent_id != agent_id:
+            return False
+        if user_id is not None and record.user_id != user_id:
+            return False
+        if record.done:
+            return True
+        if callable(record.cancel_runtime):
+            await record.cancel_runtime(UUID(task_id))
+        record.error = "Task cancelled"
+        await record.channel.send_event(
+            {
+                "type": "error",
+                "message": record.error,
+                "code": "TASK_CANCELLED",
+            },
+        )
+        if record.runner is not None:
+            record.runner.cancel()
+            with suppress(asyncio.CancelledError):
+                await record.runner
+        return True
 
     def cleanup_old_tasks(
         self,

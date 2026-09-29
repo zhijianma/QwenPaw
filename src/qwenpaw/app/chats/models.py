@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, Literal, Optional
-from uuid import uuid4
+from typing import Any, Dict, Literal, Optional, Self
+from uuid import UUID, uuid4
 
 from pydantic import (
     BaseModel,
@@ -65,6 +65,114 @@ class ChatGroup(BaseModel):
         default=False,
         description="Whether the group is pinned above regular groups",
     )
+
+
+class ChatForkOrigin(BaseModel):
+    """Immutable lineage for a Chat forked from persisted message history."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    parent_chat_id: str = Field(min_length=1)
+    source_message_id: str = Field(
+        min_length=1,
+        description=(
+            "Inclusive AgentScope message identity at the fork boundary"
+        ),
+    )
+
+
+class ChatForkRequest(BaseModel):
+    """Idempotent request to branch history through one source message."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_message_id: str = Field(min_length=1)
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+class ChatInteractionDecisionRequest(BaseModel):
+    """Untrusted Console response to one Chat-owned interaction."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    expected_revision: int = Field(ge=1)
+    selected_option_ids: tuple[str, ...] = ()
+    text: str = ""
+    values: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_answer(self) -> Self:
+        """Reject transport events that do not carry a user decision."""
+        if not (self.selected_option_ids or self.text or self.values):
+            raise ValueError("interaction response cannot be empty")
+        if len(self.selected_option_ids) != len(
+            set(self.selected_option_ids),
+        ):
+            raise ValueError("selected interaction options must be unique")
+        return self
+
+
+class ChatControlRequest(BaseModel):
+    """Optimistic and idempotent mutation of one Chat control plane."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    expected_revision: int = Field(ge=0)
+
+
+class ChatSteerRequest(ChatControlRequest):
+    """Instruction to inject at the next safe point of the active run."""
+
+    instruction: str = Field(min_length=1, max_length=20_000)
+
+
+class ChatQueueReorderRequest(ChatControlRequest):
+    """Complete desired order of the currently queued submissions."""
+
+    ordered_submission_ids: tuple[UUID, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_unique_submissions(self) -> Self:
+        """Reject ambiguous queue orders before reaching the domain port."""
+        if len(self.ordered_submission_ids) != len(
+            set(self.ordered_submission_ids),
+        ):
+            raise ValueError("queued submission IDs must be unique")
+        return self
+
+
+class ChatSubmissionRequest(ChatControlRequest):
+    """Complete durable input accepted by the Console Chat dispatcher."""
+
+    expected_revision: int | None = Field(default=None, ge=0)
+    content_parts: tuple[dict[str, Any], ...] = Field(min_length=1)
+    request_context: dict[str, Any] = Field(default_factory=dict)
+    message_metadata: dict[str, Any] = Field(default_factory=dict)
+    model_slot_override: str | dict[str, Any] | None = None
+    request_extensions: dict[str, Any] = Field(default_factory=dict)
+    priority: int = Field(default=20, ge=0, le=100)
+
+    @model_validator(mode="after")
+    def validate_request_extensions(self) -> Self:
+        """Prevent plugins from replacing server-owned envelope fields."""
+        reserved = {
+            "channel_id",
+            "sender_id",
+            "content_parts",
+            "message_metadata",
+            "message_id",
+            "meta",
+        }
+        conflicts = sorted(reserved.intersection(self.request_extensions))
+        if conflicts:
+            raise ValueError(
+                f"request_extensions contain reserved fields: "
+                f"{', '.join(conflicts)}",
+            )
+        return self
 
 
 def default_chat_groups() -> list[ChatGroup]:
@@ -154,6 +262,12 @@ class ChatSpec(BaseModel):
     root_session_id: Optional[str] = Field(
         default=None,
         description="Root session for a subagent chat tree",
+    )
+    fork_origin: ChatForkOrigin | None = Field(
+        default=None,
+        description=(
+            "Parent ChatSpec and inclusive persisted message boundary"
+        ),
     )
 
     @computed_field  # type: ignore[misc]
