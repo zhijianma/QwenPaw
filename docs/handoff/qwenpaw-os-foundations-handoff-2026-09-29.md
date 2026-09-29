@@ -6,6 +6,67 @@
 > Goal 状态：已暂停
 > 钉钉副本：<https://alidocs.dingtalk.com/i/nodes/Y1OQX0akWmzdBowLFj9006eDVGlDd3mE>
 
+## 0. 当前 Goal
+
+### 0.1 Goal 元数据
+
+| 字段 | 当前值 |
+|---|---|
+| Thread ID | `01a0c21e-e72a-75c2-aa72-52508ca3099a` |
+| 状态 | `paused` |
+| 创建时间 | 2026-09-22 |
+| 最后更新时间 | 2026-09-29 |
+| 恢复条件 | 仅在用户明确要求后恢复 |
+
+### 0.2 Goal 原文
+
+> 重构 QwenPaw Lite 的任务运行时，使现有内置能力与插件能力在同一套
+> 领域模型、注册机制和执行管线下完整对齐，并以真实可交互 Task
+> Workbench 交付。先盘点当前 Chat/Console/Tool Guard/Driver/Harness/
+> Plugin/Task/Artifact 等能力与缺口，形成可追踪矩阵；冻结 Task、Run、
+> Plan、Conversation、Approval、Artifact、Evidence、Capability、
+> Contribution、Checkpoint 的稳定 API 与事件契约；重新设计统一 Runtime
+> Orchestrator，使内置模块和插件都通过相同 Slot/Contribution/Capability
+> 接口接入，支持热安装即生效、generation 隔离、运行中固定版本及失败
+> 回退；打通任务创建、计划、实时对话、工具调用、单个及并行审批、批准/
+> 拒绝后的继续执行、Artifacts/Evidence 产出、取消/失败/恢复和审计时间线；
+> Task 页面必须直接呈现执行计划、完整消息、实时状态、所有待审批及其风险
+> 与参数、决策结果、成果预览和恢复入口，不依赖旧 Console 私有状态或仅靠
+> 事件猜测；兼容现有 QwenPaw 能力并提供迁移适配层，明确哪些旧路径保留、
+> 弃用或移除。验收以功能矩阵逐项通过、内置与插件同契约测试、严格审批
+> 模式真实端到端演示、多个并行审批测试、插件热激活/替换/回退测试、任务
+> 产出 Artifact 与 Evidence 测试、失败恢复测试、前后端定点测试和浏览器
+> 实测为准；禁止用 mock 页面或“组件存在”代替运行链路验证，并产出架构
+> 说明、API/事件规范、二次开发指南和未覆盖边界清单。
+
+### 0.3 Goal 验收口径
+
+- [ ] 现有 Chat、Console、Tool Guard、Driver、Harness、Plugin、Task、
+  Artifact 能力形成可追踪矩阵。
+- [ ] Task、Run、Plan、Conversation、Approval、Artifact、Evidence、
+  Capability、Contribution、Checkpoint 的 API 和事件契约冻结。
+- [ ] 内置能力与插件能力通过同一 Slot / Contribution / Capability 接口。
+- [ ] 插件安装后无需重启即可对新请求生效。
+- [ ] Runtime Generation 支持隔离、运行中固定版本和失败回退。
+- [ ] 任务创建、计划、实时对话和工具调用形成真实运行链路。
+- [ ] 单个审批、并行审批、批准、拒绝及继续执行完成真实验证。
+- [ ] Approval、`ask_user_*` 和 suggestion 归一到 Interaction 基础设施。
+- [ ] Queue / Steer / Interrupt 在服务端控制，并覆盖 reasoning 与工具调用
+  前后的及时干预点。
+- [ ] Artifact、Evidence、Checkpoint、审计时间线可持久化并可恢复。
+- [ ] 支持从指定消息 Fork，新旧 Chat 的后续状态互不污染。
+- [ ] 旧路径的保留、弃用、移除和兼容适配范围明确。
+- [ ] Task Workbench 展示完整计划、消息、实时状态、审批、成果和恢复入口。
+- [ ] 严格审批、失败恢复、插件热激活/替换/回退完成浏览器端到端实测。
+- [ ] 交付架构说明、API/事件规范、二次开发指南和未覆盖边界清单。
+
+### 0.4 当前阶段与原 Goal 的关系
+
+当前已完成的是 Goal 的“OS 基础设施与契约底座”阶段。根据后续讨论形成的
+实施顺序，Chat 仍是当前主入口，Task 页面暂缓；这属于执行顺序调整，不代表
+删除 Task Workbench 的最终验收要求。恢复 Goal 后，应先按第 6 节验证 Chat
+真实切换到新基础设施，再继续 Task Workbench。
+
 ## 1. 本阶段结论
 
 本阶段已将 QwenPaw 从“按页面和旧服务堆叠能力”的结构，推进到以
