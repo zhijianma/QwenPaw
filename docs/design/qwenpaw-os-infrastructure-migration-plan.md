@@ -668,6 +668,11 @@ Cron 不形成独立审批或产物事实源。
 - [x] 插件安装、替换、失败回滚、卸载与 cleanup 全链路无需服务重启；替换时旧
   capability 保持可解析，新 bundle 通过门禁后只发布一个 generation，失败会恢复旧
   manifest、文件、注册和实现，更新不会误执行永久 uninstall hook。
+  - [x] 2026-09-30 使用运行中的 `localhost:8004` 与固定 Chat 完成真实链路：从空
+    Registry 安装 `chat-tool-provider` 1.0.0 后，无需重启即可调用；强制替换为
+    1.1.0 后，新 Invocation 返回 `PLUGIN_HOT_V2`；不满足 `tool.provider` Port 的
+    2.0.0 在发布前返回 HTTP 400，Registry 仍固定 1.1.0，随后浏览器新 Invocation
+    仍返回 `PLUGIN_HOT_V2`；卸载后 `/api/plugins` 恢复为空。
 - [x] SDK 文档与所有参考插件只使用 `qwenpaw.plugins.sdk` 稳定导入路径，并由 AST
   契约测试防止示例回退到 App、Loader、Registry 或 Store 内部模块。
 
@@ -758,6 +763,9 @@ Cron 不形成独立审批或产物事实源。
     Runtime owner、Submission 和 blocking Interaction，不遗留 waiter。
   - [x] `AskUser` 与 Approval 使用同一 Interaction 投影并按顺序阻塞；
     `SuggestUserAction` 非阻塞，Runtime 终态后仍保留到用户处理。
+  - [x] 插件 1.0.0 安装、1.1.0 热替换、错误 2.0.0 发布前回退及卸载均在同一
+    后端进程完成；浏览器分别观察到旧实现结果与 `PLUGIN_HOT_V2`，失败替换后
+    再次调用仍命中 1.1.0，证明不是只检查管理 API 或组件存在。
 - [ ] 架构文档、API 规范、迁移表和未覆盖边界同步更新。
 - [ ] 完成主要功能 Code Review，Blocking finding 为零。
 - [ ] 达到门禁后再恢复 Task Workbench 开发。

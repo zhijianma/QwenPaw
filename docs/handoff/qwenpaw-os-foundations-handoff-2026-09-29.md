@@ -137,8 +137,9 @@ Scheduling、Plugin Generation 和 Edition Profile 为核心的 OS 基础设施�
 - Goal 已恢复，但 Task Workbench 仍按用户要求后置。
 - Task 页面不是当前阶段验收目标。仓库中的 `console/src/pages/Tasks/`
   来自此前累计实现，只能视为早期投影/原型，不能视为最终 Workbench。
-- 尚未完成浏览器级真实端到端验收：失败恢复、热替换回退、
-  Artifact/Evidence 全链路仍需在后续阶段逐项实测；并行审批已完成。
+- 尚未完成浏览器级真实端到端验收：运行失败恢复、Steer 安全点和
+  Artifact/Evidence 全链路仍需在后续阶段逐项实测；并行审批与插件热替换回退
+  已完成。
 - 没有执行被项目规范禁止的全量 `npm run build`、全量
   `npm run test` 或全量 `npm run format`。
 - 全项目 TypeScript 检查仍包含既有错误；本阶段只确认与改动相关的定点
@@ -169,6 +170,24 @@ Scheduling、Plugin Generation 和 Edition Profile 为核心的 OS 基础设施�
 
 上述验证使用真实模型、真实工具、真实持久化与浏览器交互，不是 mock 页面或
 组件存在性检查。
+
+### 2026-09-30 插件热生命周期浏览器验收
+
+- 验收前 `/api/plugins` 为空；向运行中的后端安装公开示例
+  `chat-tool-provider` 1.0.0，未重启服务。
+- 固定 Chat `/clear` 后真实调用 `describe_qwenpaw_invocation`，页面返回 1.0.0
+  实现结果，证明安装不仅更新管理面，也进入新 Invocation 的 Runtime Assembly。
+- 强制热替换为 1.1.0 后，再次 `/clear` 并调用同一工具，页面原样返回
+  `PLUGIN_HOT_V2`，证明新 Invocation 切换到新 generation。
+- 尝试替换为缺少完整 `tool.provider` 契约的 2.0.0 时，安装 API 返回 HTTP 400；
+  Registry 仍报告健康的 1.1.0。随后浏览器再次调用仍返回 `PLUGIN_HOT_V2`，证明
+  失败 bundle 在 generation 发布前关闭失败，没有污染稳定实现。
+- 卸载返回 HTTP 200，随后 `/api/plugins` 为 `[]`；安装、替换、回退和卸载全程
+  使用同一后端进程，没有重启。
+
+该验收覆盖真实 Plugin API、Capability Registry、generation 发布、Runtime
+Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果，不以单元测试
+或静态 manifest 检查代替运行链路。
 
 ### 本次 handoff 前重新验证
 
@@ -255,7 +274,8 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
 4. 验证 Steer 在 reasoning 前后和工具调用前后均能及时生效。
 5. 验证从指定消息 Fork 后，父子 Chat 的历史、后续消息、Artifact 和控制
    状态互不污染。
-6. 验证插件安装无需重启即可对新请求生效，并验证 generation 固定与回退。
+6. 插件安装即生效、generation 热替换及失败回退已验收；后续只需在新增 Slot 时
+   复用同一门禁，不再重复实现私有插件生命周期。
 7. 完成上述基础设施验收后，再决定 Task Workbench 页面所需的最小投影和
    交互，不让页面反向定义领域模型。
 
