@@ -12,7 +12,11 @@ import time
 
 # pylint: disable=protected-access
 
-from qwenpaw.governance.policy import ToolCallSpec
+from qwenpaw.governance.policy import (
+    GovernanceAction,
+    GovernanceDecision,
+    ToolCallSpec,
+)
 from qwenpaw.kernel.models import ApprovalSource
 from qwenpaw.security.tool_guard.approval import (
     ApprovalDecision,
@@ -277,3 +281,52 @@ class TestApprovalScopeConsumer:
         assert display["is_generalized"] is True
         assert display["exact_target"] == "git status"
         assert display["similar_target"] == "git *"
+
+
+class TestRequestScopedApprovalLevel:
+    """Approval overrides belong to one invocation, not shared policy state."""
+
+    async def test_strict_is_passed_without_mutating_governor_policy(self):
+        from types import SimpleNamespace
+
+        from qwenpaw.governance import tool_adapter
+
+        class _Governor:
+            def __init__(self) -> None:
+                self.policy = SimpleNamespace(execution_level="smart")
+                self.received_level: str | None = None
+
+            def assert_policy(
+                self,
+                _tc_spec,
+                *,
+                execution_level=None,
+            ):  # noqa: ANN
+                self.received_level = execution_level
+                return GovernanceDecision(
+                    action=GovernanceAction.ALLOW,
+                    reason="test",
+                )
+
+            def audit(self, _tc_spec, _decision):  # noqa: ANN
+                return None
+
+        governor = _Governor()
+        tool = SimpleNamespace(
+            name="get_current_time",
+            _qp_governor=governor,
+            _qp_request_context={"approval_level": "strict"},
+            _build_tc_spec=lambda: ToolCallSpec(
+                tool_name="GetCurrentTime",
+                target="",
+                agent_id="agent-1",
+                session_id="chat-1",
+                tool_type="internal",
+            ),
+        )
+
+        decision = await tool_adapter._policy_tool_check_permissions(tool, {})
+
+        assert decision.behavior.value == "allow"
+        assert governor.received_level == "strict"
+        assert governor.policy.execution_level == "smart"

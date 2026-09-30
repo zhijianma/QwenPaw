@@ -367,13 +367,6 @@ async def _policy_tool_check_permissions(
             message="governance: approval_level=off, all tools allowed.",
         )
 
-    # Sync effective approval_level to the governor's policy
-    # so the three-phase evaluation uses the correct threshold.
-    # Skipped while F1 is active: F1's STRICT is applied per-evaluation
-    # below (set + restore) so it cannot leak into later requests.
-    if governor is not None and effective_level is not None and not f1_active:
-        governor.policy.execution_level = effective_level.value
-
     if governor is None:
         # Check if execution_level is "off" (dev mode) — allow pass-through
         if _is_execution_level_off():
@@ -400,18 +393,12 @@ async def _policy_tool_check_permissions(
 
     tc_spec = self._build_tc_spec()
 
-    if f1_active:
-        # Temporarily force STRICT for this evaluation only, then restore
-        # the previous level (assert_policy is synchronous, so this
-        # set/restore is atomic within the event loop).
-        prev_level = governor.policy.execution_level
-        governor.policy.execution_level = ToolExecutionLevel.STRICT.value
-        try:
-            decision = governor.assert_policy(tc_spec)
-        finally:
-            governor.policy.execution_level = prev_level
-    else:
-        decision = governor.assert_policy(tc_spec)
+    decision = governor.assert_policy(
+        tc_spec,
+        execution_level=(
+            effective_level.value if effective_level is not None else None
+        ),
+    )
     governor.audit(tc_spec, decision)
 
     # Cache the decision + tc_spec for __call__ to use

@@ -217,11 +217,16 @@ class ResourceGovernor:
     # Core interface 1: Policy evaluation
     # ------------------------------------------------------------------
 
-    def assert_policy(self, tc_spec: ToolCallSpec) -> GovernanceDecision:
+    def assert_policy(
+        self,
+        tc_spec: ToolCallSpec,
+        *,
+        execution_level: str | None = None,
+    ) -> GovernanceDecision:
         """Evaluate policy for a tool call.
 
         Flow:
-            1. policy.evaluate(tc_spec) → GovernanceDecision
+            1. policy.evaluate(tc_spec, execution_level=...) → decision
             2. Sandbox degradation: if SANDBOX_FALLBACK and sandbox
                unavailable → escalate to ASK
             3. If SANDBOX_FALLBACK → compile sandbox config and attach
@@ -236,7 +241,10 @@ class ResourceGovernor:
             ASK              → ask user
             SANDBOX_FALLBACK → bash tool with no rule match, sandbox fallback
         """
-        decision = self.policy.evaluate(tc_spec)
+        decision = self.policy.evaluate(
+            tc_spec,
+            execution_level=execution_level,
+        )
 
         # Sandbox not usable (platform unsupported OR the global
         # security.sandbox_enabled switch is off): a SANDBOX_FALLBACK cannot

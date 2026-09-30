@@ -704,11 +704,13 @@ class GovernancePolicy:
     def evaluate(  # noqa: E501  pylint: disable=too-many-return-statements,too-many-branches
         self,
         tc_spec: ToolCallSpec,
+        *,
+        execution_level: str | None = None,
     ) -> GovernanceDecision:
         """Evaluate policy decision for a tool call.
 
         Three-phase evaluation (v2.0):
-            Phase 0: Type check — unknown → DENY, internal → ALLOW
+            Phase 0: Type check — unknown → DENY, internal → ALLOW/ASK
             Phase 1: Deep security scan (accumulates findings)
                      configured auto-deny findings → immediate DENY
             Phase 2: Policy rules first-match-wins
@@ -719,6 +721,8 @@ class GovernancePolicy:
 
         Returns: GovernanceDecision (with optional findings attached)
         """
+        effective_level = (execution_level or self.execution_level).lower()
+
         # ── Phase 0: ToolRegistry type check ──
         tool_type = tc_spec.tool_type or self._registry.get_type(
             tc_spec.tool_name,
@@ -730,13 +734,19 @@ class GovernancePolicy:
                 source="unknown tool",
             )
         if tool_type == "internal":
+            if effective_level == "strict":
+                return GovernanceDecision(
+                    action=GovernanceAction.ASK,
+                    reason="STRICT mode: all tool calls require approval",
+                    source="STRICT mode",
+                )
             return GovernanceDecision(
                 action=GovernanceAction.ALLOW,
                 reason="internal",
             )
 
         # execution_level == OFF → skip Phase 1, go to Phase 2
-        skip_deep_scan = self.execution_level.lower() == "off"
+        skip_deep_scan = effective_level == "off"
 
         # ── Phase 1: Deep security scan ──
         findings: list[Any] = []
@@ -785,7 +795,7 @@ class GovernancePolicy:
                 )
 
         # ── Phase 2: builtin_rules + user_rules (first-match-wins) ──
-        is_strict = self.execution_level == "strict"
+        is_strict = effective_level == "strict"
 
         for rule in self.builtin_rules:
             if rule.matches_tool_call(
@@ -809,6 +819,7 @@ class GovernancePolicy:
                     return self._apply_execution_level_fallback(
                         tc_spec,
                         sensitive_path_findings,
+                        execution_level=effective_level,
                     )
                 return GovernanceDecision(
                     action=action,
@@ -837,6 +848,7 @@ class GovernancePolicy:
                     return self._apply_execution_level_fallback(
                         tc_spec,
                         sensitive_path_findings,
+                        execution_level=effective_level,
                     )
                 return GovernanceDecision(
                     action=action,
@@ -863,7 +875,11 @@ class GovernancePolicy:
             # INFO/LOW findings (fallback returns ALLOW) fall through to the
             # sandbox path below, where sandbox isolation is the safety net.
             if findings:
-                fb = self._apply_execution_level_fallback(tc_spec, findings)
+                fb = self._apply_execution_level_fallback(
+                    tc_spec,
+                    findings,
+                    execution_level=effective_level,
+                )
                 if fb.action is not GovernanceAction.ALLOW:
                     return fb
             # No findings (or only INFO/LOW): route to sandbox. When the
@@ -874,7 +890,11 @@ class GovernancePolicy:
                 findings=findings or None,
                 source="sandbox",
             )
-        return self._apply_execution_level_fallback(tc_spec, findings)
+        return self._apply_execution_level_fallback(
+            tc_spec,
+            findings,
+            execution_level=effective_level,
+        )
 
     def _deep_security_scan(
         self,
@@ -992,6 +1012,8 @@ class GovernancePolicy:
         self,
         tc_spec: ToolCallSpec,  # pylint: disable=unused-argument
         findings: list[Any],
+        *,
+        execution_level: str | None = None,
     ) -> GovernanceDecision:
         """Apply execution_level threshold to determine final decision.
 
@@ -1011,7 +1033,7 @@ class GovernancePolicy:
             - SMART: INFO/LOW → ALLOW; MEDIUM+ → ASK
             - AUTO / OFF: ASK (a finding surfaced despite the relaxed scan)
         """
-        level = self.execution_level
+        level = (execution_level or self.execution_level).lower()
 
         if not findings:
             # No findings and no rule hit.
