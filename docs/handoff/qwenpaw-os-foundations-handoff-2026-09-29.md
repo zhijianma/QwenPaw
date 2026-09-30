@@ -137,9 +137,9 @@ Scheduling、Plugin Generation 和 Edition Profile 为核心的 OS 基础设施�
 - Goal 已恢复，但 Task Workbench 仍按用户要求后置。
 - Task 页面不是当前阶段验收目标。仓库中的 `console/src/pages/Tasks/`
   来自此前累计实现，只能视为早期投影/原型，不能视为最终 Workbench。
-- 尚未完成浏览器级真实端到端验收：运行失败恢复、Steer 安全点和
-  Artifact/Evidence 全链路仍需在后续阶段逐项实测；并行审批与插件热替换回退
-  已完成。
+- 尚未完成浏览器级真实端到端验收：运行失败恢复、Steer 的 reasoning 前与工具
+  admission 前边界、Artifact/Evidence 全链路仍需在后续阶段逐项实测；并行审批、
+  `AFTER_REASONING`/`AFTER_TOOL_BATCH` Steer 与插件热替换回退已完成。
 - 没有执行被项目规范禁止的全量 `npm run build`、全量
   `npm run test` 或全量 `npm run format`。
 - 全项目 TypeScript 检查仍包含既有错误；本阶段只确认与改动相关的定点
@@ -188,6 +188,23 @@ Scheduling、Plugin Generation 和 Edition Profile 为核心的 OS 基础设施�
 该验收覆盖真实 Plugin API、Capability Registry、generation 发布、Runtime
 Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果，不以单元测试
 或静态 manifest 检查代替运行链路。
+
+### 2026-09-30 Steer 安全点浏览器验收
+
+- 通过服务端控制 API 提交的 Steer 已真实记录 `after_reasoning` 回执，并作为可见
+  用户消息进入 Conversation，随后驱动 Agent 继续 reasoning。
+- 为排除 Shell 自动后台化干扰，临时热安装公开 `tool.provider` 慢工具；监控器先
+  观察到工具 `running` 且 Submission active，再提交 Steer。
+- 工具没有被 Steer 静默取消，先提交 `SLOW_TOOL_COMMITTED`；控制回执随后变为
+  `applied_at_safe_point=after_tool_batch`，Chat 最终只回复
+  `STEER_AFTER_TOOL_BATCH_OK`。
+- 对照路径确认已进入 background offload 的工具不再属于 active Invocation，此时
+  Steer 明确失败为 `no active invocation`，不会误伤后台任务。
+- 临时插件已卸载，插件列表恢复为空，临时源码未进入 Git。
+
+该验收证明运行中工具批次的不可变事实边界和 `AFTER_TOOL_BATCH` 及时干预；
+`BEFORE_REASONING`、`BEFORE_TOOL_BATCH` 以及长模型流协作取消仍需分别保留真实链路
+验收，不能由本项外推。
 
 ### 本次 handoff 前重新验证
 

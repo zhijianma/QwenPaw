@@ -766,6 +766,10 @@ Cron 不形成独立审批或产物事实源。
   - [x] 插件 1.0.0 安装、1.1.0 热替换、错误 2.0.0 发布前回退及卸载均在同一
     后端进程完成；浏览器分别观察到旧实现结果与 `PLUGIN_HOT_V2`，失败替换后
     再次调用仍命中 1.1.0，证明不是只检查管理 API 或组件存在。
+  - [x] 真实插件慢工具处于 `running` 且 Submission active 时提交 Steer；工具先
+    提交不可变结果，回执再以 `after_tool_batch` 转为 `applied`，Chat 写入可见
+    Steer 消息并继续生成 `STEER_AFTER_TOOL_BATCH_OK`。已 offload 的后台工具没有
+    active Invocation 时明确拒绝 Steer，不混淆两种取消语义。
 - [ ] 架构文档、API 规范、迁移表和未覆盖边界同步更新。
 - [ ] 完成主要功能 Code Review，Blocking finding 为零。
 - [ ] 达到门禁后再恢复 Task Workbench 开发。

@@ -399,6 +399,25 @@ Harness 进程仍需各自实测，不能由 Ask User 取消或适配器定点�
 由 `durableSubmission` 和 Chat 页面定点测试覆盖；外部 backend 仍保留显式
 兼容队列。
 
+### 6.10 真实 AFTER_TOOL_BATCH Steer 验收记录
+
+2026-09-30 使用公开 `tool.provider` 临时安装一个不会切换到后台的 8 秒慢工具，
+并在真实 Console Chat 中完成运行中 Steer：
+
+1. 独立监控器先观察到 `wait_for_steer_probe` 的 Tool Coordinator 状态为
+   `running`，同时 Queue 仍有 active Submission，再按当时 revision 提交 Steer。
+2. Steer 首次返回 durable `accepted`，没有取消已开始的工具；工具正常提交
+   `SLOW_TOOL_COMMITTED` 后，控制回执转为 `applied`，实际安全点精确记录为
+   `after_tool_batch`。
+3. Chat 持久化了一条可见的 Steer 用户消息，随后 Agent 继续 reasoning，最终只
+   回复 `STEER_AFTER_TOOL_BATCH_OK`；工具事实没有被覆盖或伪造。
+4. 验收后卸载临时插件，`/api/plugins` 恢复为空；全程没有重启服务。
+
+对照试验还确认：Shell 或工具进入用户配置的 background offload 后，原
+Invocation 已结束，Steer 会明确返回 `conversation has no active invocation to
+steer`，不会错误命中后台任务。若用户需要停止后台工具，应使用 Tool Coordinator
+的取消能力，而不是伪装为 Invocation Steer。
+
 ## 7. 验收
 
 - 在 reasoning 前、reasoning 流中、reasoning 后、工具批次前和工具批次运行中分别
