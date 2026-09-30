@@ -19,6 +19,8 @@ interface ServerRuntimeQueueProps {
   onSettled?: () => void | Promise<void>;
 }
 
+const STANDALONE_QUEUE_GRACE_MS = 500;
+
 function queuedSubmissions(
   projection: ConversationRuntimeProjection | null,
 ): TurnSubmission[] {
@@ -56,6 +58,27 @@ export default function ServerRuntimeQueue({
   }, [settledGeneration]);
 
   const items = useMemo(() => queuedSubmissions(projection), [projection]);
+  const hasActiveSubmission = Boolean(
+    projection?.queue.active_submission_id,
+  );
+  const standaloneQueueKey = items
+    .map((item) => item.submission_id)
+    .join("\u0000");
+  const [visibleStandaloneQueueKey, setVisibleStandaloneQueueKey] = useState<
+    string | null
+  >(null);
+
+  useEffect(() => {
+    if (items.length === 0 || hasActiveSubmission) {
+      setVisibleStandaloneQueueKey(null);
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      setVisibleStandaloneQueueKey(standaloneQueueKey);
+    }, STANDALONE_QUEUE_GRACE_MS);
+    return () => window.clearTimeout(timer);
+  }, [hasActiveSubmission, items.length, standaloneQueueKey]);
 
   const cancel = useCallback(
     async (submission: TurnSubmission) => {
@@ -120,7 +143,13 @@ export default function ServerRuntimeQueue({
     [agentId, busy, chatId, items, message, projection, refresh, t],
   );
 
-  if (items.length === 0) return null;
+  if (
+    items.length === 0 ||
+    (!hasActiveSubmission &&
+      visibleStandaloneQueueKey !== standaloneQueueKey)
+  ) {
+    return null;
+  }
 
   const border = isDark ? "rgba(255,255,255,0.10)" : "rgba(31,42,35,0.10)";
   const surface = isDark ? "rgba(255,255,255,0.035)" : "rgba(247,249,246,0.96)";

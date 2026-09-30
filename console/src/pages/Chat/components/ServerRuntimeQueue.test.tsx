@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -47,6 +53,7 @@ function submission(id: string, position: number): TurnSubmission {
 function projection(
   submissions: TurnSubmission[],
   revision = 3,
+  activeSubmissionId: string | null = "active-submission",
 ): ConversationRuntimeProjection {
   return {
     agent_id: "default",
@@ -55,7 +62,7 @@ function projection(
       agent_id: "default",
       conversation_id: "chat-1",
       revision,
-      active_submission_id: null,
+      active_submission_id: activeSubmissionId,
       submissions,
       updated_at: "2026-09-28T00:00:00Z",
     },
@@ -143,7 +150,7 @@ describe("ServerRuntimeQueue", () => {
       active.status = "running";
       active.invocation_id = "invocation-1";
       options.onSnapshot(projection([active], 4));
-      options.onSnapshot(projection([], 5));
+      options.onSnapshot(projection([], 5, null));
       await new Promise<void>((resolve) => {
         options.signal?.addEventListener("abort", () => resolve(), {
           once: true,
@@ -162,6 +169,51 @@ describe("ServerRuntimeQueue", () => {
     );
 
     await waitFor(() => expect(onSettled).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not flash a standalone dispatcher handoff as a user queue", async () => {
+    vi.useFakeTimers();
+    vi.mocked(streamRuntimeProjection).mockImplementation(async (options) => {
+      options.onSnapshot(projection([submission("submission-1", 1)], 3, null));
+      window.setTimeout(() => {
+        options.onSnapshot(projection([], 4, null));
+      }, 100);
+      await new Promise<void>((resolve) => {
+        options.signal?.addEventListener("abort", () => resolve(), {
+          once: true,
+        });
+      });
+      return "v1-4";
+    });
+
+    render(<ServerRuntimeQueue active agentId="default" chatId="chat-1" />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(499);
+    });
+    expect(screen.queryByLabelText("chat.queue.title")).not.toBeInTheDocument();
+    vi.useRealTimers();
+  });
+
+  it("shows a standalone queue when dispatch remains stalled", async () => {
+    vi.useFakeTimers();
+    vi.mocked(streamRuntimeProjection).mockImplementation(async (options) => {
+      options.onSnapshot(projection([submission("submission-1", 1)], 3, null));
+      await new Promise<void>((resolve) => {
+        options.signal?.addEventListener("abort", () => resolve(), {
+          once: true,
+        });
+      });
+      return "v1-3";
+    });
+
+    render(<ServerRuntimeQueue active agentId="default" chatId="chat-1" />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(screen.getByLabelText("chat.queue.title")).toBeInTheDocument();
+    vi.useRealTimers();
   });
 
   it("reorders the complete server queue with its observed revision", async () => {
