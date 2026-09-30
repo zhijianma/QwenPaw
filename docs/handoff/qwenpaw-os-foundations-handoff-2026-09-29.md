@@ -2,8 +2,8 @@
 
 > 日期：2026-09-29
 > 分支：`feat/lite-agent-os`
-> 代码快照：`e2e227f2`（`feat(runtime): introduce qwenpaw os foundations`）
-> Goal 状态：已暂停
+> 代码快照：`b190dea9`（`fix(governance): enforce strict approval per invocation`）
+> Goal 状态：执行中
 > 钉钉副本：<https://alidocs.dingtalk.com/i/nodes/Y1OQX0akWmzdBowLFj9006eDVGlDd3mE>
 
 ## 0. 当前 Goal
@@ -13,10 +13,10 @@
 | 字段 | 当前值 |
 |---|---|
 | Thread ID | `01a0c21e-e72a-75c2-aa72-52508ca3099a` |
-| 状态 | `paused` |
+| 状态 | `active` |
 | 创建时间 | 2026-09-22 |
-| 最后更新时间 | 2026-09-29 |
-| 恢复条件 | 仅在用户明确要求后恢复 |
+| 最后更新时间 | 2026-09-30 |
+| 当前约束 | Chat-first；Task Workbench 继续后置 |
 
 ### 0.2 Goal 原文
 
@@ -62,10 +62,10 @@
 
 ### 0.4 当前阶段与原 Goal 的关系
 
-当前已完成的是 Goal 的“OS 基础设施与契约底座”阶段。根据后续讨论形成的
-实施顺序，Chat 仍是当前主入口，Task 页面暂缓；这属于执行顺序调整，不代表
-删除 Task Workbench 的最终验收要求。恢复 Goal 后，应先按第 6 节验证 Chat
-真实切换到新基础设施，再继续 Task Workbench。
+当前 Goal 已恢复执行，仍处于“OS 基础设施与契约底座”阶段。根据后续讨论
+形成的实施顺序，Chat 仍是当前主入口，Task 页面暂缓；这属于执行顺序调整，
+不代表删除 Task Workbench 的最终验收要求。当前先按第 6 节验证 Chat 真实
+切换到新基础设施，再继续 Task Workbench。
 
 ## 1. 本阶段结论
 
@@ -134,11 +134,11 @@ Scheduling、Plugin Generation 和 Edition Profile 为核心的 OS 基础设施�
 
 ## 3. 明确未完成或不应误判为完成的部分
 
-- Goal 保持暂停，没有在归档或提交过程中恢复。
+- Goal 已恢复，但 Task Workbench 仍按用户要求后置。
 - Task 页面不是当前阶段验收目标。仓库中的 `console/src/pages/Tasks/`
   来自此前累计实现，只能视为早期投影/原型，不能视为最终 Workbench。
-- 尚未完成浏览器级真实端到端验收：并行审批、失败恢复、热替换回退、
-  Artifact/Evidence 全链路仍需在后续阶段逐项实测。
+- 尚未完成浏览器级真实端到端验收：失败恢复、热替换回退、
+  Artifact/Evidence 全链路仍需在后续阶段逐项实测；并行审批已完成。
 - 没有执行被项目规范禁止的全量 `npm run build`、全量
   `npm run test` 或全量 `npm run format`。
 - 全项目 TypeScript 检查仍包含既有错误；本阶段只确认与改动相关的定点
@@ -147,6 +147,28 @@ Scheduling、Plugin Generation 和 Edition Profile 为核心的 OS 基础设施�
   不是一次性大爆炸替换。
 
 ## 4. 验证证据
+
+### 2026-09-30 Chat 治理与 Interaction 浏览器验收
+
+- 修复 `GovernancePolicy` 对 internal 工具在 STRICT 判定前直接放行的问题；
+  execution level 改为单次 Invocation 参数，不再写入共享 Governor Policy。
+- 治理相关定点测试：`107 passed`；OFF、统一注册、请求级审批与 Interaction
+  相关补充组：`64 passed`；相关文件 pre-commit 全通过。
+- 固定 Chat `1ee31988-b37a-48b9-b6ce-423c52f6a3a9` 在 `/clear` 后完成真实
+  浏览器验证：
+  - STRICT 下 `GetCurrentTime` 先生成 durable Approval Interaction，批准后执行并
+    完成消息；
+  - 同一 Invocation 的 `GetCurrentTime` 与 `GetTokenUsage` 同时生成两条审批，
+    分别批准后并行工具批次完成；
+  - 拒绝后工具不执行，Agent 收到终局拒绝且不重试；
+  - 审批等待时 Interrupt 会同时结束 Submission 与 blocking Interaction，页面显示
+    “已取消”，后端无 active Submission 或 open Interaction；
+  - `AskUser` 先经过 STRICT Approval，再显示阻塞选项，选择“绿色”后继续生成
+    最终消息；
+  - `SuggestUserAction` 在对话完成后仍保留非阻塞建议，用户处理后才关闭。
+
+上述验证使用真实模型、真实工具、真实持久化与浏览器交互，不是 mock 页面或
+组件存在性检查。
 
 ### 本次 handoff 前重新验证
 

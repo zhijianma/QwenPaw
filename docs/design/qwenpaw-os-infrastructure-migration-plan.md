@@ -750,6 +750,14 @@ Cron 不形成独立审批或产物事实源。
   - [ ] 仍需按模块完成行为级同契约矩阵，不能仅以 activation 结构校验替代运行语义。
 - [ ] Python 定点测试、pre-commit 与前端 Chat 定点测试通过。
 - [ ] 真实固定 Chat 先 `/clear`，再逐模块完成可见验收。
+  - [x] STRICT internal tool 不再绕过 Governance；请求级 execution level 不修改
+    共享 Policy，批准后工具执行并完成对话。
+  - [x] 同一 Invocation 的两个并行 Tool Approval 同时持久化并显示；分别批准时
+    未决项继续阻塞，全部处理后工具批次与 Submission 正常完成。
+  - [x] Approval 拒绝形成终局 Tool 结果且不重试；审批等待时 Interrupt 同时清理
+    Runtime owner、Submission 和 blocking Interaction，不遗留 waiter。
+  - [x] `AskUser` 与 Approval 使用同一 Interaction 投影并按顺序阻塞；
+    `SuggestUserAction` 非阻塞，Runtime 终态后仍保留到用户处理。
 - [ ] 架构文档、API 规范、迁移表和未覆盖边界同步更新。
 - [ ] 完成主要功能 Code Review，Blocking finding 为零。
 - [ ] 达到门禁后再恢复 Task Workbench 开发。
