@@ -364,6 +364,13 @@ Artifact/Evidence 数量，不公开 acceptance criterion、reason 或插件 met
 因此 Runner 发出“完成”或模型声称“已验证”都不能产生 VERIFICATION 观察项，只有
 通过 Ledger 完整性检查的 `verification.completed` 才能成为独立 Evidence。
 
+跨来源时间线现已增加固定水位分页。Lite 维护内容零拷贝的派生索引，只保存
+Observation identity、权威 source pointer、UTC 排序键与单调索引序号；事实内容仍在
+Model Call、Action、Interaction、Control、Compaction 和 Task Ledger 中。第一页固定
+索引水位，后续新增或为既有请求补出的 Evidence 不会进入旧快照；相同时间戳用稳定
+Observation identity 排序。该实现移除了原来每类最多扫描 1000 条的正确性上限，
+同时保留旧列表 API 作为第一页兼容视图。
+
 ### A9. Model Call Plane 与显式 Route Decision
 
 优先级：P1；Lite 先做记录，不先做复杂路由器。

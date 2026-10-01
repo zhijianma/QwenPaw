@@ -15,6 +15,7 @@ from qwenpaw.app.chats.api import (
     list_chat_actions,
     list_chat_model_calls,
     list_chat_observations,
+    page_chat_observations,
     list_chats,
 )
 from qwenpaw.app.chats.models import ChatHistory, ChatSpec
@@ -437,3 +438,27 @@ async def test_list_chat_observations_rejects_unknown_chat(tmp_path):
 
     assert raised.value.status_code == 404
     assert not (tmp_path / ".qwenpaw").exists()
+
+
+@pytest.mark.asyncio
+async def test_page_chat_observations_maps_invalid_cursor_to_400(tmp_path):
+    chat_id = "chat-invalid-observation-cursor"
+    manager = SimpleNamespace(
+        get_chat=AsyncMock(return_value=_chat(chat_id)),
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        await page_chat_observations(
+            chat_id=chat_id,
+            limit=20,
+            cursor="not-a-cursor",
+            mgr=manager,
+            workspace=SimpleNamespace(
+                workspace_dir=tmp_path,
+                agent_id="default",
+                interaction_service=None,
+                invocation_control=None,
+            ),
+        )
+
+    assert raised.value.status_code == 400

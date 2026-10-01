@@ -43,7 +43,14 @@ from qwenpaw.kernel import (
 )
 from qwenpaw.runtime.model_calls import lite_model_call_store
 from qwenpaw.runtime.actions import lite_action_store
-from qwenpaw.runtime.observations import lite_observation_projection
+from qwenpaw.runtime.observation_index import (
+    LiteObservationIndex,
+    ObservationCursorError,
+)
+from qwenpaw.runtime.observations import (
+    LiteObservationProjection,
+    lite_observation_projection,
+)
 from qwenpaw.runtime.compactions import lite_compaction_store
 from qwenpaw.interactions import InteractionService
 
@@ -132,6 +139,253 @@ async def test_projection_limit_applies_to_observations(tmp_path) -> None:
     assert await projection.list_for_conversation("chat-1", limit=1) == []
     with pytest.raises(ValueError, match="limit must be between"):
         await projection.list_for_conversation("chat-1", limit=0)
+
+
+@pytest.mark.asyncio
+async def test_page_watermark_excludes_late_terminal_evidence(
+    tmp_path,
+) -> None:
+    conversation_id = "chat-page-watermark"
+    invocation_id = uuid4()
+    attempt_id = uuid4()
+    now = datetime.now(timezone.utc)
+    route = RouteDecision(
+        route_decision_id=uuid4(),
+        attempt_id=attempt_id,
+        invocation_id=invocation_id,
+        correlation_id=invocation_id,
+        conversation_id=conversation_id,
+        registry_generation=3,
+        context_manifest_id=uuid4(),
+        model_call_index=1,
+        attempt_index=1,
+        provider_id="provider-a",
+        model_id="model-a",
+        reason=ModelRouteReason.PRIMARY,
+        decided_at=now,
+    )
+    attempt = ModelCallAttempt(
+        attempt_id=attempt_id,
+        route_decision_id=route.route_decision_id,
+        invocation_id=invocation_id,
+        correlation_id=invocation_id,
+        conversation_id=conversation_id,
+        registry_generation=3,
+        context_manifest_id=route.context_manifest_id,
+        model_call_index=1,
+        attempt_index=1,
+        provider_id="provider-a",
+        model_id="model-a",
+        started_at=now + timedelta(milliseconds=1),
+    )
+    store = lite_model_call_store(tmp_path)
+    await store.begin(route, attempt)
+    projection = lite_observation_projection(tmp_path)
+
+    first = await projection.page_for_conversation(
+        conversation_id,
+        limit=1,
+    )
+    assert first.next_cursor is not None
+    assert first.items[0].stage is ObservationStage.EXECUTION
+
+    await store.complete(
+        ModelCallResult(
+            attempt_id=attempt_id,
+            invocation_id=invocation_id,
+            conversation_id=conversation_id,
+            status=ModelCallStatus.SUCCEEDED,
+            completed_at=now + timedelta(milliseconds=2),
+        ),
+    )
+    second = await projection.page_for_conversation(
+        conversation_id,
+        limit=1,
+        cursor=first.next_cursor,
+    )
+
+    assert [item.stage for item in second.items] == [
+        ObservationStage.POLICY,
+    ]
+    assert second.next_cursor is None
+    fresh = await projection.page_for_conversation(
+        conversation_id,
+        limit=1,
+    )
+    assert fresh.items[0].stage is ObservationStage.EVIDENCE
+
+
+@pytest.mark.asyncio
+async def test_pages_order_same_time_cross_source_without_duplicates(
+    tmp_path,
+) -> None:
+    conversation_id = "chat-page-tie"
+    now = datetime.now(timezone.utc)
+    invocation_id = uuid4()
+    await lite_action_store(tmp_path).begin(
+        ActionRequest(
+            invocation_id=invocation_id,
+            correlation_id=invocation_id,
+            conversation_id=conversation_id,
+            registry_generation=4,
+            capability_id="example.read",
+            kind=ActionKind.TOOL,
+            action_name="read",
+            arguments_hash=f"sha256:{'a' * 64}",
+            effect=ToolEffect.NONE,
+            idempotency_key="tie-action",
+            requested_at=now,
+        ),
+    )
+    await lite_compaction_store(tmp_path).append(
+        CompactionRecord(
+            agent_id="default",
+            conversation_id=conversation_id,
+            invocation_id=uuid4(),
+            registry_generation=4,
+            strategy_id="qwenpaw.context.scroll",
+            trigger=CompactionTrigger.MANUAL,
+            status=CompactionStatus.SUCCEEDED,
+            before_message_count=3,
+            after_message_count=1,
+            evicted_messages=2,
+            context_changed=True,
+            started_at=now,
+            completed_at=now,
+        ),
+    )
+    projection = lite_observation_projection(tmp_path)
+    observed = []
+    cursor = None
+    while True:
+        page = await projection.page_for_conversation(
+            conversation_id,
+            limit=1,
+            cursor=cursor,
+        )
+        observed.extend(page.items)
+        cursor = page.next_cursor
+        if cursor is None:
+            break
+
+    assert len(observed) == 3
+    assert len({item.observation_id for item in observed}) == 3
+    assert [str(item.observation_id) for item in observed] == sorted(
+        (str(item.observation_id) for item in observed),
+        reverse=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_page_rejects_cursor_from_another_conversation(
+    tmp_path,
+) -> None:
+    now = datetime.now(timezone.utc)
+    await lite_compaction_store(tmp_path).append(
+        CompactionRecord(
+            agent_id="default",
+            conversation_id="chat-owner-a",
+            invocation_id=uuid4(),
+            registry_generation=2,
+            strategy_id="qwenpaw.context.scroll",
+            trigger=CompactionTrigger.MANUAL,
+            status=CompactionStatus.SUCCEEDED,
+            before_message_count=3,
+            after_message_count=2,
+            evicted_messages=1,
+            context_changed=True,
+            started_at=now,
+            completed_at=now,
+        ),
+    )
+    await lite_compaction_store(tmp_path).append(
+        CompactionRecord(
+            agent_id="default",
+            conversation_id="chat-owner-a",
+            invocation_id=uuid4(),
+            registry_generation=2,
+            strategy_id="qwenpaw.context.scroll",
+            trigger=CompactionTrigger.MANUAL,
+            status=CompactionStatus.SUCCEEDED,
+            before_message_count=2,
+            after_message_count=1,
+            evicted_messages=1,
+            context_changed=True,
+            started_at=now,
+            completed_at=now + timedelta(milliseconds=1),
+        ),
+    )
+    projection = lite_observation_projection(tmp_path)
+    first = await projection.page_for_conversation(
+        "chat-owner-a",
+        limit=1,
+    )
+    assert first.next_cursor is not None
+
+    with pytest.raises(ObservationCursorError, match="owner mismatch"):
+        await projection.page_for_conversation(
+            "chat-owner-b",
+            limit=1,
+            cursor=first.next_cursor,
+        )
+
+
+@pytest.mark.asyncio
+async def test_pagination_is_not_limited_to_first_thousand_sources(
+    tmp_path,
+) -> None:
+    conversation_id = "chat-large-history"
+    now = datetime.now(timezone.utc)
+    records = tuple(
+        CompactionRecord(
+            agent_id="default",
+            conversation_id=conversation_id,
+            invocation_id=uuid4(),
+            registry_generation=2,
+            strategy_id="qwenpaw.context.scroll",
+            trigger=CompactionTrigger.AUTOMATIC,
+            status=CompactionStatus.SUCCEEDED,
+            before_message_count=2,
+            after_message_count=1,
+            evicted_messages=1,
+            context_changed=True,
+            started_at=now + timedelta(microseconds=index),
+            completed_at=now + timedelta(microseconds=index),
+        )
+        for index in range(1001)
+    )
+
+    class EmptyHistory:
+        async def scan_for_conversation(self, *_args, **_kwargs):
+            return ()
+
+    class CompactionHistory:
+        async def scan_for_conversation(self, *_args, **_kwargs):
+            return records
+
+    projection = LiteObservationProjection(
+        EmptyHistory(),
+        EmptyHistory(),
+        CompactionHistory(),
+        LiteObservationIndex(tmp_path / "observations.sqlite3"),
+    )
+    first = await projection.page_for_conversation(
+        conversation_id,
+        limit=1000,
+    )
+    assert len(first.items) == 1000
+    assert first.next_cursor is not None
+    second = await projection.page_for_conversation(
+        conversation_id,
+        limit=1000,
+        cursor=first.next_cursor,
+    )
+    assert len(second.items) == 1
+    assert second.next_cursor is None
+    assert not (
+        {item.observation_id for item in first.items}
+        & {item.observation_id for item in second.items}
+    )
 
 
 @pytest.mark.asyncio
@@ -290,7 +544,7 @@ async def test_control_projects_safe_audit_without_instruction_content(
     )
 
     class History:
-        async def list_for_conversation(self, **_kwargs):
+        async def scan_for_conversation(self, **_kwargs):
             return (
                 ControlRecord(command=steer, receipt=steer_receipt),
                 ControlRecord(
@@ -420,9 +674,8 @@ async def test_verification_projects_host_evidence_without_content(
     )
 
     class History:
-        async def list_for_conversation(self, chat_id, *, limit=100):
+        async def scan_for_conversation(self, chat_id):
             assert chat_id == conversation_id
-            assert limit == 1000
             return (record,)
 
     observations = await lite_observation_projection(

@@ -810,7 +810,12 @@ Cron 不形成独立审批或产物事实源。
       临时真实 SQLite Ledger → Verification Event → Chat API 读链路及失败隐私投影
       共 67 项定点测试通过。运行中 24 个 Task 当前没有 Verification 源记录，固定
       Chat 查询正确保持 VERIFICATION=0，没有伪造通过状态。
-    - [ ] 完成跨来源 cursor/pagination，替代 Lite 当前每类最多 1000 条的有界扫描。
+    - [x] 完成跨来源 cursor/pagination：稳定 `ObservationPage` 保留旧列表 API，
+      新增 Chat-owned `/observations/page`；Lite 内容零拷贝索引只保存 source pointer、
+      UTC 排序键与单调 `indexed_sequence`。游标绑定 Chat、首屏水位和最后排序键，
+      新增或后补 Evidence 不污染旧快照，畸形、不可用锚点和跨 Chat 游标失败关闭。
+      各权威源提供 Lite 全量索引重建入口，不再截断每类 1000 条；同时间戳跨来源、
+      翻页期间完成 Model Result、1001 条历史及 API 400 映射由 79 项定点测试覆盖。
   - [ ] 完成 Model Call Plane 全部路由与成本能力：
     - [x] 冻结 `RouteDecision` / `ModelCallAttempt` / `ModelCallResult` / Store Port，
       并在 `TokenRecordingModelWrapper` 的真实 Provider 网络边界留证。每个实际请求

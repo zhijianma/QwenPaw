@@ -164,7 +164,7 @@ class FilesystemModelCallStore:
     def _list_sync(
         self,
         conversation_id: str,
-        limit: int,
+        limit: int | None,
     ) -> list[ModelCallRecord]:
         root = self._root / self._owner_key(conversation_id, "")
         records: list[ModelCallRecord] = []
@@ -188,7 +188,7 @@ class FilesystemModelCallStore:
             ),
             reverse=True,
         )
-        return records[:limit]
+        return records if limit is None else records[:limit]
 
     async def list_for_conversation(
         self,
@@ -202,6 +202,15 @@ class FilesystemModelCallStore:
         if limit < 1 or limit > 1000:
             raise ValueError("limit must be between 1 and 1000")
         return await run_sync_io(self._list_sync, conversation_id, limit)
+
+    async def scan_for_conversation(
+        self,
+        conversation_id: str,
+    ) -> Sequence[ModelCallRecord]:
+        """Scan all Lite records for a derived-index rebuild."""
+        if not conversation_id.strip():
+            raise ValueError("conversation_id cannot be empty")
+        return await run_sync_io(self._list_sync, conversation_id, None)
 
 
 class ModelCallSession:

@@ -114,9 +114,21 @@ class RuntimeObservation(KernelModel):
         return facts
 
 
+class ObservationPage(KernelModel):
+    """Stable cursor page over a fixed semantic-observation snapshot."""
+
+    schema_id: Literal["qwenpaw.observation-page.v1"] = Field(
+        default="qwenpaw.observation-page.v1",
+        alias="schema",
+    )
+    items: tuple[RuntimeObservation, ...] = ()
+    next_cursor: NonEmptyStr | None = None
+
+
 __all__ = [
     "MAX_OBSERVATION_FACTS_BYTES",
     "ObservationCategory",
+    "ObservationPage",
     "ObservationSource",
     "ObservationStage",
     "ObservationStatus",

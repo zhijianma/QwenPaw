@@ -95,7 +95,7 @@ from .conversations import (
 from .delivery import DeliveryAttempt, DeliveryReceipt, DeliveryRequest
 from .inbox import InboxItem
 from .operational import OperationalEvent
-from .observations import RuntimeObservation
+from .observations import ObservationPage, RuntimeObservation
 
 
 @runtime_checkable
@@ -1285,6 +1285,15 @@ class ObservationProjectionPort(Protocol):
         limit: int = 100,
     ) -> Sequence[RuntimeObservation]:
         """Return newest observations for one ChatSpec identity."""
+
+    async def page_for_conversation(
+        self,
+        conversation_id: str,
+        *,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> ObservationPage:
+        """Return one stable page over a fixed source snapshot."""
 
 
 @runtime_checkable

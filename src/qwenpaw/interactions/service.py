@@ -326,15 +326,21 @@ class InteractionService:
         self,
         agent_id: str,
         conversation_id: str,
-        limit: int,
+        limit: int | None,
     ) -> tuple[InteractionRecord, ...]:
         with self._connect() as connection:
+            suffix = " LIMIT ?" if limit is not None else ""
+            arguments: tuple[object, ...] = (
+                (agent_id, conversation_id, limit)
+                if limit is not None
+                else (agent_id, conversation_id)
+            )
             rows = connection.execute(
                 "SELECT request_json, resolution_json "
                 "FROM runtime_interactions WHERE agent_id = ? "
                 "AND conversation_id = ? "
-                "ORDER BY updated_at DESC, interaction_id DESC LIMIT ?",
-                (agent_id, conversation_id, limit),
+                "ORDER BY updated_at DESC, interaction_id DESC" + suffix,
+                arguments,
             ).fetchall()
         return tuple(
             InteractionRecord(
@@ -350,6 +356,23 @@ class InteractionService:
                 ),
             )
             for row in rows
+        )
+
+    async def scan_for_conversation(
+        self,
+        *,
+        agent_id: str,
+        conversation_id: str,
+    ) -> Sequence[InteractionRecord]:
+        """Scan all Lite records for a derived-index rebuild."""
+        if not agent_id.strip() or not conversation_id.strip():
+            raise ValueError("interaction owner cannot be empty")
+        await self.start()
+        return await asyncio.to_thread(
+            self._list_for_conversation_sync,
+            agent_id,
+            conversation_id,
+            None,
         )
 
     @staticmethod

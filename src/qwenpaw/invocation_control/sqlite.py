@@ -1285,14 +1285,20 @@ class SQLiteInvocationControl:
         self,
         agent_id: str,
         conversation_id: str,
-        limit: int,
+        limit: int | None,
     ) -> tuple[ControlRecord, ...]:
         with self._connect() as connection:
+            suffix = " LIMIT ?" if limit is not None else ""
+            arguments: tuple[object, ...] = (
+                (agent_id, conversation_id, limit)
+                if limit is not None
+                else (agent_id, conversation_id)
+            )
             rows = connection.execute(
                 "SELECT model_json, receipt_json FROM control_commands "
                 "WHERE agent_id = ? AND conversation_id = ? "
-                "ORDER BY updated_at DESC, command_id DESC LIMIT ?",
-                (agent_id, conversation_id, limit),
+                "ORDER BY updated_at DESC, command_id DESC" + suffix,
+                arguments,
             ).fetchall()
         return tuple(
             ControlRecord(
@@ -1304,6 +1310,23 @@ class SQLiteInvocationControl:
                 ),
             )
             for row in rows
+        )
+
+    async def scan_for_conversation(
+        self,
+        *,
+        agent_id: str,
+        conversation_id: str,
+    ) -> tuple[ControlRecord, ...]:
+        """Scan all Lite records for a derived-index rebuild."""
+        if not agent_id.strip() or not conversation_id.strip():
+            raise ValueError("control owner cannot be empty")
+        await self.initialize()
+        return await asyncio.to_thread(
+            self._list_for_conversation_sync,
+            agent_id,
+            conversation_id,
+            None,
         )
 
     def _lookup_control_sync(

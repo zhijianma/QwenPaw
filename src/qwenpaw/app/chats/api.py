@@ -68,6 +68,7 @@ from ...kernel import (
     InteractionResolution,
     InteractionResponse,
     ModelCallRecord,
+    ObservationPage,
     RuntimeObservation,
     ConversationRuntimeProjection,
     ControlReceipt,
@@ -85,6 +86,7 @@ from ...kernel.models import ArtifactRenderDisposition
 from ...runtime.assembly import capability_registry_for
 from ...runtime.actions import lite_action_store, public_action_record
 from ...runtime.model_calls import lite_model_call_store
+from ...runtime.observation_index import ObservationCursorError
 from ...runtime.observations import lite_observation_projection
 from ...tasks.artifacts import (
     ArtifactIntegrityError,
@@ -1413,6 +1415,43 @@ async def list_chat_observations(
         limit=limit,
     )
     return list(observations)
+
+
+@router.get(
+    "/{chat_id}/observations/page",
+    response_model=ObservationPage,
+)
+async def page_chat_observations(
+    chat_id: str,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    cursor: Annotated[str | None, Query(max_length=2048)] = None,
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+) -> ObservationPage:
+    """Return a stable fixed-watermark semantic-observation page."""
+    chat_spec = await mgr.get_chat(chat_id)
+    if not chat_spec:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Chat not found: {chat_id}",
+        )
+    projection = lite_observation_projection(
+        Path(workspace.workspace_dir),
+        agent_id=workspace.agent_id,
+        interactions=workspace.interaction_service,
+        controls=workspace.invocation_control,
+        verifications=lite_verification_history(
+            Path(workspace.workspace_dir),
+        ),
+    )
+    try:
+        return await projection.page_for_conversation(
+            chat_id,
+            limit=limit,
+            cursor=cursor,
+        )
+    except ObservationCursorError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/{chat_id}/status", response_model=ChatStatusResponse)

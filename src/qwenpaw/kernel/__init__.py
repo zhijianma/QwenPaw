@@ -255,6 +255,7 @@ from .operational import (
 )
 from .observations import (
     ObservationCategory,
+    ObservationPage,
     ObservationSource,
     ObservationStage,
     ObservationStatus,
@@ -404,6 +405,7 @@ __all__ = [
     "OperationalSeverity",
     "OperationalStatus",
     "ObservationCategory",
+    "ObservationPage",
     "ObservationProjectionPort",
     "ObservationSource",
     "ObservationStage",

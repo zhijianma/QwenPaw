@@ -65,6 +65,16 @@ class TaskVerificationHistory(VerificationHistoryPort):
             raise ValueError("conversation_id cannot be empty")
         if limit < 1 or limit > 1000:
             raise ValueError("limit must be between 1 and 1000")
+        records = await self.scan_for_conversation(conversation_id)
+        return records[:limit]
+
+    async def scan_for_conversation(
+        self,
+        conversation_id: str,
+    ) -> Sequence[VerificationRecord]:
+        """Scan all records derived from matching Task ledgers."""
+        if not conversation_id.strip():
+            raise ValueError("conversation_id cannot be empty")
         records = []
         for task in await self._matching_tasks(conversation_id):
             projection = await load_task_result_projection(
@@ -79,7 +89,7 @@ class TaskVerificationHistory(VerificationHistoryPort):
             ),
             reverse=True,
         )
-        return records[:limit]
+        return records
 
 
 def lite_verification_history(

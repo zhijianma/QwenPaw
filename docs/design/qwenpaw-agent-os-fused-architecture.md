@@ -466,6 +466,9 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
   VERIFICATION 从 Task Ledger 的 `verification.completed` 权威事件派生，以只读
   `VerificationHistoryPort` 关联 ChatSpec.id；公开投影不复制验收文本、失败原因或
   插件 metadata。执行成功、Artifact 生成和 Verification 通过仍是三个独立事实。
+  Lite 通过只保存 source pointer 的派生索引提供固定水位分页；不透明游标绑定
+  `ChatSpec.id`、首屏 `indexed_sequence` 和最后排序键。翻页期间新增或后补的
+  Evidence 不进入旧快照，且权威事实仍从原 Store 动态投影，不形成第二份事实库。
 - [x] 冻结 `ModelCallAttempt` / `RouteDecision` / `ModelCallResult` 和 Store Port；
   Lite 已在真实 Provider 网络边界记录直连、同模型重试、跨模型 fallback、overflow
   retry、流式成功/取消/失败和 usage，并提供 Chat-owned 只读查询。Route 区分逻辑

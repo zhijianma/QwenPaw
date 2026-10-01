@@ -187,6 +187,20 @@ class InvocationControlService:  # pylint: disable=too-many-public-methods
             limit=limit,
         )
 
+    async def scan_for_conversation(
+        self,
+        *,
+        agent_id: str,
+        conversation_id: str,
+    ) -> tuple[ControlRecord, ...]:
+        """Scan all durable control history for index reconstruction."""
+        if self.store is None:
+            return ()
+        return await self.store.scan_for_conversation(
+            agent_id=agent_id,
+            conversation_id=conversation_id,
+        )
+
     async def bind_interrupt(
         self,
         invocation_id: UUID,

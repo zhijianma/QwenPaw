@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 from uuid import UUID, uuid5
 
 from ..kernel import (
@@ -26,6 +27,7 @@ from ..kernel import (
     ModelCallStatus,
     ModelCallStore,
     ObservationCategory,
+    ObservationPage,
     ObservationProjectionPort,
     ObservationSource,
     ObservationStage,
@@ -37,8 +39,7 @@ from ..kernel import (
 )
 from .actions import lite_action_store
 from .model_calls import lite_model_call_store
-
-_SOURCE_SCAN_LIMIT = 1000
+from .observation_index import LiteObservationIndex
 
 
 def _observation_id(source_id: UUID, stage: ObservationStage) -> UUID:
@@ -572,6 +573,19 @@ async def _empty_verifications() -> Sequence[VerificationRecord]:
     return ()
 
 
+async def _scan_source(
+    source: object,
+    *args: object,
+    **kwargs: object,
+) -> Sequence[Any]:
+    scanner = getattr(source, "scan_for_conversation", None)
+    if scanner is None:
+        raise TypeError(
+            f"{type(source).__name__} cannot rebuild the observation index",
+        )
+    return await scanner(*args, **kwargs)
+
+
 class LiteObservationProjection(ObservationProjectionPort):
     """Derive Lite observations without creating a second fact store."""
 
@@ -580,6 +594,7 @@ class LiteObservationProjection(ObservationProjectionPort):
         model_calls: ModelCallStore,
         actions: ActionStore,
         compactions: CompactionStore,
+        index: LiteObservationIndex,
         *,
         agent_id: str | None = None,
         interactions: InteractionHistoryPort | None = None,
@@ -589,6 +604,7 @@ class LiteObservationProjection(ObservationProjectionPort):
         self._model_calls = model_calls
         self._actions = actions
         self._compactions = compactions
+        self._index = index
         self._agent_id = agent_id
         self._interactions = interactions
         self._controls = controls
@@ -601,34 +617,43 @@ class LiteObservationProjection(ObservationProjectionPort):
         limit: int = 100,
     ) -> Sequence[RuntimeObservation]:
         """Return newest observations derived from durable source facts."""
+        page = await self.page_for_conversation(
+            conversation_id,
+            limit=limit,
+        )
+        return list(page.items)
+
+    async def _load_observations(
+        self,
+        conversation_id: str,
+    ) -> tuple[RuntimeObservation, ...]:
+        """Project every Lite source fact for index synchronization."""
         if not conversation_id.strip():
             raise ValueError("conversation_id cannot be empty")
-        if limit < 1 or limit > 1000:
-            raise ValueError("limit must be between 1 and 1000")
         if self._interactions is not None:
             if self._agent_id is None:
                 raise ValueError("interaction projection requires agent_id")
-            interaction_records = self._interactions.list_for_conversation(
+            interaction_records = _scan_source(
+                self._interactions,
                 agent_id=self._agent_id,
                 conversation_id=conversation_id,
-                limit=_SOURCE_SCAN_LIMIT,
             )
         else:
             interaction_records = _empty_interactions()
         if self._controls is not None:
             if self._agent_id is None:
                 raise ValueError("control projection requires agent_id")
-            control_records = self._controls.list_for_conversation(
+            control_records = _scan_source(
+                self._controls,
                 agent_id=self._agent_id,
                 conversation_id=conversation_id,
-                limit=_SOURCE_SCAN_LIMIT,
             )
         else:
             control_records = _empty_controls()
         verification_records = (
-            self._verifications.list_for_conversation(
+            _scan_source(
+                self._verifications,
                 conversation_id,
-                limit=_SOURCE_SCAN_LIMIT,
             )
             if self._verifications is not None
             else _empty_verifications()
@@ -641,17 +666,17 @@ class LiteObservationProjection(ObservationProjectionPort):
             resolved_controls,
             resolved_verifications,
         ) = await asyncio.gather(
-            self._model_calls.list_for_conversation(
+            _scan_source(
+                self._model_calls,
                 conversation_id,
-                limit=_SOURCE_SCAN_LIMIT,
             ),
-            self._actions.list_for_conversation(
+            _scan_source(
+                self._actions,
                 conversation_id,
-                limit=_SOURCE_SCAN_LIMIT,
             ),
-            self._compactions.list_for_conversation(
+            _scan_source(
+                self._compactions,
                 conversation_id,
-                limit=_SOURCE_SCAN_LIMIT,
             ),
             interaction_records,
             control_records,
@@ -688,7 +713,45 @@ class LiteObservationProjection(ObservationProjectionPort):
             key=lambda item: (item.occurred_at, str(item.observation_id)),
             reverse=True,
         )
-        return observations[:limit]
+        return tuple(observations)
+
+    async def page_for_conversation(
+        self,
+        conversation_id: str,
+        *,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> ObservationPage:
+        """Return one stable page without copying source facts."""
+        if not conversation_id.strip():
+            raise ValueError("conversation_id cannot be empty")
+        if limit < 1 or limit > 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        observations = await self._load_observations(conversation_id)
+        entries, next_cursor = await self._index.sync_and_page(
+            conversation_id,
+            observations,
+            limit=limit,
+            cursor=cursor,
+        )
+        by_id = {str(item.observation_id): item for item in observations}
+        missing = [
+            entry.observation_id
+            for entry in entries
+            if entry.observation_id not in by_id
+        ]
+        if missing:
+            observations = await self._load_observations(conversation_id)
+            by_id = {str(item.observation_id): item for item in observations}
+            missing = [item for item in missing if item not in by_id]
+        if missing:
+            raise RuntimeError(
+                "observation index references unavailable source facts",
+            )
+        return ObservationPage(
+            items=tuple(by_id[item.observation_id] for item in entries),
+            next_cursor=next_cursor,
+        )
 
 
 def lite_observation_projection(
@@ -706,6 +769,9 @@ def lite_observation_projection(
         lite_model_call_store(workspace_dir),
         lite_action_store(workspace_dir),
         lite_compaction_store(workspace_dir),
+        LiteObservationIndex(
+            Path(workspace_dir) / ".qwenpaw" / "lite" / "observations.sqlite3",
+        ),
         agent_id=agent_id,
         interactions=interactions,
         controls=controls,
