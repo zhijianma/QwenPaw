@@ -50,6 +50,8 @@ class ObservationStatus(str, Enum):
     UNKNOWN = "unknown"
     CANCELLED = "cancelled"
     DENIED = "denied"
+    RESOLVED = "resolved"
+    EXPIRED = "expired"
     BLOCKED = "blocked"
 
 
@@ -77,7 +79,7 @@ class RuntimeObservation(KernelModel):
     conversation_id: NonEmptyStr | None = None
     invocation_id: UUID | None = None
     correlation_id: UUID | None = None
-    registry_generation: int = Field(ge=1)
+    registry_generation: int | None = Field(default=None, ge=1)
     title: NonEmptyStr
     facts: JsonObject = Field(default_factory=dict)
     occurred_at: AwareDatetime

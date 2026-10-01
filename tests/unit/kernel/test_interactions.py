@@ -13,6 +13,7 @@ from qwenpaw.kernel import (
     InteractionMode,
     InteractionOption,
     InteractionRequest,
+    InteractionRecord,
     InteractionResolution,
     InteractionResponse,
     InteractionStatus,
@@ -127,3 +128,18 @@ def test_cancelled_interaction_cannot_carry_user_response() -> None:
             revision=2,
             response=response,
         )
+
+
+def test_interaction_record_rejects_foreign_resolution() -> None:
+    request = _request(
+        kind=InteractionKind.USER_INPUT,
+        mode=InteractionMode.BLOCKING,
+    )
+    resolution = InteractionResolution(
+        interaction_id=uuid4(),
+        status=InteractionStatus.CANCELLED,
+        revision=2,
+    )
+
+    with pytest.raises(ValidationError, match="identity mismatch"):
+        InteractionRecord(request=request, resolution=resolution)

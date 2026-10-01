@@ -1401,6 +1401,8 @@ async def list_chat_observations(
         )
     observations = await lite_observation_projection(
         Path(workspace.workspace_dir),
+        agent_id=workspace.agent_id,
+        interactions=workspace.interaction_service,
     ).list_for_conversation(
         chat_id,
         limit=limit,

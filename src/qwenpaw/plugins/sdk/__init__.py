@@ -58,6 +58,7 @@ from ...kernel.inbox import (
     InboxItemNotFoundError,
     InboxProjectionConflictError,
 )
+from ...kernel.interactions import InteractionRecord
 from ...kernel.operational import (
     OperationalEvent,
     OperationalEventConflictError,
@@ -168,6 +169,7 @@ from ...kernel.ports import (
     DeliveryAdapter,
     DeliveryProjectionPort,
     InboxProjectionPort,
+    InteractionHistoryPort,
     OperationalEventPort,
     ObservationProjectionPort,
     DriverHost,
@@ -270,6 +272,8 @@ __all__ = [
     "InboxItemNotFoundError",
     "InboxProjectionConflictError",
     "InboxProjectionPort",
+    "InteractionHistoryPort",
+    "InteractionRecord",
     "OperationalEvent",
     "OperationalEventConflictError",
     "OperationalEventPort",

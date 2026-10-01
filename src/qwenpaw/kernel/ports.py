@@ -74,6 +74,7 @@ from .invocation_control import (
 )
 from .interactions import (
     InteractionOption,
+    InteractionRecord,
     InteractionRequest,
     InteractionResolution,
     InteractionResponse,
@@ -441,6 +442,20 @@ class InteractionPort(Protocol):
         timeout_seconds: float | None = None,
     ) -> InteractionResolution:
         """Wait for one blocking interaction's authoritative terminal state."""
+
+
+@runtime_checkable
+class InteractionHistoryPort(Protocol):
+    """Optional read-only history surface over runtime interactions."""
+
+    async def list_for_conversation(
+        self,
+        *,
+        agent_id: str,
+        conversation_id: str,
+        limit: int = 100,
+    ) -> Sequence[InteractionRecord]:
+        """List newest interaction requests with terminal resolutions."""
 
 
 @runtime_checkable

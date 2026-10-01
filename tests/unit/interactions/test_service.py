@@ -17,11 +17,13 @@ from qwenpaw.kernel import (
     ActorRef,
     ActorType,
     InteractionKind,
+    InteractionHistoryPort,
     InteractionMode,
     InteractionOption,
     InteractionRequest,
     InteractionResponse,
     InteractionStatus,
+    InteractionPort,
 )
 
 
@@ -67,6 +69,8 @@ async def test_parallel_interactions_are_owned_by_chat_spec(
     tmp_path: Path,
 ) -> None:
     service = InteractionService(tmp_path / "interactions.sqlite3")
+    assert isinstance(service, InteractionPort)
+    assert isinstance(service, InteractionHistoryPort)
     invocation_id = uuid4()
     first = _request(invocation_id)
     second = _request(
@@ -105,6 +109,13 @@ async def test_resolve_wakes_waiter_and_replays_same_response(
     assert await waiter == resolution
     assert replay == resolution
     assert resolution.status is InteractionStatus.RESOLVED
+
+    [record] = await service.list_for_conversation(
+        agent_id="default",
+        conversation_id="chat-spec-1",
+    )
+    assert record.request == request
+    assert record.resolution == resolution
 
 
 @pytest.mark.asyncio
@@ -218,3 +229,35 @@ async def test_suggestion_is_persisted_but_never_awaited(
 
     with pytest.raises(InteractionConflictError, match="cannot be awaited"):
         await service.wait(request.interaction_id)
+
+
+@pytest.mark.asyncio
+async def test_interaction_history_is_owner_scoped_and_bounded(
+    tmp_path: Path,
+) -> None:
+    service = InteractionService(tmp_path / "interactions.sqlite3")
+    await service.open(_request(uuid4()))
+
+    assert (
+        len(
+            await service.list_for_conversation(
+                agent_id="default",
+                conversation_id="chat-spec-1",
+                limit=1,
+            ),
+        )
+        == 1
+    )
+    assert (
+        await service.list_for_conversation(
+            agent_id="another-agent",
+            conversation_id="chat-spec-1",
+        )
+        == ()
+    )
+    with pytest.raises(ValueError, match="limit must be between"):
+        await service.list_for_conversation(
+            agent_id="default",
+            conversation_id="chat-spec-1",
+            limit=0,
+        )

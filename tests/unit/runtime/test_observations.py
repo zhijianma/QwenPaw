@@ -11,6 +11,13 @@ from qwenpaw.kernel import (
     ActionRequest,
     ActionResult,
     ActionStatus,
+    ActorRef,
+    ActorType,
+    InteractionKind,
+    InteractionMode,
+    InteractionOption,
+    InteractionRequest,
+    InteractionResponse,
     ModelCallAttempt,
     ModelCallResult,
     ModelCallStatus,
@@ -23,6 +30,7 @@ from qwenpaw.kernel import (
 from qwenpaw.runtime.model_calls import lite_model_call_store
 from qwenpaw.runtime.actions import lite_action_store
 from qwenpaw.runtime.observations import lite_observation_projection
+from qwenpaw.interactions import InteractionService
 
 
 @pytest.mark.asyncio
@@ -148,12 +156,71 @@ async def test_action_uses_the_same_observation_contract(tmp_path) -> None:
         tmp_path,
     ).list_for_conversation(conversation_id)
 
-    assert [item.stage for item in observations] == [
-        ObservationStage.EVIDENCE,
+    assert observations[0].stage is ObservationStage.EVIDENCE
+    assert {item.stage for item in observations[1:]} == {
         ObservationStage.INTENT,
-    ]
+        ObservationStage.POLICY,
+    }
     assert observations[0].status is ObservationStatus.SUCCEEDED
     assert observations[0].source.source_type == "qwenpaw.action.result"
-    assert observations[1].facts["capability_id"] == "example.export"
+    intent = next(
+        item
+        for item in observations
+        if item.category.value == "action"
+        and item.stage is ObservationStage.INTENT
+    )
+    guardrail = next(
+        item for item in observations if item.category.value == "guardrail"
+    )
+    assert intent.facts["capability_id"] == "example.export"
+    assert intent.status is ObservationStatus.RECORDED
+    assert guardrail.facts["policy_decision"] == "allow"
+    assert "redacted_arguments" not in intent.facts
+    assert "redacted_arguments" not in guardrail.facts
+
+
+@pytest.mark.asyncio
+async def test_interaction_projects_hitl_without_response_content(
+    tmp_path,
+) -> None:
+    conversation_id = "chat-hitl"
+    service = InteractionService(tmp_path / "interactions.sqlite3")
+    request = InteractionRequest(
+        kind=InteractionKind.USER_INPUT,
+        mode=InteractionMode.BLOCKING,
+        agent_id="default",
+        conversation_id=conversation_id,
+        invocation_id=uuid4(),
+        title="Sensitive title",
+        prompt="Private question body",
+        options=(InteractionOption(option_id="safe", label="Private label"),),
+    )
+    await service.open(request)
+    await service.resolve(
+        InteractionResponse(
+            interaction_id=request.interaction_id,
+            idempotency_key="answer-1",
+            expected_revision=1,
+            actor=ActorRef(type=ActorType.USER, id="private-user"),
+            selected_option_ids=("safe",),
+            text="Private response body",
+            values={"private": "structured answer"},
+        ),
+    )
+
+    observations = await lite_observation_projection(
+        tmp_path,
+        agent_id="default",
+        interactions=service,
+    ).list_for_conversation(conversation_id)
+
+    assert [item.category.value for item in observations] == ["hitl", "hitl"]
+    assert observations[0].status is ObservationStatus.RESOLVED
+    assert observations[0].facts["selected_option_ids"] == ["safe"]
     assert observations[1].status is ObservationStatus.RECORDED
-    assert "redacted_arguments" not in observations[1].facts
+    serialized = "".join(item.model_dump_json() for item in observations)
+    assert "Private question body" not in serialized
+    assert "Private response body" not in serialized
+    assert "structured answer" not in serialized
+    assert "private-user" not in serialized
+    assert "Private label" not in serialized

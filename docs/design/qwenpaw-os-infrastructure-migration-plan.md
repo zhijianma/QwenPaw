@@ -779,7 +779,14 @@ Cron 不形成独立审批或产物事实源。
       `GET /api/chats/{ChatSpec.id}/observations?limit=` 已接入；固定 Chat 的真实
       查询在同一时间线返回 11 条 MODEL 和 9 条 ACTION（limit=20），覆盖 policy、
       execution、intent、evidence，且 Action 结果保留 Artifact/Evidence 引用。
-    - [ ] 接入 GUARDRAIL、COMPACTION、HITL、INTERRUPT 与 VERIFICATION 的权威
+    - [x] `InteractionRecord` 冻结 request + optional resolution 历史契约，
+      独立只读 `InteractionHistoryPort` 可按 Agent 与 `ChatSpec.id` 查询所有状态，
+      不扩张或破坏既有运行交互 Port；Approval、User Input、Suggestion 统一派生 HITL
+      intent/evidence。ActionRequest 的 policy decision、risk、effect 和 approval links
+      独立派生 GUARDRAIL policy，不与 Action 结果混写。固定
+      Chat 真实查询共返回 89 条观察项：MODEL 11、ACTION 28、GUARDRAIL 14、HITL
+      36；未复制 prompt、回答正文、values、用户 ID 或隐藏推理。
+    - [ ] 接入 COMPACTION、INTERRUPT 与 VERIFICATION 的权威
       来源；完成跨来源 cursor/pagination，替代 Lite 当前每类最多 1000 条的有界扫描。
   - [ ] 完成 Model Call Plane 全部路由与成本能力：
     - [x] 冻结 `RouteDecision` / `ModelCallAttempt` / `ModelCallResult` / Store Port，

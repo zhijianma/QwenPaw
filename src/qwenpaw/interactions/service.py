@@ -14,6 +14,7 @@ from uuid import UUID
 
 from ..kernel import (
     InteractionMode,
+    InteractionRecord,
     InteractionRequest,
     InteractionResolution,
     InteractionResponse,
@@ -298,6 +299,56 @@ class InteractionService:
             ).fetchall()
         return tuple(
             InteractionRequest.model_validate_json(row["request_json"])
+            for row in rows
+        )
+
+    async def list_for_conversation(
+        self,
+        *,
+        agent_id: str,
+        conversation_id: str,
+        limit: int = 100,
+    ) -> Sequence[InteractionRecord]:
+        """List newest requests with their optional terminal resolution."""
+        if not agent_id.strip() or not conversation_id.strip():
+            raise ValueError("interaction owner cannot be empty")
+        if limit < 1 or limit > 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        await self.start()
+        return await asyncio.to_thread(
+            self._list_for_conversation_sync,
+            agent_id,
+            conversation_id,
+            limit,
+        )
+
+    def _list_for_conversation_sync(
+        self,
+        agent_id: str,
+        conversation_id: str,
+        limit: int,
+    ) -> tuple[InteractionRecord, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT request_json, resolution_json "
+                "FROM runtime_interactions WHERE agent_id = ? "
+                "AND conversation_id = ? "
+                "ORDER BY updated_at DESC, interaction_id DESC LIMIT ?",
+                (agent_id, conversation_id, limit),
+            ).fetchall()
+        return tuple(
+            InteractionRecord(
+                request=InteractionRequest.model_validate_json(
+                    row["request_json"],
+                ),
+                resolution=(
+                    InteractionResolution.model_validate_json(
+                        row["resolution_json"],
+                    )
+                    if row["resolution_json"] is not None
+                    else None
+                ),
+            )
             for row in rows
         )
 

@@ -12,6 +12,9 @@ from ..kernel import (
     ActionRecord,
     ActionStatus,
     ActionStore,
+    InteractionHistoryPort,
+    InteractionRecord,
+    InteractionStatus,
     ModelCallRecord,
     ModelCallStatus,
     ModelCallStore,
@@ -52,6 +55,14 @@ def _action_status(status: ActionStatus) -> ObservationStatus:
         ActionStatus.UNKNOWN: ObservationStatus.UNKNOWN,
         ActionStatus.CANCELLED: ObservationStatus.CANCELLED,
         ActionStatus.DENIED: ObservationStatus.DENIED,
+    }[status]
+
+
+def _interaction_status(status: InteractionStatus) -> ObservationStatus:
+    return {
+        InteractionStatus.RESOLVED: ObservationStatus.RESOLVED,
+        InteractionStatus.EXPIRED: ObservationStatus.EXPIRED,
+        InteractionStatus.CANCELLED: ObservationStatus.CANCELLED,
     }[status]
 
 
@@ -201,8 +212,42 @@ def _action_observations(
         occurred_at=request.requested_at,
         **common,
     )
+    guardrail = RuntimeObservation(
+        observation_id=_observation_id(
+            request.action_id,
+            ObservationStage.POLICY,
+        ),
+        category=ObservationCategory.GUARDRAIL,
+        stage=ObservationStage.POLICY,
+        status=ObservationStatus.RECORDED,
+        source=ObservationSource(
+            source_type="qwenpaw.action.policy-decision",
+            source_id=str(request.action_id),
+        ),
+        conversation_id=request.conversation_id,
+        invocation_id=request.invocation_id,
+        correlation_id=request.correlation_id,
+        registry_generation=request.registry_generation,
+        title="Action policy decided",
+        facts={
+            "action_id": str(request.action_id),
+            "capability_id": request.capability_id,
+            "kind": request.kind.value,
+            "effect": request.effect.value,
+            "risk": request.risk.value,
+            "reversible": request.reversible,
+            "policy_decision": request.policy_decision,
+            "approval_ids": [
+                str(link.approval_id) for link in record.approval_links
+            ],
+            "approval_sources": [
+                link.source.value for link in record.approval_links
+            ],
+        },
+        occurred_at=request.requested_at,
+    )
     if record.result is None:
-        return (intent,)
+        return intent, guardrail
     result = record.result
     evidence = RuntimeObservation(
         observation_id=_observation_id(
@@ -241,7 +286,83 @@ def _action_observations(
         occurred_at=result.completed_at,
         **common,
     )
-    return intent, evidence
+    return intent, guardrail, evidence
+
+
+def _interaction_observations(
+    record: InteractionRecord,
+) -> tuple[RuntimeObservation, ...]:
+    request = record.request
+    common = {
+        "category": ObservationCategory.HITL,
+        "conversation_id": request.conversation_id,
+        "invocation_id": request.invocation_id,
+        "correlation_id": request.correlation_id,
+        "registry_generation": None,
+    }
+    opened = RuntimeObservation(
+        observation_id=_observation_id(
+            request.interaction_id,
+            ObservationStage.INTENT,
+        ),
+        stage=ObservationStage.INTENT,
+        status=ObservationStatus.RECORDED,
+        source=ObservationSource(
+            source_type="qwenpaw.interaction.request",
+            source_id=str(request.interaction_id),
+        ),
+        title="Human interaction opened",
+        facts={
+            "interaction_id": str(request.interaction_id),
+            "kind": request.kind.value,
+            "mode": request.mode.value,
+            "source_id": _optional_uuid(request.source_id),
+            "option_ids": [option.option_id for option in request.options],
+            "has_response_schema": bool(request.response_schema),
+            "expires_at": (
+                request.expires_at.isoformat()
+                if request.expires_at is not None
+                else None
+            ),
+        },
+        occurred_at=request.created_at,
+        **common,
+    )
+    if record.resolution is None:
+        return (opened,)
+    resolution = record.resolution
+    response = resolution.response
+    resolved = RuntimeObservation(
+        observation_id=_observation_id(
+            resolution.interaction_id,
+            ObservationStage.EVIDENCE,
+        ),
+        stage=ObservationStage.EVIDENCE,
+        status=_interaction_status(resolution.status),
+        source=ObservationSource(
+            source_type="qwenpaw.interaction.resolution",
+            source_id=str(resolution.interaction_id),
+        ),
+        title="Human interaction resolved",
+        facts={
+            "interaction_id": str(resolution.interaction_id),
+            "revision": resolution.revision,
+            "selected_option_ids": (
+                list(response.selected_option_ids)
+                if response is not None
+                else []
+            ),
+            "has_text_response": bool(response and response.text),
+            "has_structured_response": bool(response and response.values),
+        },
+        occurred_at=resolution.resolved_at,
+        **common,
+    )
+    return opened, resolved
+
+
+async def _empty_interactions() -> Sequence[InteractionRecord]:
+    return ()
 
 
 class LiteObservationProjection(ObservationProjectionPort):
@@ -251,9 +372,14 @@ class LiteObservationProjection(ObservationProjectionPort):
         self,
         model_calls: ModelCallStore,
         actions: ActionStore,
+        *,
+        agent_id: str | None = None,
+        interactions: InteractionHistoryPort | None = None,
     ) -> None:
         self._model_calls = model_calls
         self._actions = actions
+        self._agent_id = agent_id
+        self._interactions = interactions
 
     async def list_for_conversation(
         self,
@@ -266,15 +392,27 @@ class LiteObservationProjection(ObservationProjectionPort):
             raise ValueError("conversation_id cannot be empty")
         if limit < 1 or limit > 1000:
             raise ValueError("limit must be between 1 and 1000")
-        model_records, action_records = await asyncio.gather(
-            self._model_calls.list_for_conversation(
-                conversation_id,
+        interaction_records = None
+        if self._interactions is not None:
+            if self._agent_id is None:
+                raise ValueError("interaction projection requires agent_id")
+            interaction_records = self._interactions.list_for_conversation(
+                agent_id=self._agent_id,
+                conversation_id=conversation_id,
                 limit=_SOURCE_SCAN_LIMIT,
-            ),
-            self._actions.list_for_conversation(
-                conversation_id,
-                limit=_SOURCE_SCAN_LIMIT,
-            ),
+            )
+        model_records, action_records, resolved_interactions = (
+            await asyncio.gather(
+                self._model_calls.list_for_conversation(
+                    conversation_id,
+                    limit=_SOURCE_SCAN_LIMIT,
+                ),
+                self._actions.list_for_conversation(
+                    conversation_id,
+                    limit=_SOURCE_SCAN_LIMIT,
+                ),
+                interaction_records or _empty_interactions(),
+            )
         )
         observations = [
             observation
@@ -286,6 +424,11 @@ class LiteObservationProjection(ObservationProjectionPort):
             for record in action_records
             for observation in _action_observations(record)
         )
+        observations.extend(
+            observation
+            for record in resolved_interactions
+            for observation in _interaction_observations(record)
+        )
         observations.sort(
             key=lambda item: (item.occurred_at, str(item.observation_id)),
             reverse=True,
@@ -295,11 +438,16 @@ class LiteObservationProjection(ObservationProjectionPort):
 
 def lite_observation_projection(
     workspace_dir: Path,
+    *,
+    agent_id: str | None = None,
+    interactions: InteractionHistoryPort | None = None,
 ) -> LiteObservationProjection:
     """Return the Lite semantic projection over workspace source facts."""
     return LiteObservationProjection(
         lite_model_call_store(workspace_dir),
         lite_action_store(workspace_dir),
+        agent_id=agent_id,
+        interactions=interactions,
     )
 
 

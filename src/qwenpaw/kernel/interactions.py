@@ -148,10 +148,28 @@ class InteractionResolution(KernelModel):
         return self
 
 
+class InteractionRecord(KernelModel):
+    """Queryable request and optional authoritative terminal resolution."""
+
+    request: InteractionRequest
+    resolution: InteractionResolution | None = None
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> Self:
+        """Require request and resolution to identify one interaction."""
+        if (
+            self.resolution is not None
+            and self.resolution.interaction_id != self.request.interaction_id
+        ):
+            raise ValueError("interaction resolution identity mismatch")
+        return self
+
+
 __all__ = [
     "InteractionKind",
     "InteractionMode",
     "InteractionOption",
+    "InteractionRecord",
     "InteractionRequest",
     "InteractionResolution",
     "InteractionResponse",

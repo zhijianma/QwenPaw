@@ -457,7 +457,9 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
   实际执行和 Runtime 独立证据。稳定 `RuntimeObservation` 只读契约以
   `INTENT/POLICY/EXECUTION/EVIDENCE` 表示责任边界，并通过 `source_type +
   source_id` 回指权威事实，不形成第二份事实库。Lite 已接入 Model Call 和 Action，
-  其余类别按同一 Projection Port 增量接入。
+  Action Policy 单独派生 GUARDRAIL；统一 Interaction Request/Resolution 已接入 HITL，
+  且不复制 prompt、自由文本回答或结构化 values。其余类别按同一 Projection Port
+  增量接入。
 - [x] 冻结 `ModelCallAttempt` / `RouteDecision` / `ModelCallResult` 和 Store Port；
   Lite 已在真实 Provider 网络边界记录直连、同模型重试、跨模型 fallback、overflow
   retry、流式成功/取消/失败和 usage，并提供 Chat-owned 只读查询。Route 区分逻辑

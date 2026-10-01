@@ -317,7 +317,11 @@ async def test_list_chat_observations_uses_owned_projection(tmp_path):
         chat_id=chat_id,
         limit=20,
         mgr=manager,
-        workspace=SimpleNamespace(workspace_dir=tmp_path),
+        workspace=SimpleNamespace(
+            workspace_dir=tmp_path,
+            agent_id="default",
+            interaction_service=None,
+        ),
     )
 
     assert {item.stage.value for item in observations} == {
@@ -340,7 +344,11 @@ async def test_list_chat_observations_rejects_unknown_chat(tmp_path):
             chat_id=str(uuid4()),
             limit=20,
             mgr=manager,
-            workspace=SimpleNamespace(workspace_dir=tmp_path),
+            workspace=SimpleNamespace(
+                workspace_dir=tmp_path,
+                agent_id="default",
+                interaction_service=None,
+            ),
         )
 
     assert raised.value.status_code == 404
