@@ -16,6 +16,33 @@
 3. 可替换能力通过 Contribution 和 Slot 扩展。
 4. 产品差异由 Profile 和部署适配器表达，不复制领域代码。
 
+### 1.1 3.0 产品定位与 OS 边界
+
+结合 `aliyun/ai-agent-handbook` 对 Harness 与 Agentic OS 的责任划分，
+QwenPaw 3.0 的准确定位是：
+
+> **产品化 Harness + Agentic OS Substrate**。
+
+产品化 Harness 决定目标如何推进：Agent Contract、Context Policy、Plan、
+Prepare / Model / Act / Observe / Verify Loop、能力选择和完成验证。Agentic OS
+Substrate 管理多个 Harness 都需要的公共运行对象与强制边界：Agent Identity、
+Run、Conversation、Workspace、Capability、Budget Lease、Policy、Checkpoint、
+Artifact 和 Evidence。
+
+这一区分是逻辑责任边界，不要求现在移动大量文件。现有 `kernel/` 继续保存稳定
+公共契约，但每个类型和 Port 必须能够归类为 Harness Contract 或 OS Contract。
+任务目标、计划内容、业务终止条件、Verifier 规则和 Context 策展策略由应用 /
+Harness 定义；OS 可以持久化和执行这些契约，但不决定其业务内容。
+
+能力是否下沉到 OS，使用三条门禁：
+
+1. 多个应用重复实现，且实现差异不产生业务价值；
+2. 必须由被约束方之外的组件执行才真正有效；
+3. 需要独立于执行方的证据来源才能验证。
+
+详细逐项分析见
+`docs/analysis/qwenpaw-ai-agent-handbook-absorption-2026-10-01.md`。
+
 文中的状态含义：
 
 | 状态 | 含义 |
@@ -50,6 +77,24 @@
 ```
 
 OS 3.0 的 P1–P6 是能力域，不是强制调用层级：
+
+逻辑责任叠加如下，不能仅凭物理目录判断归属：
+
+```text
+Experience / Channel
+        |
+Productized Harness
+  Agent Contract / Context Compiler / Plan / Loop / Verifier
+        |
+Agentic OS Substrate
+  Run / Conversation / Workspace / Capability / Policy / Budget Lease
+  Interaction / Queue / Checkpoint / Artifact / Evidence
+        |
+Runtime / Sandbox / Storage adapters
+```
+
+其中 Context Compiler、统一 Action Plane、Environment Contract 和可派生的
+Budget Lease 是 Handbook 比对后确认的增量基础设施，不由 Task Workbench 私有实现。
 
 | 能力域 | 稳定契约 | 当前主要实现 |
 |---|---|---|
@@ -355,6 +400,20 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
 `docs/development/plugin-quickstart.md`。
 
 ## 11. 分阶段路线图
+
+### R0A：Handbook 吸收项（Chat-first）
+
+- 完成 Chat 工具输出到不可变 Artifact / Evidence 的宿主捕获。
+- 将 Tool、Driver、MCP、Shell、Browser 与远程执行统一适配到
+  `ActionRequest` / `ActionResult`，不为每类能力复制审批、重试和审计。
+- 将 `PromptFragment` 兼容演进为带来源、版本、信任级和哈希的
+  `ContextFragment`，为每次模型调用生成 `ContextManifest`。
+- 冻结 `EnvironmentContract`，Lite 先由本地 Workspace / Sandbox 适配。
+- 区分 Run Completion、Verification 与业务 Outcome，并预留 Trajectory 投影。
+- Task Workbench 继续后置；上述契约先在真实 Chat 中完成验证。
+
+`BudgetLease`、外置 Resource Registry 和分布式发现先冻结公共边界，由
+Workstation / Hub 实现；Lite 不引入 Nacos、向量数据库或互联网 Federation。
 
 ### R0：Lite 基线收口（当前）
 

@@ -681,6 +681,18 @@ Cron 不形成独立审批或产物事实源。
 
 ### I8：基建完成门禁
 
+- [ ] 完成 Handbook 增量基础契约，不把它们下放到 Task 页面私有状态：
+  - [ ] `ContextPolicy` / `ContextManifest` 覆盖每次真实模型调用的来源、版本、
+    信任级、裁剪、能力披露和内容哈希；不保存隐藏推理或 Secret。
+  - [ ] `ActionRequest` / `ActionResult` 统一 Tool、Driver、MCP、Shell、Browser
+    与 Harness Remote Action 的身份、风险、幂等、审批、结果和 Evidence。
+  - [ ] `EnvironmentContract` 冻结 Workspace、Sandbox、Harness 和 Hub runtime
+    共同需要的挂载、网络、凭据引用、依赖、资源、快照与清理语义。
+  - [ ] Run Completion、Verification 与业务 Outcome 分层；Event 能派生可回放
+    Trajectory，但本阶段不建设完整 Evaluation UI。
+  - [ ] `BudgetLease` 与现有 `ExecutionBudget`、Usage Scope、Capability lease
+    明确区分；Lite 只冻结接口，Workstation / Hub 再实现可派生和级联撤销。
+
 - [x] 每个公开扩展模块均有 system/plugin contract tests；system-only 模块具有
   核心激活、固定 generation、失败关闭和代际排空合同。
   - [x] Capability Registry 对 system 与 plugin 的每次 bundle activation 使用同一份
