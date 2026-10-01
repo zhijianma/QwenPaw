@@ -295,6 +295,7 @@ from .ports import (
     OperationalEventPort,
     RuntimeInteractionProducer,
     SchedulerPort,
+    SubmissionHistoryPort,
 )
 
 __all__ = [
@@ -499,6 +500,7 @@ __all__ = [
     "QueueProjection",
     "SteerSafePoint",
     "SubmissionStatus",
+    "SubmissionHistoryPort",
     "SubmissionInputEnvelope",
     "TurnSubmission",
     "TurnSubmissionRequest",

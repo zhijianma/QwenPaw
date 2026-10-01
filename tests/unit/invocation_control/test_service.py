@@ -19,6 +19,7 @@ from qwenpaw.kernel import (
     ControlCommandKind,
     ControlCommandStatus,
     ControlHistoryPort,
+    SubmissionHistoryPort,
     SteerSafePoint,
     SubmissionStatus,
     TurnSubmissionRequest,
@@ -173,6 +174,7 @@ async def test_durable_dispatch_resolves_only_after_safe_point(
     )
     assert accepted.status is ControlCommandStatus.ACCEPTED
     assert isinstance(service, ControlHistoryPort)
+    assert isinstance(service, SubmissionHistoryPort)
     assert len(history) == 1
     assert history[0].command == command
     assert history[0].receipt == accepted
@@ -197,6 +199,44 @@ async def test_durable_dispatch_resolves_only_after_safe_point(
     assert pending == ()
     assert replay.status is ControlCommandStatus.APPLIED
     assert replay.applied_at_safe_point is SteerSafePoint.BEFORE_REASONING
+
+
+@pytest.mark.asyncio
+async def test_submission_history_survives_terminal_restart(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "control.sqlite3"
+    store, invocation_id = await _active_store(database_path)
+    active = await store.read_queue(
+        agent_id="default",
+        conversation_id="chat-1",
+    )
+    [submission] = active.submissions
+    await store.transition_submission(
+        submission.submission_id,
+        invocation_id=invocation_id,
+        target=SubmissionStatus.SUCCEEDED,
+        expected_revision=submission.revision,
+    )
+    restarted = InvocationControlService(
+        store=SQLiteInvocationControl(database_path),
+    )
+
+    history = await restarted.list_submissions_for_conversation(
+        agent_id="default",
+        conversation_id="chat-1",
+    )
+    unrelated = await restarted.list_submissions_for_conversation(
+        agent_id="default",
+        conversation_id="chat-2",
+    )
+
+    assert isinstance(restarted, SubmissionHistoryPort)
+    assert len(history) == 1
+    assert history[0].status is SubmissionStatus.SUCCEEDED
+    assert history[0].invocation_id == invocation_id
+    assert unrelated == ()
+    await restarted.close()
 
 
 @pytest.mark.asyncio

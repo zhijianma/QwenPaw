@@ -174,6 +174,22 @@ class LiteObservationIndex:
                     for item in observations
                 ),
             )
+            connection.execute(
+                "CREATE TEMP TABLE IF NOT EXISTS current_observation_ids ("
+                "observation_id TEXT PRIMARY KEY)",
+            )
+            connection.execute("DELETE FROM current_observation_ids")
+            connection.executemany(
+                "INSERT INTO current_observation_ids (observation_id) "
+                "VALUES (?)",
+                ((str(item.observation_id),) for item in observations),
+            )
+            connection.execute(
+                "DELETE FROM observation_index WHERE owner_key = ? "
+                "AND observation_id NOT IN ("
+                "SELECT observation_id FROM current_observation_ids)",
+                (owner,),
+            )
             row = connection.execute(
                 "SELECT COALESCE(MAX(indexed_sequence), 0) AS watermark "
                 "FROM observation_index WHERE owner_key = ?",

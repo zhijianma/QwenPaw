@@ -526,6 +526,67 @@ class SQLiteInvocationControl:
             submission_id,
         )
 
+    def _list_submissions_for_conversation_sync(
+        self,
+        agent_id: str,
+        conversation_id: str,
+        limit: int | None,
+    ) -> tuple[TurnSubmission, ...]:
+        with self._connect() as connection:
+            suffix = " LIMIT ?" if limit is not None else ""
+            arguments: tuple[object, ...] = (
+                (agent_id, conversation_id, limit)
+                if limit is not None
+                else (agent_id, conversation_id)
+            )
+            rows = connection.execute(
+                "SELECT model_json FROM turn_submissions "
+                "WHERE agent_id = ? AND conversation_id = ? "
+                "ORDER BY sequence DESC, submission_id DESC" + suffix,
+                arguments,
+            ).fetchall()
+        return tuple(
+            TurnSubmission.model_validate_json(row["model_json"])
+            for row in rows
+        )
+
+    async def list_submissions_for_conversation(
+        self,
+        *,
+        agent_id: str,
+        conversation_id: str,
+        limit: int = 100,
+    ) -> tuple[TurnSubmission, ...]:
+        """List newest submissions, including durable terminal records."""
+        if not agent_id.strip() or not conversation_id.strip():
+            raise ValueError("submission history owner cannot be empty")
+        if limit < 1 or limit > 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        await self.initialize()
+        return await asyncio.to_thread(
+            self._list_submissions_for_conversation_sync,
+            agent_id,
+            conversation_id,
+            limit,
+        )
+
+    async def scan_submissions_for_conversation(
+        self,
+        *,
+        agent_id: str,
+        conversation_id: str,
+    ) -> tuple[TurnSubmission, ...]:
+        """Scan all submissions for a derived observation-index rebuild."""
+        if not agent_id.strip() or not conversation_id.strip():
+            raise ValueError("submission history owner cannot be empty")
+        await self.initialize()
+        return await asyncio.to_thread(
+            self._list_submissions_for_conversation_sync,
+            agent_id,
+            conversation_id,
+            None,
+        )
+
     def _list_dispatchable_sync(
         self,
         agent_id: str,

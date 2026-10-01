@@ -33,6 +33,10 @@ from ..kernel import (
     ObservationStage,
     ObservationStatus,
     RuntimeObservation,
+    SubmissionHistoryPort,
+    SubmissionStatus,
+    TERMINAL_SUBMISSION_STATUSES,
+    TurnSubmission,
     VerificationHistoryPort,
     VerificationRecord,
     VerificationStatus,
@@ -561,6 +565,80 @@ def _verification_observation(
     )
 
 
+def _submission_status(status: SubmissionStatus) -> ObservationStatus:
+    return {
+        SubmissionStatus.SUCCEEDED: ObservationStatus.SUCCEEDED,
+        SubmissionStatus.FAILED: ObservationStatus.FAILED,
+        SubmissionStatus.INTERRUPTED: ObservationStatus.CANCELLED,
+        SubmissionStatus.CANCELLED: ObservationStatus.CANCELLED,
+    }[status]
+
+
+def _submission_observations(
+    submission: TurnSubmission,
+) -> tuple[RuntimeObservation, ...]:
+    intent = RuntimeObservation(
+        observation_id=_observation_id(
+            submission.submission_id,
+            ObservationStage.INTENT,
+        ),
+        category=ObservationCategory.CONTROL,
+        stage=ObservationStage.INTENT,
+        status=ObservationStatus.RECORDED,
+        source=ObservationSource(
+            source_type="qwenpaw.control.submission",
+            source_id=str(submission.submission_id),
+        ),
+        conversation_id=submission.conversation_id,
+        correlation_id=submission.correlation_id,
+        title="Conversation input accepted",
+        facts={
+            "submission_id": str(submission.submission_id),
+            "sequence": submission.sequence,
+            "priority": submission.priority,
+            "artifact_count": len(submission.artifact_refs),
+            "input_kind": (
+                submission.input_envelope.kind
+                if submission.input_envelope is not None
+                else None
+            ),
+        },
+        occurred_at=submission.created_at,
+    )
+    if submission.status not in TERMINAL_SUBMISSION_STATUSES:
+        return (intent,)
+    terminal = RuntimeObservation(
+        observation_id=_observation_id(
+            submission.submission_id,
+            ObservationStage.EVIDENCE,
+        ),
+        category=ObservationCategory.CONTROL,
+        stage=ObservationStage.EVIDENCE,
+        status=_submission_status(submission.status),
+        source=ObservationSource(
+            source_type="qwenpaw.control.submission",
+            source_id=str(submission.submission_id),
+        ),
+        conversation_id=submission.conversation_id,
+        invocation_id=submission.invocation_id,
+        correlation_id=submission.correlation_id,
+        title="Conversation execution completed",
+        facts={
+            "submission_id": str(submission.submission_id),
+            "sequence": submission.sequence,
+            "queue_position": submission.queue_position,
+            "submission_status": submission.status.value,
+            "invocation_id": (
+                str(submission.invocation_id)
+                if submission.invocation_id is not None
+                else None
+            ),
+        },
+        occurred_at=submission.updated_at,
+    )
+    return intent, terminal
+
+
 async def _empty_interactions() -> Sequence[InteractionRecord]:
     return ()
 
@@ -570,6 +648,10 @@ async def _empty_controls() -> Sequence[ControlRecord]:
 
 
 async def _empty_verifications() -> Sequence[VerificationRecord]:
+    return ()
+
+
+async def _empty_submissions() -> Sequence[TurnSubmission]:
     return ()
 
 
@@ -586,6 +668,23 @@ async def _scan_source(
     return await scanner(*args, **kwargs)
 
 
+async def _scan_submissions(
+    source: object,
+    *,
+    agent_id: str,
+    conversation_id: str,
+) -> Sequence[TurnSubmission]:
+    scanner = getattr(source, "scan_submissions_for_conversation", None)
+    if scanner is None:
+        raise TypeError(
+            f"{type(source).__name__} cannot rebuild submission activity",
+        )
+    return await scanner(
+        agent_id=agent_id,
+        conversation_id=conversation_id,
+    )
+
+
 class LiteObservationProjection(ObservationProjectionPort):
     """Derive Lite observations without creating a second fact store."""
 
@@ -599,6 +698,7 @@ class LiteObservationProjection(ObservationProjectionPort):
         agent_id: str | None = None,
         interactions: InteractionHistoryPort | None = None,
         controls: ControlHistoryPort | None = None,
+        submissions: SubmissionHistoryPort | None = None,
         verifications: VerificationHistoryPort | None = None,
     ) -> None:
         self._model_calls = model_calls
@@ -608,6 +708,7 @@ class LiteObservationProjection(ObservationProjectionPort):
         self._agent_id = agent_id
         self._interactions = interactions
         self._controls = controls
+        self._submissions = submissions
         self._verifications = verifications
 
     async def list_for_conversation(
@@ -650,6 +751,16 @@ class LiteObservationProjection(ObservationProjectionPort):
             )
         else:
             control_records = _empty_controls()
+        if self._submissions is not None:
+            if self._agent_id is None:
+                raise ValueError("submission projection requires agent_id")
+            submission_records = _scan_submissions(
+                self._submissions,
+                agent_id=self._agent_id,
+                conversation_id=conversation_id,
+            )
+        else:
+            submission_records = _empty_submissions()
         verification_records = (
             _scan_source(
                 self._verifications,
@@ -664,6 +775,7 @@ class LiteObservationProjection(ObservationProjectionPort):
             compaction_records,
             resolved_interactions,
             resolved_controls,
+            resolved_submissions,
             resolved_verifications,
         ) = await asyncio.gather(
             _scan_source(
@@ -680,6 +792,7 @@ class LiteObservationProjection(ObservationProjectionPort):
             ),
             interaction_records,
             control_records,
+            submission_records,
             verification_records,
         )
         observations = [
@@ -704,6 +817,11 @@ class LiteObservationProjection(ObservationProjectionPort):
             observation
             for record in resolved_controls
             for observation in _control_observations(record)
+        )
+        observations.extend(
+            observation
+            for record in resolved_submissions
+            for observation in _submission_observations(record)
         )
         observations.extend(
             _verification_observation(record, conversation_id)
@@ -760,6 +878,7 @@ def lite_observation_projection(
     agent_id: str | None = None,
     interactions: InteractionHistoryPort | None = None,
     controls: ControlHistoryPort | None = None,
+    submissions: SubmissionHistoryPort | None = None,
     verifications: VerificationHistoryPort | None = None,
 ) -> LiteObservationProjection:
     """Return the Lite semantic projection over workspace source facts."""
@@ -775,6 +894,7 @@ def lite_observation_projection(
         agent_id=agent_id,
         interactions=interactions,
         controls=controls,
+        submissions=submissions,
         verifications=verifications,
     )
 

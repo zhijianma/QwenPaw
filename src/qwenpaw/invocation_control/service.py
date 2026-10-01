@@ -347,6 +347,36 @@ class InvocationControlService:  # pylint: disable=too-many-public-methods
             raise RuntimeError("durable invocation-control store is disabled")
         return await self.store.get_submission(submission_id)
 
+    async def list_submissions_for_conversation(
+        self,
+        *,
+        agent_id: str,
+        conversation_id: str,
+        limit: int = 100,
+    ) -> tuple[TurnSubmission, ...]:
+        """List durable submissions without exposing the Lite adapter."""
+        if self.store is None:
+            return ()
+        return await self.store.list_submissions_for_conversation(
+            agent_id=agent_id,
+            conversation_id=conversation_id,
+            limit=limit,
+        )
+
+    async def scan_submissions_for_conversation(
+        self,
+        *,
+        agent_id: str,
+        conversation_id: str,
+    ) -> tuple[TurnSubmission, ...]:
+        """Scan every durable submission for observation reconstruction."""
+        if self.store is None:
+            return ()
+        return await self.store.scan_submissions_for_conversation(
+            agent_id=agent_id,
+            conversation_id=conversation_id,
+        )
+
     async def list_dispatchable(
         self,
         *,

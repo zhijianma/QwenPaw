@@ -32,14 +32,22 @@ from qwenpaw.kernel import (
     ModelCallStatus,
     ModelRouteReason,
     ObservationCategory,
+    ObservationSource,
     ObservationStage,
     ObservationStatus,
+    RuntimeObservation,
+    SubmissionStatus,
     SteerSafePoint,
     ToolEffect,
     RouteDecision,
     VerificationRecord,
     VerificationResult,
     VerificationStatus,
+    TurnSubmissionRequest,
+)
+from qwenpaw.invocation_control import (
+    InvocationControlService,
+    SQLiteInvocationControl,
 )
 from qwenpaw.runtime.model_calls import lite_model_call_store
 from qwenpaw.runtime.actions import lite_action_store
@@ -139,6 +147,113 @@ async def test_projection_limit_applies_to_observations(tmp_path) -> None:
     assert await projection.list_for_conversation("chat-1", limit=1) == []
     with pytest.raises(ValueError, match="limit must be between"):
         await projection.list_for_conversation("chat-1", limit=0)
+
+
+@pytest.mark.asyncio
+async def test_index_reconciles_stale_derived_pointers(tmp_path) -> None:
+    conversation_id = "chat-reconcile"
+    index = LiteObservationIndex(tmp_path / "observations.sqlite3")
+    observation = RuntimeObservation(
+        observation_id=uuid4(),
+        category=ObservationCategory.CONTROL,
+        stage=ObservationStage.INTENT,
+        status=ObservationStatus.RECORDED,
+        source=ObservationSource(
+            source_type="qwenpaw.control.retired-source",
+            source_id=str(uuid4()),
+        ),
+        conversation_id=conversation_id,
+        title="Retired derived source",
+        occurred_at=datetime.now(timezone.utc),
+    )
+    populated, _ = await index.sync_and_page(
+        conversation_id,
+        (observation,),
+        limit=10,
+        cursor=None,
+    )
+
+    reconciled, cursor = await index.sync_and_page(
+        conversation_id,
+        (),
+        limit=10,
+        cursor=None,
+    )
+
+    assert [item.observation_id for item in populated] == [
+        str(observation.observation_id),
+    ]
+    assert reconciled == ()
+    assert cursor is None
+
+
+@pytest.mark.asyncio
+async def test_submission_projects_immutable_intent_and_terminal_evidence(
+    tmp_path,
+) -> None:
+    conversation_id = "chat-submission"
+    correlation_id = uuid4()
+    store = SQLiteInvocationControl(tmp_path / "control.sqlite3")
+    control = InvocationControlService(store=store)
+    receipt = await store.submit(
+        TurnSubmissionRequest(
+            agent_id="default",
+            conversation_id=conversation_id,
+            content="private user request",
+            idempotency_key="submission-1",
+            correlation_id=correlation_id,
+        ),
+        expected_revision=0,
+    )
+    projection = lite_observation_projection(
+        tmp_path,
+        agent_id="default",
+        submissions=control,
+    )
+
+    queued = await projection.list_for_conversation(conversation_id)
+
+    assert len(queued) == 1
+    assert queued[0].stage is ObservationStage.INTENT
+    assert queued[0].correlation_id == correlation_id
+    assert "private user request" not in queued[0].model_dump_json()
+
+    invocation_id = uuid4()
+    admitted = await store.claim_next(
+        agent_id="default",
+        conversation_id=conversation_id,
+        invocation_id=invocation_id,
+    )
+    assert admitted is not None
+    running = await store.transition_submission(
+        admitted.submission_id,
+        invocation_id=invocation_id,
+        target=SubmissionStatus.RUNNING,
+        expected_revision=admitted.revision,
+    )
+    while_running = await projection.list_for_conversation(conversation_id)
+    assert len(while_running) == 1
+
+    await store.transition_submission(
+        running.submission_id,
+        invocation_id=invocation_id,
+        target=SubmissionStatus.SUCCEEDED,
+        expected_revision=running.revision,
+    )
+    terminal = await projection.list_for_conversation(conversation_id)
+
+    assert len(terminal) == 2
+    evidence = next(
+        item
+        for item in terminal
+        if item.stage is ObservationStage.EVIDENCE
+    )
+    assert evidence.status is ObservationStatus.SUCCEEDED
+    assert evidence.invocation_id == invocation_id
+    assert evidence.correlation_id == correlation_id
+    assert evidence.facts["submission_status"] == "succeeded"
+    assert evidence.source.source_id == str(receipt.submission_id)
+    await control.close()
 
 
 @pytest.mark.asyncio

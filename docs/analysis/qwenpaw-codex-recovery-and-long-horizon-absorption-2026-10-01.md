@@ -169,9 +169,15 @@ Control、Compaction 和 Verification 的权威 Store 派生最近活动，并�
 `ObservationPage` 纳入 snapshot cursor。它不保存 prompt、回答、隐藏推理或第二份
 生命周期状态；每条 activity 都必须携带可回查的 `ObservationSource`。
 
-当前仍需补齐 Submission/Invocation 和独立 Artifact/Evidence registry 的 source。
-在各源 Store 具备 revision/notifier 之前，应控制重建频率；不能为了 UI 动画增加一套
-易漂移的事件表，也不能把当前状态 SSE 宣称为完整审计日志。
+Invocation Control 现在公开只读 Submission history：接收事实投影为不可变 intent，
+进入成功、失败、中断或取消后投影为不可变 terminal evidence，并贯穿
+`submission_id + invocation_id + correlation_id`。queued/running 仍读取 Queue 当前
+snapshot；旧 Store 没有逐跳转换记录，因此不会反向编造时间线。
+
+当前仍需补齐独立 Artifact/Evidence registry 的 source。在各源 Store 具备
+revision/notifier 之前，应控制重建频率；不能为了 UI 动画增加一套易漂移的事件表，
+也不能把当前状态 SSE 宣称为完整审计日志。派生 Observation index 必须与当前 source
+集合 reconciliation，版本变化后的旧指针只能失效，不能反过来阻断权威事实读取。
 
 ## 5. 类型化恢复模型
 

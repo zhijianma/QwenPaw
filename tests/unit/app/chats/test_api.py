@@ -403,8 +403,22 @@ async def test_list_chat_observations_uses_owned_projection(tmp_path):
         "qwenpaw.model.attempt",
         "qwenpaw.control.command",
         "qwenpaw.control.receipt",
+        "qwenpaw.control.submission",
         "qwenpaw.task.verification-record",
     }
+    submission_observations = [
+        item
+        for item in observations
+        if item.source.source_type == "qwenpaw.control.submission"
+    ]
+    assert {item.status.value for item in submission_observations} == {
+        "recorded",
+        "cancelled",
+    }
+    assert all(
+        "queued content" not in item.model_dump_json()
+        for item in submission_observations
+    )
     [verification_observation] = [
         item
         for item in observations

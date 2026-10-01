@@ -194,6 +194,20 @@ class ControlHistoryPort(Protocol):
 
 
 @runtime_checkable
+class SubmissionHistoryPort(Protocol):
+    """Read-only history of durable Conversation submissions."""
+
+    async def list_submissions_for_conversation(
+        self,
+        *,
+        agent_id: str,
+        conversation_id: str,
+        limit: int = 100,
+    ) -> Sequence[TurnSubmission]:
+        """List newest submissions, including terminal records."""
+
+
+@runtime_checkable
 class CompactionStore(Protocol):
     """Durable owner-only history for material context compactions."""
 
