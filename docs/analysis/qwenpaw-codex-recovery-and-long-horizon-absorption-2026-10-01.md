@@ -174,10 +174,16 @@ Invocation Control 现在公开只读 Submission history：接收事实投影为
 `submission_id + invocation_id + correlation_id`。queued/running 仍读取 Queue 当前
 snapshot；旧 Store 没有逐跳转换记录，因此不会反向编造时间线。
 
-当前仍需补齐独立 Artifact/Evidence registry 的 source。在各源 Store 具备
-revision/notifier 之前，应控制重建频率；不能为了 UI 动画增加一套易漂移的事件表，
-也不能把当前状态 SSE 宣称为完整审计日志。派生 Observation index 必须与当前 source
-集合 reconciliation，版本变化后的旧指针只能失效，不能反过来阻断权威事实读取。
+Chat-owned Artifact/Evidence 已从 ownership receipt 独立投影：上传与内置/插件工具
+输出共用 `ConversationArtifactHistoryPort`，工具产物保留 invocation、correlation 与
+固定 registry generation。投影只公开 ID、类型、媒体、大小、哈希和 producer，不公开
+URI、文件名、metadata 或 claim。Task-owned `ArtifactRecord/EvidenceRecord` 仍需增加
+同构 Adapter，不能依赖 Chat receipt 冒充 Task registry。
+
+在各源 Store 具备 revision/notifier 之前，应控制重建频率；不能为了 UI 动画增加一套
+易漂移的事件表，也不能把当前状态 SSE 宣称为完整审计日志。派生 Observation index
+必须与当前 source 集合 reconciliation，版本变化后的旧指针只能失效，不能反过来
+阻断权威事实读取。
 
 ## 5. 类型化恢复模型
 

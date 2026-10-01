@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ..kernel.artifacts import ConversationArtifactRecord
 from ..kernel.models import ArtifactRef, EvidenceRef
 from ..utils.io_utils import (
     get_path_lock,
@@ -39,6 +41,15 @@ class _Receipt(BaseModel):
     artifact: ArtifactRef
     evidence: EvidenceRef
     chat_id: str | None = None
+    invocation_id: UUID | None = None
+    correlation_id: UUID | None = None
+    registry_generation: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def validate_evidence_artifact(self) -> "_Receipt":
+        if self.evidence.artifact_id != self.artifact.artifact_id:
+            raise ValueError("conversation evidence artifact mismatch")
+        return self
 
 
 class ConversationArtifactReceiptStore:
@@ -46,9 +57,15 @@ class ConversationArtifactReceiptStore:
 
     def __init__(self, root: Path) -> None:
         self._root = Path(root)
+        self._history_lock = asyncio.Lock()
+        self._history_mtime_ns: int | None = None
+        self._history_cache: tuple[ConversationArtifactRecord, ...] = ()
 
     def _path(self, receipt_id: UUID) -> Path:
         return self._root / "receipts" / f"{receipt_id}.json"
+
+    def _invalidate_history(self) -> None:
+        self._history_mtime_ns = None
 
     @staticmethod
     def _parse_id(receipt_id: str) -> UUID:
@@ -76,6 +93,7 @@ class ConversationArtifactReceiptStore:
                 path,
                 receipt.model_dump(mode="json"),
             )
+        self._invalidate_history()
         return str(receipt.receipt_id)
 
     async def create_owned(
@@ -84,6 +102,9 @@ class ConversationArtifactReceiptStore:
         evidence: EvidenceRef,
         *,
         chat_id: str,
+        invocation_id: UUID | None = None,
+        correlation_id: UUID | None = None,
+        registry_generation: int | None = None,
     ) -> str:
         """Persist a host-generated artifact already owned by one Chat."""
         if not chat_id.strip():
@@ -93,6 +114,9 @@ class ConversationArtifactReceiptStore:
             artifact=artifact,
             evidence=evidence,
             chat_id=chat_id,
+            invocation_id=invocation_id,
+            correlation_id=correlation_id,
+            registry_generation=registry_generation,
         )
         path = self._path(receipt.receipt_id)
         async with get_path_lock(path):
@@ -100,6 +124,7 @@ class ConversationArtifactReceiptStore:
                 path,
                 receipt.model_dump(mode="json"),
             )
+        self._invalidate_history()
         return str(receipt.receipt_id)
 
     async def _read(self, receipt_id: UUID) -> _Receipt:
@@ -141,7 +166,103 @@ class ConversationArtifactReceiptStore:
                     path,
                     receipt.model_dump(mode="json"),
                 )
+                self._invalidate_history()
         return receipt.artifact, receipt.evidence
+
+    @staticmethod
+    def _record(receipt: _Receipt) -> ConversationArtifactRecord | None:
+        if receipt.chat_id is None:
+            return None
+        return ConversationArtifactRecord(
+            record_id=receipt.receipt_id,
+            conversation_id=receipt.chat_id,
+            artifact=receipt.artifact,
+            evidence=receipt.evidence,
+            invocation_id=receipt.invocation_id,
+            correlation_id=receipt.correlation_id,
+            registry_generation=receipt.registry_generation,
+            created_at=receipt.evidence.captured_at,
+        )
+
+    async def _directory_mtime_ns(self) -> int:
+        directory = self._root / "receipts"
+        try:
+            stat = await asyncio.to_thread(directory.stat)
+        except FileNotFoundError:
+            return 0
+        return stat.st_mtime_ns
+
+    async def _load_history(
+        self,
+    ) -> tuple[ConversationArtifactRecord, ...]:
+        mtime_ns = await self._directory_mtime_ns()
+        if self._history_mtime_ns == mtime_ns:
+            return self._history_cache
+        async with self._history_lock:
+            mtime_ns = await self._directory_mtime_ns()
+            if self._history_mtime_ns == mtime_ns:
+                return self._history_cache
+            directory = self._root / "receipts"
+            paths = await asyncio.to_thread(
+                lambda: tuple(sorted(directory.glob("*.json"))),
+            )
+            receipts = await asyncio.gather(
+                *(read_json_async(path) for path in paths),
+            )
+            records = tuple(
+                record
+                for payload in receipts
+                if (
+                    record := self._record(
+                        _Receipt.model_validate(payload),
+                    )
+                )
+                is not None
+            )
+            self._history_cache = tuple(
+                sorted(
+                    records,
+                    key=lambda item: (
+                        item.created_at,
+                        str(item.record_id),
+                    ),
+                    reverse=True,
+                ),
+            )
+            self._history_mtime_ns = mtime_ns
+            return self._history_cache
+
+    async def list_for_conversation(
+        self,
+        conversation_id: str,
+        *,
+        limit: int = 100,
+    ) -> tuple[ConversationArtifactRecord, ...]:
+        """List newest owned Artifact/Evidence records for one Chat."""
+        if not conversation_id.strip():
+            raise ValueError("conversation_id cannot be empty")
+        if limit < 1 or limit > 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        records = await self._load_history()
+        return tuple(
+            item
+            for item in records
+            if item.conversation_id == conversation_id
+        )[:limit]
+
+    async def scan_for_conversation(
+        self,
+        conversation_id: str,
+    ) -> tuple[ConversationArtifactRecord, ...]:
+        """Scan all owned records for observation-index reconstruction."""
+        if not conversation_id.strip():
+            raise ValueError("conversation_id cannot be empty")
+        records = await self._load_history()
+        return tuple(
+            item
+            for item in records
+            if item.conversation_id == conversation_id
+        )
 
     async def resolve(
         self,

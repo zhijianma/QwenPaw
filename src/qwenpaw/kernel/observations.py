@@ -27,6 +27,8 @@ class ObservationCategory(str, Enum):
     HITL = "hitl"
     INTERRUPT = "interrupt"
     VERIFICATION = "verification"
+    ARTIFACT = "artifact"
+    EVIDENCE = "evidence"
 
 
 class ObservationStage(str, Enum):

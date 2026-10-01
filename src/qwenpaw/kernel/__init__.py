@@ -271,11 +271,13 @@ from .observations import (
     ObservationStatus,
     RuntimeObservation,
 )
+from .artifacts import ConversationArtifactRecord
 from .ports import (
     ActionStore,
     AgentFactory,
     CostAwareTaskRunner,
     ConversationForkPort,
+    ConversationArtifactHistoryPort,
     DeliveryAdapter,
     DeliveryProjectionPort,
     EnvironmentResolver,
@@ -474,6 +476,8 @@ __all__ = [
     "CompactionStore",
     "CompactionTrigger",
     "ConversationRuntimeProjection",
+    "ConversationArtifactHistoryPort",
+    "ConversationArtifactRecord",
     "DriverApprovalRejectedError",
     "DriverCredentialUnavailableError",
     "DriverApprovalRequest",

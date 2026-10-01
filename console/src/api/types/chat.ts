@@ -159,7 +159,9 @@ export type RuntimeObservationCategory =
   | "compaction"
   | "hitl"
   | "interrupt"
-  | "verification";
+  | "verification"
+  | "artifact"
+  | "evidence";
 
 export interface RuntimeObservation {
   schema?: "qwenpaw.runtime-observation.v1";

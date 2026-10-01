@@ -20,6 +20,8 @@ from ..kernel import (
     CompactionRecord,
     CompactionStatus,
     CompactionStore,
+    ConversationArtifactHistoryPort,
+    ConversationArtifactRecord,
     InteractionHistoryPort,
     InteractionRecord,
     InteractionStatus,
@@ -639,6 +641,63 @@ def _submission_observations(
     return intent, terminal
 
 
+def _conversation_artifact_observations(
+    record: ConversationArtifactRecord,
+) -> tuple[RuntimeObservation, RuntimeObservation]:
+    common = {
+        "conversation_id": record.conversation_id,
+        "invocation_id": record.invocation_id,
+        "correlation_id": record.correlation_id,
+        "registry_generation": record.registry_generation,
+        "occurred_at": record.created_at,
+    }
+    artifact = record.artifact
+    evidence = record.evidence
+    source = ObservationSource(
+        source_type="qwenpaw.conversation.artifact-record",
+        source_id=str(record.record_id),
+    )
+    artifact_observation = RuntimeObservation(
+        observation_id=_observation_id(
+            artifact.artifact_id,
+            ObservationStage.EVIDENCE,
+        ),
+        category=ObservationCategory.ARTIFACT,
+        stage=ObservationStage.EVIDENCE,
+        status=ObservationStatus.SUCCEEDED,
+        source=source,
+        title="Artifact registered",
+        facts={
+            "artifact_id": str(artifact.artifact_id),
+            "evidence_id": str(evidence.evidence_id),
+            "kind": artifact.kind,
+            "media_type": artifact.media_type,
+            "size_bytes": artifact.size_bytes,
+            "content_hash": artifact.content_hash,
+        },
+        **common,
+    )
+    evidence_observation = RuntimeObservation(
+        observation_id=_observation_id(
+            evidence.evidence_id,
+            ObservationStage.EVIDENCE,
+        ),
+        category=ObservationCategory.EVIDENCE,
+        stage=ObservationStage.EVIDENCE,
+        status=ObservationStatus.SUCCEEDED,
+        source=source,
+        title="Evidence registered",
+        facts={
+            "evidence_id": str(evidence.evidence_id),
+            "artifact_id": str(artifact.artifact_id),
+            "producer": evidence.producer,
+            "has_claim": bool(evidence.claim),
+        },
+        **common,
+    )
+    return artifact_observation, evidence_observation
+
+
 async def _empty_interactions() -> Sequence[InteractionRecord]:
     return ()
 
@@ -652,6 +711,11 @@ async def _empty_verifications() -> Sequence[VerificationRecord]:
 
 
 async def _empty_submissions() -> Sequence[TurnSubmission]:
+    return ()
+
+
+async def _empty_conversation_artifacts(
+) -> Sequence[ConversationArtifactRecord]:
     return ()
 
 
@@ -699,6 +763,7 @@ class LiteObservationProjection(ObservationProjectionPort):
         interactions: InteractionHistoryPort | None = None,
         controls: ControlHistoryPort | None = None,
         submissions: SubmissionHistoryPort | None = None,
+        conversation_artifacts: ConversationArtifactHistoryPort | None = None,
         verifications: VerificationHistoryPort | None = None,
     ) -> None:
         self._model_calls = model_calls
@@ -709,6 +774,7 @@ class LiteObservationProjection(ObservationProjectionPort):
         self._interactions = interactions
         self._controls = controls
         self._submissions = submissions
+        self._conversation_artifacts = conversation_artifacts
         self._verifications = verifications
 
     async def list_for_conversation(
@@ -761,6 +827,14 @@ class LiteObservationProjection(ObservationProjectionPort):
             )
         else:
             submission_records = _empty_submissions()
+        conversation_artifact_records = (
+            _scan_source(
+                self._conversation_artifacts,
+                conversation_id,
+            )
+            if self._conversation_artifacts is not None
+            else _empty_conversation_artifacts()
+        )
         verification_records = (
             _scan_source(
                 self._verifications,
@@ -776,6 +850,7 @@ class LiteObservationProjection(ObservationProjectionPort):
             resolved_interactions,
             resolved_controls,
             resolved_submissions,
+            resolved_conversation_artifacts,
             resolved_verifications,
         ) = await asyncio.gather(
             _scan_source(
@@ -793,6 +868,7 @@ class LiteObservationProjection(ObservationProjectionPort):
             interaction_records,
             control_records,
             submission_records,
+            conversation_artifact_records,
             verification_records,
         )
         observations = [
@@ -822,6 +898,11 @@ class LiteObservationProjection(ObservationProjectionPort):
             observation
             for record in resolved_submissions
             for observation in _submission_observations(record)
+        )
+        observations.extend(
+            observation
+            for record in resolved_conversation_artifacts
+            for observation in _conversation_artifact_observations(record)
         )
         observations.extend(
             _verification_observation(record, conversation_id)
@@ -879,6 +960,7 @@ def lite_observation_projection(
     interactions: InteractionHistoryPort | None = None,
     controls: ControlHistoryPort | None = None,
     submissions: SubmissionHistoryPort | None = None,
+    conversation_artifacts: ConversationArtifactHistoryPort | None = None,
     verifications: VerificationHistoryPort | None = None,
 ) -> LiteObservationProjection:
     """Return the Lite semantic projection over workspace source facts."""
@@ -895,6 +977,7 @@ def lite_observation_projection(
         interactions=interactions,
         controls=controls,
         submissions=submissions,
+        conversation_artifacts=conversation_artifacts,
         verifications=verifications,
     )
 

@@ -592,6 +592,9 @@ async def _chat_runtime_projection_context(
         interactions=interactions,
         controls=control,
         submissions=control,
+        conversation_artifacts=conversation_artifact_receipts(
+            Path(workspace.workspace_dir),
+        ),
         verifications=lite_verification_history(
             Path(workspace.workspace_dir),
         ),
@@ -1531,6 +1534,9 @@ async def list_chat_observations(
         interactions=workspace.interaction_service,
         controls=workspace.invocation_control,
         submissions=workspace.invocation_control,
+        conversation_artifacts=conversation_artifact_receipts(
+            Path(workspace.workspace_dir),
+        ),
         verifications=lite_verification_history(
             Path(workspace.workspace_dir),
         ),
@@ -1565,6 +1571,9 @@ async def page_chat_observations(
         interactions=workspace.interaction_service,
         controls=workspace.invocation_control,
         submissions=workspace.invocation_control,
+        conversation_artifacts=conversation_artifact_receipts(
+            Path(workspace.workspace_dir),
+        ),
         verifications=lite_verification_history(
             Path(workspace.workspace_dir),
         ),

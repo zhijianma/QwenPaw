@@ -14,11 +14,13 @@ from qwenpaw.kernel import (
     ActionStatus,
     ActorRef,
     ActorType,
+    ArtifactRef,
     ControlCommand,
     ControlCommandKind,
     ControlCommandStatus,
     ControlReceipt,
     ControlRecord,
+    EvidenceRef,
     CompactionRecord,
     CompactionStatus,
     CompactionTrigger,
@@ -61,6 +63,9 @@ from qwenpaw.runtime.observations import (
 )
 from qwenpaw.runtime.compactions import lite_compaction_store
 from qwenpaw.interactions import InteractionService
+from qwenpaw.tasks.conversation_artifacts import (
+    conversation_artifact_receipts,
+)
 
 
 @pytest.mark.asyncio
@@ -254,6 +259,57 @@ async def test_submission_projects_immutable_intent_and_terminal_evidence(
     assert evidence.facts["submission_status"] == "succeeded"
     assert evidence.source.source_id == str(receipt.submission_id)
     await control.close()
+
+
+@pytest.mark.asyncio
+async def test_conversation_artifact_projects_content_safe_registry_facts(
+    tmp_path,
+) -> None:
+    conversation_id = "chat-artifact"
+    invocation_id = uuid4()
+    correlation_id = uuid4()
+    artifact = ArtifactRef(
+        kind="report.markdown",
+        uri="qwenpaw-artifact://sha256/" + "a" * 64,
+        media_type="text/markdown",
+        content_hash="sha256:" + "a" * 64,
+        size_bytes=42,
+        metadata={"name": "secret-name.md"},
+    )
+    evidence = EvidenceRef(
+        artifact_id=artifact.artifact_id,
+        claim="Sensitive internal verification claim",
+        producer="example.report-tools.export",
+    )
+    receipts = conversation_artifact_receipts(tmp_path)
+    receipt_id = await receipts.create_owned(
+        artifact,
+        evidence,
+        chat_id=conversation_id,
+        invocation_id=invocation_id,
+        correlation_id=correlation_id,
+        registry_generation=9,
+    )
+
+    observations = await lite_observation_projection(
+        tmp_path,
+        conversation_artifacts=receipts,
+    ).list_for_conversation(conversation_id)
+
+    assert {item.category for item in observations} == {
+        ObservationCategory.ARTIFACT,
+        ObservationCategory.EVIDENCE,
+    }
+    assert all(item.invocation_id == invocation_id for item in observations)
+    assert all(
+        item.correlation_id == correlation_id for item in observations
+    )
+    assert all(item.registry_generation == 9 for item in observations)
+    assert all(item.source.source_id == receipt_id for item in observations)
+    serialized = "".join(item.model_dump_json() for item in observations)
+    assert "Sensitive internal verification claim" not in serialized
+    assert "secret-name.md" not in serialized
+    assert "qwenpaw-artifact://" not in serialized
 
 
 @pytest.mark.asyncio

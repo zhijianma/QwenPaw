@@ -3,11 +3,13 @@
 
 import hashlib
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
 
 from qwenpaw.app.routers.console import _claim_conversation_artifacts
+from qwenpaw.kernel import ConversationArtifactHistoryPort
 from qwenpaw.kernel.models import ArtifactRef, EvidenceRef
 from qwenpaw.schemas import FileContent
 from qwenpaw.tasks.conversation_artifacts import (
@@ -39,6 +41,7 @@ async def test_receipt_claim_is_idempotent_for_owner(tmp_path) -> None:
         producer="test",
     )
     receipt_id = await store.create(artifact, evidence)
+    assert await store.list_for_conversation("chat-a") == ()
 
     first = await store.claim(
         receipt_id=receipt_id,
@@ -54,6 +57,11 @@ async def test_receipt_claim_is_idempotent_for_owner(tmp_path) -> None:
     )
 
     assert first == second == (artifact, evidence)
+    [record] = await store.list_for_conversation("chat-a")
+    assert isinstance(store, ConversationArtifactHistoryPort)
+    assert record.record_id.hex == receipt_id.replace("-", "")
+    assert record.artifact == artifact
+    assert record.evidence == evidence
     assert await store.resolve(
         receipt_id=receipt_id,
         chat_id="chat-a",
@@ -94,6 +102,24 @@ async def test_receipt_rejects_cross_chat_and_forged_identity(
             artifact_id=_artifact(b"forged").artifact_id,
             evidence_id=evidence.evidence_id,
         )
+
+
+@pytest.mark.asyncio
+async def test_receipt_rejects_mismatched_evidence_before_write(
+    tmp_path,
+) -> None:
+    store = conversation_artifact_receipts(tmp_path)
+    artifact = _artifact()
+    mismatched = EvidenceRef(
+        artifact_id=_artifact(b"different").artifact_id,
+        claim="Mismatched evidence",
+        producer="test",
+    )
+
+    with pytest.raises(ValueError, match="evidence artifact mismatch"):
+        await store.create(artifact, mismatched)
+
+    assert await store.list_for_conversation("chat-a") == ()
 
 
 @pytest.mark.asyncio
@@ -140,10 +166,15 @@ async def test_host_generated_receipt_is_owned_at_creation(tmp_path) -> None:
         producer="test",
     )
 
+    invocation_id = uuid4()
+    correlation_id = uuid4()
     receipt_id = await store.create_owned(
         artifact,
         evidence,
         chat_id="chat-a",
+        invocation_id=invocation_id,
+        correlation_id=correlation_id,
+        registry_generation=7,
     )
 
     assert await store.resolve(
@@ -151,6 +182,11 @@ async def test_host_generated_receipt_is_owned_at_creation(tmp_path) -> None:
         chat_id="chat-a",
         artifact_id=artifact.artifact_id,
     ) == (artifact, evidence)
+    [record] = await store.scan_for_conversation("chat-a")
+    assert str(record.record_id) == receipt_id
+    assert record.invocation_id == invocation_id
+    assert record.correlation_id == correlation_id
+    assert record.registry_generation == 7
     with pytest.raises(ConversationArtifactOwnershipError):
         await store.resolve(
             receipt_id=receipt_id,

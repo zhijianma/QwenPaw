@@ -97,6 +97,7 @@ from .inbox import InboxItem
 from .operational import OperationalEvent
 from .observations import ObservationPage, RuntimeObservation
 from .waits import ConversationContinuation, WaitCondition
+from .artifacts import ConversationArtifactRecord
 
 
 @runtime_checkable
@@ -205,6 +206,19 @@ class SubmissionHistoryPort(Protocol):
         limit: int = 100,
     ) -> Sequence[TurnSubmission]:
         """List newest submissions, including terminal records."""
+
+
+@runtime_checkable
+class ConversationArtifactHistoryPort(Protocol):
+    """Read-only registry of Conversation-owned Artifact/Evidence pairs."""
+
+    async def list_for_conversation(
+        self,
+        conversation_id: str,
+        *,
+        limit: int = 100,
+    ) -> Sequence[ConversationArtifactRecord]:
+        """List newest records without exposing Artifact content."""
 
 
 @runtime_checkable

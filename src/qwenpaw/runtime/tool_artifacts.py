@@ -12,6 +12,7 @@ from pathlib import Path
 from stat import S_ISREG
 from typing import Any
 from urllib.parse import unquote
+from uuid import UUID
 
 from agentscope.message import TextBlock, ToolResultState
 from agentscope.tool import ToolResponse
@@ -35,6 +36,13 @@ MAX_TOOL_ARTIFACT_BYTES = 50 * 1024 * 1024
 _HOST_TOOL_ARTIFACT_OUTPUTS_KEY = "qwenpaw_host_artifact_outputs"
 
 logger = logging.getLogger(__name__)
+
+
+def _optional_uuid(value: Any) -> UUID | None:
+    try:
+        return UUID(str(value)) if value else None
+    except (TypeError, ValueError, AttributeError):
+        return None
 
 
 @dataclass(frozen=True)
@@ -112,8 +120,11 @@ class ConversationToolArtifactPublisher:
             request_context.get("os_conversation_id") or "",
         )
         self._generation = request_context.get("os_registry_generation")
-        self._invocation_id = str(
-            request_context.get("os_invocation_id") or "",
+        self._invocation_id = _optional_uuid(
+            request_context.get("os_invocation_id"),
+        )
+        self._correlation_id = _optional_uuid(
+            request_context.get("os_correlation_id"),
         )
         raw_owners = request_context.get("_tool_provider_owners")
         self._owners = dict(raw_owners) if isinstance(raw_owners, dict) else {}
@@ -334,8 +345,8 @@ class ConversationToolArtifactPublisher:
         }
         if self._generation is not None:
             artifact_metadata["registry_generation"] = self._generation
-        if self._invocation_id:
-            artifact_metadata["invocation_id"] = self._invocation_id
+        if self._invocation_id is not None:
+            artifact_metadata["invocation_id"] = str(self._invocation_id)
         media_type = (
             media_type
             or mimetypes.guess_type(path.name)[0]
@@ -364,6 +375,15 @@ class ConversationToolArtifactPublisher:
             artifact,
             evidence,
             chat_id=self._chat_id,
+            invocation_id=self._invocation_id,
+            correlation_id=self._correlation_id,
+            registry_generation=(
+                self._generation
+                if isinstance(self._generation, int)
+                and not isinstance(self._generation, bool)
+                and self._generation > 0
+                else None
+            ),
         )
         return {
             "chat_id": self._chat_id,

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+from uuid import UUID
 
 import pytest
 from agentscope.message import TextBlock, ToolResultState
@@ -48,12 +49,15 @@ async def test_plugin_tool_output_becomes_owned_immutable_artifact(
     output_path = tmp_path / "project" / "report.md"
     output_path.parent.mkdir()
     output_path.write_text("# immutable\n", encoding="utf-8")
+    invocation_id = UUID("00000000-0000-0000-0000-000000000701")
+    correlation_id = UUID("00000000-0000-0000-0000-000000000702")
     publisher = ConversationToolArtifactPublisher(
         {
             "workspace_dir": str(tmp_path),
             "os_conversation_id": "chat-1",
             "os_registry_generation": 7,
-            "os_invocation_id": "invocation-1",
+            "os_invocation_id": str(invocation_id),
+            "os_correlation_id": str(correlation_id),
             "_tool_provider_owners": {
                 "plugin_export": "example.report-tools",
             },
@@ -93,6 +97,12 @@ async def test_plugin_tool_output_becomes_owned_immutable_artifact(
         chat_id="chat-1",
         artifact_id=artifact.artifact_id,
     ) == (artifact, evidence)
+    [record] = await conversation_artifact_receipts(
+        tmp_path,
+    ).list_for_conversation("chat-1")
+    assert record.invocation_id == invocation_id
+    assert record.correlation_id == correlation_id
+    assert record.registry_generation == 7
 
     output_path.write_text("# changed later\n", encoding="utf-8")
     assert await lite_artifact_store(tmp_path).read(artifact) == (

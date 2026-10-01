@@ -370,8 +370,13 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     派生不可变 intent，成功、失败、中断或取消后派生不可变 terminal evidence，保留
     `submission_id + invocation_id + correlation_id`。活动中的 queued/running 仍由
     Queue snapshot 表达；旧 Store 没有逐跳事实，因此不伪造状态转换历史。
-  - [ ] 补齐独立 Artifact/Evidence registry 的 Observation source；在源 Store 提供
-    revision/notifier 前，不把全量重建频率继续提高，也不以轮询结果冒充事件日志。
+  - [x] Chat 上传与内置/插件工具产物共用只读
+    `ConversationArtifactHistoryPort`；Artifact/Evidence 分别投影独立 category，来源
+    回指同一 ownership record。工具产物新记录保留 invocation、correlation 和固定
+    generation；Activity 不暴露 URI、文件名、metadata 或 Evidence claim。固定真实
+    Chat 的完整 Observation 分页恢复出 6 个 Artifact 和 6 个 Evidence 权威投影。
+  - [ ] 为 Task-owned `ArtifactRecord/EvidenceRecord` 增加相同 Observation adapter；
+    在源 Store 提供 revision/notifier 前，不提高全量重建频率，也不以轮询冒充日志。
   - [x] Lite Observation index 会按 owner 与当前权威派生集做 reconciliation；版本
     演进后遗留的陈旧指针被删除，旧 cursor 明确失效，不再让 Activity GET/SSE 500。
   - [ ] Console 增加薄 Activity 投影；只显示语义状态和来源引用，不暴露隐藏推理，
