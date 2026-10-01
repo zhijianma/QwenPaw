@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 
 from qwenpaw.kernel import (
+    AcceptanceVerification,
     ActionKind,
     ActionRequest,
     ActionResult,
@@ -36,6 +37,9 @@ from qwenpaw.kernel import (
     SteerSafePoint,
     ToolEffect,
     RouteDecision,
+    VerificationRecord,
+    VerificationResult,
+    VerificationStatus,
 )
 from qwenpaw.runtime.model_calls import lite_model_call_store
 from qwenpaw.runtime.actions import lite_action_store
@@ -380,3 +384,72 @@ async def test_compaction_projects_content_free_evidence(tmp_path) -> None:
         "summary_changed": True,
         "error_code": None,
     }
+
+
+@pytest.mark.asyncio
+async def test_verification_projects_host_evidence_without_content(
+    tmp_path,
+) -> None:
+    conversation_id = "chat-verification"
+    now = datetime.now(timezone.utc)
+    task_id = uuid4()
+    run_id = uuid4()
+    record = VerificationRecord(
+        verification=VerificationResult(
+            task_id=task_id,
+            run_id=run_id,
+            verifier_id="qwenpaw.verifier.tests",
+            status=VerificationStatus.FAILED,
+            acceptance=(
+                AcceptanceVerification(
+                    criterion="PRIVATE CRITERION",
+                    passed=False,
+                    reason="PRIVATE FAILURE REASON",
+                ),
+            ),
+            metadata={"private": "PRIVATE METADATA"},
+        ),
+        task_id=task_id,
+        run_id=run_id,
+        event_id=uuid4(),
+        invocation_id=uuid4(),
+        correlation_id=uuid4(),
+        registry_generation=12,
+        source="qwenpaw.verifier.tests",
+        occurred_at=now,
+    )
+
+    class History:
+        async def list_for_conversation(self, chat_id, *, limit=100):
+            assert chat_id == conversation_id
+            assert limit == 1000
+            return (record,)
+
+    observations = await lite_observation_projection(
+        tmp_path,
+        verifications=History(),
+    ).list_for_conversation(conversation_id)
+
+    assert len(observations) == 1
+    observation = observations[0]
+    assert observation.category is ObservationCategory.VERIFICATION
+    assert observation.stage is ObservationStage.EVIDENCE
+    assert observation.status is ObservationStatus.FAILED
+    assert observation.task_id == task_id
+    assert observation.run_id == run_id
+    assert observation.invocation_id == record.invocation_id
+    assert observation.registry_generation == 12
+    assert observation.occurred_at == now
+    assert observation.facts == {
+        "verification_id": str(record.verification.verification_id),
+        "verifier_id": "qwenpaw.verifier.tests",
+        "acceptance_total": 1,
+        "acceptance_passed": 0,
+        "acceptance_failed": 1,
+        "artifact_count": 0,
+        "evidence_count": 0,
+    }
+    serialized = observation.model_dump_json()
+    assert "PRIVATE CRITERION" not in serialized
+    assert "PRIVATE FAILURE REASON" not in serialized
+    assert "PRIVATE METADATA" not in serialized

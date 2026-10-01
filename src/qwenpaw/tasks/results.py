@@ -315,7 +315,10 @@ def project_task_results(
                     step_id=event.step_id,
                     cause_event_id=event.cause_event_id,
                     correlation_id=event.correlation_id,
+                    invocation_id=event.invocation_id,
+                    registry_generation=event.registry_generation,
                     source=event.source or result.verifier_id,
+                    occurred_at=event.occurred_at,
                 ),
             )
         if event.event_type == "exit_condition.met":
@@ -520,9 +523,7 @@ def satisfied_result_exit_condition_ids(
                 for artifact in package.artifacts
             )
         elif condition.kind == "explicit_signal":
-            met = condition.condition_id in (
-                projection.met_exit_condition_ids
-            )
+            met = condition.condition_id in (projection.met_exit_condition_ids)
         if met:
             satisfied.add(condition.condition_id)
     return frozenset(satisfied)

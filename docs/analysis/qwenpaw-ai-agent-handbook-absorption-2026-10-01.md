@@ -356,6 +356,14 @@ recorder；该旁路现已接入同一记录器。当前固定 Chat 仅占 0.1% 
 和 overflow 路径由定点契约测试验证。这个结果把 Handbook 的“所有执行入口使用
 同一观测强制点”从原则落实成了回归门禁。
 
+VERIFICATION 随后也接入同一语义面，但继续以 Task append-only Ledger 为唯一事实
+源：`VerificationHistoryPort` 只回放与 ChatSpec.id 关联的 Task 事件，兼容新
+`conversation_id` 和旧 `chat_id` 元数据。Host 从 Execution Event 补齐 Invocation、
+correlation、generation 与可信事件时间；观察 API 只提供 verifier、通过/失败计数和
+Artifact/Evidence 数量，不公开 acceptance criterion、reason 或插件 metadata。
+因此 Runner 发出“完成”或模型声称“已验证”都不能产生 VERIFICATION 观察项，只有
+通过 Ledger 完整性检查的 `verification.completed` 才能成为独立 Evidence。
+
 ### A9. Model Call Plane 与显式 Route Decision
 
 优先级：P1；Lite 先做记录，不先做复杂路由器。

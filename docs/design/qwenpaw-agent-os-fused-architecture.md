@@ -463,7 +463,9 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
   但不复制 instruction、idempotency key 或 receipt detail。COMPACTION 从不可变
   CompactionRecord 派生，覆盖 automatic、manual 与 overflow recovery；消息正文、
   摘要、压缩指令和异常正文均不落入记录，真正 no-op 不生成虚假的成功事实。
-  VERIFICATION 继续按同一 Projection Port 增量接入。
+  VERIFICATION 从 Task Ledger 的 `verification.completed` 权威事件派生，以只读
+  `VerificationHistoryPort` 关联 ChatSpec.id；公开投影不复制验收文本、失败原因或
+  插件 metadata。执行成功、Artifact 生成和 Verification 通过仍是三个独立事实。
 - [x] 冻结 `ModelCallAttempt` / `RouteDecision` / `ModelCallResult` 和 Store Port；
   Lite 已在真实 Provider 网络边界记录直连、同模型重试、跨模型 fallback、overflow
   retry、流式成功/取消/失败和 usage，并提供 Chat-owned 只读查询。Route 区分逻辑

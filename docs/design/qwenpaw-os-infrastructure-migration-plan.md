@@ -801,8 +801,16 @@ Cron 不形成独立审批或产物事实源。
       110 条（MODEL 20、ACTION 28、GUARDRAIL 14、HITL 36、CONTROL 8、
       INTERRUPT 4），COMPACTION 为 0；material/failure/overflow 路径由 130 项
       定点测试覆盖。
-    - [ ] 接入 VERIFICATION 的权威来源；完成跨来源 cursor/pagination，替代 Lite
-      当前每类最多 1000 条的有界扫描。
+    - [x] VERIFICATION 直接从 Task append-only Ledger 的
+      `verification.completed` 事件派生，不建立第二个 Verification Store；新增
+      `VerificationHistoryPort` 按 `ChatSpec.id` 读取新 `conversation_id` 和旧
+      `chat_id` 关联的 Task。Host-owned `VerificationRecord` 保留 event、Task、Run、
+      Invocation、correlation、generation 与事件时间；观察项只公开 verifier、验收
+      通过/失败数量及 Artifact/Evidence 数量，不复制 criterion、reason 或 metadata。
+      临时真实 SQLite Ledger → Verification Event → Chat API 读链路及失败隐私投影
+      共 67 项定点测试通过。运行中 24 个 Task 当前没有 Verification 源记录，固定
+      Chat 查询正确保持 VERIFICATION=0，没有伪造通过状态。
+    - [ ] 完成跨来源 cursor/pagination，替代 Lite 当前每类最多 1000 条的有界扫描。
   - [ ] 完成 Model Call Plane 全部路由与成本能力：
     - [x] 冻结 `RouteDecision` / `ModelCallAttempt` / `ModelCallResult` / Store Port，
       并在 `TokenRecordingModelWrapper` 的真实 Provider 网络边界留证。每个实际请求

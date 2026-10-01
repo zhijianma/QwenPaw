@@ -4,6 +4,7 @@
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 
 from qwenpaw.kernel.events import ExecutionEvent
 from qwenpaw.kernel.models import (
@@ -21,6 +22,7 @@ from qwenpaw.kernel.models import (
     TaskSource,
     VerificationPolicy,
     VerificationResult,
+    VerificationRecord,
     VerificationStatus,
 )
 from qwenpaw.tasks.results import (
@@ -80,11 +82,7 @@ def _event(
         payload=(
             payload
             if payload is not None
-            else (
-                {"result": result.model_dump(mode="json")}
-                if result
-                else {}
-            )
+            else ({"result": result.model_dump(mode="json")} if result else {})
         ),
         artifact_refs=artifacts,
         evidence_refs=evidence,
@@ -170,6 +168,11 @@ def test_projection_preserves_host_owned_result_provenance() -> None:
     assert verification_record.event_id == verification_event.event_id
     assert verification_record.cause_event_id == artifact_event.event_id
     assert verification_record.correlation_id == correlation_id
+    assert (
+        verification_record.invocation_id == verification_event.invocation_id
+    )
+    assert verification_record.registry_generation == 1
+    assert verification_record.occurred_at == verification_event.occurred_at
 
 
 def test_projection_rejects_unknown_superseded_artifact() -> None:
@@ -187,6 +190,26 @@ def test_projection_rejects_unknown_superseded_artifact() -> None:
         project_task_results(
             task_id,
             (_event(task_id, run_id, 1, artifacts=(artifact,)),),
+        )
+
+
+def test_verification_record_rejects_mismatched_ownership() -> None:
+    task_id = uuid4()
+    run_id = uuid4()
+    verification = VerificationResult(
+        task_id=task_id,
+        run_id=run_id,
+        verifier_id="verifier.tests",
+        status=VerificationStatus.PASSED,
+    )
+
+    with pytest.raises(ValidationError, match="task ownership mismatch"):
+        VerificationRecord(
+            verification=verification,
+            task_id=uuid4(),
+            run_id=run_id,
+            event_id=uuid4(),
+            source="verifier.tests",
         )
 
 

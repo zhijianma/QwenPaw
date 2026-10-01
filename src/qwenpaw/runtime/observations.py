@@ -31,6 +31,9 @@ from ..kernel import (
     ObservationStage,
     ObservationStatus,
     RuntimeObservation,
+    VerificationHistoryPort,
+    VerificationRecord,
+    VerificationStatus,
 )
 from .actions import lite_action_store
 from .model_calls import lite_model_call_store
@@ -97,6 +100,13 @@ def _compaction_status(status: CompactionStatus) -> ObservationStatus:
     return {
         CompactionStatus.SUCCEEDED: ObservationStatus.SUCCEEDED,
         CompactionStatus.FAILED: ObservationStatus.FAILED,
+    }[status]
+
+
+def _verification_status(status: VerificationStatus) -> ObservationStatus:
+    return {
+        VerificationStatus.PASSED: ObservationStatus.SUCCEEDED,
+        VerificationStatus.FAILED: ObservationStatus.FAILED,
     }[status]
 
 
@@ -508,11 +518,57 @@ def _compaction_observation(record: CompactionRecord) -> RuntimeObservation:
     )
 
 
+def _verification_observation(
+    record: VerificationRecord,
+    conversation_id: str,
+) -> RuntimeObservation:
+    result = record.verification
+    passed = sum(1 for item in result.acceptance if item.passed)
+    return RuntimeObservation(
+        observation_id=_observation_id(
+            record.event_id,
+            ObservationStage.EVIDENCE,
+        ),
+        category=ObservationCategory.VERIFICATION,
+        stage=ObservationStage.EVIDENCE,
+        status=_verification_status(result.status),
+        source=ObservationSource(
+            source_type="qwenpaw.task.verification-record",
+            source_id=str(record.event_id),
+        ),
+        task_id=record.task_id,
+        run_id=record.run_id,
+        conversation_id=conversation_id,
+        invocation_id=record.invocation_id,
+        correlation_id=record.correlation_id,
+        registry_generation=record.registry_generation,
+        title=(
+            "Acceptance verification passed"
+            if result.status is VerificationStatus.PASSED
+            else "Acceptance verification failed"
+        ),
+        facts={
+            "verification_id": str(result.verification_id),
+            "verifier_id": result.verifier_id,
+            "acceptance_total": len(result.acceptance),
+            "acceptance_passed": passed,
+            "acceptance_failed": len(result.acceptance) - passed,
+            "artifact_count": len(result.artifact_ids),
+            "evidence_count": len(result.evidence_ids),
+        },
+        occurred_at=record.occurred_at or result.created_at,
+    )
+
+
 async def _empty_interactions() -> Sequence[InteractionRecord]:
     return ()
 
 
 async def _empty_controls() -> Sequence[ControlRecord]:
+    return ()
+
+
+async def _empty_verifications() -> Sequence[VerificationRecord]:
     return ()
 
 
@@ -528,6 +584,7 @@ class LiteObservationProjection(ObservationProjectionPort):
         agent_id: str | None = None,
         interactions: InteractionHistoryPort | None = None,
         controls: ControlHistoryPort | None = None,
+        verifications: VerificationHistoryPort | None = None,
     ) -> None:
         self._model_calls = model_calls
         self._actions = actions
@@ -535,6 +592,7 @@ class LiteObservationProjection(ObservationProjectionPort):
         self._agent_id = agent_id
         self._interactions = interactions
         self._controls = controls
+        self._verifications = verifications
 
     async def list_for_conversation(
         self,
@@ -567,12 +625,21 @@ class LiteObservationProjection(ObservationProjectionPort):
             )
         else:
             control_records = _empty_controls()
+        verification_records = (
+            self._verifications.list_for_conversation(
+                conversation_id,
+                limit=_SOURCE_SCAN_LIMIT,
+            )
+            if self._verifications is not None
+            else _empty_verifications()
+        )
         (
             model_records,
             action_records,
             compaction_records,
             resolved_interactions,
             resolved_controls,
+            resolved_verifications,
         ) = await asyncio.gather(
             self._model_calls.list_for_conversation(
                 conversation_id,
@@ -588,6 +655,7 @@ class LiteObservationProjection(ObservationProjectionPort):
             ),
             interaction_records,
             control_records,
+            verification_records,
         )
         observations = [
             observation
@@ -612,6 +680,10 @@ class LiteObservationProjection(ObservationProjectionPort):
             for record in resolved_controls
             for observation in _control_observations(record)
         )
+        observations.extend(
+            _verification_observation(record, conversation_id)
+            for record in resolved_verifications
+        )
         observations.sort(
             key=lambda item: (item.occurred_at, str(item.observation_id)),
             reverse=True,
@@ -625,6 +697,7 @@ def lite_observation_projection(
     agent_id: str | None = None,
     interactions: InteractionHistoryPort | None = None,
     controls: ControlHistoryPort | None = None,
+    verifications: VerificationHistoryPort | None = None,
 ) -> LiteObservationProjection:
     """Return the Lite semantic projection over workspace source facts."""
     from .compactions import lite_compaction_store
@@ -636,6 +709,7 @@ def lite_observation_projection(
         agent_id=agent_id,
         interactions=interactions,
         controls=controls,
+        verifications=verifications,
     )
 
 

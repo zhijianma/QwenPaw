@@ -25,14 +25,20 @@ from qwenpaw.invocation_control import (
 from qwenpaw.kernel import (
     ActionKind,
     ActionRequest,
+    PlanStep,
     ModelCallAttempt,
     ModelRouteReason,
     RouteDecision,
     TurnSubmissionRequest,
+    VerificationResult,
+    VerificationStatus,
 )
 from qwenpaw.runtime.actions import lite_action_store
 from qwenpaw.runtime.model_calls import lite_model_call_store
 from qwenpaw.schemas import DataContent, Message
+from qwenpaw.tasks.ledger import SQLiteExecutionLedger
+from qwenpaw.tasks.results import verification_signal
+from qwenpaw.tasks.service import TaskService
 
 
 def _chat(chat_id: str, *, app_id: str | None = None) -> ChatSpec:
@@ -335,6 +341,43 @@ async def test_list_chat_observations_uses_owned_projection(tmp_path):
         submission_id=submitted.submission_id,
         idempotency_key="cancel-turn",
     )
+    task_ledger = SQLiteExecutionLedger(
+        tmp_path / ".qwenpaw" / "lite" / "tasks.db",
+    )
+    await task_ledger.initialize()
+    task_service = TaskService(
+        store=task_ledger,
+        registry_generation=7,
+    )
+    task = await task_service.create_task(
+        objective="Verify Chat observation",
+        agent_id="default",
+        metadata={"conversation_id": chat_id},
+    )
+    await task_service.plan_task(
+        task.task_id,
+        steps=(
+            PlanStep(
+                title="Verify",
+                objective="Verify Chat observation",
+            ),
+        ),
+    )
+    _, run = await task_service.start_task(
+        task.task_id,
+        runner_id="qwenpaw.runner.tests",
+    )
+    verification = VerificationResult(
+        task_id=task.task_id,
+        run_id=run.run_id,
+        verifier_id="qwenpaw.verifier.tests",
+        status=VerificationStatus.PASSED,
+    )
+    await task_service.record_runner_signal(
+        task.task_id,
+        run.run_id,
+        verification_signal(verification),
+    )
 
     observations = await list_chat_observations(
         chat_id=chat_id,
@@ -359,7 +402,19 @@ async def test_list_chat_observations_uses_owned_projection(tmp_path):
         "qwenpaw.model.attempt",
         "qwenpaw.control.command",
         "qwenpaw.control.receipt",
+        "qwenpaw.task.verification-record",
     }
+    [verification_observation] = [
+        item
+        for item in observations
+        if item.source.source_type == "qwenpaw.task.verification-record"
+    ]
+    assert verification_observation.task_id == task.task_id
+    assert verification_observation.run_id == run.run_id
+    assert verification_observation.registry_generation == 7
+    assert verification_observation.facts["verification_id"] == str(
+        verification.verification_id,
+    )
     manager.get_chat.assert_awaited_once_with(chat_id)
 
 

@@ -63,6 +63,7 @@ from .models import (
     TaskOrder,
     ToolDefinition,
     ToolSelection,
+    VerificationRecord,
 )
 from .invocation import InvocationScope
 from .invocation_control import (
@@ -1284,6 +1285,19 @@ class ObservationProjectionPort(Protocol):
         limit: int = 100,
     ) -> Sequence[RuntimeObservation]:
         """Return newest observations for one ChatSpec identity."""
+
+
+@runtime_checkable
+class VerificationHistoryPort(Protocol):
+    """Read-only Task verification history for one ChatSpec identity."""
+
+    async def list_for_conversation(
+        self,
+        conversation_id: str,
+        *,
+        limit: int = 100,
+    ) -> Sequence[VerificationRecord]:
+        """Return newest authoritative verifier records for one ChatSpec."""
 
 
 @runtime_checkable

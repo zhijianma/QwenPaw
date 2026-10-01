@@ -1266,7 +1266,19 @@ class VerificationRecord(KernelModel):
     step_id: UUID | None = None
     cause_event_id: UUID | None = None
     correlation_id: UUID | None = None
+    invocation_id: UUID | None = None
+    registry_generation: int | None = Field(default=None, ge=1)
     source: NamespacedId
+    occurred_at: AwareDatetime | None = None
+
+    @model_validator(mode="after")
+    def validate_ownership(self) -> Self:
+        """Reject a verifier result wrapped by another Task or Run."""
+        if self.verification.task_id != self.task_id:
+            raise ValueError("verification record task ownership mismatch")
+        if self.verification.run_id != self.run_id:
+            raise ValueError("verification record run ownership mismatch")
+        return self
 
 
 class ResultPackage(KernelModel):

@@ -91,6 +91,7 @@ from ...tasks.artifacts import (
     artifact_filename,
     lite_artifact_store,
 )
+from ...tasks.verification_history import lite_verification_history
 from ...tasks.conversation_artifacts import (
     ConversationArtifactReceiptError,
     conversation_artifact_receipts,
@@ -1404,6 +1405,9 @@ async def list_chat_observations(
         agent_id=workspace.agent_id,
         interactions=workspace.interaction_service,
         controls=workspace.invocation_control,
+        verifications=lite_verification_history(
+            Path(workspace.workspace_dir),
+        ),
     ).list_for_conversation(
         chat_id,
         limit=limit,
