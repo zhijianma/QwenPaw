@@ -12,7 +12,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..kernel import SubmissionStatus, TurnSubmissionRequest
+from ..kernel import (
+    ActionStatus,
+    EnvironmentResolution,
+    InvocationScope,
+    SubmissionStatus,
+    TurnSubmissionRequest,
+)
+from ..runtime.actions import RuntimeActionRecorder, lite_action_store
 from ..schemas import (
     AgentResponse,
     ContentType,
@@ -20,6 +27,7 @@ from ..schemas import (
     RunStatus,
 )
 from ..utils.daily_telemetry import record_agent_activity
+from .actions import HARNESS_ACTION_TRACKER_KEY, HarnessActionTracker
 from .base import HarnessAdapter
 from .capabilities import HarnessCapabilityResolver
 from .events import (
@@ -50,6 +58,7 @@ class _HarnessInvocationBinding:
     interrupt: Any
     lease: Any
     invocation_id: uuid.UUID
+    capability_lease: Any = None
 
 
 class HarnessRuntime:
@@ -63,6 +72,7 @@ class HarnessRuntime:
         workspace: Any = None,
         environment_manager: Any = None,
     ) -> None:
+        self._workspace_dir = workspace_dir
         self._state_dir = workspace_dir / "harnesses"
         self._agent_id = agent_id
         self._workspace = workspace
@@ -292,6 +302,18 @@ class HarnessRuntime:
             raise RuntimeError("harness invocation has no owning task")
 
         session_id = str(getattr(request, "session_id", "") or "default")
+        try:
+            capability_lease = await self._open_action_tracker(
+                backend=backend,
+                request_context=request_context,
+                invocation_id=invocation_id,
+                conversation_id=str(conversation_id),
+                session_id=session_id,
+            )
+            settings["_request_context"] = request_context
+        except BaseException:
+            await control.finish_turn(lease, SubmissionStatus.FAILED)
+            raise
 
         async def cancel_harness_turn() -> int:
             adapter = await self.adapter(backend, settings)
@@ -311,6 +333,8 @@ class HarnessRuntime:
                 cancel_children=cancel_harness_turn,
             )
         except BaseException:
+            if capability_lease is not None:
+                await capability_lease.close()
             await control.finish_turn(lease, SubmissionStatus.FAILED)
             raise
         return _HarnessInvocationBinding(
@@ -319,7 +343,54 @@ class HarnessRuntime:
             interrupt=binding,
             lease=lease,
             invocation_id=invocation_id,
+            capability_lease=capability_lease,
         )
+
+    async def _open_action_tracker(
+        self,
+        *,
+        backend: str,
+        request_context: dict[str, Any],
+        invocation_id: uuid.UUID,
+        conversation_id: str,
+        session_id: str,
+    ) -> Any:
+        """Pin one generation and expose its Harness Action bridge."""
+        registry = getattr(self._workspace, "capability_registry", None)
+        if registry is None or not hasattr(registry, "pin"):
+            return None
+        capability_lease = await registry.pin()
+        try:
+            scope = InvocationScope(
+                invocation_id=invocation_id,
+                agent_id=self._agent_id,
+                conversation_id=conversation_id,
+                session_id=session_id,
+                root_agent_id=str(
+                    request_context.get("root_agent_id") or self._agent_id,
+                ),
+                root_session_id=str(
+                    request_context.get("root_session_id") or session_id,
+                ),
+                workspace_dir=str(self._workspace_dir),
+                registry_generation=capability_lease.generation,
+            )
+            recorder = RuntimeActionRecorder(
+                scope,
+                lite_action_store(self._workspace_dir),
+            )
+            request_context[HARNESS_ACTION_TRACKER_KEY] = HarnessActionTracker(
+                backend=backend,
+                scope=scope,
+                recorder=recorder,
+            )
+            request_context[
+                "os_registry_generation"
+            ] = capability_lease.generation
+            return capability_lease
+        except BaseException:
+            await capability_lease.close()
+            raise
 
     async def _drain_invocation_cleanup(
         self,
@@ -345,14 +416,18 @@ class HarnessRuntime:
         terminal: SubmissionStatus,
     ) -> None:
         """Commit Harness cleanup before releasing its pinned invocation."""
-        await lifecycle.interrupt.close()
-        if lifecycle.interaction_service is not None:
-            await lifecycle.interaction_service.cancel_invocation(
-                lifecycle.invocation_id,
-                detail=f"invocation finished as {terminal.value}",
-                include_non_blocking=False,
-            )
-        await lifecycle.control.finish_turn(lifecycle.lease, terminal)
+        try:
+            await lifecycle.interrupt.close()
+            if lifecycle.interaction_service is not None:
+                await lifecycle.interaction_service.cancel_invocation(
+                    lifecycle.invocation_id,
+                    detail=f"invocation finished as {terminal.value}",
+                    include_non_blocking=False,
+                )
+            await lifecycle.control.finish_turn(lifecycle.lease, terminal)
+        finally:
+            if lifecycle.capability_lease is not None:
+                await lifecycle.capability_lease.close()
 
     # pylint: disable-next=too-many-branches,too-many-statements
     async def _stream_uncontrolled(
@@ -366,6 +441,10 @@ class HarnessRuntime:
         """Translate one Harness turn after lifecycle ownership is bound."""
         settings = dict(settings or {})
         request_context = dict(settings.get("_request_context") or {})
+        settings["_request_context"] = request_context
+        action_tracker = request_context.get(HARNESS_ACTION_TRACKER_KEY)
+        if not isinstance(action_tracker, HarnessActionTracker):
+            action_tracker = None
         settings[
             "_runtime_capabilities"
         ] = await self._capability_resolver.resolve(request_context)
@@ -415,12 +494,14 @@ class HarnessRuntime:
                 ]
                 event_stream = self._iter_events(events)
             elif command:
-                await self._resolve_environment(
+                environment = await self._resolve_environment(
                     backend=backend,
                     cwd=cwd,
                     settings=settings,
                     request_context=request_context,
                 )
+                if action_tracker is not None and environment is not None:
+                    action_tracker.bind_environment(environment)
                 provider = get_provider(backend)
                 supported = {
                     item.name for item in provider.capabilities.commands
@@ -439,12 +520,14 @@ class HarnessRuntime:
                 )
                 event_stream = self._iter_events(events)
             else:
-                await self._resolve_environment(
+                environment = await self._resolve_environment(
                     backend=backend,
                     cwd=cwd,
                     settings=settings,
                     request_context=request_context,
                 )
+                if action_tracker is not None and environment is not None:
+                    action_tracker.bind_environment(environment)
                 adapter = await self.adapter(backend, settings)
                 await record_agent_activity()
                 event_stream = adapter.run_turn(
@@ -468,6 +551,8 @@ class HarnessRuntime:
                     ):
                         yield tagged(item)
                 elif event.kind == HarnessEventKind.TOOL_STARTED:
+                    if action_tracker is not None:
+                        await action_tracker.begin_event(event)
                     for item in text_stream.finish():
                         yield tagged(item)
                     for item in tool_stream.start(event):
@@ -476,6 +561,8 @@ class HarnessRuntime:
                     for item in tool_stream.progress(event):
                         yield tagged(item)
                 elif event.kind == HarnessEventKind.TOOL_COMPLETED:
+                    if action_tracker is not None:
+                        await action_tracker.complete_event(event)
                     for item in tool_stream.complete(event):
                         yield tagged(item)
                 elif event.kind == HarnessEventKind.ERROR:
@@ -487,6 +574,27 @@ class HarnessRuntime:
             task_cancelled = True
         except Exception as exc:
             error_text = str(exc)
+
+        if action_tracker is not None:
+            pending_status = (
+                ActionStatus.CANCELLED if cancelled else ActionStatus.UNKNOWN
+            )
+            pending_error = (
+                "harness_cancelled"
+                if cancelled
+                else (
+                    "harness_turn_error"
+                    if error_text
+                    else "provider_completion_missing"
+                )
+            )
+            try:
+                await action_tracker.finalize_pending(
+                    pending_status,
+                    pending_error,
+                )
+            except Exception as exc:
+                error_text = error_text or str(exc)
 
         for item in text_stream.finish():
             yield tagged(item)
@@ -547,11 +655,11 @@ class HarnessRuntime:
         cwd: Path,
         settings: dict[str, Any],
         request_context: dict[str, Any],
-    ) -> None:
+    ) -> EnvironmentResolution | None:
         """Resolve a controlled Harness launch before provider dispatch."""
         raw_invocation_id = request_context.get("os_invocation_id")
         if raw_invocation_id is None:
-            return
+            return None
         if self._environment_manager is None:
             raise RuntimeError(
                 "controlled Harness invocation has no environment manager",
@@ -563,7 +671,7 @@ class HarnessRuntime:
                 "invalid Harness environment invocation identity",
             ) from exc
         conversation_id = request_context.get("os_conversation_id")
-        await self._environment_manager.resolve(
+        return await self._environment_manager.resolve(
             backend,
             cwd,
             settings,

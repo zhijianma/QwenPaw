@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
+from qwenpaw.capabilities import GenerationRegistry
 from qwenpaw.harnesses.base import HarnessAdapter
 from qwenpaw.harnesses.events import (
     HarnessAttachment,
@@ -28,10 +29,15 @@ from qwenpaw.invocation_control import (
     SQLiteInvocationControl,
 )
 from qwenpaw.kernel import (
+    ActionKind,
+    ActionStatus,
     ControlCommandStatus,
+    SideEffectStatus,
     SubmissionStatus,
+    ToolEffect,
     TurnSubmissionRequest,
 )
+from qwenpaw.runtime.actions import lite_action_store
 from qwenpaw.runtime.environments import FilesystemEnvironmentStore
 from qwenpaw.runtime.harness_environments import (
     RuntimeHarnessEnvironmentManager,
@@ -141,6 +147,34 @@ class ToolAdapter(FakeAdapter):
             text="Done",
         )
         yield HarnessEvent(kind=HarnessEventKind.COMPLETED)
+
+
+class IncompleteToolAdapter(FakeAdapter):
+    """End a remote action without a provider completion event."""
+
+    async def run_turn(  # pylint: disable=invalid-overridden-method
+        self,
+        *,
+        session_id: str,
+        prompt: str,
+        cwd: Path,
+        settings: dict,
+        attachments: list[HarnessAttachment] | None = None,
+    ) -> AsyncIterator[HarnessEvent]:
+        del session_id, prompt, cwd, settings, attachments
+        yield HarnessEvent(
+            kind=HarnessEventKind.TOOL_STARTED,
+            item_id="tool-incomplete",
+            tool_name="shell",
+            data={
+                "arguments": {"command": "long-running-command"},
+                "provider_type": "commandExecution",
+            },
+        )
+        yield HarnessEvent(
+            kind=HarnessEventKind.ERROR,
+            text="provider connection lost",
+        )
 
 
 class CommandAdapter(FakeAdapter):
@@ -582,6 +616,99 @@ async def test_controlled_harness_records_environment_before_dispatch(
 
     assert output[-1].status == "completed"
     assert adapter.environment_seen is True
+
+
+@pytest.mark.asyncio
+async def test_controlled_harness_records_remote_action_evidence(
+    tmp_path: Path,
+) -> None:
+    control = InvocationControlService(
+        store=SQLiteInvocationControl(tmp_path / "control.sqlite3"),
+    )
+    registry = GenerationRegistry()
+    workspace = SimpleNamespace(
+        workspace_dir=tmp_path,
+        invocation_control=control,
+        interaction_service=InteractionService(
+            tmp_path / "interactions.sqlite3",
+        ),
+        capability_registry=registry,
+    )
+    runtime = HarnessRuntime(
+        tmp_path,
+        workspace=workspace,
+        environment_manager=_environment_manager(tmp_path),
+    )
+    runtime._adapters["codex"] = ToolAdapter()
+
+    output = [
+        item
+        async for item in runtime.stream(
+            backend="codex",
+            request=_os_request(),
+            cwd=tmp_path.resolve(),
+        )
+    ]
+    records = await lite_action_store(tmp_path).list_for_conversation(
+        "chat-spec-1",
+    )
+
+    assert output[-1].status == "completed"
+    assert len(records) == 1
+    record = records[0]
+    assert record.request.kind is ActionKind.HARNESS_REMOTE
+    assert record.request.capability_id == "qwenpaw.system.harness.codex"
+    assert record.request.action_name == "shell"
+    assert record.request.effect is ToolEffect.PROCESS
+    assert record.request.registry_generation == registry.generation
+    assert record.request.environment_ref is not None
+    assert record.request.redacted_arguments == {
+        "command": "[CONTENT OMITTED]",
+    }
+    assert record.result is not None
+    assert record.result.status is ActionStatus.SUCCEEDED
+    assert record.result.side_effect_status is SideEffectStatus.SUCCEEDED
+
+
+@pytest.mark.asyncio
+async def test_controlled_harness_marks_unfinished_remote_action_unknown(
+    tmp_path: Path,
+) -> None:
+    control = InvocationControlService(
+        store=SQLiteInvocationControl(tmp_path / "control.sqlite3"),
+    )
+    workspace = SimpleNamespace(
+        workspace_dir=tmp_path,
+        invocation_control=control,
+        interaction_service=InteractionService(
+            tmp_path / "interactions.sqlite3",
+        ),
+        capability_registry=GenerationRegistry(),
+    )
+    runtime = HarnessRuntime(
+        tmp_path,
+        workspace=workspace,
+        environment_manager=_environment_manager(tmp_path),
+    )
+    runtime._adapters["codex"] = IncompleteToolAdapter()
+
+    output = [
+        item
+        async for item in runtime.stream(
+            backend="codex",
+            request=_os_request(),
+            cwd=tmp_path.resolve(),
+        )
+    ]
+    [record] = await lite_action_store(
+        tmp_path,
+    ).list_for_conversation("chat-spec-1")
+
+    assert output[-1].status == "failed"
+    assert record.result is not None
+    assert record.result.status is ActionStatus.UNKNOWN
+    assert record.result.error_code == "harness_turn_error"
+    assert record.result.side_effect_status is SideEffectStatus.UNCERTAIN
 
 
 @pytest.mark.asyncio

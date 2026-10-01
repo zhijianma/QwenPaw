@@ -41,6 +41,7 @@ from ...utils.io_utils import (
     write_json_atomic_async,
 )
 from ..base import HarnessAdapter, HarnessOperationNotSupportedError
+from ..actions import begin_harness_approval_action
 from ..capabilities import HarnessRuntimeCapabilities
 from ..events import (
     HarnessAttachment,
@@ -605,6 +606,19 @@ class QoderAdapter(HarnessAdapter):
                 source="qoder",
                 input_data=input_data,
             )
+        if bridge_ready:
+            try:
+                await begin_harness_approval_action(
+                    request_context,
+                    backend="qoder",
+                    item_id=str(context.tool_use_id or ""),
+                    tool_name=tool_name,
+                    arguments=input_data,
+                    provider_type=tool_name,
+                    approval_id=pending.request_id,
+                )
+            except Exception:
+                bridge_ready = False
         if not bridge_ready:
             await service.resolve_request(
                 pending.request_id,

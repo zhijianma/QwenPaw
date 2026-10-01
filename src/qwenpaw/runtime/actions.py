@@ -51,6 +51,7 @@ _BULK_ARGUMENT_NAMES = frozenset(
         "body",
         "bytes",
         "code",
+        "command",
         "content",
         "data",
         "document",
@@ -539,6 +540,46 @@ class RuntimeActionRecorder:
         context.governance_metadata["action_id"] = str(request.action_id)
         return request
 
+    async def begin_harness_remote(
+        self,
+        context: ToolCallContext,
+        *,
+        capability_id: str,
+        effect: ToolEffect,
+        risk: RiskLevel,
+        reversible: bool,
+        policy_decision: str,
+        environment_ref: EnvironmentRef,
+    ) -> ActionRequest:
+        """Persist a provider-reported Harness action at its first boundary."""
+        existing = context.extra.get(ACTION_REQUEST_CONTEXT_KEY)
+        if isinstance(existing, ActionRequest):
+            return existing
+        request = self._request(
+            context,
+            capability_id=capability_id,
+            kind=ActionKind.HARNESS_REMOTE,
+            action_name=context.tool_name,
+            effect=effect,
+            risk=risk,
+            reversible=reversible,
+            policy_decision=policy_decision,
+            approval_id=None,
+            environment_ref=environment_ref,
+        )
+        try:
+            await self._store.begin(request)
+        except Exception as exc:
+            context.governance_metadata[ACTION_REQUEST_STATE_KEY] = "failed"
+            raise ActionRequestPersistenceError(
+                "Harness action was not accepted because its intent could "
+                "not be recorded",
+            ) from exc
+        context.extra[ACTION_REQUEST_CONTEXT_KEY] = request
+        context.governance_metadata[ACTION_REQUEST_STATE_KEY] = "recorded"
+        context.governance_metadata["action_id"] = str(request.action_id)
+        return request
+
     async def link_approval(
         self,
         context: ToolCallContext,
@@ -689,6 +730,52 @@ class RuntimeActionRecorder:
                 "tool executed but its result could not be durably verified",
             ) from exc
         return response
+
+    async def complete_harness_remote(
+        self,
+        context: ToolCallContext,
+        *,
+        status: ActionStatus,
+        error_code: str = "",
+        retryable: bool = False,
+    ) -> None:
+        """Commit content-free terminal evidence for a Harness action."""
+        request = context.extra.get(ACTION_REQUEST_CONTEXT_KEY)
+        if not isinstance(request, ActionRequest):
+            raise ActionConflictError(
+                "Harness result has no active action request",
+            )
+        approval_ids = tuple(
+            UUID(value)
+            for value in context.governance_metadata.get(
+                "approval_ids",
+                [],
+            )
+        )
+        result = ActionResult(
+            action_id=request.action_id,
+            invocation_id=request.invocation_id,
+            conversation_id=request.conversation_id,
+            status=status,
+            observation_digest=_sha256(
+                {
+                    "status": status.value,
+                    "error_code": error_code,
+                    "approval_ids": [str(value) for value in approval_ids],
+                },
+            ),
+            approval_ids=approval_ids,
+            error_code=error_code,
+            retryable=retryable,
+            side_effect_status=_side_effect_status(request.effect, status),
+        )
+        try:
+            await self._store.complete(result)
+        except Exception as exc:
+            raise ActionResultPersistenceError(
+                "Harness action completed but its result could not be "
+                "durably verified",
+            ) from exc
 
 
 def lite_action_store(workspace_dir: Path) -> FilesystemActionStore:

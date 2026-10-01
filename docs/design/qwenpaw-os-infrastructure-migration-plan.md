@@ -734,8 +734,17 @@ Cron 不形成独立审批或产物事实源。
       Browser code 不会因新增查询接口泄露。固定 Chat 实测返回 Browser kind、终态
       及 Artifact/Evidence 数量，历史三条 Browser code 均投影为
       `[CONTENT OMITTED]`，不读取或暴露私有 Action 文件路径。
-    - [ ] Harness Remote 仍待接入；现有 Task `SideEffectRecord` 保持防重放权威，
-      不迁移为第二状态机。
+    - [x] 本地 Codex/Qoder Harness Remote 已在统一 Event 翻译层接入：受控 Chat
+      turn pin 住 capability generation，Action 保存 Harness EnvironmentRef；Codex/
+      Qoder 审批在 Provider 恢复前生成 Request 与不可变 Approval Link，远程工具终态
+      映射为 succeeded/failed/denied/cancelled。命令参数按内容字段省略，不进入 Action
+      JSON。Provider 丢失 TOOL_COMPLETED 时终态为 `unknown`，副作用为 `uncertain`，
+      禁止把断线伪装为失败后可安全重试。68 项 Harness 定点测试及全部 Python 文件
+      门禁通过。
+    - [ ] Hub remote runner 与跨主机执行仍待接入 attested Action/Environment
+      Adapter；现有 Task `SideEffectRecord` 继续作为 Task 防重放权威，不迁移为第二
+      状态机。仅有 TOOL_STARTED 的 Provider 事件属于 observed boundary，不宣称
+      宿主已在实际执行前拦截。
   - [ ] `EnvironmentContract` 冻结 Workspace、Sandbox、Harness 和 Hub runtime
     共同需要的挂载、网络、凭据引用、依赖、资源、快照与清理语义。
     - [x] Kernel 已冻结 Contract、Resolution、Ref 与 Resolver/Store Port；Lite

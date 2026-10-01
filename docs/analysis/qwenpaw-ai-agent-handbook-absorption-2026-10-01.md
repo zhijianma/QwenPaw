@@ -181,7 +181,12 @@ Artifact/Evidence 引用；系统与插件 Driver 共用 Driver Action、动态�
 `ActionKind.BROWSER`；插件可通过同一 `ToolDefinition.action_kind` 接入，Host 不按
 工具名或 Policy 名猜测。Browser 内部逐方法副作用分类与溢出输出 Artifact 关联仍由
 Browser 子系统继续闭环；其中溢出输出 Artifact 关联已经完成，逐方法副作用分类仍待
-收敛。Harness Remote 仍属于后续迁移范围。
+收敛。本地 Codex/Qoder Harness Remote 已在 provider-neutral Event 边界接入同一
+Action Plane：每个受控 Chat turn 固定 capability generation，Action 引用调用前
+持久化的 EnvironmentResolution，审批型动作在恢复 Provider 前先记录 Request 和
+Approval Link，完成/拒绝/失败/取消均生成内容最小化 Result。没有 Provider 审批回调
+的动作最早只能在 `TOOL_STARTED` 被观察，不能伪称为宿主执行前拦截；Hub remote
+runner 与独立 Runtime attestation 仍属于后续迁移范围。
 MCP 标准 `readOnlyHint=true` 会被保留并映射为低风险无副作用 Action；服务未声明
 注解时保持 `external_write/high` 的保守默认值，禁止根据工具名称猜测权限。
 
@@ -401,6 +406,9 @@ Lite 不为未来形态提前承担其部署复杂度。
 - Tool Call 意图、策略判定和真实副作用分别留证；Tool 自报成功不能代替 Runtime
   Evidence。
 - HITL 与 Interrupt 的等待、恢复、拒绝、中断点和有效结果可跨请求还原。
+- Harness 审批型 Action 在 Provider 恢复前已有 Request 与 Approval Link；只提供
+  start/completed 事件的 Provider 明确标注为 observed boundary，缺失完成事件时结果
+  为 `unknown` 且副作用状态为 `uncertain`。
 - 每次模型重试或降级都有独立 Attempt 与 Route Decision，不在 Provider Adapter
   内静默切换模型。
 

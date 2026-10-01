@@ -21,6 +21,7 @@ from ...kernel.models import ApprovalDisplay, ApprovalSource
 from ...security.tool_guard.approval import ApprovalDecision
 from ...utils.io_utils import read_json, write_json_atomic_async
 from ..base import HarnessAdapter
+from ..actions import begin_harness_approval_action
 from ..capabilities import HarnessRuntimeCapabilities
 from ..events import (
     HarnessAttachment,
@@ -754,6 +755,31 @@ class CodexAdapter(HarnessAdapter):
                 source="codex",
                 input_data=summary.payload,
             )
+        if bridge_ready:
+            try:
+                await begin_harness_approval_action(
+                    context,
+                    backend="codex",
+                    item_id=str(params.get("itemId") or ""),
+                    tool_name=(
+                        "shell"
+                        if is_command
+                        else (
+                            "permissions" if is_permissions else "apply_patch"
+                        )
+                    ),
+                    arguments=summary.payload,
+                    provider_type=(
+                        "commandExecution"
+                        if is_command
+                        else (
+                            "permissions" if is_permissions else "fileChange"
+                        )
+                    ),
+                    approval_id=pending.request_id,
+                )
+            except Exception:
+                bridge_ready = False
         if not bridge_ready:
             await service.resolve_request(
                 pending.request_id,

@@ -420,8 +420,13 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
     显式 `ActionKind.BROWSER`，执行前后复用同一 Request / Result 管线，不按名称
     推断；真实 Chromium、固定 Chat、失败输出 Artifact/Evidence 及安全 Action 查询
     均已通过。Browser 内部逐方法副作用分类仍由对应子系统继续闭环。
-  - [ ] Harness Remote 仍通过后续显式 Adapter 迁移；不能因枚举和模型已存在就
-    宣称 Action Plane 全量完成。
+  - [x] 本地 Codex/Qoder Harness Remote 已通过 provider-neutral Event Adapter
+    接入：受控 Chat turn 固定 generation 和 EnvironmentRef；审批回调在 Provider
+    恢复前记录 Request/Approval Link，TOOL_COMPLETED 写入最小化 Result，缺失终态
+    收敛为 `unknown/uncertain`。仅有 TOOL_STARTED 的动作属于观测边界，不冒充宿主
+    执行前拦截。
+  - [ ] Hub remote runner、跨主机执行与 attested Runtime 仍待显式 Adapter；不能因
+    本地 Harness 已接入就宣称远程 Action Plane 全量完成。
 - [x] 将 `PromptFragment` 兼容演进为带来源、版本、信任级和哈希的
   `ContextFragment`，并在 Provider 调用前为每次实际尝试生成不可变
   `ContextManifest`。真实 Chat 验收覆盖 generation 11、93 个 Fragment 和
