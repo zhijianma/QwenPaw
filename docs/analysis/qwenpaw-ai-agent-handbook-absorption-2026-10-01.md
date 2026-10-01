@@ -74,6 +74,8 @@ Handbook 的 2026 调研与 QwenPaw 的产品机会高度一致：
 | 业务 Outcome | `run.completed` 与 Verification 证明执行完成 | 增加 `Outcome` 投影，区分执行成功、业务验收和后续动作 |
 | 资产发布 | Capability generation 解决运行版本，Plugin lifecycle 解决安装 | 增加 Release / Lock Manifest，区分逻辑资源、发布版本、运行引用和派生索引 |
 | 轨迹评估 | 已有 causal event，但没有稳定 Trajectory 数据产品 | 从 Event / Context Manifest / Action / Evidence 派生 Trajectory，后续用于 Badcase 与回归 |
+| 通信语义 | HTTP、SSE、Queue、Ledger 与 Continuation 已分别存在 | 冻结 `CommunicationContract`，分开声明调用、流、任务句柄和续传能力，不从传输方式推断恢复语义 |
+| 插件发布证据 | shadow generation 已有结构、身份与健康检查 | 增加风险分级的 Scenario / Evidence / Evaluation 门禁；验证通过后才原子晋升，不把“可导入”当作“可发布” |
 
 ### 3.3 当前模型需要收紧的地方
 
@@ -112,7 +114,7 @@ Handbook 给出了 `WAITING_INPUT`、`WAITING_APPROVAL`、`WAITING_EVENT`、
 
 这能避免 Ask User、Approval、后台 Tool、Suggestion 和外部事件各自创造平行状态机。
 
-## 4. 建议吸收的九项设计
+## 4. 建议吸收的十一项设计
 
 ### A1. 明确 Productized Harness 与 OS Substrate
 
@@ -412,6 +414,75 @@ Provider/Model，Attempt 记录实际 Adapter、Formatter 及版本；Provider �
 `GET /api/chats/{ChatSpec.id}/model-calls` 查询内容最小化记录。当前仍未实现按成本、
 健康度或数据边界自动选路，也不把既有静态 fallback 配置冒充智能路由器。
 
+### A10. 通信能力契约，而不是统一成一种传输
+
+优先级：P0，直接约束当前 Chat Queue、Continuation 与后续 Hub。
+
+Handbook 第 12 章最值得吸收的不是某个消息中间件，而是把四种语义分开：
+
+```text
+S1 Request / Response  短调用，一次请求得到结果或回执
+S2 Request Stream      当前请求内增量可见，断流不等于可续传
+S3 Durable Handle      执行独立于连接，可按稳定标识查询结果
+S4 Durable Channel     有保留、确认、重投和续传位置的持久通道
+```
+
+QwenPaw 3.0 不为四档分别建四套业务模型，而是在 Port 与 Adapter 契约中显式声明
+能力：`delivery_mode`、`ordering_scope`、`idempotency_key`、`resume_cursor`、
+`retention`、`backpressure` 和 `disconnect_policy`。领域对象继续保持清晰：
+
+- `ChatSpec.id` 是 Conversation 身份，不是网络连接或 Provider session；
+- `Submission` 是一次已接受输入的持久句柄，不等同于 Invocation；
+- `Invocation` 是一次执行尝试，失败或等待后可以由新 Invocation 续行；
+- SSE cursor 只承诺恢复当前投影，不冒充完整 Event Log 消费位置；
+- `InteractionRequest` 和 `WaitCondition` 描述等待事实，Continuation outbox 负责
+  在决定提交后可靠地产生后续 Submission；
+- 只有确实需要离线消费、重投与背压的 Hub 链路才升级为 S4。Lite 不因为“未来
+  可能分布式”就强制引入消息队列。
+
+这项设计也决定普通 Chat Ask User 的正确恢复方式：先原子提交回答和内容最小化
+continuation outbox，再创建同一 `ChatSpec.id` 下的新 Submission / Invocation；不
+序列化 Python 调用栈，也不依赖旧 SSE 连接仍然存在。问题与回答只从权威
+Interaction Store 在执行时装配，Queue Store 仅保存 `interaction_id` 等引用。
+
+验收：SSE 断线不改变已接受 Submission；重连可以取得当前投影；进程在回答提交后、
+Continuation 入队前退出时，重启能够从 outbox 补发且不重复；短 Tool 调用仍保持
+S1/S2，不被迫走持久队列。
+
+### A11. Scenario / Evidence / Evaluation / Promotion 插件晋升门禁
+
+优先级：P1；先增强现有 shadow generation，不建设独立仿真平台。
+
+Handbook 第 16 章明确区分“运行完成、任务成功、允许发布”。这一点应进入 3.0
+插件生命周期，否则“安装即生效”容易被误解为“代码能导入就立刻获得执行权”。
+建议把现有激活流程升级为：
+
+```text
+discover -> validate -> stage -> shadow generation
+         -> contract checks -> risk-based scenarios
+         -> evidence bundle -> evaluation decision
+         -> authorized promotion -> atomic publish
+```
+
+其中：
+
+- **Contract checks** 验证 Port、identity、schema、权限声明和兼容版本；
+- **Scenario** 只替换本次实验的环境条件，不替换被测插件行为；
+- **Evidence bundle** 保存结构化结果、Action / Interaction / Artifact 引用和环境
+  Manifest，不把日志文本当作发布证据；
+- **Evaluation** 按插件声明的成功标准判定，证据不足返回 `indeterminate`；
+- **Promotion** 是 Host 的授权动作，只有它能发布新 generation；失败继续使用上一
+  个健康 generation，不污染正在运行的 lease。
+
+Lite 按风险分级保持轻量：纯 Renderer / Prompt 贡献只跑确定性契约样例；只读 Tool
+增加隔离调用；外部写入、Shell、Browser、Driver 和 Harness 贡献必须验证 Policy、
+Approval、幂等和副作用证据。验证在安装事务内自动完成，因此普通插件仍然“安装后
+无需重启即生效”，只是生效点从 import 成功收紧为 promotion 成功。
+
+这一门禁还为后续受控自进化预留边界：生产 Badcase 可以生成候选 Scenario、Skill
+或 Policy，但只能进入 shadow generation，不能由运行中的 Agent 自行修改当前
+generation。
+
 ## 5. 不建议直接吸收的内容
 
 | 内容 | 决策 | 原因 |
@@ -433,12 +504,15 @@ Provider/Model，Attempt 记录实际 Adapter、Formatter 及版本；Provider �
    Tool Schema、来源、信任和 generation；
 3. 冻结并实现统一 Action Plane，使内置和插件不再只在 Tool Adapter 层对齐；
 4. 冻结 Environment Contract，并让 Lite 本地 Runtime 兑现；
-5. 统一语义观测，先从现有 Event 派生，不另建第二套运行状态机；
-6. 冻结 Model Call Attempt / Route Decision；Lite 记录直连与重试，后续 Edition
+5. 冻结 Communication Contract，先让 Chat Submission、SSE、Interaction
+   Continuation 和 Event Log 的承诺互不混淆；
+6. 统一语义观测，先从现有 Event 派生，不另建第二套运行状态机；
+7. 冻结 Model Call Attempt / Route Decision；Lite 记录直连与重试，后续 Edition
    再实现自动路由；
-7. 把 Checkpoint 与 Workspace snapshot / Action uncertainty 对齐，完成失败恢复；
-8. 预留 Outcome / Trajectory 事件，不先建设评估平台；
-9. 基础模块全部通过真实 Chat 验收后，再恢复 Task Workbench。
+8. 把 Checkpoint 与 Workspace snapshot / Action uncertainty 对齐，完成失败恢复；
+9. 在 shadow generation 增加风险分级 Scenario / Evidence / Promotion 门禁；
+10. 预留 Outcome / Trajectory 事件，不先建设评估平台；
+11. 基础模块全部通过真实 Chat 验收后，再恢复 Task Workbench。
 
 Workstation / Hub 后续增加 Budget Lease、外置 Registry、分布式状态和隔离 Runtime；
 Lite 不为未来形态提前承担其部署复杂度。
@@ -470,6 +544,12 @@ Lite 不为未来形态提前承担其部署复杂度。
 - Model Call 记录只关联 ContextManifest 和实际 usage，不保存消息、Prompt、隐藏
   推理或 Secret；流看到终态 chunk 后被消费者关闭仍记为成功，未见终态的提前关闭
   才记为取消。
+- HTTP/SSE 断连不改变已接受 Submission 的权威状态；Projection cursor、Event Log
+  cursor 和任务句柄分别声明，禁止互相冒充。
+- Interaction 回答与 Continuation outbox 原子提交；恢复产生的新 Invocation 使用
+  同一 `ChatSpec.id`，稳定幂等键确保最多形成一个后续 Submission。
+- 插件只有在 shadow generation 的契约、风险场景和证据门禁通过后才发布；失败或
+  证据不足保留上一健康 generation，且普通热插件无需重启服务。
 
 ## 8. 参考章节
 
@@ -478,10 +558,15 @@ Lite 不为未来形态提前承担其部署复杂度。
 - [第 4 章：任务、长程推进与完成证据](https://github.com/aliyun/ai-agent-handbook/blob/main/02-build/%E7%AC%AC%204%20%E7%AB%A0%20%E4%BB%BB%E5%8A%A1%EF%BC%9A%E7%BC%96%E6%8E%92%E3%80%81%E9%95%BF%E7%A8%8B%E6%8E%A8%E8%BF%9B%E4%B8%8E%E5%8D%8F%E4%BD%9C%E6%B5%81%E8%BD%AC.md)
 - [第 5 章：Context、State 与 Workspace](https://github.com/aliyun/ai-agent-handbook/blob/main/02-build/%E7%AC%AC%205%20%E7%AB%A0%20%E4%BF%A1%E6%81%AF%EF%BC%9A%E4%B8%8A%E4%B8%8B%E6%96%87%E3%80%81%E7%8A%B6%E6%80%81%E4%B8%8E%E5%8F%AF%E5%A4%8D%E7%94%A8%E8%83%BD%E5%8A%9B%E8%B5%84%E4%BA%A7.md)
 - [第 6 章：Action Plane 与 HITL](https://github.com/aliyun/ai-agent-handbook/blob/main/02-build/%E7%AC%AC%206%20%E7%AB%A0%20%E8%A1%8C%E5%8A%A8%EF%BC%9A%E5%8F%97%E6%8E%A7%E6%89%A7%E8%A1%8C%E3%80%81%E9%AA%8C%E8%AF%81%E5%8F%8D%E9%A6%88%E4%B8%8E%E4%BA%A4%E4%BB%98%E5%87%86%E5%A4%87.md)
+- [第 7 章：Agent Runtime 与 Sandbox](https://github.com/aliyun/ai-agent-handbook/blob/main/03-run/%E7%AC%AC%207%20%E7%AB%A0%20%20Agent%20%E8%BF%90%E8%A1%8C%E6%97%B6%E4%B8%8E%E6%B2%99%E7%AE%B1.md)
 - [第 8 章：状态、Checkpoint 与 Artifact](https://github.com/aliyun/ai-agent-handbook/blob/main/03-run/%E7%AC%AC%208%20%E7%AB%A0%20Agent%20%E7%8A%B6%E6%80%81%E5%AD%98%E5%82%A8%E4%B8%8E%E8%AF%AD%E4%B9%89%E8%B5%84%E4%BA%A7.md)
 - [第 9 章：AI 网关与统一流量治理](https://github.com/aliyun/ai-agent-handbook/blob/main/03-run/%E7%AC%AC%209%20%E7%AB%A0%20%20AI%20%E7%BD%91%E5%85%B3%E4%B8%8E%E7%BB%9F%E4%B8%80%E6%B5%81%E9%87%8F%E6%B2%BB%E7%90%86.md)
+- [第 10 章：异步任务与自动化流程](https://github.com/aliyun/ai-agent-handbook/blob/main/03-run/%E7%AC%AC%2010%20%E7%AB%A0%20%20Agent%20%E5%BC%82%E6%AD%A5%E4%BB%BB%E5%8A%A1%E4%B8%8E%E8%87%AA%E5%8A%A8%E5%8C%96%E6%B5%81%E7%A8%8B.md)
+- [第 12 章：Agent 分布式通信](https://github.com/aliyun/ai-agent-handbook/blob/main/03-run/%E7%AC%AC%2012%20%E7%AB%A0%20Agent%20%E5%88%86%E5%B8%83%E5%BC%8F%E9%80%9A%E4%BF%A1.md)
 - [第 13 章：Agent 的可观测性](https://github.com/aliyun/ai-agent-handbook/blob/main/04-governance/%E7%AC%AC%2013%20%E7%AB%A0%E3%80%80Agent%20%E7%9A%84%E5%8F%AF%E8%A7%82%E6%B5%8B%E6%80%A7.md)
 - [第 14 章：Agent 安全](https://github.com/aliyun/ai-agent-handbook/blob/main/04-governance/%E7%AC%AC%2014%20%E7%AB%A0%E3%80%80Agent%20%E5%AE%89%E5%85%A8.md)
 - [第 15 章：AI 资产注册与发现](https://github.com/aliyun/ai-agent-handbook/blob/main/04-governance/%E7%AC%AC%2015%20%E7%AB%A0%E3%80%80AI%20%E8%B5%84%E4%BA%A7%E7%9A%84%E5%8F%91%E7%8E%B0%E4%B8%8E%E7%AE%A1%E7%90%86.md)
+- [第 16 章：Agent Simulation 与质量验证](https://github.com/aliyun/ai-agent-handbook/blob/main/04-governance/%E7%AC%AC%2016%20%E7%AB%A0%E3%80%80Agent%20%E8%A1%8C%E4%B8%BA%E7%94%9F%E6%88%90%E4%B8%8E%E8%B4%A8%E9%87%8F%E9%AA%8C%E8%AF%81.md)
 - [第 19 章：Agent 轨迹数据](https://github.com/aliyun/ai-agent-handbook/blob/main/05-optimization/%E7%AC%AC%2019%20%E7%AB%A0%E3%80%80Agent%20%E8%BD%A8%E8%BF%B9%E6%95%B0%E6%8D%AE.md)
+- [第 23 章：受控自进化](https://github.com/aliyun/ai-agent-handbook/blob/main/05-optimization/%E7%AC%AC%2023%20%E7%AB%A0%E3%80%80%E5%8F%97%E6%8E%A7%E8%87%AA%E8%BF%9B%E5%8C%96.md)
 - [第 30 章：Agentic OS](https://github.com/aliyun/ai-agent-handbook/blob/main/07-conclusion/%E7%AC%AC%2030%20%E7%AB%A0%20%E4%BB%8E%20Agentic%20Application%20%E5%88%B0%20Agentic%20OS.md)

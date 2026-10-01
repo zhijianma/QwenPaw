@@ -313,13 +313,20 @@ Manifest v2 使用 `schema_version`、`restart_policy` 和多条
 ```text
 discover -> validate manifest -> stage -> import
          -> validate Slot Port + identity -> health check
-         -> build shadow generation -> atomic publish
+         -> build shadow generation -> risk-based scenarios
+         -> evidence + evaluation -> authorized promotion
+         -> atomic publish
          -> new runs pin new generation -> old lease drains -> reclaim
 ```
 
 公共 backend Slot 在发布前必须通过对应 runtime-checkable Port，并声明与
 `<plugin_id>.<contribution_id>` 一致的能力身份。UI Slot 必须返回带非空
-`entrypoint` 的入口描述。任一步失败都不会改变当前 generation。
+`entrypoint` 的入口描述。纯 UI、Renderer 和 Prompt Contribution 可以只运行
+确定性契约样例；Tool、Driver、Browser、Shell 和 Harness 等有副作用能力还必须在
+shadow generation 验证 Policy、Approval、幂等、Artifact/Evidence 和失败语义。
+Evaluation 只提交证据与结论，只有 Host Promotion 能发布 generation。任一步失败或
+证据不足都不会改变当前 generation。普通 hot 插件仍在安装事务完成后立即生效，
+不要求重启服务。
 
 以下情况必须重启，不承诺安装即生效：
 
