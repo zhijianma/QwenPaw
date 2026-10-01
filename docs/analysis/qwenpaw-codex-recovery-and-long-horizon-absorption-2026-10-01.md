@@ -1,0 +1,271 @@
+# Codex 恢复机制与长程 Chat 对 QwenPaw 3.0 的吸收评估
+
+> 日期：2026-10-01
+>
+> 输入材料：`Codex深度剖析报告.md` v5，重点为第十四章
+>
+> 适用范围：QwenPaw Agent OS 的 Chat-first Kernel、Runtime、Model Call、
+> Action、Interaction、Control 与 Projection 设计
+>
+> 事实边界：报告是二手分析材料；本文用 QwenPaw 当前源码和既有架构文档
+> 校验可迁移性，不把报告中的实现描述直接视为 QwenPaw 事实。
+
+## 1. 结论
+
+QwenPaw 应吸收 Codex 的“分层恢复”思想，但不应复制其具体传输实现，也不应再把
+“一问一答”作为智能体运行的基本单位。
+
+目标形态是 **Conversation Execution Chain（会话持续执行链）**：
+
+- Chat 仍是用户的首要入口；
+- 一条用户消息是 `Submission`，不是一次任务的完整生命周期；
+- 一次模型调用是 `ModelCallAttempt`，不是一个 Turn 的全部工作；
+- 一次运行尝试是 `Invocation`，可因等待、断网、进程重启而结束；
+- 同一意图可沿同一 `correlation_id` 创建后续 `Invocation`；
+- 工具、审批、提问、建议、Steer 和 Interrupt 都是执行链事件；
+- Artifact、Evidence、Verification 和 Outcome 才说明工作完成到什么程度；
+- 短问答继续走单 Submission、单 Invocation 的快速路径，不为简单对话增加负担。
+
+因此，“一问一答”应从**内核生命周期模型**降级为**一种常见 UI 投影**。这既能
+保持当前 Chat 体验，也能支撑分钟、小时甚至跨进程的长程任务。
+
+## 2. 当前能力与真实缺口
+
+### 2.1 已经具备的恢复基础
+
+| 能力 | 当前状态 | 判断 |
+|---|---|---|
+| 浏览器 SSE 断开 | 服务端执行不依赖 subscriber，重连可读缓冲和权威投影 | 已覆盖客户端断线，不等于模型流恢复 |
+| Submission 接收确认 | 使用稳定 client message ID 和幂等边界 | 已具备“不确定时不盲目重发”的基础 |
+| Chat 排队与运行所有权 | 服务端持久化 queued/admitted/running/terminal | 已不依赖浏览器存活 |
+| 模型调用审计 | 已记录 route、attempt、stream success/cancel/failure 与 usage | 具备引入恢复裁决的事实基础 |
+| 模型连接前重试 | `RetryChatModel` 在尚未产生有效输出时有界重试 | 部分覆盖；尚未与业务重试预算显式分离 |
+| 流中错误 | 产生有效输出后立即抛出，不盲目重放完整请求 | 避免重复输出，但当前会让 Invocation 失败 |
+| 工具副作用 | `ActionRequest/Result`、审批、幂等与 uncertain 状态 | 比“让模型猜工具是否执行”更适合可靠恢复 |
+| Interaction | Approval、Ask User、Suggestion 与 WaitCondition 已统一 | 持久化 Chat continuation 仍在实施 |
+| 进程重启 | Queue、Ledger、Wait 等可查询；Python 调用栈不可恢复 | 必须创建新 Invocation，不能伪装原地续跑 |
+| 时钟 | Provider timeout、rate limiter 等已使用 `time.monotonic()` | 保留，但 suspend 语义需逐平台验证 |
+
+### 2.2 最大缺口
+
+当前 `RetryChatModel` 把“流已产生内容后的网络中断”收敛为异常。这个做法比盲目
+重试安全，但对长程任务仍不够：已经完成的模型输出、Action、Artifact 和 Evidence
+可能有效，网络中断不应自动把整条执行链判为业务失败。
+
+另一个结构性缺口是，Chat 的视觉模型仍容易让开发者把“用户消息 → 助手消息”
+理解成完整运行边界。这样会导致：
+
+- 等待审批或用户输入时长期占用进程内协程；
+- 恢复时试图复活旧调用栈，而不是重建新 Invocation；
+- 把中间 assistant message 误当最终 Outcome；
+- Steer 被误建模为下一轮提问，而不是当前执行链的控制输入；
+- 网络、配额、预算、用户中断和副作用不确定性混入同一个失败通道。
+
+## 3. 对 Codex 第十四章的逐项裁决
+
+| 报告机制 | QwenPaw 裁决 | 原因与落点 |
+|---|---|---|
+| 网络错误与业务失败分离 | 吸收 | 在 Model Call Plane 增加类型化 failure class 与 recovery disposition |
+| 连接前独立退避 | 吸收思想 | 独立于业务 attempt 预算，但必须受可取消的总等待策略约束 |
+| 无限连接重试 | 不照搬 | Lite 不能永久占用运行槽；超过 deadline 后转 Resource Wait，而不是失败或假暂停 |
+| 流中断返回“需继续” | 吸收语义 | 表达为持久化 stream outcome，由 Runtime 决定后续新 Model Step/Invocation |
+| 工具边收流边执行 | 暂不吸收实现 | 当前 AgentScope/Provider 抽象没有统一 committed action item；直接做会扩大重复副作用风险 |
+| 断流后排空在途工具 | 有条件吸收 | 只处理已经持久化 `ActionRequest` 的动作；未提交的模型片段不得触发动作 |
+| 工具结果写历史后不重做 | 强化吸收 | 以 `ActionResult` 和 SideEffect status 为权威，不能只依赖自然语言历史 |
+| 用户中断独立终态 | 已对齐 | Interrupt 沿 cancellation root 传播，不能被网络恢复重新拉起 |
+| WS 增量续传 | Adapter 可选能力 | 不进入 Kernel；需要 Provider 明确 token/prefix/route 契约，失败回退完整请求 |
+| WS → HTTPS 降级 | Adapter 策略 | 只能由支持该能力的 Provider 实现，仍须遵守 `Retry-After` 与预算 |
+| 单调时钟 | 吸收 | 活动耗时使用 monotonic，审计和 durable deadline 使用 wall-clock；逐平台验证 suspend |
+| 精确 client ID 对账 | 已对齐并保留 | 只有相同 submission identity 才确认接收，不因模糊历史自动重发 |
+| 重连状态可见 | 吸收 | 作为 semantic observation/control projection，不伪造 Queue 项 |
+| 网络恢复与进程恢复分层 | 强化吸收 | 前者可保留当前 Invocation；后者必须从 durable boundary 创建新 Invocation |
+
+## 4. 替代“一问一答”的领域模型
+
+### 4.1 身份层次
+
+| 概念 | 生命周期 | 作用 |
+|---|---|---|
+| `ChatSpec.id` | 整个会话 | 用户可理解的持续工作空间；避免再引入竞争性的 `session_id` |
+| `Submission.id` | 一次输入或控制提交 | 幂等接收、排队和精确回执 |
+| `correlation_id` | 一条用户意图的完整执行链 | 跨等待、恢复和多个 Invocation 保持因果连续 |
+| `Invocation.id` | 一次占用 Runtime 的运行尝试 | 有明确开始和终态，不跨进程复活 |
+| `ModelCallAttempt.id` | 一次 Provider 网络尝试 | 路由、成本、流结果和恢复证据 |
+| `ActionRequest.id` | 一个已提交动作 | 审批、执行、结果、幂等与副作用不确定性 |
+| `Interaction.id` | 一次人机等待 | Approval、Ask User、Suggestion 的统一事实 |
+| `Artifact/Evidence` | 可持久复用 | 进度和结果，不依附某条临时 UI 消息 |
+
+`correlation_id` 是持续执行链的关键。后续 Submission 可以由用户产生，也可以由
+Interaction continuation、资源恢复或 Scheduler 产生，但它们必须显式引用前序因果，
+不能靠“最后一条消息”推断归属。
+
+### 4.2 执行链
+
+```text
+User Submission accepted
+  -> Invocation N admitted
+  -> Model Step
+  -> zero or more governed ActionRequest / ActionResult
+  -> Artifact / Evidence / Observation
+  -> choose one:
+       complete -> Verification -> Outcome
+       interact -> persist Interaction + WaitCondition
+                   -> end Invocation N
+                   -> response creates continuation Submission
+                   -> Invocation N+1, same correlation_id
+       resource unavailable -> persist Resource Wait
+                               -> recovery scheduler creates Submission
+       interrupted -> terminal, never auto-recover
+       uncertain side effect -> explicit reconciliation or authorization
+```
+
+这条链允许“一条用户消息产生多次模型调用和多轮动作”，也允许在没有新增用户问题时
+继续执行。Assistant message 是给人的投影，不再充当 Runtime 状态机的分隔符。
+
+### 4.3 与 Chat UI 的关系
+
+Chat 不需要改成 Task 页面。当前阶段只需让 Chat 投影表达：
+
+- 当前执行阶段：推理、动作、等待人、等待资源、验证、完成；
+- 中间产物与证据；
+- 可响应的 Interaction；
+- 可作用于当前执行链的 Steer / Interrupt；
+- 网络恢复是 Runtime 状态，不是“排队中”的假消息。
+
+短对话仍可只显示用户消息和最终助手消息。只有执行跨越动作、等待或恢复边界时，
+才展开持续执行活动。Task Workbench 继续后置，不能为了长程执行复制第二套状态机。
+
+## 5. 类型化恢复模型
+
+### 5.1 故障分类
+
+建议在现有 `ModelCallResult` 和 Runtime policy 上冻结以下稳定语义，而不是依赖
+异常字符串：
+
+- `transport_unavailable`：尚未建立连接或未产生可观察输出；
+- `stream_interrupted`：已经产生输出但没有收到合法终态；
+- `provider_overloaded` / `rate_limited`：尊重服务端恢复时间；
+- `auth` / `quota` / `budget` / `policy`：立即终止，禁止伪装网络重试；
+- `invalid_request` / `context_overflow`：由明确修正或 compaction policy 处理；
+- `user_interrupt`：唯一用户终止语义，不得自动继续；
+- `unknown`：失败关闭，不能默认成安全可重试。
+
+恢复裁决至少包含：
+
+- `retry_transport`：同一逻辑 Model Step 的新网络 attempt；
+- `continue_model_step`：基于 durable context 启动后续模型步骤；
+- `wait_resource`：释放计算槽，等待网络或 Provider 恢复；
+- `fail_terminal`：业务终态；
+- `reconcile_side_effect`：存在 uncertain Action，先查证再决定；
+- `stop_interrupted`：用户中断，永不自动续跑。
+
+### 5.2 五层恢复
+
+| 层级 | 故障边界 | 恢复方式 | 不变量 |
+|---|---|---|---|
+| L0 | 浏览器/SSE 断开 | 重订阅权威 projection | 不停止服务端 Invocation |
+| L1 | 模型连接前失败 | 新 `ModelCallAttempt`，独立退避 | 无输出、无 Action，才允许安全重试 |
+| L2 | 流中断且无 committed Action | 保存 partial outcome，重建下一 Model Step | 不把 partial message 当最终 Outcome |
+| L3 | 已有 Action | 读取 `ActionResult`/side effect 状态 | succeeded 不重做，uncertain 先对账 |
+| L4 | 进程重启 | 从 Wait/Checkpoint/Outbox 创建新 Invocation | 不恢复 Python stack，不覆盖旧 Invocation |
+
+### 5.3 等待策略
+
+QwenPaw 不采用无限占槽重试。推荐策略是：
+
+1. 短暂抖动在 Provider Adapter 内有界退避；
+2. 超过短等待预算后持久化 `Resource WaitCondition`；
+3. 释放 Invocation 的模型连接和计算槽；
+4. 本地恢复探针或 Scheduler 在资源恢复后写 continuation Submission；
+5. 保持原 `ChatSpec.id` 与 `correlation_id`，创建新 Invocation；
+6. 用户可随时 Interrupt，且恢复事件不能越过已提交的 Interrupt revision。
+
+这样既不会把断网当失败，也不会像无限 retry 那样永久占用 Lite 单机资源。
+
+## 6. 工具执行的安全边界
+
+Codex 的“边收流边执行工具”建立在其 Provider 事件协议、工具项身份和 rollout
+持久化之上。QwenPaw 当前不能只看到类似 tool call 的增量文本就执行。
+
+只有满足以下条件，未来才可开启流内工具并发：
+
+1. Provider Adapter 输出完整、校验通过且身份稳定的 committed action item；
+2. Host 在执行前原子保存 `ActionRequest`；
+3. Policy、Approval、Environment 和 generation 已固定；
+4. handler 使用稳定 idempotency key；
+5. `ActionResult` 或 `uncertain` 在流终止前后都可独立查询；
+6. 断流 drain 只处理已提交 Action，禁止从残缺增量重建动作。
+
+在此之前，保持“模型步骤终止后再执行动作”是合理的安全选择。性能优化不能破坏
+副作用可证明性。
+
+## 7. 分阶段落地
+
+### R0：先完成 durable continuation
+
+- 完成 Chat Ask User 的 conversation continuation outbox；
+- Interaction 决定与 continuation enqueue 必须同一事务或可幂等恢复；
+- continuation 创建新 Submission 和 Invocation，并继承 `correlation_id`；
+- 不恢复旧协程，不依赖浏览器在线。
+
+### R1：冻结 Model Recovery Contract
+
+- 为 Model Call Plane 增加稳定 failure class、stream outcome 和 disposition；
+- 把 transport retry 与任务/业务 retry 预算分开；
+- quota、budget、auth、policy 和 user interrupt 必须终止；
+- 输出 semantic observation，供 Chat 展示恢复状态。
+
+### R2：Resource Wait 与恢复调度
+
+- 短等待超限后持久化资源等待并释放槽位；
+- 恢复探针以幂等 outbox 创建 continuation；
+- Interrupt revision 对恢复提交进行 fencing；
+- Lite 使用本地 durable scheduler，Workstation/Hub 替换 Adapter。
+
+### R3：部分流与 Action 对账
+
+- 保存 bounded partial stream outcome，而非把增量消息作为事实源；
+- 已成功 Action 不重做，uncertain Action 必须查询或人工授权；
+- 只有具备 committed action protocol 的 Adapter 才能启用流内执行。
+
+### R4：可选 Provider 增量续传
+
+- 作为 Adapter capability 声明 prefix/token/route/fallback；
+- 严格验证前缀与 response identity；
+- 能力不满足时回退持久上下文重建，不污染 Kernel。
+
+## 8. 验收标准
+
+1. 浏览器关闭或 SSE 断开后，已接收 Submission 继续执行且只执行一次。
+2. 模型在产生任何输出前断网，可按独立 transport policy 重试，不消耗业务重试。
+3. 产生部分输出后断流，不盲目重发完整 Turn，也不把 partial message 判为完成。
+4. Action 已成功而网络随后断开时，恢复不能再次执行同一 Action。
+5. Action 状态为 uncertain 时，系统必须先对账或取得显式重试授权。
+6. Ask User 回答提交成功但进程在 enqueue 前崩溃，重启后恰好创建一个 continuation。
+7. quota、budget、auth、policy 和用户 Interrupt 不进入网络恢复循环。
+8. 同一长程意图跨多个 Invocation 时保持同一 `ChatSpec.id` 和
+   `correlation_id`，每个 Invocation 有独立终态。
+9. 短问答继续通过单 Submission、单 Invocation 快速路径完成。
+10. Chat 可显示等待资源、等待用户和正在恢复，但不能把它们伪装成 Queue 项。
+11. 进程重启后不尝试恢复旧 Python stack，只从 durable boundary 恢复。
+12. macOS、Linux、Windows 分别验证 monotonic、sleep/suspend 与 deadline 语义。
+
+## 9. 明确不做
+
+- 不把一问一答删除出 UI；只取消它作为内核的唯一生命周期模型。
+- 不新建与 Chat 平行的“长任务会话”事实源。
+- 不因长程执行而提前开发 Task 页面。
+- 不在 Kernel 写死 WebSocket、HTTPS 或某一 Provider 的续传字段。
+- 不采用无限且不可释放资源的连接重试。
+- 不把自然语言提示“先检查是否做过”当作副作用一致性的唯一保证。
+- 不从未完成的模型增量中猜测并执行工具调用。
+
+## 10. 最终建议
+
+QwenPaw 3.0 的差异点不应是“比别人多一种聊天框”，而应是：用户仍在熟悉的 Chat
+中工作，但系统内部已经具备长程执行所需的持久身份、控制、等待、恢复、副作用
+治理和证据链。
+
+Codex 第十四章提供了很好的故障分层样本；QwenPaw 可以进一步做到：短暂网络抖动
+原地恢复，长期不可用转 durable resource wait，进程重启创建新 Invocation，副作用
+通过 Action Ledger 精确对账。这样既吸收其优点，也避开无限重试和 Provider 耦合。

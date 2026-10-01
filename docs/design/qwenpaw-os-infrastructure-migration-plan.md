@@ -346,6 +346,45 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
 三个控制命令均通过幂等、竞态、重连、崩溃恢复和跨平台定点测试。浏览器存储全部
 清空后，服务端 Queue 与运行控制状态仍保持正确。
 
+### I3C：Conversation Execution Chain 与分层恢复
+
+定位：用持续执行链替代内核中的隐含“一问一答”假设，同时保留 Chat 的简单交互
+体验。该模块属于 Chat-first Runtime 基建，不要求提前开发 Task 页面。
+
+- [ ] 冻结持续执行身份：`ChatSpec.id` 是 Conversation，`Submission.id` 是一次
+  输入，`Invocation.id` 是一次运行尝试，`correlation_id` 贯穿同一长程意图；
+  禁止用 assistant message 或 `session_id` 推断生命周期。
+- [ ] 完成 Conversation Activity 只读投影；它从 Submission、Invocation、
+  ModelCall、Action、Interaction、Artifact、Evidence 与 Verification 权威事实
+  派生，不复制第二套状态，也不把恢复状态伪装成 Queue 项。
+- [ ] 完成 Chat Ask User durable continuation：响应决定与 continuation outbox
+  可原子提交或幂等恢复；新 Submission 继承原 correlation 并创建新 Invocation，
+  不恢复旧协程。
+- [ ] 冻结 Model Recovery Contract：
+  - [ ] 区分 `transport_unavailable`、`stream_interrupted`、Provider overload、
+    rate limit、quota、budget、auth、policy、context overflow、user interrupt 与
+    unknown；
+  - [ ] 区分 `retry_transport`、`continue_model_step`、`wait_resource`、
+    `fail_terminal`、`reconcile_side_effect` 与 `stop_interrupted`；
+  - [ ] transport retry 使用独立退避和预算，尊重 `Retry-After`，不消耗业务 retry；
+  - [ ] 短等待超限后保存 Resource Wait 并释放槽位，禁止无限占槽重试。
+- [ ] 持久化 bounded stream outcome：产生部分输出后断流时，不盲目重放完整
+  Turn，不把 partial assistant message 当完成；后续 Model Step 从 durable context
+  重建。
+- [ ] 以 Action Plane 完成副作用恢复：已成功 Action 不重做，failed 服从重试
+  policy，uncertain 必须先对账或取得显式授权。只有具备 provider-neutral committed
+  action identity 的 Adapter 才能开启流内工具执行。
+- [ ] 把 WebSocket 增量续传、sticky route 和 HTTP fallback 保持为 Provider
+  Adapter capability；严格验证 response identity/prefix，失败时回退持久上下文重建，
+  Kernel 不感知具体传输。
+- [ ] 使用 monotonic 计算活动耗时、wall-clock 保存 durable deadline，并分别在
+  macOS、Linux、Windows 验证 suspend/sleep 语义。
+
+验收：浏览器断连不停止执行；连接前失败可安全重试；部分流断开不误判成功或盲目
+重放；Action 成功后不会重复执行；Interaction 回答或资源恢复在崩溃窗口内恰好创建
+一个 continuation；quota/budget/auth/policy 和 Interrupt 不进入网络恢复；长程意图
+可跨多个 Invocation 保持同一 correlation，短问答仍走单 Invocation 快速路径。
+
 ### I4：存储、产物与验证基建收口
 
 - [x] Execution Ledger Port 与 SQLite Lite Adapter 明确分层。

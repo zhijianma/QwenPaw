@@ -336,7 +336,64 @@ Evaluation 只提交证据与结论，只有 Host Promotion 能发布 generation
 - 需要重建 Agent/Channel/Memory 实例的 scoped contribution；
 - 安全策略要求由管理员重新签名或重新装配的 Hub 插件。
 
-## 8. Task 端到端闭环
+## 8. 持续执行与 Task 闭环
+
+### 8.1 Conversation Execution Chain
+
+Chat 是 QwenPaw 3.0 的首要交互入口，但“一问一答”只是一种 UI 投影，不再作为
+Agent Runtime 的唯一生命周期模型。短问答继续走单 Submission、单 Invocation 的
+快速路径；长程工作由同一组 Kernel 契约自然扩展，不另建平行的长任务会话。
+
+```text
+ChatSpec.id
+  -> Submission (用户意图或控制输入)
+  -> Invocation N
+  -> Model Step -> Action(s) -> Artifact / Evidence
+  -> complete: Verification -> Outcome
+  -> wait: Interaction / Resource Wait -> end Invocation N
+           -> durable continuation Submission
+           -> Invocation N+1 (same correlation_id)
+```
+
+身份边界如下：
+
+- `ChatSpec.id` 标识整个 Conversation，公共 API 优先使用它而不是
+  竞争性的 `session_id`；
+- `Submission.id` 提供接收幂等、队列顺序和精确回执；
+- `correlation_id` 贯穿同一用户意图的多次 Submission、Invocation、Action、
+  Interaction、Artifact 和 Verification；
+- `Invocation.id` 只标识一次 Runtime 尝试，不跨进程复活；
+- Assistant message 是面向人的输出，不是 Runtime 状态机的终止标志。
+
+Approval、Ask User、Suggestion、Steer 和 Interrupt 均是执行链中的一等事件。
+Interaction 或资源等待必须保存 durable `WaitCondition` 并释放计算资源；满足条件后
+由 outbox 创建新的 continuation Submission，而不是恢复旧 Python 调用栈。
+
+### 8.2 分层恢复
+
+QwenPaw 区分五层故障边界：
+
+1. 浏览器/SSE 断开只重建投影，不停止服务端 Invocation；
+2. 模型连接前失败可创建新的 `ModelCallAttempt`，使用独立 transport 退避；
+3. 模型流已产生内容但未正常结束时保存 partial outcome，不盲目重放完整 Turn；
+4. 已提交 Action 以 `ActionResult` / Side Effect 状态对账，成功不重做，
+   uncertain 必须查证或取得显式重试授权；
+5. 进程重启从 Checkpoint、Wait 或 Outbox 创建新 Invocation，不伪装原地续跑。
+
+传输失败、Provider overload、rate limit、quota、budget、auth、policy、用户
+Interrupt 和 unknown error 必须进入类型化恢复裁决。短暂网络抖动可以有界重试；
+超过等待预算后进入 durable Resource Wait 并释放槽位，禁止用无限 retry 永久占用
+Lite 运行资源。恢复事件必须受最新 Interrupt revision fencing。
+
+Provider 的 WebSocket 增量续传、sticky route 和 HTTP fallback 属于 Adapter
+capability，不能进入 Kernel。流内并发执行工具只有在 Provider 输出稳定的
+committed action identity，且 Host 已原子保存 `ActionRequest` 后才允许启用；
+不得从未完成的模型增量中猜测并执行工具。
+
+详细裁决和验收见
+`docs/analysis/qwenpaw-codex-recovery-and-long-horizon-absorption-2026-10-01.md`。
+
+### 8.3 Task 端到端闭环
 
 ```text
 POST /tasks
@@ -481,6 +538,15 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
   retry、流式成功/取消/失败和 usage，并提供 Chat-owned 只读查询。Route 区分逻辑
   请求与实际 Provider/Model，Attempt 记录 Adapter/Formatter 身份和版本；缺失价格
   以 `cost_unknown` 留证，不折算为零。
+- [ ] 将 Chat 运行模型从隐含的一问一答升级为 Conversation Execution Chain：
+  `Submission` 是输入，`Invocation` 是一次运行尝试，`correlation_id` 贯穿同一意图
+  的多次等待与恢复；短问答继续使用单 Invocation 快速路径。
+- [ ] 冻结 Model Recovery Contract：区分连接前失败、部分流中断、Provider 限流、
+  quota/budget/auth/policy、用户 Interrupt 与 unknown；transport retry 不消耗业务
+  retry，超过短等待预算后持久化 Resource Wait 并释放运行槽。
+- [ ] 完成长程恢复闭环：Interaction/Resource Wait 通过 durable outbox 创建后续
+  Submission；进程重启创建新 Invocation；成功 Action 不重做，uncertain Action
+  必须先对账或取得显式授权。
 - [ ] Workstation / Hub 再实现按能力、健康、成本和数据边界的动态路由；Lite 当前
   继续使用确定性主模型与显式 fallback 顺序，不冒充智能路由器。
 - 区分 Run Completion、Verification 与业务 Outcome，并预留 Trajectory 投影。
@@ -552,6 +618,8 @@ Slot 已实现；对应工作保留在 R0/R1/R2 路线图中。
    厂商特定序列化。后续 Model Call Plane 应记录实际 Provider usage 和格式版本。
 8. `ContextManifestStore` 已具备按 `ChatSpec.id` 查询的公共 Port，当前尚未开放
    HTTP / UI 查看入口；Task Workbench 继续按既定顺序后置。
+9. 模型流在产生部分内容后的网络中断当前仍收敛为 Invocation 失败；尚未实现
+   typed stream outcome、Resource Wait 和跨 Invocation 的自动 continuation。
 
 ### 13.2 回滚原则
 
@@ -570,5 +638,7 @@ Slot 已实现；对应工作保留在 R0/R1/R2 路线图中。
   共享契约和结构化缺口测试。只有进入对应产品里程碑后，才要求其 runtime
   adapters 可运行；
 - Console stream 具备终态 watchdog，重启中的 running task 有确定恢复策略；
+- Chat 长程意图可跨多个 Invocation 保持 correlation，且网络、资源等待、用户中断
+  与副作用不确定性有互不混淆的恢复策略；
 - Artifact 可以安全读取并至少由一个 Markdown preview 或导出路径消费；
 - 定点验证、跨平台静态审查和验收记录同步更新。
