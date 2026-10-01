@@ -202,6 +202,14 @@ from .interactions import (
     InteractionResponse,
     InteractionStatus,
 )
+from .waits import (
+    ContinuationAvailability,
+    ContinuationMode,
+    ContinuationRef,
+    WaitCondition,
+    WaitConditionKind,
+    WaitConditionStatus,
+)
 from .memory import (
     MemoryStateConflictError,
     MemoryStateScope,
@@ -273,6 +281,7 @@ from .ports import (
     InboxProjectionPort,
     InteractionPort,
     InteractionHistoryPort,
+    WaitConditionProjectionPort,
     ControlHistoryPort,
     CompactionStore,
     InvocationControlPort,
@@ -414,6 +423,7 @@ __all__ = [
     "InvocationControlPort",
     "InteractionPort",
     "InteractionHistoryPort",
+    "WaitConditionProjectionPort",
     "RuntimeInteractionProducer",
     "SchedulerPort",
     "InteractionKind",
@@ -424,6 +434,12 @@ __all__ = [
     "InteractionResolution",
     "InteractionResponse",
     "InteractionStatus",
+    "ContinuationAvailability",
+    "ContinuationMode",
+    "ContinuationRef",
+    "WaitCondition",
+    "WaitConditionKind",
+    "WaitConditionStatus",
     "MemoryStateConflictError",
     "MemoryStateScope",
     "MemoryStateSnapshot",

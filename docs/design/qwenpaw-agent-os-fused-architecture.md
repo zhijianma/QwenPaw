@@ -117,7 +117,7 @@ Model Call Plane 和可派生的 Budget Lease 是 Handbook 比对后确认的增
 | Durable Task | `kernel/*`、`tasks/*`、`app/routers/tasks.py` | Kernel + Application | 新稳定主干 | 已实现 Lite 基线 |
 | Tool Guard | `security/tool_guard/*` | Runtime policy adapter | 保留，禁止 Kernel 依赖具体实现 | Agent Profile 策略与 Task 审批桥已实现 |
 | Environment / Sandbox | `kernel/models.py`、`runtime/environments.py`、`sandbox/*` | Kernel contract + Edition adapter | Invocation 前解析；Edition 只能承诺可证明的约束 | Lite Chat 已接本地证据与失败关闭；隔离型 Adapter 待接 |
-| Approval | `app/approvals/*` | Application adapter | 活跃等待由旧服务承担，决定写入 Ledger | 双向决策与 fail-closed bridge 已实现 |
+| Approval / Ask User | `interactions/*`、`app/approvals/*` | OS substrate + Application adapter | Interaction 是权威事实，WaitCondition 是内容最小化投影 | live invocation 已实现；checkpoint continuation 待实现 |
 | Checkpoint | `checkpoints/*`、`tasks/replay.py` | Infrastructure adapter | 保留旧快照，实现安全恢复契约 | Task 安全 checkpoint 已实现；运行时快照待接 |
 | Memory | `agents/memory/*`、`memory/*` | `memory.provider` Contribution | 核心只定义 port/session，后端外迁 | 已接入 Chat 固定 generation |
 | Proactive cognition | `agents/memory/proactive/*` | `sensor` + Proposal producer | 只能产生 Proposal，审批后进入 TaskOrder | 已实现门禁路径 |

@@ -371,6 +371,16 @@ Model Call、Action、Interaction、Control、Compaction 和 Task Ledger 中。�
 Observation identity 排序。该实现移除了原来每类最多扫描 1000 条的正确性上限，
 同时保留旧列表 API 作为第一页兼容视图。
 
+阻塞 Interaction 现已投影为稳定 `WaitCondition`：Approval 与 Ask User 共享
+waiting / satisfied / expired / cancelled 生命周期，只公开 ChatSpec.id、Invocation、
+source identity、revision 和 `ContinuationRef`，不复制 prompt、选项或回答内容。
+Suggestion 明确不属于 WaitCondition。Lite 当前 continuation mode 如实标记为
+`live_invocation`；Interaction 状态可以在服务重启后恢复查询，但执行协程尚不能跨
+进程恢复。`ContinuationRef.availability` 会进一步标记 live waiter / resolution
+hook 是 `attached` 还是 `detached`，避免把孤立的开放请求误报为可续跑。下一阶段
+必须在安全 Checkpoint 上实现 `checkpoint` Continuation，才能把 HITL 等待从
+“持久化请求 + 内存 waiter”升级为真正释放计算资源的 durable wait。
+
 ### A9. Model Call Plane 与显式 Route Decision
 
 优先级：P1；Lite 先做记录，不先做复杂路由器。
@@ -444,6 +454,8 @@ Lite 不为未来形态提前承担其部署复杂度。
 - Tool Call 意图、策略判定和真实副作用分别留证；Tool 自报成功不能代替 Runtime
   Evidence。
 - HITL 与 Interrupt 的等待、恢复、拒绝、中断点和有效结果可跨请求还原。
+- WaitCondition 不包含用户问题、回答或审批参数；`live_invocation` 与
+  `checkpoint` continuation 必须可区分，禁止把可查询等待伪称为跨进程续跑。
 - Harness 审批型 Action 在 Provider 恢复前已有 Request 与 Approval Link；只提供
   start/completed 事件的 Provider 明确标注为 observed boundary，缺失完成事件时结果
   为 `unknown` 且副作用状态为 `uncertain`。

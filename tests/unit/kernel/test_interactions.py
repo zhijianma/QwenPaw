@@ -9,6 +9,9 @@ import pytest
 from qwenpaw.kernel import (
     ActorRef,
     ActorType,
+    ContinuationAvailability,
+    ContinuationMode,
+    ContinuationRef,
     InteractionKind,
     InteractionMode,
     InteractionOption,
@@ -143,3 +146,15 @@ def test_interaction_record_rejects_foreign_resolution() -> None:
 
     with pytest.raises(ValidationError, match="identity mismatch"):
         InteractionRecord(request=request, resolution=resolution)
+
+
+def test_checkpoint_continuation_requires_checkpoint_identity() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="checkpoint continuation requires checkpoint_id",
+    ):
+        ContinuationRef(
+            mode=ContinuationMode.CHECKPOINT,
+            availability=ContinuationAvailability.DETACHED,
+            invocation_id=uuid4(),
+        )

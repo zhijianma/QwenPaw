@@ -16,6 +16,7 @@ from qwenpaw.interactions import (
 from qwenpaw.kernel import (
     ActorRef,
     ActorType,
+    ContinuationAvailability,
     InteractionKind,
     InteractionHistoryPort,
     InteractionMode,
@@ -24,6 +25,8 @@ from qwenpaw.kernel import (
     InteractionResponse,
     InteractionStatus,
     InteractionPort,
+    WaitConditionStatus,
+    WaitConditionProjectionPort,
 )
 
 
@@ -71,6 +74,7 @@ async def test_parallel_interactions_are_owned_by_chat_spec(
     service = InteractionService(tmp_path / "interactions.sqlite3")
     assert isinstance(service, InteractionPort)
     assert isinstance(service, InteractionHistoryPort)
+    assert isinstance(service, WaitConditionProjectionPort)
     invocation_id = uuid4()
     first = _request(invocation_id)
     second = _request(
@@ -213,6 +217,47 @@ async def test_wait_timeout_is_persisted_and_survives_restart(
 
     assert resolution.status is InteractionStatus.EXPIRED
     assert recovered == resolution
+    conditions = await restarted.list_wait_conditions(
+        agent_id="default",
+        conversation_id="chat-spec-1",
+        include_terminal=True,
+    )
+    assert len(conditions) == 1
+    assert conditions[0].status is WaitConditionStatus.EXPIRED
+    assert conditions[0].continuation.invocation_id == request.invocation_id
+    assert (
+        conditions[0].continuation.availability
+        is ContinuationAvailability.DETACHED
+    )
+
+
+@pytest.mark.asyncio
+async def test_wait_projection_reports_live_hook_attachment(
+    tmp_path: Path,
+) -> None:
+    service = InteractionService(tmp_path / "interactions.sqlite3")
+    request = _request(uuid4())
+    await service.open(request)
+
+    async def on_terminal(_resolution) -> None:
+        return None
+
+    await service.add_terminal_hook(request.interaction_id, on_terminal)
+
+    conditions = await service.list_wait_conditions(
+        agent_id="default",
+        conversation_id="chat-spec-1",
+    )
+    await service.cancel_invocation(
+        request.invocation_id,
+        detail="test cleanup",
+    )
+
+    assert len(conditions) == 1
+    assert (
+        conditions[0].continuation.availability
+        is ContinuationAvailability.ATTACHED
+    )
 
 
 @pytest.mark.asyncio
@@ -229,6 +274,47 @@ async def test_suggestion_is_persisted_but_never_awaited(
 
     with pytest.raises(InteractionConflictError, match="cannot be awaited"):
         await service.wait(request.interaction_id)
+
+
+@pytest.mark.asyncio
+async def test_wait_projection_excludes_suggestions_and_cancels(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "interactions.sqlite3"
+    service = InteractionService(path)
+    invocation_id = uuid4()
+    blocking = _request(invocation_id)
+    suggestion = _request(
+        invocation_id,
+        kind=InteractionKind.SUGGESTION,
+        mode=InteractionMode.NON_BLOCKING,
+    )
+    await service.open(blocking)
+    await service.open(suggestion)
+
+    opened = await service.list_wait_conditions(
+        agent_id="default",
+        conversation_id="chat-spec-1",
+    )
+    await service.cancel_invocation(
+        invocation_id,
+        detail="test cancellation",
+        include_non_blocking=False,
+    )
+    restarted = InteractionService(path)
+    terminal = await restarted.list_wait_conditions(
+        agent_id="default",
+        conversation_id="chat-spec-1",
+        include_terminal=True,
+    )
+
+    assert [item.condition_id for item in opened] == [
+        blocking.interaction_id,
+    ]
+    assert [item.status for item in terminal] == [
+        WaitConditionStatus.CANCELLED,
+    ]
+    assert "prompt" not in terminal[0].model_dump(mode="json")
 
 
 @pytest.mark.asyncio

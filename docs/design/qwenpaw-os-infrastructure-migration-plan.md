@@ -287,6 +287,11 @@ Workbench。前端只能提交命令、订阅事件和展示服务端投影；�
   - [x] 内置 `ask_user` 工具和 Chat Interaction Adapter 已贯通：服务端按
     `ChatSpec.id` 投递和校验响应，Console 只呈现 open projection；真实 Chat
     已验证选项回答后工具返回、reasoning 继续并形成最终消息。
+  - [x] Kernel 已冻结内容最小化的 `WaitCondition` / `ContinuationRef` 契约；
+    Lite 从 Interaction 权威表投影 Approval 与 Ask User 的等待、解决、过期和取消，
+    重启后可查询且不复制 prompt、选项或回答。当前仅承诺 `live_invocation`，基于
+    waiter / hook 的 attached 状态区分活跃与孤立 continuation；基于 Checkpoint
+    释放计算资源并跨进程续跑仍是后续独立模块。
   - [x] Chat Runtime 已进入 queued -> admitted -> running -> terminal
     Submission 生命周期；如果存在更早 queued turn，当前 HTTP 输入
     不会被错配执行。

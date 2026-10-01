@@ -13,12 +13,19 @@ from typing import Any
 from uuid import UUID
 
 from ..kernel import (
+    ContinuationAvailability,
+    ContinuationMode,
+    ContinuationRef,
+    InteractionKind,
     InteractionMode,
     InteractionRecord,
     InteractionRequest,
     InteractionResolution,
     InteractionResponse,
     InteractionStatus,
+    WaitCondition,
+    WaitConditionKind,
+    WaitConditionStatus,
 )
 from ..kernel.models import utc_now
 
@@ -373,6 +380,124 @@ class InteractionService:
             agent_id,
             conversation_id,
             None,
+        )
+
+    async def list_wait_conditions(
+        self,
+        *,
+        agent_id: str,
+        conversation_id: str,
+        include_terminal: bool = False,
+        limit: int = 100,
+    ) -> Sequence[WaitCondition]:
+        """Project blocking interactions as content-free wait conditions."""
+        if not agent_id.strip() or not conversation_id.strip():
+            raise ValueError("wait-condition owner cannot be empty")
+        if limit < 1 or limit > 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        await self.start()
+        records = await asyncio.to_thread(
+            self._list_wait_records_sync,
+            agent_id,
+            conversation_id,
+            include_terminal,
+            limit,
+        )
+        attached = set(self._waiters) | set(self._terminal_hooks)
+        return tuple(
+            self._project_wait_condition(
+                item,
+                attached=item.request.interaction_id in attached,
+            )
+            for item in records
+        )
+
+    def _list_wait_records_sync(
+        self,
+        agent_id: str,
+        conversation_id: str,
+        include_terminal: bool,
+        limit: int,
+    ) -> tuple[InteractionRecord, ...]:
+        query = (
+            "SELECT request_json, resolution_json "
+            "FROM runtime_interactions WHERE agent_id = ? "
+            "AND conversation_id = ? AND mode = ? "
+        )
+        arguments: tuple[object, ...] = (
+            agent_id,
+            conversation_id,
+            InteractionMode.BLOCKING.value,
+        )
+        if not include_terminal:
+            query += "AND status = ? "
+            arguments += (InteractionStatus.OPEN.value,)
+        query += "ORDER BY updated_at DESC, interaction_id DESC LIMIT ?"
+        arguments += (limit,)
+        with self._connect() as connection:
+            rows = connection.execute(query, arguments).fetchall()
+        return tuple(
+            InteractionRecord(
+                request=InteractionRequest.model_validate_json(
+                    row["request_json"],
+                ),
+                resolution=(
+                    InteractionResolution.model_validate_json(
+                        row["resolution_json"],
+                    )
+                    if row["resolution_json"] is not None
+                    else None
+                ),
+            )
+            for row in rows
+        )
+
+    @staticmethod
+    def _project_wait_condition(
+        record: InteractionRecord,
+        *,
+        attached: bool,
+    ) -> WaitCondition:
+        request = record.request
+        resolution = record.resolution
+        kind = {
+            InteractionKind.APPROVAL: WaitConditionKind.APPROVAL,
+            InteractionKind.USER_INPUT: WaitConditionKind.USER_INPUT,
+        }[request.kind]
+        status = WaitConditionStatus.WAITING
+        if resolution is not None:
+            status = {
+                InteractionStatus.RESOLVED: WaitConditionStatus.SATISFIED,
+                InteractionStatus.EXPIRED: WaitConditionStatus.EXPIRED,
+                InteractionStatus.CANCELLED: WaitConditionStatus.CANCELLED,
+            }[resolution.status]
+        return WaitCondition(
+            condition_id=request.interaction_id,
+            kind=kind,
+            status=status,
+            agent_id=request.agent_id,
+            conversation_id=request.conversation_id,
+            source_type="qwenpaw.interaction",
+            source_id=request.interaction_id,
+            policy_source_id=request.source_id,
+            continuation=ContinuationRef(
+                mode=ContinuationMode.LIVE_INVOCATION,
+                availability=(
+                    ContinuationAvailability.ATTACHED
+                    if attached
+                    else ContinuationAvailability.DETACHED
+                ),
+                invocation_id=request.invocation_id,
+            ),
+            revision=(
+                resolution.revision
+                if resolution is not None
+                else request.revision
+            ),
+            created_at=request.created_at,
+            resolved_at=(
+                resolution.resolved_at if resolution is not None else None
+            ),
         )
 
     @staticmethod

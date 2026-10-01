@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from qwenpaw.app.chats.api import (
     list_chat_interactions,
+    list_chat_wait_conditions,
     respond_chat_interaction,
 )
 from qwenpaw.app.chats.manager import ChatManager
@@ -25,6 +26,7 @@ from qwenpaw.kernel import (
     InteractionOption,
     InteractionRequest,
     InteractionStatus,
+    WaitConditionStatus,
 )
 
 
@@ -99,6 +101,16 @@ async def test_list_and_resolve_chat_owned_interaction(tmp_path) -> None:
         )
         == []
     )
+    conditions = await list_chat_wait_conditions(
+        "chat-spec-1",
+        True,
+        100,
+        manager,
+        workspace,
+    )
+    assert len(conditions) == 1
+    assert conditions[0].status is WaitConditionStatus.SATISFIED
+    assert conditions[0].condition_id == interaction.interaction_id
 
 
 @pytest.mark.asyncio

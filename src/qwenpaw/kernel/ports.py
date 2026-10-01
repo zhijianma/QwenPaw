@@ -96,6 +96,7 @@ from .delivery import DeliveryAttempt, DeliveryReceipt, DeliveryRequest
 from .inbox import InboxItem
 from .operational import OperationalEvent
 from .observations import ObservationPage, RuntimeObservation
+from .waits import WaitCondition
 
 
 @runtime_checkable
@@ -489,6 +490,21 @@ class InteractionHistoryPort(Protocol):
         limit: int = 100,
     ) -> Sequence[InteractionRecord]:
         """List newest interaction requests with terminal resolutions."""
+
+
+@runtime_checkable
+class WaitConditionProjectionPort(Protocol):
+    """Read-only normalized view over authoritative wait sources."""
+
+    async def list_wait_conditions(
+        self,
+        *,
+        agent_id: str,
+        conversation_id: str,
+        include_terminal: bool = False,
+        limit: int = 100,
+    ) -> Sequence[WaitCondition]:
+        """List content-free wait conditions for one ChatSpec."""
 
 
 @runtime_checkable

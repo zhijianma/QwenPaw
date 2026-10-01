@@ -75,6 +75,7 @@ from ...kernel import (
     QueueProjection,
     SubmissionInputEnvelope,
     TurnSubmissionRequest,
+    WaitCondition,
     ConversationForkCommand,
     ConversationForkConflictError,
     ConversationForkInvalidAnchorError,
@@ -633,6 +634,28 @@ async def list_chat_interactions(
         conversation_id=chat_id,
     )
     return list(interactions)
+
+
+@router.get(
+    "/{chat_id}/wait-conditions",
+    response_model=list[WaitCondition],
+)
+async def list_chat_wait_conditions(
+    chat_id: str,
+    include_terminal: bool = Query(default=False),
+    limit: int = Query(default=100, ge=1, le=1000),
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+) -> list[WaitCondition]:
+    """List content-free blockers projected from authoritative facts."""
+    _, service = await _chat_interaction_context(chat_id, mgr, workspace)
+    conditions = await service.list_wait_conditions(
+        agent_id=workspace.agent_id,
+        conversation_id=chat_id,
+        include_terminal=include_terminal,
+        limit=limit,
+    )
+    return list(conditions)
 
 
 @router.post(
