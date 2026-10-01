@@ -418,8 +418,8 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
     低风险无副作用，缺少注解时保持保守默认值，不按名称推断。
   - [x] Browser 外层受治理执行边界已迁移：统一与兼容实现、内置与插件均用
     显式 `ActionKind.BROWSER`，执行前后复用同一 Request / Result 管线，不按名称
-    推断；真实 Chromium 公共 Tool journey 已通过，Browser 内部逐方法副作用、
-    固定 Chat Action 留证与输出 Artifact 仍由对应子系统继续闭环。
+    推断；真实 Chromium、固定 Chat、失败输出 Artifact/Evidence 及安全 Action 查询
+    均已通过。Browser 内部逐方法副作用分类仍由对应子系统继续闭环。
   - [ ] Harness Remote 仍通过后续显式 Adapter 迁移；不能因枚举和模型已存在就
     宣称 Action Plane 全量完成。
 - [x] 将 `PromptFragment` 兼容演进为带来源、版本、信任级和哈希的

@@ -187,9 +187,9 @@ MCP 标准 `readOnlyHint=true` 会被保留并映射为低风险无副作用 Act
 
 固定 Chat `1ee31988-b37a-48b9-b6ce-423c52f6a3a9` 已在 `/clear` 后完成真实
 Browser 可见链路：访问 `https://example.com`，记录 7 个步骤和两次 Browser 调用，
-最终返回 `BROWSER_ACTION_E2E_OK: Example Domain`。当前 Action Store 没有安全的
-只读投影，因此该次真实调用的私有 Action JSON 留证仍待专门验收；这一限制不以直接
-暴露工作区私有目录规避。
+最终返回 `BROWSER_ACTION_E2E_OK: Example Domain`。Chat 现可通过有界只读
+`GET /api/chats/{ChatSpec.id}/actions` 查询脱敏 `ActionRecord`；API 边界会再次
+清理旧版本持久化的内容字段并重算投影哈希，不暴露私有目录或历史 Browser code。
 
 同一固定 Chat 还完成了 Browser 溢出实测：1100022 字节 stdout 超过 1048576 字节
 控制帧上限后，Action 保持失败语义，同时发布 1 个 `browser.output` Artifact 和

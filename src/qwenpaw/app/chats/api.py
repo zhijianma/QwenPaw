@@ -60,6 +60,7 @@ from ...invocation_control import (
     QueueTargetNotFoundError,
 )
 from ...kernel import (
+    ActionRecord,
     ActorRef,
     ActorType,
     ArtifactRef,
@@ -80,6 +81,7 @@ from ...conversations import LiteConversationForkAdapter
 from ...config.config import load_agent_config_async
 from ...kernel.models import ArtifactRenderDisposition
 from ...runtime.assembly import capability_registry_for
+from ...runtime.actions import lite_action_store, public_action_record
 from ...tasks.artifacts import (
     ArtifactIntegrityError,
     artifact_filename,
@@ -1328,6 +1330,29 @@ async def clear_chat_project_dirs(
 
 
 # ----- Existing CRUD endpoints -----
+
+
+@router.get("/{chat_id}/actions", response_model=list[ActionRecord])
+async def list_chat_actions(
+    chat_id: str,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+) -> list[ActionRecord]:
+    """Return the newest privacy-safe Action records for one ChatSpec."""
+    chat_spec = await mgr.get_chat(chat_id)
+    if not chat_spec:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Chat not found: {chat_id}",
+        )
+    records = await lite_action_store(
+        Path(workspace.workspace_dir),
+    ).list_for_conversation(
+        chat_id,
+        limit=limit,
+    )
+    return [public_action_record(record) for record in records]
 
 
 @router.get("/{chat_id}/status", response_model=ChatStatusResponse)

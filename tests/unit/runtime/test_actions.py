@@ -93,6 +93,8 @@ def _context(
     context.extra["tool_input"] = {
         "output_path": "report.md",
         "content": "private document body",
+        "code": "private browser program",
+        "script": "private automation script",
         "apiToken": "do-not-persist",
         "nested": {"password": "also-secret"},
     }
@@ -141,6 +143,8 @@ async def test_action_store_is_private_and_never_persists_raw_values(
     assert "do-not-persist" not in persisted
     assert "also-secret" not in persisted
     assert "private document body" not in persisted
+    assert "private browser program" not in persisted
+    assert "private automation script" not in persisted
     assert "[CONTENT OMITTED]" in persisted
     assert "[REDACTED]" in persisted
     assert "secret tool output" not in result_payload

@@ -50,12 +50,14 @@ _BULK_ARGUMENT_NAMES = frozenset(
         "audio",
         "body",
         "bytes",
+        "code",
         "content",
         "data",
         "document",
         "image",
         "payload",
         "prompt",
+        "script",
         "text",
     },
 )
@@ -112,6 +114,21 @@ def _minimize_arguments(value: Any, *, key: str = "") -> Any:
     if isinstance(value, list):
         return [_minimize_arguments(item, key=key) for item in value]
     return value
+
+
+def public_action_record(record: ActionRecord) -> ActionRecord:
+    """Return a read-safe projection, including records from older builds."""
+    safe_arguments = _minimize_arguments(
+        redact_payload(record.request.redacted_arguments),
+    )
+    request = record.request.model_copy(
+        update={
+            "arguments": {},
+            "redacted_arguments": safe_arguments,
+            "arguments_hash": _sha256(safe_arguments),
+        },
+    )
+    return record.model_copy(update={"request": request})
 
 
 def _risk_for_effect(effect: ToolEffect) -> RiskLevel:
@@ -706,4 +723,5 @@ __all__ = [
     "RuntimeActionRecorder",
     "link_active_action_approval",
     "lite_action_store",
+    "public_action_record",
 ]
