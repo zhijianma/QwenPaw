@@ -173,10 +173,13 @@ ContextManifest
 
 优先级：P0，在完成当前 Chat Artifact/Evidence 捕获后推进。
 
-截至 2026-10-01，第一条真实垂直切片已经完成：内置与插件 Tool 共用稳定
-Action 契约、执行前不可变请求、执行后内容最小化结果以及 Artifact/Evidence 引用。
-这证明融合方向可行，但不改变分阶段结论：Driver、MCP、Browser 与 Harness Remote
-尚未接入同一 Recorder，仍属于后续迁移范围。
+截至 2026-10-01，Tool 与 Driver 两条垂直切片已经完成。内置与插件 Tool 共用
+稳定 Action 契约、执行前不可变请求、执行后内容最小化结果以及
+Artifact/Evidence 引用；系统与插件 Driver 共用 Driver Action、动态审批关联和
+策略拒绝语义。MCP 作为 Driver 协议已经随 Driver 接入，旧 Driver Manager 路径也
+通过兼容 Adapter 留证。Browser 与 Harness Remote 仍属于后续迁移范围。
+MCP 标准 `readOnlyHint=true` 会被保留并映射为低风险无副作用 Action；服务未声明
+注解时保持 `external_write/high` 的保守默认值，禁止根据工具名称猜测权限。
 
 ```text
 ActionRequest
@@ -334,7 +337,9 @@ Lite 不为未来形态提前承担其部署复杂度。
 - 每次真实模型调用都有可查询的 Context Manifest，且不保存隐藏推理或 Secret。
 - 同一内置 Tool 与插件 Tool 生成相同 Action 生命周期、审批、Artifact / Evidence
   和错误分类。
-- Shell / Driver / MCP 不再绕过 Action Request 的身份、风险、幂等和审计字段。
+- Shell / Driver / MCP 不再绕过 Action Request 的身份、风险、幂等和审计字段；
+  Driver 运行中产生的审批以不可变 Link 关联 Action，策略拒绝记为 `denied` 而非
+  伪装成执行错误。
 - Environment 不满足声明时在执行前失败，不让模型进入模糊降级。
 - `/clear` 清理 Conversation Context，但不删除 Artifact、Evidence、Task State 或
   已提交 Outcome。

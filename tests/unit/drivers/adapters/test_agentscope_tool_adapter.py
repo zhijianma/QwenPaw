@@ -11,7 +11,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-
+import pytest
 from agentscope.message import ToolResultState
 from agentscope.permission import PermissionBehavior
 
@@ -38,6 +38,16 @@ def _capability(name="cap", tool_name="", as_tool=True):
         description=f"desc {name}",
         input_schema={"type": "object"},
         exposure=exposure,
+    )
+
+
+def _read_only_capability():
+    capability = _capability(name="read", tool_name="read")
+    return DriverCapability(
+        **{
+            **capability.__dict__,
+            "metadata": {"read_only": True},
+        },
     )
 
 
@@ -226,6 +236,19 @@ class TestToolChunkFromDriverResult:
         assert "timeout" in chunk.content[0].text
         assert "slow" in chunk.content[0].text
 
+    @pytest.mark.parametrize(
+        "error_type",
+        ["driver_policy_denied", "driver_policy_approval_required"],
+    )
+    def test_policy_rejection_is_denied(self, error_type):
+        result = DriverInvocationResult(
+            ok=False,
+            error_type=error_type,
+            message="not admitted",
+        )
+        chunk = at._tool_chunk_from_driver_result(result)
+        assert chunk.state == ToolResultState.DENIED
+
     def test_ok_metadata_copied(self):
         result = DriverInvocationResult(ok=True, value="x", metadata={"a": 1})
         chunk = at._tool_chunk_from_driver_result(result)
@@ -289,6 +312,15 @@ class TestDriverCapabilityTool:
         tool = at.DriverCapabilityTool(cap, invoker)
         chunk = await tool()
         assert chunk.state == ToolResultState.ERROR
+
+
+def test_read_only_capability_has_narrow_action_classification():
+    effect, risk, reversible = at._action_classification(
+        _read_only_capability(),
+    )
+    assert effect.value == "none"
+    assert risk.value == "low"
+    assert reversible is True
 
 
 # ---------------------------------------------------------------------------

@@ -12,6 +12,7 @@ from .driver import (
     DriverCredentialUnavailableError,
 )
 from .models import (
+    ActionApprovalLink,
     ActionKind,
     ActionRecord,
     ActionRequest,
@@ -240,6 +241,7 @@ from .ports import (
 )
 
 __all__ = [
+    "ActionApprovalLink",
     "ActionKind",
     "ActionRecord",
     "ActionRequest",

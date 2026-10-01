@@ -29,8 +29,17 @@ from qwenpaw.drivers.handlers.mcp import (
 )
 
 
-def _tool(name: str) -> SimpleNamespace:
-    return SimpleNamespace(name=name, description="", inputSchema={})
+def _tool(
+    name: str,
+    *,
+    annotations: Any = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        name=name,
+        description="",
+        inputSchema={},
+        annotations=annotations,
+    )
 
 
 def _handler(tools_config: Any) -> MCPDriverHandler:
@@ -92,6 +101,23 @@ def test_mcp_prefixed_tool_name_uses_raw_whitelist_key() -> None:
     )
     assert capability.name == "read"
     assert capability.enabled is True
+
+
+@pytest.mark.parametrize(
+    "annotations",
+    [
+        {"readOnlyHint": True},
+        {"read_only_hint": True},
+        SimpleNamespace(readOnlyHint=True),
+        SimpleNamespace(read_only_hint=True),
+    ],
+)
+def test_mcp_read_only_annotation_is_preserved(annotations: Any) -> None:
+    capability = _mcp_tool_to_capability(
+        "fs",
+        _tool("read", annotations=annotations),
+    )
+    assert capability.metadata["read_only"] is True
 
 
 @pytest.mark.asyncio

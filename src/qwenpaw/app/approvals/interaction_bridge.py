@@ -227,6 +227,11 @@ async def attach_pending_to_interaction(
             "severity": pending.severity,
             "findings_count": pending.findings_count,
             "arguments": _redacted_json(input_data),
+            **(
+                {"action_id": str(request_context["os_action_id"])}
+                if request_context.get("os_action_id")
+                else {}
+            ),
         },
     )
     try:

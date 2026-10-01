@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from ...constant import TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS
 from ...drivers.errors import (
     ApprovalRequiredError,
@@ -115,6 +117,25 @@ class QwenPawDriverApprovalGate:
                 ),
             },
         )
+        try:
+            from ...runtime.actions import link_active_action_approval
+
+            await link_active_action_approval(
+                ctx,
+                UUID(pending.request_id),
+                ApprovalSource.DRIVER,
+            )
+        except Exception as exc:
+            await svc.resolve_request(
+                pending.request_id,
+                ApprovalDecision.DENIED,
+            )
+            raise DriverPermissionDeniedError(
+                context.driver_name,
+                context.subject,
+                context.operation,
+                reason="Driver approval could not be linked to its action.",
+            ) from exc
         bridge_ready = await attach_pending_to_durable_task(
             ctx,
             pending,

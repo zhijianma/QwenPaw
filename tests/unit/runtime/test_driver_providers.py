@@ -9,6 +9,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from agentscope.message import TextBlock, ToolResultState
+from agentscope.tool import ToolResponse
 
 import qwenpaw.app.approvals as approvals_package
 from qwenpaw.app.approvals.service import ApprovalService
@@ -38,6 +40,12 @@ from qwenpaw.runtime.driver_providers import (
     WorkspaceDriverHost,
     validate_driver_session,
 )
+from qwenpaw.runtime.actions import (
+    FilesystemActionStore,
+    RuntimeActionRecorder,
+)
+from qwenpaw.tool_calls import ToolCallContext
+from qwenpaw.tool_calls._ctxvars import reset_call_context, set_call_context
 from qwenpaw.drivers.adapters.agentscope_tool import (
     adapt_driver_definitions,
 )
@@ -376,6 +384,118 @@ async def test_plugin_driver_approval_uses_unified_interaction(
         ),
     )
     await approval_task
+
+
+@pytest.mark.asyncio
+async def test_driver_approval_links_to_active_action(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    approvals = ApprovalService()
+    interactions = InteractionService(tmp_path / "interactions.sqlite3")
+    monkeypatch.setattr(
+        approvals_package,
+        "get_approval_service",
+        lambda: approvals,
+    )
+    provider_id = "example.driver"
+    scope = InvocationScope(
+        agent_id="default",
+        conversation_id="driver-plugin-chat",
+        session_id="console:driver-plugin",
+        root_agent_id="default",
+        root_session_id="console:driver-plugin",
+        workspace_dir=str(tmp_path),
+        registry_generation=7,
+    )
+    store = FilesystemActionStore(tmp_path)
+    recorder = RuntimeActionRecorder(scope, store)
+    request_context = {
+        **_approval_context(interactions),
+        "os_invocation_id": str(scope.invocation_id),
+        "os_correlation_id": str(scope.invocation_id),
+        "_action_recorder": recorder,
+    }
+    host = WorkspaceDriverHost(
+        None,
+        request_context,
+        provider_id,
+    )
+
+    async def invoke(payload):
+        return payload
+
+    definition = DriverToolDefinition(
+        provider_id=provider_id,
+        capability_id="driver://example/tools/write#invoke",
+        name="driver_write",
+        invoke=invoke,
+    )
+    call_context = ToolCallContext(
+        tool_call_id="driver-call-1",
+        tool_name="driver_write",
+        session_id=scope.session_id,
+        agent_id=scope.agent_id,
+        root_session_id=scope.root_session_id,
+        root_agent_id=scope.root_agent_id,
+        started_at=0.0,
+        offload_deadline=None,
+        cancel_event=asyncio.Event(),
+    )
+    call_context.extra["tool_input"] = {"path": "result.md"}
+    await recorder.begin_driver(call_context, definition)
+    token = set_call_context(call_context)
+    try:
+        approval_task = asyncio.create_task(
+            host.require_approval(
+                DriverApprovalRequest(
+                    provider_id=provider_id,
+                    capability_id=definition.capability_id,
+                    tool_name=definition.name,
+                    redacted_arguments={"path": "result.md"},
+                ),
+            ),
+        )
+    finally:
+        reset_call_context(token)
+
+    opened: Sequence[InteractionRequest] = ()
+    for _ in range(30):
+        opened = await interactions.list_open(
+            agent_id="default",
+            conversation_id="driver-plugin-chat",
+        )
+        if opened:
+            break
+        await asyncio.sleep(0)
+    assert len(opened) == 1
+    action_id = str(
+        call_context.governance_metadata["action_id"],
+    )
+    assert opened[0].metadata["action_id"] == action_id
+    await interactions.resolve(
+        InteractionResponse(
+            interaction_id=opened[0].interaction_id,
+            idempotency_key="approve-linked-driver",
+            expected_revision=opened[0].revision,
+            actor=ActorRef(type=ActorType.USER, id="local-user"),
+            selected_option_ids=("approve_exact",),
+        ),
+    )
+    await approval_task
+    response = ToolResponse(
+        content=[TextBlock(type="text", text="done")],
+        id=call_context.tool_call_id,
+        state=ToolResultState.SUCCESS,
+    )
+    await recorder.complete(response, call_context)
+
+    [record] = await store.list_for_conversation("driver-plugin-chat")
+    assert len(record.approval_links) == 1
+    assert record.approval_links[0].approval_id == opened[0].interaction_id
+    assert record.approval_links[0].source.value == "driver"
+    assert record.result is not None
+    assert record.result.approval_ids == (opened[0].interaction_id,)
 
 
 @pytest.mark.asyncio

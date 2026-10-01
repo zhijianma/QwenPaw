@@ -646,6 +646,15 @@ class AgentBuilder:
         if local_ws is not None:
             local_ws.set_governor(governor)
 
+        invocation = getattr(ctx, "invocation_scope", None)
+        if invocation is not None and workspace_dir is not None:
+            from .actions import RuntimeActionRecorder, lite_action_store
+
+            request_context["_action_recorder"] = RuntimeActionRecorder(
+                invocation,
+                lite_action_store(Path(workspace_dir)),
+            )
+
         # Toolkit.
         extra_tools = self._collect_coding_mode_tools(
             agent_config,
@@ -697,7 +706,10 @@ class AgentBuilder:
                 driver_session,
                 driver_provider_id,
             )
-            driver_tools = adapt_driver_definitions(list(definitions))
+            driver_tools = adapt_driver_definitions(
+                list(definitions),
+                request_context=request_context,
+            )
             driver_prompt_hints = [fragment.content for fragment in fragments]
         extra_tools.extend(driver_tools)
         ctx.extras["driver_prompt_hints"] = driver_prompt_hints
@@ -752,7 +764,6 @@ class AgentBuilder:
 
         memory_session = await self._open_memory_session(ctx)
         ctx.extras["memory_session"] = memory_session
-        invocation = getattr(ctx, "invocation_scope", None)
         memory_provider_id = (
             invocation.selection.memory_provider_id
             if invocation is not None
@@ -779,16 +790,13 @@ class AgentBuilder:
         )
 
         if invocation is not None and workspace_dir is not None:
-            from .actions import ToolActionRecorder, lite_action_store
             from .context_manifests import (
                 ContextManifestCompiler,
                 lite_context_manifest_store,
             )
 
-            request_context["_action_recorder"] = ToolActionRecorder(
-                invocation,
-                lite_action_store(Path(workspace_dir)),
-                tool_owners=request_context.get("_tool_provider_owners"),
+            request_context["_action_recorder"].bind_tool_owners(
+                request_context.get("_tool_provider_owners"),
             )
             request_context[
                 "_context_manifest_compiler"

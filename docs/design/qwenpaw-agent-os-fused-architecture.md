@@ -412,8 +412,12 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
   `ActionRequest` / `ActionResult`，不为每类能力复制审批、重试和审计。
   - [x] Tool 垂直切片已落地：系统 Tool 与插件 Tool 共用执行前 Request、执行后
     Result、内容最小化、Artifact/Evidence 关联和 fail-closed 语义。
-  - [ ] Driver、MCP、Browser 与 Harness Remote 仍通过后续显式 Adapter 迁移；
-    不能因枚举和模型已存在就宣称 Action Plane 全量完成。
+  - [x] Driver 垂直切片已落地：系统与插件 Provider、旧 Driver Manager 兼容路径
+    共用 Driver Action；运行中审批通过不可变 `ActionApprovalLink` 关联，拒绝与
+    执行失败分开。MCP 作为 Driver 协议随该路径接入；显式 `readOnlyHint` 映射为
+    低风险无副作用，缺少注解时保持保守默认值，不按名称推断。
+  - [ ] Browser 与 Harness Remote 仍通过后续显式 Adapter 迁移；不能因枚举和
+    模型已存在就宣称 Action Plane 全量完成。
 - [x] 将 `PromptFragment` 兼容演进为带来源、版本、信任级和哈希的
   `ContextFragment`，并在 Provider 调用前为每次实际尝试生成不可变
   `ContextManifest`。真实 Chat 验收覆盖 generation 11、93 个 Fragment 和

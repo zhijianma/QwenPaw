@@ -695,7 +695,7 @@ Cron 不形成独立审批或产物事实源。
       `ActionResult` / `ActionRecord` 与 host-owned `ActionStore`；纯领域模型从
       Plugin SDK 导出，文件存储和 Recorder 不作为插件 API 暴露。
     - [x] 内置与插件 `ToolDefinition` 共用
-      `PolicyGuardedTool -> ToolCoordinator -> ToolActionRecorder`：执行前请求
+      `PolicyGuardedTool -> ToolCoordinator -> RuntimeActionRecorder`：执行前请求
       留证，Artifact/Evidence 发布后写结果；内容类参数只留
       `[CONTENT OMITTED]`，参数与结果摘要仅覆盖安全投影，不生成原始 Secret 或
       工具输出的可猜测指纹，JSON 权限为 `0600`。
@@ -705,8 +705,17 @@ Cron 不形成独立审批或产物事实源。
       `1ee31988-b37a-48b9-b6ce-423c52f6a3a9` 在 generation 11 真实调用
       `write_file`：Action 与 ChatSpec.id、Invocation 和 provider 对齐，结果关联
       1 个 Artifact 与 1 个 Evidence，正文未进入 Action JSON，最终 SSE 完整结束。
-    - [ ] Driver、MCP、Browser 与 Harness Remote 通过显式 Adapter 接入同一
-      Recorder；现有 Task `SideEffectRecord` 保持防重放权威，不迁移为第二状态机。
+    - [x] 系统与插件 Driver Provider 通过显式 Adapter 接入同一 Recorder；旧
+      Driver Manager 兼容路径也生成 `DRIVER` Action。运行中产生的审批通过不可变
+      `ActionApprovalLink` 关联 Request/Result；策略拒绝记为 `denied`，不误报为
+      执行失败。MCP 作为 Driver 协议已覆盖，未建立第二套 MCP Tool Namespace。
+      固定 Chat `1ee31988-b37a-48b9-b6ce-423c52f6a3a9` 已在 generation 11
+      真实调用 dingtalkdoc `get_document_info`：Action 与 ChatSpec.id、Invocation、
+      系统 Driver Provider 和真实 capability 对齐，结果成功且 JSON 权限为
+      `0600`。远端未声明 `readOnlyHint`，因此按 `external_write/high` 保守记录；
+      标准 MCP 只读注解的低风险映射已有定点合同覆盖，不根据工具名猜测权限。
+    - [ ] Browser 与 Harness Remote 仍待接入；现有 Task `SideEffectRecord` 保持
+      防重放权威，不迁移为第二状态机。
   - [ ] `EnvironmentContract` 冻结 Workspace、Sandbox、Harness 和 Hub runtime
     共同需要的挂载、网络、凭据引用、依赖、资源、快照与清理语义。
   - [ ] 语义观测统一 `MODEL`、`ACTION`、`GUARDRAIL`、`COMPACTION`、

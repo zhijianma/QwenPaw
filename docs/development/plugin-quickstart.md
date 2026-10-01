@@ -930,6 +930,9 @@ class ProjectDriverSession:
                 capability_id="driver://project/local/tools/echo#invoke",
                 name="driver_echo",
                 description="Echo text after Driver policy admission.",
+                effect="external_write",
+                risk="high",
+                reversible=False,
                 input_schema={
                     "type": "object",
                     "properties": {"text": {"type": "string"}},
@@ -958,6 +961,13 @@ approval; denial, timeout or persistence failure raises
 `DriverApprovalRejectedError`, while Invocation cancellation propagates
 normally. Never catch that error and execute the side effect anyway. See
 `examples/plugins/runtime-provider-kit/runtime_provider_kit/driver.py`.
+
+Every Driver definition must classify its effect, risk, and reversibility so
+the host can persist an `ActionRequest` before invocation. The compatibility
+defaults are deliberately conservative (`external_write`, `high`, and not
+reversible); read-only providers should declare narrower values explicitly.
+Approvals requested during `invoke` are linked to that Action by the host.
+Plugins neither create Action IDs nor write Action records directly.
 
 Third-party providers receive a minimal `DriverHost` containing only config,
 pre-bound credential handles, and the unified approval method. The built-in

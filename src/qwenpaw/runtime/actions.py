@@ -13,14 +13,17 @@ from agentscope.message import ToolResultState
 from agentscope.tool import ToolResponse
 
 from ..kernel import (
+    ActionApprovalLink,
     ActionKind,
     ActionRecord,
     ActionRequest,
     ActionResult,
     ActionStore,
     ActionStatus,
+    ApprovalSource,
     ArtifactRef,
     EvidenceRef,
+    DriverToolDefinition,
     InvocationScope,
     RiskLevel,
     SideEffectStatus,
@@ -159,7 +162,7 @@ class FilesystemActionStore:
     @staticmethod
     async def _append_immutable(
         path: Path,
-        model: ActionRequest | ActionResult,
+        model: ActionApprovalLink | ActionRequest | ActionResult,
         *,
         timestamp_field: str,
     ) -> None:
@@ -217,12 +220,55 @@ class FilesystemActionStore:
             raise ActionConflictError(
                 "action result has no durable request",
             ) from exc
-        ActionRecord(request=request, result=result)
+        approval_links = await run_sync_io(
+            self._load_approval_links,
+            directory,
+        )
+        ActionRecord(
+            request=request,
+            approval_links=approval_links,
+            result=result,
+        )
         await self._append_immutable(
             directory / "result.json",
             result,
             timestamp_field="completed_at",
         )
+
+    async def link_approval(self, link: ActionApprovalLink) -> None:
+        """Persist one approval relation under its owning action."""
+        directory = self._action_dir(
+            conversation_id=link.conversation_id,
+            invocation_id=link.invocation_id,
+            action_id=link.action_id,
+        )
+        request_path = directory / "request.json"
+        try:
+            request = ActionRequest.model_validate(
+                await read_json_async(request_path),
+            )
+        except FileNotFoundError as exc:
+            raise ActionConflictError(
+                "action approval link has no durable request",
+            ) from exc
+        ActionRecord(request=request, approval_links=(link,))
+        await self._append_immutable(
+            directory / "approval-links" / f"{link.approval_id}.json",
+            link,
+            timestamp_field="linked_at",
+        )
+
+    @staticmethod
+    def _load_approval_links(
+        directory: Path,
+    ) -> tuple[ActionApprovalLink, ...]:
+        links = [
+            ActionApprovalLink.model_validate_json(
+                path.read_text(encoding="utf-8"),
+            )
+            for path in sorted((directory / "approval-links").glob("*.json"))
+        ]
+        return tuple(links)
 
     def _list_sync(
         self,
@@ -236,6 +282,7 @@ class FilesystemActionStore:
                 request_path.read_text(encoding="utf-8"),
             )
             result_path = request_path.with_name("result.json")
+            approval_links = self._load_approval_links(request_path.parent)
             result = (
                 ActionResult.model_validate_json(
                     result_path.read_text(encoding="utf-8"),
@@ -243,7 +290,13 @@ class FilesystemActionStore:
                 if result_path.exists()
                 else None
             )
-            records.append(ActionRecord(request=request, result=result))
+            records.append(
+                ActionRecord(
+                    request=request,
+                    approval_links=approval_links,
+                    result=result,
+                ),
+            )
         records.sort(
             key=lambda item: item.request.requested_at,
             reverse=True,
@@ -264,8 +317,8 @@ class FilesystemActionStore:
         return await run_sync_io(self._list_sync, conversation_id, limit)
 
 
-class ToolActionRecorder:
-    """Bridge governed built-in and plugin tools to the Action Plane."""
+class RuntimeActionRecorder:
+    """Bridge runtime executors to one privacy-safe Action Plane."""
 
     def __init__(
         self,
@@ -278,11 +331,20 @@ class ToolActionRecorder:
         self._store = store
         self._tool_owners = dict(tool_owners or {})
 
+    def bind_tool_owners(self, tool_owners: dict[str, str] | None) -> None:
+        """Bind the final provider catalog before any tool can execute."""
+        self._tool_owners = dict(tool_owners or {})
+
     def _request(
         self,
         context: ToolCallContext,
         *,
+        capability_id: str,
+        kind: ActionKind,
+        action_name: str,
         effect: ToolEffect,
+        risk: RiskLevel,
+        reversible: bool,
         policy_decision: str,
         approval_id: UUID | None,
     ) -> ActionRequest:
@@ -293,13 +355,9 @@ class ToolActionRecorder:
         redacted_arguments = _minimize_arguments(
             redact_payload(arguments),
         )
-        provider_id = self._tool_owners.get(
-            context.tool_name,
-            "qwenpaw.system.workspace-tools",
-        )
         action_id = uuid5(
             self._scope.invocation_id,
-            f"tool:{context.tool_call_id}",
+            f"{kind.value}:{context.tool_call_id}",
         )
         return ActionRequest(
             action_id=action_id,
@@ -309,21 +367,18 @@ class ToolActionRecorder:
             ),
             conversation_id=self._scope.conversation_id,
             registry_generation=self._scope.registry_generation,
-            capability_id=provider_id,
-            kind=(
-                ActionKind.SHELL
-                if effect is ToolEffect.PROCESS
-                else ActionKind.TOOL
-            ),
-            action_name=context.tool_name,
+            capability_id=capability_id,
+            kind=kind,
+            action_name=action_name,
             arguments=arguments,
             redacted_arguments=redacted_arguments,
             arguments_hash=_sha256(redacted_arguments),
             effect=effect,
-            risk=_risk_for_effect(effect),
-            reversible=effect is ToolEffect.NONE,
+            risk=risk,
+            reversible=reversible,
             idempotency_key=(
-                f"tool:{self._scope.invocation_id}:{context.tool_call_id}"
+                f"{kind.value}:{self._scope.invocation_id}:"
+                f"{context.tool_call_id}"
             ),
             approval_id=approval_id,
             policy_decision=policy_decision or "unknown",
@@ -343,22 +398,116 @@ class ToolActionRecorder:
             return existing
         request = self._request(
             context,
+            capability_id=self._tool_owners.get(
+                context.tool_name,
+                "qwenpaw.system.workspace-tools",
+            ),
+            kind=(
+                ActionKind.SHELL
+                if effect is ToolEffect.PROCESS
+                else ActionKind.TOOL
+            ),
+            action_name=context.tool_name,
             effect=effect,
+            risk=_risk_for_effect(effect),
+            reversible=effect is ToolEffect.NONE,
             policy_decision=policy_decision,
             approval_id=approval_id,
         )
         try:
             await self._store.begin(request)
+            context.extra[ACTION_REQUEST_CONTEXT_KEY] = request
+            context.governance_metadata[ACTION_REQUEST_STATE_KEY] = "recorded"
+            context.governance_metadata["action_id"] = str(request.action_id)
+            if approval_id is not None:
+                await self.link_approval(
+                    context,
+                    approval_id,
+                    ApprovalSource.TOOL,
+                )
         except Exception as exc:
             context.governance_metadata[ACTION_REQUEST_STATE_KEY] = "failed"
             raise ActionRequestPersistenceError(
                 "tool was not executed because action intent could not be "
                 "recorded",
             ) from exc
+        return request
+
+    async def begin_driver(
+        self,
+        context: ToolCallContext,
+        definition: DriverToolDefinition,
+    ) -> ActionRequest:
+        """Persist a Driver-owned request before invoking its capability."""
+        return await self.begin_driver_capability(
+            context,
+            provider_id=definition.provider_id,
+            capability_id=definition.capability_id,
+            effect=definition.effect,
+            risk=definition.risk,
+            reversible=definition.reversible,
+        )
+
+    async def begin_driver_capability(
+        self,
+        context: ToolCallContext,
+        *,
+        provider_id: str,
+        capability_id: str,
+        effect: ToolEffect = ToolEffect.EXTERNAL_WRITE,
+        risk: RiskLevel = RiskLevel.HIGH,
+        reversible: bool = False,
+    ) -> ActionRequest:
+        """Persist a Driver capability across provider and legacy paths."""
+        existing = context.extra.get(ACTION_REQUEST_CONTEXT_KEY)
+        if isinstance(existing, ActionRequest):
+            return existing
+        request = self._request(
+            context,
+            capability_id=provider_id,
+            kind=ActionKind.DRIVER,
+            action_name=capability_id,
+            effect=effect,
+            risk=risk,
+            reversible=reversible,
+            policy_decision="driver_policy",
+            approval_id=None,
+        )
+        try:
+            await self._store.begin(request)
+        except Exception as exc:
+            context.governance_metadata[ACTION_REQUEST_STATE_KEY] = "failed"
+            raise ActionRequestPersistenceError(
+                "driver was not executed because action intent could not be "
+                "recorded",
+            ) from exc
         context.extra[ACTION_REQUEST_CONTEXT_KEY] = request
         context.governance_metadata[ACTION_REQUEST_STATE_KEY] = "recorded"
         context.governance_metadata["action_id"] = str(request.action_id)
         return request
+
+    async def link_approval(
+        self,
+        context: ToolCallContext,
+        approval_id: UUID,
+        source: ApprovalSource,
+    ) -> ActionApprovalLink:
+        """Attach a dynamically discovered approval to the active action."""
+        request = context.extra.get(ACTION_REQUEST_CONTEXT_KEY)
+        if not isinstance(request, ActionRequest):
+            raise ActionConflictError("approval has no active action request")
+        link = ActionApprovalLink(
+            action_id=request.action_id,
+            invocation_id=request.invocation_id,
+            conversation_id=request.conversation_id,
+            approval_id=approval_id,
+            source=source,
+        )
+        await self._store.link_approval(link)
+        raw_ids = context.governance_metadata.setdefault("approval_ids", [])
+        if str(approval_id) not in raw_ids:
+            raw_ids.append(str(approval_id))
+        return link
 
     async def _ensure_request(
         self,
@@ -461,6 +610,13 @@ class ToolActionRecorder:
             observation_digest=_sha256(safe_observation),
             artifact_refs=artifacts,
             evidence_refs=evidence,
+            approval_ids=tuple(
+                UUID(value)
+                for value in context.governance_metadata.get(
+                    "approval_ids",
+                    [],
+                )
+            ),
             error_code=(
                 ""
                 if status is ActionStatus.SUCCEEDED
@@ -487,6 +643,23 @@ def lite_action_store(workspace_dir: Path) -> FilesystemActionStore:
     return FilesystemActionStore(workspace_dir)
 
 
+async def link_active_action_approval(
+    request_context: dict[str, Any],
+    approval_id: UUID,
+    source: ApprovalSource,
+) -> None:
+    """Link approval when a runtime action is active; no-op for legacy use."""
+    recorder = request_context.get("_action_recorder")
+    if not isinstance(recorder, RuntimeActionRecorder):
+        return
+    from ..tool_calls._ctxvars import get_call_context
+
+    context = get_call_context()
+    if context is None:
+        return
+    await recorder.link_approval(context, approval_id, source)
+
+
 __all__ = [
     "ACTION_REQUEST_CONTEXT_KEY",
     "ACTION_REQUEST_STATE_KEY",
@@ -494,6 +667,7 @@ __all__ = [
     "ActionRequestPersistenceError",
     "ActionResultPersistenceError",
     "FilesystemActionStore",
-    "ToolActionRecorder",
+    "RuntimeActionRecorder",
+    "link_active_action_approval",
     "lite_action_store",
 ]

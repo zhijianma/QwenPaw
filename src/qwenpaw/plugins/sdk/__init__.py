@@ -65,6 +65,7 @@ from ...kernel.operational import (
     OperationalStatus,
 )
 from ...kernel.models import (
+    ActionApprovalLink,
     ActionKind,
     ActionRecord,
     ActionRequest,
@@ -172,6 +173,7 @@ SDK_VERSION = "1.0"
 
 __all__ = [
     "SDK_VERSION",
+    "ActionApprovalLink",
     "ActionKind",
     "ActionRecord",
     "ActionRequest",

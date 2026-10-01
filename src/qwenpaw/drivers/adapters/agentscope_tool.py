@@ -23,7 +23,13 @@ from agentscope.permission import PermissionBehavior, PermissionDecision
 from agentscope.tool import ToolBase, ToolChunk
 
 from ...kernel.invocation import DEFAULT_DRIVER_PROVIDER_ID
-from ...kernel.models import DriverToolDefinition, PromptFragment
+from ...kernel.driver import DriverApprovalRejectedError
+from ...kernel.models import (
+    DriverToolDefinition,
+    PromptFragment,
+    RiskLevel,
+    ToolEffect,
+)
 from ..capabilities import (
     DriverCapability,
     DriverInvocation,
@@ -33,6 +39,15 @@ from ..capabilities import (
 logger = logging.getLogger(__name__)
 
 DriverInvoker = Callable[[DriverInvocation], Awaitable[DriverInvocationResult]]
+
+
+def _action_classification(
+    capability: DriverCapability,
+) -> tuple[ToolEffect, RiskLevel, bool]:
+    """Translate explicit Driver metadata without guessing from names."""
+    if capability.metadata.get("read_only") is True:
+        return ToolEffect.NONE, RiskLevel.LOW, True
+    return ToolEffect.EXTERNAL_WRITE, RiskLevel.HIGH, False
 
 
 def _text_block(text: str) -> Any:
@@ -126,9 +141,17 @@ def _tool_chunk_from_driver_result(result: DriverInvocationResult) -> Any:
         "message": result.message,
         "metadata": result.metadata,
     }
+    denied_error_types = {
+        "driver_policy_approval_required",
+        "driver_policy_denied",
+    }
     return ToolChunk(
         content=[_text_block(_stringify(error_payload))],
-        state=ToolResultState.ERROR,
+        state=(
+            ToolResultState.DENIED
+            if result.error_type in denied_error_types
+            else ToolResultState.ERROR
+        ),
         is_last=True,
         metadata=dict(result.metadata or {}),
     )
@@ -171,6 +194,26 @@ class DriverCapabilityTool(ToolBase):
         )
 
     async def __call__(self, **kwargs: Any) -> Any:
+        recorder = self._request_context.get("_action_recorder")
+        if recorder is not None:
+            from ...tool_calls._ctxvars import get_call_context
+
+            context = get_call_context()
+            if context is None:
+                raise RuntimeError(
+                    "driver action recorder requires supervised context",
+                )
+            effect, risk, reversible = _action_classification(
+                self._capability,
+            )
+            await recorder.begin_driver_capability(
+                context,
+                provider_id=DEFAULT_DRIVER_PROVIDER_ID,
+                capability_id=self._capability.capability_id,
+                effect=effect,
+                risk=risk,
+                reversible=reversible,
+            )
         result = await self._invoker(
             DriverInvocation(
                 capability_id=self._capability.capability_id,
@@ -194,11 +237,16 @@ class DriverDefinitionTool(ToolBase):
     is_mcp = False
     mcp_name = None
 
-    def __init__(self, definition: DriverToolDefinition) -> None:
+    def __init__(
+        self,
+        definition: DriverToolDefinition,
+        request_context: dict[str, Any] | None = None,
+    ) -> None:
         self.name = definition.name
         self.description = definition.description
         self.input_schema = dict(definition.input_schema)
         self._definition = definition
+        self._request_context = request_context or {}
 
     async def check_permissions(
         self,
@@ -211,7 +259,32 @@ class DriverDefinitionTool(ToolBase):
         )
 
     async def __call__(self, **kwargs: Any) -> Any:
-        result = await self._definition.invoke(dict(kwargs))
+        recorder = self._request_context.get("_action_recorder")
+        if recorder is not None:
+            from ...tool_calls._ctxvars import get_call_context
+
+            context = get_call_context()
+            if context is None:
+                raise RuntimeError(
+                    "driver action recorder requires supervised context",
+                )
+            await recorder.begin_driver(context, self._definition)
+        try:
+            result = await self._definition.invoke(dict(kwargs))
+        except DriverApprovalRejectedError as exc:
+            return ToolChunk(
+                content=[
+                    _text_block(
+                        "Driver action was denied by its approval policy.",
+                    ),
+                ],
+                state=ToolResultState.DENIED,
+                is_last=True,
+                metadata={
+                    "error_type": "driver_approval_rejected",
+                    "capability_id": exc.capability_id,
+                },
+            )
         if isinstance(result, DriverInvocationResult):
             return _tool_chunk_from_driver_result(result)
         return ToolChunk(
@@ -223,9 +296,14 @@ class DriverDefinitionTool(ToolBase):
 
 def adapt_driver_definitions(
     definitions: list[DriverToolDefinition],
+    *,
+    request_context: dict[str, Any] | None = None,
 ) -> list[ToolBase]:
     """Convert public Driver definitions at the AgentScope boundary."""
-    return [DriverDefinitionTool(definition) for definition in definitions]
+    return [
+        DriverDefinitionTool(definition, request_context)
+        for definition in definitions
+    ]
 
 
 async def build_driver_definitions(
@@ -268,6 +346,7 @@ async def build_driver_definitions(
                 ),
             )
 
+        effect, risk, reversible = _action_classification(capability)
         definitions.append(
             DriverToolDefinition(
                 provider_id=DEFAULT_DRIVER_PROVIDER_ID,
@@ -275,6 +354,9 @@ async def build_driver_definitions(
                 name=capability.exposure.tool_name or capability.name,
                 description=capability.description,
                 input_schema=dict(capability.input_schema or {}),
+                effect=effect,
+                risk=risk,
+                reversible=reversible,
                 invoke=invoke,
             ),
         )

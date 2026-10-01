@@ -142,9 +142,21 @@ async def _require_driver_approval(
     from ..drivers.policy import DriverInvocationContext
     from ..drivers.policy_types import PolicyTarget
 
+    approval_context = dict(request_context)
+    try:
+        from ..tool_calls._ctxvars import get_call_context
+
+        active_call = get_call_context()
+    except Exception:  # noqa: BLE001
+        active_call = None
+    if active_call is not None:
+        approval_context["tool_call_id"] = active_call.tool_call_id
+        action_id = active_call.governance_metadata.get("action_id")
+        if action_id:
+            approval_context["os_action_id"] = str(action_id)
     subject = str(
-        request_context.get("user_id")
-        or request_context.get("agent_id")
+        approval_context.get("user_id")
+        or approval_context.get("agent_id")
         or "unknown",
     )
     context = DriverInvocationContext(
@@ -153,9 +165,14 @@ async def _require_driver_approval(
         protocol="plugin",
         operation=request.operation,
         target=PolicyTarget(kind="tool", name=request.tool_name),
-        request_context=dict(request_context),
+        request_context=approval_context,
         extras={
             "capability_id": request.capability_id,
+            **(
+                {"action_id": approval_context["os_action_id"]}
+                if approval_context.get("os_action_id")
+                else {}
+            ),
             **dict(request.redacted_arguments),
         },
     )

@@ -135,6 +135,17 @@ class ActionStatus(str, Enum):
     DENIED = "denied"
 
 
+class ActionApprovalLink(KernelModel):
+    """Immutable relation for approvals discovered during an action."""
+
+    action_id: UUID
+    invocation_id: UUID
+    conversation_id: NonEmptyStr | None = None
+    approval_id: UUID
+    source: ApprovalSource
+    linked_at: AwareDatetime = Field(default_factory=utc_now)
+
+
 class ActionRequest(KernelModel):
     """Privacy-safe durable intent recorded before external execution.
 
@@ -200,6 +211,7 @@ class ActionResult(KernelModel):
     )
     artifact_refs: tuple["ArtifactRef", ...] = ()
     evidence_refs: tuple["EvidenceRef", ...] = ()
+    approval_ids: tuple[UUID, ...] = ()
     error_code: str = ""
     retryable: bool = False
     side_effect_status: SideEffectStatus | None = None
@@ -210,11 +222,34 @@ class ActionRecord(KernelModel):
     """Queryable action projection with an optional terminal result."""
 
     request: ActionRequest
+    approval_links: tuple[ActionApprovalLink, ...] = ()
     result: ActionResult | None = None
 
     @model_validator(mode="after")
     def validate_result_identity(self) -> Self:
         """Require request and result to describe the same execution."""
+        if self.result is None:
+            result_approval_ids: tuple[UUID, ...] = ()
+        else:
+            result_approval_ids = self.result.approval_ids
+        link_ids = tuple(link.approval_id for link in self.approval_links)
+        if len(link_ids) != len(set(link_ids)):
+            raise ValueError("action approval links must be unique")
+        for link in self.approval_links:
+            if link.action_id != self.request.action_id:
+                raise ValueError("action approval link does not match request")
+            if link.invocation_id != self.request.invocation_id:
+                raise ValueError(
+                    "action approval link invocation does not match request",
+                )
+            if link.conversation_id != self.request.conversation_id:
+                raise ValueError(
+                    "action approval link conversation does not match request",
+                )
+        if self.result is not None and set(result_approval_ids) != set(
+            link_ids,
+        ):
+            raise ValueError("action result approvals do not match links")
         if self.result is None:
             return self
         if self.result.action_id != self.request.action_id:
@@ -1437,6 +1472,9 @@ class DriverToolDefinition(KernelModel):
     name: NonEmptyStr
     description: str = ""
     input_schema: JsonObject = Field(default_factory=dict)
+    effect: ToolEffect = ToolEffect.EXTERNAL_WRITE
+    risk: RiskLevel = RiskLevel.HIGH
+    reversible: bool = False
     invoke: SkipJsonSchema[Callable[[JsonObject], Awaitable[object]]] = Field(
         exclude=True,
     )

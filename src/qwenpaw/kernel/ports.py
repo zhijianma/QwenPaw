@@ -16,6 +16,7 @@ from .events import (
     TaskProjectionSnapshot,
 )
 from .models import (
+    ActionApprovalLink,
     ActionRecord,
     ActionRequest,
     ActionResult,
@@ -1176,6 +1177,9 @@ class ActionStore(Protocol):
 
     async def complete(self, result: ActionResult) -> None:
         """Persist one immutable terminal result after verification."""
+
+    async def link_approval(self, link: ActionApprovalLink) -> None:
+        """Persist an approval relation discovered during execution."""
 
     async def list_for_conversation(
         self,

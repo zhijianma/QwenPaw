@@ -419,6 +419,18 @@ def _mcp_tool_to_capability(
     input_schema.setdefault("type", "object")
     input_schema.setdefault("properties", {})
     input_schema.setdefault("required", [])
+    annotations = getattr(raw_tool, "annotations", None)
+    if isinstance(annotations, dict):
+        read_only = annotations.get(
+            "readOnlyHint",
+            annotations.get("read_only_hint"),
+        )
+    else:
+        read_only = getattr(
+            annotations,
+            "readOnlyHint",
+            getattr(annotations, "read_only_hint", None),
+        )
     return DriverCapability(
         # capability_id keeps the original MCP tool name (URL-encoded) so
         # invoke routing always resolves to the server-side name.
@@ -447,6 +459,7 @@ def _mcp_tool_to_capability(
         metadata={
             "driver_key": driver_name,
             "display_name": display_name or driver_name,
+            "read_only": read_only is True,
         },
         enabled=mcp_tool_is_enabled(whitelist, name),
     )
