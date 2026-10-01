@@ -29,11 +29,12 @@ QwenPaw 应吸收 Codex 的“分层恢复”思想，但不应复制其具体�
 因此，“一问一答”应从**内核生命周期模型**降级为**一种常见 UI 投影**。这既能
 保持当前 Chat 体验，也能支撑分钟、小时甚至跨进程的长程任务。
 
-这里还需要进一步修正 Handbook 常见的“模型提问、用户回答、模型继续”范式：
-`Ask User` 不是智能体每一步的默认推进器，而是 Runtime 在缺少必要事实或授权时
-创建的 durable suspension。正常路径应由目标、计划、事件、Action 结果、Artifact、
-Evidence 和 Verification 自主推进；Suggestion 是非阻塞提示，Steer 是异步控制输入，
-Approval 是策略裁决，三者都不能退化成追问用户的聊天话术。
+这里要避免一种实现层误读：Handbook 已把“一问一答”归入上一阶段应用形态，并以
+持续 Agent Loop 描述长程任务；其中采用请求/响应形式的 HTTP/SDK 示例不是 Runtime
+生命周期契约。`Ask User` 不是智能体每一步的默认推进器，而是 Runtime 在缺少必要
+事实或授权时创建的 durable suspension。正常路径应由目标、计划、事件、Action
+结果、Artifact、Evidence 和 Verification 自主推进；Suggestion 是非阻塞提示，
+Steer 是异步控制输入，Approval 是策略裁决，三者都不能退化成追问用户的聊天话术。
 
 ## 2. 当前能力与真实缺口
 
@@ -176,9 +177,11 @@ snapshot；旧 Store 没有逐跳转换记录，因此不会反向编造时间�
 
 Chat-owned Artifact/Evidence 已从 ownership receipt 独立投影：上传与内置/插件工具
 输出共用 `ConversationArtifactHistoryPort`，工具产物保留 invocation、correlation 与
-固定 registry generation。投影只公开 ID、类型、媒体、大小、哈希和 producer，不公开
-URI、文件名、metadata 或 claim。Task-owned `ArtifactRecord/EvidenceRecord` 仍需增加
-同构 Adapter，不能依赖 Chat receipt 冒充 Task registry。
+固定 registry generation。Task-owned 结果则由 `TaskResultHistoryPort` 一次回放
+Artifact、Evidence 与 Verification，保留 Task/Run/Event/Step/Correlation 因果；同一
+结果同时存在 Chat receipt 时，以 Task 因果记录为准并去重，不让 receipt 冒充 Task
+registry。两种投影都只公开 ID、类型、媒体、大小、哈希和 producer，不公开 URI、
+文件名、metadata 或 claim。
 
 在各源 Store 具备 revision/notifier 之前，应控制重建频率；不能为了 UI 动画增加一套
 易漂移的事件表，也不能把当前状态 SSE 宣称为完整审计日志。派生 Observation index
@@ -257,6 +260,8 @@ Codex 的“边收流边执行工具”建立在其 Provider 事件协议、工�
 - [x] Interaction 决定与 outbox 同一事务提交，enqueue/mark 崩溃窗口幂等恢复；
 - [x] continuation 创建新 Submission 和 Invocation，并继承 `correlation_id`；
 - [x] 不恢复旧协程，不依赖浏览器在线；并行 Ask User 全部保留。
+- [x] Task-owned Artifact/Evidence/Verification 通过统一结果历史进入 Chat Activity，
+  相同 Chat receipt 不重复显示且不丢失 Task 因果。
 - [x] 在固定真实 Chat 中完成浏览器级回答、自动续接与最终消息验收。
 
 ### R1：冻结 Model Recovery Contract

@@ -14,13 +14,17 @@ from qwenpaw.kernel import (
     ActionStatus,
     ActorRef,
     ActorType,
+    ArtifactRecord,
     ArtifactRef,
+    ArtifactStatus,
+    ConversationTaskResultRecords,
     ControlCommand,
     ControlCommandKind,
     ControlCommandStatus,
     ControlReceipt,
     ControlRecord,
     EvidenceRef,
+    EvidenceRecord,
     CompactionRecord,
     CompactionStatus,
     CompactionTrigger,
@@ -309,6 +313,97 @@ async def test_conversation_artifact_projects_content_safe_registry_facts(
     serialized = "".join(item.model_dump_json() for item in observations)
     assert "Sensitive internal verification claim" not in serialized
     assert "secret-name.md" not in serialized
+    assert "qwenpaw-artifact://" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_task_results_replace_duplicate_chat_receipt_with_causality(
+    tmp_path,
+) -> None:
+    conversation_id = "chat-task-results"
+    now = datetime.now(timezone.utc)
+    task_id = uuid4()
+    run_id = uuid4()
+    event_id = uuid4()
+    correlation_id = uuid4()
+    artifact = ArtifactRef(
+        kind="report.markdown",
+        uri="qwenpaw-artifact://sha256/" + "b" * 64,
+        media_type="text/markdown",
+        content_hash="sha256:" + "b" * 64,
+        size_bytes=84,
+        metadata={"name": "private-task-report.md"},
+    )
+    evidence = EvidenceRef(
+        artifact_id=artifact.artifact_id,
+        claim="PRIVATE TASK CLAIM",
+        producer="qwenpaw.tests.report",
+        captured_at=now,
+    )
+    await conversation_artifact_receipts(tmp_path).create_owned(
+        artifact,
+        evidence,
+        chat_id=conversation_id,
+        correlation_id=correlation_id,
+    )
+    snapshot = ConversationTaskResultRecords(
+        conversation_id=conversation_id,
+        artifacts=(
+            ArtifactRecord(
+                artifact=artifact,
+                task_id=task_id,
+                run_id=run_id,
+                event_id=event_id,
+                correlation_id=correlation_id,
+                version=2,
+                status=ArtifactStatus.READY,
+                producer="qwenpaw.tests.report",
+                created_at=now,
+            ),
+        ),
+        evidence=(
+            EvidenceRecord(
+                evidence=evidence,
+                task_id=task_id,
+                run_id=run_id,
+                event_id=event_id,
+                correlation_id=correlation_id,
+                source="qwenpaw.tests.report",
+            ),
+        ),
+    )
+
+    class History:
+        async def read_for_conversation(self, chat_id):
+            assert chat_id == conversation_id
+            return snapshot
+
+    observations = await lite_observation_projection(
+        tmp_path,
+        conversation_artifacts=conversation_artifact_receipts(tmp_path),
+        task_results=History(),
+    ).list_for_conversation(conversation_id)
+
+    assert len(observations) == 2
+    assert {item.category for item in observations} == {
+        ObservationCategory.ARTIFACT,
+        ObservationCategory.EVIDENCE,
+    }
+    assert all(item.task_id == task_id for item in observations)
+    assert all(item.run_id == run_id for item in observations)
+    assert all(item.source.source_id == str(event_id) for item in observations)
+    artifact_observation = next(
+        item
+        for item in observations
+        if item.category is ObservationCategory.ARTIFACT
+    )
+    assert artifact_observation.facts["version"] == 2
+    assert artifact_observation.facts["artifact_status"] == "ready"
+    serialized = "".join(
+        item.model_dump_json() for item in observations
+    )
+    assert "PRIVATE TASK CLAIM" not in serialized
+    assert "private-task-report.md" not in serialized
     assert "qwenpaw-artifact://" not in serialized
 
 

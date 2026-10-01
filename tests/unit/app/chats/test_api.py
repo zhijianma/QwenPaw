@@ -26,10 +26,13 @@ from qwenpaw.invocation_control import (
 from qwenpaw.kernel import (
     ActionKind,
     ActionRequest,
+    ArtifactRef,
+    EvidenceRef,
     PlanStep,
     ModelCallAttempt,
     ModelRouteReason,
     RouteDecision,
+    RunnerSignal,
     TurnSubmissionRequest,
     VerificationResult,
     VerificationStatus,
@@ -368,6 +371,29 @@ async def test_list_chat_observations_uses_owned_projection(tmp_path):
         task.task_id,
         runner_id="qwenpaw.runner.tests",
     )
+    artifact = ArtifactRef(
+        kind="report.markdown",
+        uri="qwenpaw-artifact://sha256/" + "c" * 64,
+        media_type="text/markdown",
+        content_hash="sha256:" + "c" * 64,
+        size_bytes=128,
+        metadata={"name": "private-observation.md"},
+    )
+    evidence = EvidenceRef(
+        artifact_id=artifact.artifact_id,
+        claim="PRIVATE OBSERVATION CLAIM",
+        producer="qwenpaw.runner.tests",
+    )
+    await task_service.record_runner_signal(
+        task.task_id,
+        run.run_id,
+        RunnerSignal(
+            event_type="artifact.created",
+            source="qwenpaw.runner.tests",
+            artifact_refs=(artifact,),
+            evidence_refs=(evidence,),
+        ),
+    )
     verification = VerificationResult(
         task_id=task.task_id,
         run_id=run.run_id,
@@ -404,6 +430,8 @@ async def test_list_chat_observations_uses_owned_projection(tmp_path):
         "qwenpaw.control.command",
         "qwenpaw.control.receipt",
         "qwenpaw.control.submission",
+        "qwenpaw.task.artifact-record",
+        "qwenpaw.task.evidence-record",
         "qwenpaw.task.verification-record",
     }
     submission_observations = [
@@ -430,6 +458,21 @@ async def test_list_chat_observations_uses_owned_projection(tmp_path):
     assert verification_observation.facts["verification_id"] == str(
         verification.verification_id,
     )
+    task_results = [
+        item
+        for item in observations
+        if item.source.source_type
+        in {
+            "qwenpaw.task.artifact-record",
+            "qwenpaw.task.evidence-record",
+        }
+    ]
+    assert len(task_results) == 2
+    assert all(item.task_id == task.task_id for item in task_results)
+    serialized = "".join(item.model_dump_json() for item in task_results)
+    assert "PRIVATE OBSERVATION CLAIM" not in serialized
+    assert "private-observation.md" not in serialized
+    assert "qwenpaw-artifact://" not in serialized
     manager.get_chat.assert_awaited_once_with(chat_id)
 
 

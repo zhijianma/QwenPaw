@@ -8,10 +8,13 @@ from uuid import UUID
 from pydantic import AwareDatetime, Field, model_validator
 
 from .models import (
+    ArtifactRecord,
     ArtifactRef,
     EvidenceRef,
+    EvidenceRecord,
     KernelModel,
     NonEmptyStr,
+    VerificationRecord,
 )
 
 
@@ -35,4 +38,42 @@ class ConversationArtifactRecord(KernelModel):
         return self
 
 
-__all__ = ["ConversationArtifactRecord"]
+class ConversationTaskResultRecords(KernelModel):
+    """Task-owned result facts associated with one ChatSpec identity."""
+
+    conversation_id: NonEmptyStr
+    artifacts: tuple[ArtifactRecord, ...] = ()
+    evidence: tuple[EvidenceRecord, ...] = ()
+    verifications: tuple[VerificationRecord, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_references(self) -> "ConversationTaskResultRecords":
+        """Require evidence and verification references to resolve locally."""
+        artifact_ids = {
+            record.artifact.artifact_id for record in self.artifacts
+        }
+        evidence_ids = {
+            record.evidence.evidence_id for record in self.evidence
+        }
+        if any(
+            record.evidence.artifact_id not in artifact_ids
+            for record in self.evidence
+        ):
+            raise ValueError("task evidence references an unknown artifact")
+        for record in self.verifications:
+            result = record.verification
+            if not set(result.artifact_ids) <= artifact_ids:
+                raise ValueError(
+                    "task verification references an unknown artifact",
+                )
+            if not set(result.evidence_ids) <= evidence_ids:
+                raise ValueError(
+                    "task verification references unknown evidence",
+                )
+        return self
+
+
+__all__ = [
+    "ConversationArtifactRecord",
+    "ConversationTaskResultRecords",
+]

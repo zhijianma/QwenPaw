@@ -10,13 +10,18 @@ from qwenpaw.kernel import (
     AcceptanceVerification,
     ActorRef,
     ActorType,
+    ArtifactRef,
+    EvidenceRef,
     Task,
     TaskSource,
     VerificationResult,
     VerificationStatus,
 )
 from qwenpaw.kernel.events import ExecutionEvent
-from qwenpaw.tasks.verification_history import TaskVerificationHistory
+from qwenpaw.tasks.verification_history import (
+    TaskResultHistory,
+    TaskVerificationHistory,
+)
 
 
 class _TaskLedger:
@@ -133,3 +138,62 @@ async def test_history_rejects_invalid_query_bounds():
         await history.list_for_conversation(" ")
     with pytest.raises(ValueError, match="between 1 and 1000"):
         await history.list_for_conversation("chat", limit=1001)
+
+
+@pytest.mark.asyncio
+async def test_result_history_reads_artifact_evidence_and_verification_once():
+    now = datetime.now(timezone.utc)
+    task = Task(
+        objective="Create report",
+        source=TaskSource.USER,
+        agent_id="default",
+        metadata={"conversation_id": "chat-results"},
+    )
+    artifact = ArtifactRef(
+        kind="report.markdown",
+        uri="qwenpaw-artifact://sha256/" + "a" * 64,
+        media_type="text/markdown",
+        content_hash="sha256:" + "a" * 64,
+        size_bytes=42,
+        metadata={"name": "private-report.md"},
+    )
+    evidence = EvidenceRef(
+        artifact_id=artifact.artifact_id,
+        claim="PRIVATE CLAIM",
+        producer="qwenpaw.tests.report",
+        captured_at=now,
+    )
+    run_id = uuid4()
+    result_event = ExecutionEvent(
+        task_id=task.task_id,
+        run_id=run_id,
+        sequence=1,
+        event_type="artifact.registered",
+        occurred_at=now,
+        correlation_id=uuid4(),
+        registry_generation=1,
+        actor=ActorRef(type=ActorType.SYSTEM, id="runner"),
+        source="qwenpaw.tests.report",
+        artifact_refs=(artifact,),
+        evidence_refs=(evidence,),
+    )
+    verification_event = _verification_event(
+        task,
+        now + timedelta(seconds=1),
+    ).model_copy(update={"sequence": 2})
+    ledger = _TaskLedger(
+        (task,),
+        {task.task_id: (result_event, verification_event)},
+    )
+
+    snapshot = await TaskResultHistory(
+        ledger,
+        ledger,
+    ).read_for_conversation("chat-results")
+
+    assert snapshot.conversation_id == "chat-results"
+    assert [record.artifact for record in snapshot.artifacts] == [artifact]
+    assert [record.evidence for record in snapshot.evidence] == [evidence]
+    assert len(snapshot.verifications) == 1
+    assert snapshot.artifacts[0].event_id == result_event.event_id
+    assert snapshot.evidence[0].event_id == result_event.event_id

@@ -271,7 +271,10 @@ from .observations import (
     ObservationStatus,
     RuntimeObservation,
 )
-from .artifacts import ConversationArtifactRecord
+from .artifacts import (
+    ConversationArtifactRecord,
+    ConversationTaskResultRecords,
+)
 from .ports import (
     ActionStore,
     AgentFactory,
@@ -298,6 +301,7 @@ from .ports import (
     RuntimeInteractionProducer,
     SchedulerPort,
     SubmissionHistoryPort,
+    TaskResultHistoryPort,
 )
 
 __all__ = [
@@ -478,6 +482,7 @@ __all__ = [
     "ConversationRuntimeProjection",
     "ConversationArtifactHistoryPort",
     "ConversationArtifactRecord",
+    "ConversationTaskResultRecords",
     "DriverApprovalRejectedError",
     "DriverCredentialUnavailableError",
     "DriverApprovalRequest",
@@ -559,6 +564,7 @@ __all__ = [
     "VerificationStatus",
     "VerificationPolicy",
     "VerificationHistoryPort",
+    "TaskResultHistoryPort",
     "ExitCondition",
     "validate_run_transition",
     "validate_task_transition",

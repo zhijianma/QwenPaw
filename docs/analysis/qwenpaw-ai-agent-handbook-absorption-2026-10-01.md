@@ -440,11 +440,13 @@ QwenPaw 3.0 不为四档分别建四套业务模型，而是在 Port 与 Adapter
 - 只有确实需要离线消费、重投与背压的 Hub 链路才升级为 S4。Lite 不因为“未来
   可能分布式”就强制引入消息队列。
 
-Handbook 以请求/响应说明通信层级是有价值的，但不能继续把“一问一答”当作长程
-Agent 的运行模型。QwenPaw 将它降级为短 Chat 的快速路径和 UI 投影：一个用户意图
-可以沿同一 `correlation_id` 跨越多个 Submission、Invocation、Model Step、Action、
-Interaction 和恢复周期。Assistant message 只负责对人表达，不负责划定 Runtime
-生命周期；等待和恢复也不要求用户再发一句话来“推动下一轮”。
+Handbook 第 1 章已把“请求—回答”归为上一阶段应用形态，第 4 章则采用持续
+Agent Loop、显式等待和异步续行；不能因为其中部分 HTTP/SDK 示例采用请求/响应接口，
+就把传输边界误读为长程 Agent 的运行边界。QwenPaw 仅把“一问一答”保留为短 Chat
+的快速路径和 UI 投影：一个用户意图可以沿同一 `correlation_id` 跨越多个
+Submission、Invocation、Model Step、Action、Interaction 和恢复周期。Assistant
+message 只负责对人表达，不负责划定 Runtime 生命周期；等待和恢复也不要求用户再发
+一句话来“推动下一轮”。
 
 这项设计也决定普通 Chat Ask User 的正确恢复方式：先原子提交回答和内容最小化
 continuation outbox，再创建同一 `ChatSpec.id` 下的新 Submission / Invocation；不

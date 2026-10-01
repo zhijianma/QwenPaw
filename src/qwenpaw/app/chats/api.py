@@ -96,7 +96,7 @@ from ...tasks.artifacts import (
     artifact_filename,
     lite_artifact_store,
 )
-from ...tasks.verification_history import lite_verification_history
+from ...tasks.verification_history import lite_task_result_history
 from ...tasks.conversation_artifacts import (
     ConversationArtifactReceiptError,
     conversation_artifact_receipts,
@@ -595,7 +595,7 @@ async def _chat_runtime_projection_context(
         conversation_artifacts=conversation_artifact_receipts(
             Path(workspace.workspace_dir),
         ),
-        verifications=lite_verification_history(
+        task_results=lite_task_result_history(
             Path(workspace.workspace_dir),
         ),
     )
@@ -1537,7 +1537,7 @@ async def list_chat_observations(
         conversation_artifacts=conversation_artifact_receipts(
             Path(workspace.workspace_dir),
         ),
-        verifications=lite_verification_history(
+        task_results=lite_task_result_history(
             Path(workspace.workspace_dir),
         ),
     ).list_for_conversation(
@@ -1574,7 +1574,7 @@ async def page_chat_observations(
         conversation_artifacts=conversation_artifact_receipts(
             Path(workspace.workspace_dir),
         ),
-        verifications=lite_verification_history(
+        task_results=lite_task_result_history(
             Path(workspace.workspace_dir),
         ),
     )

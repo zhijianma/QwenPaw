@@ -375,8 +375,12 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     回指同一 ownership record。工具产物新记录保留 invocation、correlation 和固定
     generation；Activity 不暴露 URI、文件名、metadata 或 Evidence claim。固定真实
     Chat 的完整 Observation 分页恢复出 6 个 Artifact 和 6 个 Evidence 权威投影。
-  - [ ] 为 Task-owned `ArtifactRecord/EvidenceRecord` 增加相同 Observation adapter；
-    在源 Store 提供 revision/notifier 前，不提高全量重建频率，也不以轮询冒充日志。
+  - [x] Task-owned `ArtifactRecord/EvidenceRecord` 已通过统一
+    `TaskResultHistoryPort` 接入 Observation；一次 Ledger 回放同时返回 Artifact、
+    Evidence 与 Verification，并保留 Task/Run/Event/Step/Correlation 因果。若同一
+    结果已有 Chat ownership receipt，Activity 以 Task 因果记录为准并显式去重；
+    URI、文件名、metadata 与 Evidence claim 均不进入投影。在源 Store 提供
+    revision/notifier 前，不提高全量重建频率，也不以轮询冒充日志。
   - [x] Lite Observation index 会按 owner 与当前权威派生集做 reconciliation；版本
     演进后遗留的陈旧指针被删除，旧 cursor 明确失效，不再让 Activity GET/SSE 500。
   - [ ] Console 增加薄 Activity 投影；只显示语义状态和来源引用，不暴露隐藏推理，

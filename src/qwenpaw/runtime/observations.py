@@ -13,6 +13,8 @@ from ..kernel import (
     ActionRecord,
     ActionStatus,
     ActionStore,
+    ArtifactRecord,
+    ArtifactStatus,
     ControlCommandKind,
     ControlCommandStatus,
     ControlHistoryPort,
@@ -22,6 +24,7 @@ from ..kernel import (
     CompactionStore,
     ConversationArtifactHistoryPort,
     ConversationArtifactRecord,
+    ConversationTaskResultRecords,
     InteractionHistoryPort,
     InteractionRecord,
     InteractionStatus,
@@ -39,6 +42,8 @@ from ..kernel import (
     SubmissionStatus,
     TERMINAL_SUBMISSION_STATUSES,
     TurnSubmission,
+    TaskResultHistoryPort,
+    EvidenceRecord,
     VerificationHistoryPort,
     VerificationRecord,
     VerificationStatus,
@@ -50,6 +55,17 @@ from .observation_index import LiteObservationIndex
 
 def _observation_id(source_id: UUID, stage: ObservationStage) -> UUID:
     return uuid5(source_id, f"runtime-observation:{stage.value}")
+
+
+def _task_result_observation_id(
+    event_id: UUID,
+    result_id: UUID,
+    category: ObservationCategory,
+) -> UUID:
+    return uuid5(
+        event_id,
+        f"runtime-observation:{category.value}:{result_id}",
+    )
 
 
 def _optional_uuid(value: UUID | None) -> str | None:
@@ -114,6 +130,15 @@ def _verification_status(status: VerificationStatus) -> ObservationStatus:
     return {
         VerificationStatus.PASSED: ObservationStatus.SUCCEEDED,
         VerificationStatus.FAILED: ObservationStatus.FAILED,
+    }[status]
+
+
+def _artifact_status(status: ArtifactStatus) -> ObservationStatus:
+    return {
+        ArtifactStatus.DRAFT: ObservationStatus.RECORDED,
+        ArtifactStatus.READY: ObservationStatus.SUCCEEDED,
+        ArtifactStatus.SUPERSEDED: ObservationStatus.RECORDED,
+        ArtifactStatus.REJECTED: ObservationStatus.REJECTED,
     }[status]
 
 
@@ -567,6 +592,86 @@ def _verification_observation(
     )
 
 
+def _task_artifact_observation(
+    record: ArtifactRecord,
+    conversation_id: str,
+) -> RuntimeObservation:
+    artifact = record.artifact
+    return RuntimeObservation(
+        observation_id=_task_result_observation_id(
+            record.event_id,
+            artifact.artifact_id,
+            ObservationCategory.ARTIFACT,
+        ),
+        category=ObservationCategory.ARTIFACT,
+        stage=ObservationStage.EVIDENCE,
+        status=_artifact_status(record.status),
+        source=ObservationSource(
+            source_type="qwenpaw.task.artifact-record",
+            source_id=str(record.event_id),
+        ),
+        task_id=record.task_id,
+        run_id=record.run_id,
+        conversation_id=conversation_id,
+        correlation_id=record.correlation_id,
+        title="Task artifact registered",
+        facts={
+            "artifact_id": str(artifact.artifact_id),
+            "event_id": str(record.event_id),
+            "step_id": _optional_uuid(record.step_id),
+            "cause_event_id": _optional_uuid(record.cause_event_id),
+            "kind": artifact.kind,
+            "media_type": artifact.media_type,
+            "size_bytes": artifact.size_bytes,
+            "content_hash": artifact.content_hash,
+            "version": record.version,
+            "artifact_status": record.status.value,
+            "supersedes_artifact_id": _optional_uuid(
+                record.supersedes_artifact_id,
+            ),
+            "producer": record.producer,
+        },
+        occurred_at=record.created_at,
+    )
+
+
+def _task_evidence_observation(
+    record: EvidenceRecord,
+    conversation_id: str,
+) -> RuntimeObservation:
+    evidence = record.evidence
+    return RuntimeObservation(
+        observation_id=_task_result_observation_id(
+            record.event_id,
+            evidence.evidence_id,
+            ObservationCategory.EVIDENCE,
+        ),
+        category=ObservationCategory.EVIDENCE,
+        stage=ObservationStage.EVIDENCE,
+        status=ObservationStatus.SUCCEEDED,
+        source=ObservationSource(
+            source_type="qwenpaw.task.evidence-record",
+            source_id=str(record.event_id),
+        ),
+        task_id=record.task_id,
+        run_id=record.run_id,
+        conversation_id=conversation_id,
+        correlation_id=record.correlation_id,
+        title="Task evidence registered",
+        facts={
+            "evidence_id": str(evidence.evidence_id),
+            "artifact_id": str(evidence.artifact_id),
+            "event_id": str(record.event_id),
+            "step_id": _optional_uuid(record.step_id),
+            "cause_event_id": _optional_uuid(record.cause_event_id),
+            "producer": evidence.producer,
+            "source": record.source,
+            "has_claim": bool(evidence.claim),
+        },
+        occurred_at=evidence.captured_at,
+    )
+
+
 def _submission_status(status: SubmissionStatus) -> ObservationStatus:
     return {
         SubmissionStatus.SUCCEEDED: ObservationStatus.SUCCEEDED,
@@ -719,6 +824,12 @@ async def _empty_conversation_artifacts(
     return ()
 
 
+async def _empty_task_results(
+    conversation_id: str,
+) -> ConversationTaskResultRecords:
+    return ConversationTaskResultRecords(conversation_id=conversation_id)
+
+
 async def _scan_source(
     source: object,
     *args: object,
@@ -764,6 +875,7 @@ class LiteObservationProjection(ObservationProjectionPort):
         controls: ControlHistoryPort | None = None,
         submissions: SubmissionHistoryPort | None = None,
         conversation_artifacts: ConversationArtifactHistoryPort | None = None,
+        task_results: TaskResultHistoryPort | None = None,
         verifications: VerificationHistoryPort | None = None,
     ) -> None:
         self._model_calls = model_calls
@@ -775,6 +887,7 @@ class LiteObservationProjection(ObservationProjectionPort):
         self._controls = controls
         self._submissions = submissions
         self._conversation_artifacts = conversation_artifacts
+        self._task_results = task_results
         self._verifications = verifications
 
     async def list_for_conversation(
@@ -835,12 +948,18 @@ class LiteObservationProjection(ObservationProjectionPort):
             if self._conversation_artifacts is not None
             else _empty_conversation_artifacts()
         )
+        task_result_records = (
+            self._task_results.read_for_conversation(conversation_id)
+            if self._task_results is not None
+            else _empty_task_results(conversation_id)
+        )
         verification_records = (
             _scan_source(
                 self._verifications,
                 conversation_id,
             )
             if self._verifications is not None
+            and self._task_results is None
             else _empty_verifications()
         )
         (
@@ -851,6 +970,7 @@ class LiteObservationProjection(ObservationProjectionPort):
             resolved_controls,
             resolved_submissions,
             resolved_conversation_artifacts,
+            resolved_task_results,
             resolved_verifications,
         ) = await asyncio.gather(
             _scan_source(
@@ -869,6 +989,7 @@ class LiteObservationProjection(ObservationProjectionPort):
             control_records,
             submission_records,
             conversation_artifact_records,
+            task_result_records,
             verification_records,
         )
         observations = [
@@ -899,14 +1020,41 @@ class LiteObservationProjection(ObservationProjectionPort):
             for record in resolved_submissions
             for observation in _submission_observations(record)
         )
+        task_artifact_ids = {
+            str(record.artifact.artifact_id)
+            for record in resolved_task_results.artifacts
+        }
+        task_evidence_ids = {
+            str(record.evidence.evidence_id)
+            for record in resolved_task_results.evidence
+        }
         observations.extend(
             observation
             for record in resolved_conversation_artifacts
             for observation in _conversation_artifact_observations(record)
+            if not (
+                observation.category is ObservationCategory.ARTIFACT
+                and observation.facts["artifact_id"] in task_artifact_ids
+            )
+            and not (
+                observation.category is ObservationCategory.EVIDENCE
+                and observation.facts["evidence_id"] in task_evidence_ids
+            )
+        )
+        observations.extend(
+            _task_artifact_observation(record, conversation_id)
+            for record in resolved_task_results.artifacts
+        )
+        observations.extend(
+            _task_evidence_observation(record, conversation_id)
+            for record in resolved_task_results.evidence
         )
         observations.extend(
             _verification_observation(record, conversation_id)
-            for record in resolved_verifications
+            for record in (
+                resolved_task_results.verifications
+                or resolved_verifications
+            )
         )
         observations.sort(
             key=lambda item: (item.occurred_at, str(item.observation_id)),
@@ -961,6 +1109,7 @@ def lite_observation_projection(
     controls: ControlHistoryPort | None = None,
     submissions: SubmissionHistoryPort | None = None,
     conversation_artifacts: ConversationArtifactHistoryPort | None = None,
+    task_results: TaskResultHistoryPort | None = None,
     verifications: VerificationHistoryPort | None = None,
 ) -> LiteObservationProjection:
     """Return the Lite semantic projection over workspace source facts."""
@@ -978,6 +1127,7 @@ def lite_observation_projection(
         controls=controls,
         submissions=submissions,
         conversation_artifacts=conversation_artifacts,
+        task_results=task_results,
         verifications=verifications,
     )
 

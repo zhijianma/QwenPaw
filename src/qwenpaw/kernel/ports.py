@@ -97,7 +97,10 @@ from .inbox import InboxItem
 from .operational import OperationalEvent
 from .observations import ObservationPage, RuntimeObservation
 from .waits import ConversationContinuation, WaitCondition
-from .artifacts import ConversationArtifactRecord
+from .artifacts import (
+    ConversationArtifactRecord,
+    ConversationTaskResultRecords,
+)
 
 
 @runtime_checkable
@@ -1400,6 +1403,17 @@ class VerificationHistoryPort(Protocol):
         limit: int = 100,
     ) -> Sequence[VerificationRecord]:
         """Return newest authoritative verifier records for one ChatSpec."""
+
+
+@runtime_checkable
+class TaskResultHistoryPort(Protocol):
+    """Read Task-owned results associated with one ChatSpec identity."""
+
+    async def read_for_conversation(
+        self,
+        conversation_id: str,
+    ) -> ConversationTaskResultRecords:
+        """Return one consistent result snapshot from matching Task ledgers."""
 
 
 @runtime_checkable
