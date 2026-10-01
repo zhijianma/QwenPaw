@@ -172,6 +172,7 @@ class CommandHandler(ConversationCommandHandlerMixin):
         session_id: str | None = None,
         prompt_context: Any = None,
         reme_action_authorizer: ReMeActionAuthorizer | None = None,
+        compaction_recorder: Any = None,
     ):
         """Initialize command handler.
 
@@ -199,6 +200,8 @@ class CommandHandler(ConversationCommandHandlerMixin):
                 continuous with prior compactions.
             prompt_context: Optional runtime HookContext used to rebuild
                 the current system prompt in standalone slash-command mode.
+            compaction_recorder: Optional runtime evidence recorder for
+                standalone compaction commands.
         """
         if agent is not None and state is not None:
             raise ValueError(
@@ -216,6 +219,7 @@ class CommandHandler(ConversationCommandHandlerMixin):
         self._session_id = session_id
         self._prompt_context = prompt_context
         self._reme_action_authorizer = reme_action_authorizer
+        self._compaction_recorder = compaction_recorder
         # Set by a standalone scroll ``/compact`` to the manager's refreshed
         # checkpoint, so the adapter can persist it back to the session.
         self._updated_scroll_state: dict | None = None
@@ -397,7 +401,8 @@ class CommandHandler(ConversationCommandHandlerMixin):
             return None
         return HintBlock(hint=safe_hint, source="user")
 
-    async def _process_compact(  # pylint: disable=too-many-statements
+    # pylint: disable=too-many-statements,too-many-branches
+    async def _process_compact(
         self,
         messages: list[Msg],
         args: str = "",
@@ -436,6 +441,15 @@ class CommandHandler(ConversationCommandHandlerMixin):
                     "🚫 **Compact failed — could not initialise model.**\n\n"
                     "- Check that an active model is configured",
                 )
+
+        compaction_before = None
+        compaction_started_at = None
+        if self._compaction_recorder is not None:
+            from ..kernel.models import utc_now
+            from ..runtime.compactions import capture_compaction_snapshot
+
+            compaction_before = capture_compaction_snapshot(agent)
+            compaction_started_at = utc_now()
 
         # Manual command: force compaction, and measure before/after so the
         # reply reports what was actually evicted.
@@ -488,10 +502,39 @@ class CommandHandler(ConversationCommandHandlerMixin):
                     getattr(cm, "last_compress", None) or {},
                 )
         except Exception as e:
+            if compaction_before is not None:
+                from ..kernel import CompactionTrigger
+                from ..runtime.compactions import capture_compaction_snapshot
+
+                try:
+                    await self._compaction_recorder.record_failure(
+                        trigger=CompactionTrigger.MANUAL,
+                        before=compaction_before,
+                        after=capture_compaction_snapshot(agent),
+                        stats=compress_stats,
+                        error_code=e.__class__.__name__,
+                        started_at=compaction_started_at,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to persist compaction failure evidence",
+                    )
             logger.exception("compress_context failed: %s", e)
             return await self._make_system_msg(
                 f"❌ **Compact Failed!**\n\n- Reason: {e}\n"
                 f"- Use `/clear` to reset the context if needed",
+            )
+
+        if compaction_before is not None:
+            from ..kernel import CompactionTrigger
+            from ..runtime.compactions import capture_compaction_snapshot
+
+            await self._compaction_recorder.record_success(
+                trigger=CompactionTrigger.MANUAL,
+                before=compaction_before,
+                after=capture_compaction_snapshot(agent),
+                stats=compress_stats,
+                started_at=compaction_started_at,
             )
 
         after = len(self._state.context)

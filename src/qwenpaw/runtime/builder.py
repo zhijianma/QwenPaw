@@ -808,6 +808,10 @@ class AgentBuilder:
                 lite_context_manifest_store,
             )
             from .model_calls import lite_model_call_store
+            from .compactions import (
+                RuntimeCompactionRecorder,
+                lite_compaction_store,
+            )
 
             request_context["_action_recorder"].bind_tool_owners(
                 request_context.get("_tool_provider_owners"),
@@ -828,6 +832,17 @@ class AgentBuilder:
             request_context["_model_call_scope"] = invocation
             request_context["_model_call_store"] = lite_model_call_store(
                 Path(workspace_dir),
+            )
+            request_context[
+                "_compaction_recorder"
+            ] = RuntimeCompactionRecorder(
+                invocation,
+                lite_compaction_store(Path(workspace_dir)),
+                strategy_id=(
+                    "qwenpaw.context.scroll"
+                    if scroll is not None
+                    else "qwenpaw.context.native"
+                ),
             )
 
         # System prompt.

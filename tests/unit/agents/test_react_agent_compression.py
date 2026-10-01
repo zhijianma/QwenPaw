@@ -22,6 +22,7 @@ from qwenpaw.constant import (
     EXTERNAL_USER_QUERY_MESSAGE_TAG,
     QWENPAW_MESSAGE_TAG_KEY,
 )
+from qwenpaw.kernel import CompactionTrigger
 
 
 class _TokenModel:
@@ -84,6 +85,18 @@ class _ScrollManager:
         self._events.append("scroll")
 
 
+class _CompactionRecorder:
+    def __init__(self) -> None:
+        self.successes: list[dict[str, Any]] = []
+        self.failures: list[dict[str, Any]] = []
+
+    async def record_success(self, **kwargs):
+        self.successes.append(kwargs)
+
+    async def record_failure(self, **kwargs):
+        self.failures.append(kwargs)
+
+
 def _scroll_agent(
     memory_manager: _MemoryManager,
     scroll_manager: _ScrollManager,
@@ -109,6 +122,7 @@ def _scroll_agent(
         "session_id": "session-1",
     }
     agent._context_manager = scroll_manager
+    agent._compaction_recorder = None
     agent.state.session_id = "session-1"
     user = Msg(
         name="user",
@@ -143,12 +157,28 @@ async def test_scroll_runs_before_auto_memory() -> None:
 
 
 @pytest.mark.asyncio
+async def test_material_auto_compaction_records_automatic_trigger() -> None:
+    events: list[str] = []
+    agent = _scroll_agent(_MemoryManager(events), _ScrollManager(events))
+    recorder = _CompactionRecorder()
+    agent._compaction_recorder = recorder
+
+    await agent.compress_context()
+
+    assert len(recorder.successes) == 1
+    assert recorder.successes[0]["trigger"] is CompactionTrigger.AUTOMATIC
+    assert not recorder.failures
+
+
+@pytest.mark.asyncio
 async def test_manual_compact_submits_auto_memory_once() -> None:
     """The command handler, not compression middleware, owns manual memory."""
     events: list[str] = []
     memory_manager = _MemoryManager(events)
     scroll_manager = _ScrollManager(events)
     agent = _scroll_agent(memory_manager, scroll_manager)
+    recorder = _CompactionRecorder()
+    agent._compaction_recorder = recorder
     agent.state.context.append(
         Msg(
             name="QwenPaw",
@@ -175,3 +205,5 @@ async def test_manual_compact_submits_auto_memory_once() -> None:
     assert events == ["scroll", "auto_memory"]
     assert memory_manager.submitted == [["remember this", "answer-1"]]
     assert not auto_memory_turn_state(agent.state)["pending"]
+    assert len(recorder.successes) == 1
+    assert recorder.successes[0]["trigger"] is CompactionTrigger.MANUAL

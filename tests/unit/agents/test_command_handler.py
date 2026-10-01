@@ -1060,6 +1060,42 @@ async def test_compact_uses_manual_force_context_config() -> None:
 
 
 @pytest.mark.asyncio
+async def test_compact_records_standalone_runtime_evidence() -> None:
+    class Recorder:
+        def __init__(self) -> None:
+            self.successes = []
+
+        async def record_success(self, **kwargs):
+            self.successes.append(kwargs)
+
+    async def _compress_context(context_config=None, instructions=None):
+        del context_config, instructions
+        agent.state.context.pop(0)
+
+    agent = _make_agent()
+    agent.state.context = [_msg("user", "old", msg_id="old")]
+    agent.context_config = _FakeCtxConfig(
+        trigger_ratio=0.8,
+        reserve_ratio=0.2,
+    )
+    agent.compress_context = _compress_context
+    recorder = Recorder()
+    handler = CommandHandler(
+        agent_name="QwenPaw",
+        agent=agent,
+        compaction_recorder=recorder,
+    )
+    handler._get_agent_config = lambda: _make_config(strategy="native")
+
+    await handler.handle_command("/compact")
+
+    assert len(recorder.successes) == 1
+    assert recorder.successes[0]["trigger"].value == "manual"
+    assert recorder.successes[0]["before"].message_count == 1
+    assert recorder.successes[0]["after"].message_count == 0
+
+
+@pytest.mark.asyncio
 async def test_scroll_compact_reply_hides_internal_state() -> None:
     async def _compress_context(context_config=None, instructions=None):
         del context_config, instructions

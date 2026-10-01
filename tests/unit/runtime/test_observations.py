@@ -18,6 +18,9 @@ from qwenpaw.kernel import (
     ControlCommandStatus,
     ControlReceipt,
     ControlRecord,
+    CompactionRecord,
+    CompactionStatus,
+    CompactionTrigger,
     InteractionKind,
     InteractionMode,
     InteractionOption,
@@ -37,6 +40,7 @@ from qwenpaw.kernel import (
 from qwenpaw.runtime.model_calls import lite_model_call_store
 from qwenpaw.runtime.actions import lite_action_store
 from qwenpaw.runtime.observations import lite_observation_projection
+from qwenpaw.runtime.compactions import lite_compaction_store
 from qwenpaw.interactions import InteractionService
 
 
@@ -329,3 +333,50 @@ async def test_control_projects_safe_audit_without_instruction_content(
     assert "PRIVATE RECEIPT DETAIL" not in serialized
     assert "PRIVATE INTERRUPT DETAIL" not in serialized
     assert "PRIVATE IDEMPOTENCY KEY" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_compaction_projects_content_free_evidence(tmp_path) -> None:
+    conversation_id = "chat-compaction"
+    now = datetime.now(timezone.utc)
+    record = CompactionRecord(
+        agent_id="default",
+        conversation_id=conversation_id,
+        invocation_id=uuid4(),
+        correlation_id=uuid4(),
+        registry_generation=9,
+        strategy_id="qwenpaw.context.scroll",
+        trigger=CompactionTrigger.OVERFLOW_RECOVERY,
+        status=CompactionStatus.SUCCEEDED,
+        before_message_count=12,
+        after_message_count=4,
+        evicted_messages=8,
+        folded_items=2,
+        context_changed=True,
+        summary_changed=True,
+        started_at=now,
+        completed_at=now + timedelta(milliseconds=20),
+    )
+    await lite_compaction_store(tmp_path).append(record)
+
+    observations = await lite_observation_projection(
+        tmp_path,
+    ).list_for_conversation(conversation_id)
+
+    assert len(observations) == 1
+    observation = observations[0]
+    assert observation.category is ObservationCategory.COMPACTION
+    assert observation.stage is ObservationStage.EVIDENCE
+    assert observation.status is ObservationStatus.SUCCEEDED
+    assert observation.facts == {
+        "compaction_id": str(record.compaction_id),
+        "strategy_id": "qwenpaw.context.scroll",
+        "trigger": "overflow_recovery",
+        "before_message_count": 12,
+        "after_message_count": 4,
+        "evicted_messages": 8,
+        "folded_items": 2,
+        "context_changed": True,
+        "summary_changed": True,
+        "error_code": None,
+    }

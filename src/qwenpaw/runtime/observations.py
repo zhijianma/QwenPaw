@@ -16,6 +16,9 @@ from ..kernel import (
     ControlCommandStatus,
     ControlHistoryPort,
     ControlRecord,
+    CompactionRecord,
+    CompactionStatus,
+    CompactionStore,
     InteractionHistoryPort,
     InteractionRecord,
     InteractionStatus,
@@ -88,6 +91,13 @@ def _control_category(
     }:
         return ObservationCategory.INTERRUPT
     return ObservationCategory.CONTROL
+
+
+def _compaction_status(status: CompactionStatus) -> ObservationStatus:
+    return {
+        CompactionStatus.SUCCEEDED: ObservationStatus.SUCCEEDED,
+        CompactionStatus.FAILED: ObservationStatus.FAILED,
+    }[status]
 
 
 def _model_observations(
@@ -460,6 +470,44 @@ def _control_observations(
     return requested, resolved
 
 
+def _compaction_observation(record: CompactionRecord) -> RuntimeObservation:
+    return RuntimeObservation(
+        observation_id=_observation_id(
+            record.compaction_id,
+            ObservationStage.EVIDENCE,
+        ),
+        category=ObservationCategory.COMPACTION,
+        stage=ObservationStage.EVIDENCE,
+        status=_compaction_status(record.status),
+        source=ObservationSource(
+            source_type="qwenpaw.context.compaction",
+            source_id=str(record.compaction_id),
+        ),
+        conversation_id=record.conversation_id,
+        invocation_id=record.invocation_id,
+        correlation_id=record.correlation_id,
+        registry_generation=record.registry_generation,
+        title=(
+            "Context compaction completed"
+            if record.status is CompactionStatus.SUCCEEDED
+            else "Context compaction failed"
+        ),
+        facts={
+            "compaction_id": str(record.compaction_id),
+            "strategy_id": record.strategy_id,
+            "trigger": record.trigger.value,
+            "before_message_count": record.before_message_count,
+            "after_message_count": record.after_message_count,
+            "evicted_messages": record.evicted_messages,
+            "folded_items": record.folded_items,
+            "context_changed": record.context_changed,
+            "summary_changed": record.summary_changed,
+            "error_code": record.error_code,
+        },
+        occurred_at=record.completed_at,
+    )
+
+
 async def _empty_interactions() -> Sequence[InteractionRecord]:
     return ()
 
@@ -475,6 +523,7 @@ class LiteObservationProjection(ObservationProjectionPort):
         self,
         model_calls: ModelCallStore,
         actions: ActionStore,
+        compactions: CompactionStore,
         *,
         agent_id: str | None = None,
         interactions: InteractionHistoryPort | None = None,
@@ -482,6 +531,7 @@ class LiteObservationProjection(ObservationProjectionPort):
     ) -> None:
         self._model_calls = model_calls
         self._actions = actions
+        self._compactions = compactions
         self._agent_id = agent_id
         self._interactions = interactions
         self._controls = controls
@@ -520,6 +570,7 @@ class LiteObservationProjection(ObservationProjectionPort):
         (
             model_records,
             action_records,
+            compaction_records,
             resolved_interactions,
             resolved_controls,
         ) = await asyncio.gather(
@@ -528,6 +579,10 @@ class LiteObservationProjection(ObservationProjectionPort):
                 limit=_SOURCE_SCAN_LIMIT,
             ),
             self._actions.list_for_conversation(
+                conversation_id,
+                limit=_SOURCE_SCAN_LIMIT,
+            ),
+            self._compactions.list_for_conversation(
                 conversation_id,
                 limit=_SOURCE_SCAN_LIMIT,
             ),
@@ -543,6 +598,9 @@ class LiteObservationProjection(ObservationProjectionPort):
             observation
             for record in action_records
             for observation in _action_observations(record)
+        )
+        observations.extend(
+            _compaction_observation(record) for record in compaction_records
         )
         observations.extend(
             observation
@@ -569,9 +627,12 @@ def lite_observation_projection(
     controls: ControlHistoryPort | None = None,
 ) -> LiteObservationProjection:
     """Return the Lite semantic projection over workspace source facts."""
+    from .compactions import lite_compaction_store
+
     return LiteObservationProjection(
         lite_model_call_store(workspace_dir),
         lite_action_store(workspace_dir),
+        lite_compaction_store(workspace_dir),
         agent_id=agent_id,
         interactions=interactions,
         controls=controls,

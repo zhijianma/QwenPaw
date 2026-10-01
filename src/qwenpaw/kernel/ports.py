@@ -73,6 +73,7 @@ from .invocation_control import (
     TurnSubmission,
     TurnSubmissionRequest,
 )
+from .compaction import CompactionRecord
 from .interactions import (
     InteractionOption,
     InteractionRecord,
@@ -188,6 +189,22 @@ class ControlHistoryPort(Protocol):
         limit: int = 100,
     ) -> Sequence[ControlRecord]:
         """List newest command requests with their latest receipts."""
+
+
+@runtime_checkable
+class CompactionStore(Protocol):
+    """Durable owner-only history for material context compactions."""
+
+    async def append(self, record: CompactionRecord) -> None:
+        """Persist one immutable terminal compaction record."""
+
+    async def list_for_conversation(
+        self,
+        conversation_id: str,
+        *,
+        limit: int = 100,
+    ) -> Sequence[CompactionRecord]:
+        """List newest records for one ChatSpec identity."""
 
 
 @runtime_checkable

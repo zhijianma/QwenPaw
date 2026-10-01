@@ -10,6 +10,7 @@ from agentscope.agent import Agent
 from google.genai import errors as genai_errors
 
 from qwenpaw.agents.react_agent import QwenPawAgent
+from qwenpaw.kernel import CompactionTrigger
 
 
 class _ContextOverflowError(Exception):
@@ -50,6 +51,18 @@ class _NoOpScrollManager(_ScrollManager):
         return False
 
 
+class _CompactionRecorder:
+    def __init__(self):
+        self.successes = []
+        self.failures = []
+
+    async def record_success(self, **kwargs):
+        self.successes.append(kwargs)
+
+    async def record_failure(self, **kwargs):
+        self.failures.append(kwargs)
+
+
 def _agent(*, context_manager=None):
     agent = object.__new__(QwenPawAgent)
     agent._context_manager = context_manager
@@ -60,6 +73,7 @@ def _agent(*, context_manager=None):
             "tools": [{"name": "tool-after-compact"}],
         },
     )
+    agent._compaction_recorder = None
     return agent
 
 
@@ -99,6 +113,8 @@ async def test_context_overflow_forces_scroll_rebuilds_and_retries_once(
     monkeypatch.setattr(Agent, "_call_model", fake_call_model)
     scroll = _ScrollManager(["compacted"])
     agent = _agent(context_manager=scroll)
+    recorder = _CompactionRecorder()
+    agent._compaction_recorder = recorder
     agent._context_manifest_compiler = _ManifestCompiler()
     agent._context_manifest_store = _ManifestStore()
     agent._model_call_index = 0
@@ -141,6 +157,11 @@ async def test_context_overflow_forces_scroll_rebuilds_and_retries_once(
             [{"name": "tool-after-compact"}],
         ),
     ]
+    assert len(recorder.successes) == 1
+    assert (
+        recorder.successes[0]["trigger"] is CompactionTrigger.OVERFLOW_RECOVERY
+    )
+    assert not recorder.failures
     assert stored_attempts == ["primary", "overflow_retry"]
 
 

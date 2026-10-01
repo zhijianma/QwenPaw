@@ -346,6 +346,16 @@ Action Result 派生语义投影；Workstation / Hub 再接 OTEL、集中审计�
 Reorder 派生 CONTROL，Interrupt Current 与 Stop and Clear 派生 INTERRUPT；
 指令和回执正文不进入观察 API，只公开存在性、状态、revision 与安全点。
 
+截至 2026-10-01，COMPACTION 也已按该原则落地：Kernel 冻结内容最小化的
+`CompactionRecord` / Store Port，Lite 文件 Adapter 和 Runtime recorder 覆盖自动、
+手动与上下文溢出恢复。记录只保留策略、触发原因、前后数量、淘汰/折叠、上下文
+变化和安全错误码，不保存消息、摘要、用户提示或异常正文。真实 Chat 验收发现
+`/compact` 在 Agent 构建前由 standalone Command Handler 执行，原实现会绕过 Agent
+recorder；该旁路现已接入同一记录器。当前固定 Chat 仅占 0.1% 上下文，执行
+`/compact` 是真实 no-op，因此不生成虚假的 COMPACTION 成功记录；material、failure
+和 overflow 路径由定点契约测试验证。这个结果把 Handbook 的“所有执行入口使用
+同一观测强制点”从原则落实成了回归门禁。
+
 ### A9. Model Call Plane 与显式 Route Decision
 
 优先级：P1；Lite 先做记录，不先做复杂路由器。

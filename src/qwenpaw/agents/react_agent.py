@@ -211,6 +211,10 @@ class QwenPawAgent(CodingModeMixin, Agent):
             "_model_call_store",
             None,
         )
+        self._compaction_recorder = self._request_context.pop(
+            "_compaction_recorder",
+            None,
+        )
         self._model_call_index = 0
         self._workspace_dir = workspace_dir
         self._language = agent_config.language
@@ -295,10 +299,86 @@ class QwenPawAgent(CodingModeMixin, Agent):
                     return
             except Exception:
                 pass
-        await super().compress_context(
-            context_config,
-            instructions=instructions,
+        recorder = getattr(self, "_compaction_recorder", None)
+        if recorder is None:
+            await super().compress_context(
+                context_config,
+                instructions=instructions,
+            )
+            return
+
+        from ..kernel.models import utc_now
+        from ..runtime.compactions import capture_compaction_snapshot
+
+        before = capture_compaction_snapshot(self)
+        started_at = utc_now()
+        trigger = self._compaction_trigger(context_config)
+        try:
+            await super().compress_context(
+                context_config,
+                instructions=instructions,
+            )
+        except BaseException as exc:
+            await self._record_compaction_failure(
+                trigger=trigger,
+                before=before,
+                started_at=started_at,
+                error_code=type(exc).__name__,
+            )
+            raise
+        await recorder.record_success(
+            trigger=trigger,
+            before=before,
+            after=capture_compaction_snapshot(self),
+            stats=self._compaction_stats(),
+            started_at=started_at,
         )
+
+    def _compaction_trigger(self, context_config: Any) -> Any:
+        """Classify automatic versus explicitly forced compaction."""
+        from ..kernel import CompactionTrigger
+
+        requested = getattr(context_config, "trigger_ratio", None)
+        base = getattr(
+            getattr(self, "context_config", None),
+            "trigger_ratio",
+            None,
+        )
+        if requested is not None and base is not None and requested < base:
+            return CompactionTrigger.MANUAL
+        return CompactionTrigger.AUTOMATIC
+
+    def _compaction_stats(self) -> dict[str, Any]:
+        """Return content-free Scroll statistics when available."""
+        manager = getattr(self, "_context_manager", None)
+        stats = getattr(manager, "last_compress", None)
+        return dict(stats) if isinstance(stats, dict) else {}
+
+    async def _record_compaction_failure(
+        self,
+        *,
+        trigger: Any,
+        before: Any,
+        started_at: Any,
+        error_code: str,
+    ) -> None:
+        """Record failure without replacing the original exception."""
+        recorder = getattr(self, "_compaction_recorder", None)
+        if recorder is None:
+            return
+        from ..runtime.compactions import capture_compaction_snapshot
+
+        try:
+            await recorder.record_failure(
+                trigger=trigger,
+                before=before,
+                after=capture_compaction_snapshot(self),
+                stats=self._compaction_stats(),
+                error_code=error_code,
+                started_at=started_at,
+            )
+        except Exception:
+            logger.exception("Failed to persist compaction failure evidence")
 
     async def _compress_context_impl(
         self,
@@ -792,9 +872,11 @@ class QwenPawAgent(CodingModeMixin, Agent):
         )
 
         logical_key = str(self._get_model_key() or "")
-        requested_provider_id, separator, requested_model_id = (
-            logical_key.partition(":")
-        )
+        (
+            requested_provider_id,
+            separator,
+            requested_model_id,
+        ) = logical_key.partition(":")
         if not separator:
             requested_provider_id = None
             requested_model_id = logical_key
@@ -823,19 +905,60 @@ class QwenPawAgent(CodingModeMixin, Agent):
             raise exc
 
         before = len(getattr(self.state, "context", []) or [])
+        recorder = getattr(self, "_compaction_recorder", None)
+        compaction_before = None
+        compaction_started_at = None
+        if recorder is not None:
+            from ..kernel.models import utc_now
+            from ..runtime.compactions import capture_compaction_snapshot
+
+            compaction_before = capture_compaction_snapshot(self)
+            compaction_started_at = utc_now()
         logger.warning(
             "Model input exceeded the provider context limit; attempting "
             "one context recovery.",
         )
-        input_changed = await context_manager.recover_from_context_overflow(
-            self,
-        )
+        try:
+            input_changed = (
+                await context_manager.recover_from_context_overflow(self)
+            )
+        except BaseException as recovery_exc:
+            if compaction_before is not None:
+                from ..kernel import CompactionTrigger
+
+                await self._record_compaction_failure(
+                    trigger=CompactionTrigger.OVERFLOW_RECOVERY,
+                    before=compaction_before,
+                    started_at=compaction_started_at,
+                    error_code=type(recovery_exc).__name__,
+                )
+            raise
         if not input_changed:
+            if compaction_before is not None:
+                from ..kernel import CompactionTrigger
+
+                await self._record_compaction_failure(
+                    trigger=CompactionTrigger.OVERFLOW_RECOVERY,
+                    before=compaction_before,
+                    started_at=compaction_started_at,
+                    error_code="ContextOverflowUnchanged",
+                )
             logger.warning(
                 "Context-overflow recovery did not change the model "
                 "input; skipping the retry.",
             )
             raise exc
+        if compaction_before is not None:
+            from ..kernel import CompactionTrigger
+            from ..runtime.compactions import capture_compaction_snapshot
+
+            await recorder.record_success(
+                trigger=CompactionTrigger.OVERFLOW_RECOVERY,
+                before=compaction_before,
+                after=capture_compaction_snapshot(self),
+                stats=self._compaction_stats(),
+                started_at=compaction_started_at,
+            )
         after = len(getattr(self.state, "context", []) or [])
 
         # The original `messages` list was prepared before compaction and

@@ -187,6 +187,11 @@ from .invocation_control import (
     TurnSubmissionRequest,
     validate_submission_transition,
 )
+from .compaction import (
+    CompactionRecord,
+    CompactionStatus,
+    CompactionTrigger,
+)
 from .interactions import (
     InteractionKind,
     InteractionMode,
@@ -268,6 +273,7 @@ from .ports import (
     InteractionPort,
     InteractionHistoryPort,
     ControlHistoryPort,
+    CompactionStore,
     InvocationControlPort,
     ContextManifestStore,
     ModelCallStore,
@@ -437,6 +443,10 @@ __all__ = [
     "ControlHistoryPort",
     "ControlRecord",
     "ControlReceipt",
+    "CompactionRecord",
+    "CompactionStatus",
+    "CompactionStore",
+    "CompactionTrigger",
     "ConversationRuntimeProjection",
     "DriverApprovalRejectedError",
     "DriverCredentialUnavailableError",

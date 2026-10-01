@@ -460,8 +460,10 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
   Action Policy 单独派生 GUARDRAIL；统一 Interaction Request/Resolution 已接入 HITL，
   且不复制 prompt、自由文本回答或结构化 values。Control Command/Receipt 通过独立
   只读 History Port 派生 CONTROL 与 INTERRUPT，保留 revision 和 Steer safe point，
-  但不复制 instruction、idempotency key 或 receipt detail。其余类别按同一
-  Projection Port 增量接入。
+  但不复制 instruction、idempotency key 或 receipt detail。COMPACTION 从不可变
+  CompactionRecord 派生，覆盖 automatic、manual 与 overflow recovery；消息正文、
+  摘要、压缩指令和异常正文均不落入记录，真正 no-op 不生成虚假的成功事实。
+  VERIFICATION 继续按同一 Projection Port 增量接入。
 - [x] 冻结 `ModelCallAttempt` / `RouteDecision` / `ModelCallResult` 和 Store Port；
   Lite 已在真实 Provider 网络边界记录直连、同模型重试、跨模型 fallback、overflow
   retry、流式成功/取消/失败和 usage，并提供 Chat-owned 只读查询。Route 区分逻辑

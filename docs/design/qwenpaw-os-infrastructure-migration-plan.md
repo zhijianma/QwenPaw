@@ -792,8 +792,17 @@ Cron 不形成独立审批或产物事实源。
       revision、状态和 Steer safe point，不复制 instruction、idempotency key 或
       receipt detail。固定 Chat 真实查询共返回 101 条观察项：MODEL 11、ACTION 28、
       GUARDRAIL 14、HITL 36、CONTROL 8、INTERRUPT 4；精确递归检查未发现禁止字段。
-    - [ ] 接入 COMPACTION 与 VERIFICATION 的权威
-      来源；完成跨来源 cursor/pagination，替代 Lite 当前每类最多 1000 条的有界扫描。
+    - [x] COMPACTION 已接入权威、内容最小化的不可变记录：自动压缩、手动
+      `/compact` 和 Provider overflow recovery 共用同一契约，记录策略、触发原因、
+      前后消息数、淘汰/折叠数量、上下文身份与摘要是否变化及错误码，不保存消息、
+      摘要、指令或异常正文。Agent 构建后的压缩与 Agent 构建前的 standalone
+      Slash Command 均接入；后者是固定 Chat 验收发现并封堵的旁路。真实 no-op
+      不伪造压缩成功记录：固定 Chat 当前上下文仅占 0.1%，`/compact` 后观察项仍为
+      110 条（MODEL 20、ACTION 28、GUARDRAIL 14、HITL 36、CONTROL 8、
+      INTERRUPT 4），COMPACTION 为 0；material/failure/overflow 路径由 130 项
+      定点测试覆盖。
+    - [ ] 接入 VERIFICATION 的权威来源；完成跨来源 cursor/pagination，替代 Lite
+      当前每类最多 1000 条的有界扫描。
   - [ ] 完成 Model Call Plane 全部路由与成本能力：
     - [x] 冻结 `RouteDecision` / `ModelCallAttempt` / `ModelCallResult` / Store Port，
       并在 `TokenRecordingModelWrapper` 的真实 Provider 网络边界留证。每个实际请求

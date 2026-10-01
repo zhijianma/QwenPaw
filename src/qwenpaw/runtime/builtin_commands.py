@@ -606,6 +606,7 @@ def _make_conversation_adapter(
         ws_dir = str(getattr(workspace, "workspace_dir", "")) or None
 
         offloader = None
+        cfg = None
         from ..agents.offloader import QwenPawOffloader
 
         try:
@@ -636,10 +637,33 @@ def _make_conversation_adapter(
             pass
 
         try:
-            cfg = load_agent_config(agent_id)
+            cfg = cfg or load_agent_config(agent_id)
             agent_name = cfg.name if cfg and cfg.name else "QwenPaw"
         except Exception:
             agent_name = "QwenPaw"
+
+        compaction_recorder = None
+        invocation = getattr(ctx, "invocation_scope", None)
+        if name == "compact" and invocation is not None and ws_dir:
+            from .compactions import (
+                RuntimeCompactionRecorder,
+                lite_compaction_store,
+            )
+
+            strategy = getattr(
+                getattr(
+                    getattr(cfg, "running", None),
+                    "light_context_config",
+                    None,
+                ),
+                "strategy",
+                "native",
+            )
+            compaction_recorder = RuntimeCompactionRecorder(
+                invocation,
+                lite_compaction_store(Path(ws_dir)),
+                strategy_id=f"qwenpaw.context.{strategy}",
+            )
 
         cmd_handler = CommandHandler(
             agent_name=agent_name,
@@ -654,6 +678,7 @@ def _make_conversation_adapter(
             reme_action_authorizer=lambda action, kwargs: (
                 _request_reme_action_approval(ctx, action, kwargs)
             ),
+            compaction_recorder=compaction_recorder,
         )
 
         full_query = f"/{name} {args}".strip() if args else f"/{name}"
