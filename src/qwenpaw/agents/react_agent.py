@@ -180,7 +180,7 @@ class QwenPawAgent(CodingModeMixin, Agent):
         middlewares: list,
         agent_config: "AgentProfileConfig",
         workspace_dir: Path | None = None,
-        request_context: Optional[dict[str, str]] = None,
+        request_context: Optional[dict[str, Any]] = None,
         offloader: Any = None,
         context_config: Any = None,
         context_manager: ContextManager | None = None,
@@ -195,6 +195,15 @@ class QwenPawAgent(CodingModeMixin, Agent):
         """
         self._agent_config = agent_config
         self._request_context = dict(request_context or {})
+        self._context_manifest_compiler = self._request_context.pop(
+            "_context_manifest_compiler",
+            None,
+        )
+        self._context_manifest_store = self._request_context.pop(
+            "_context_manifest_store",
+            None,
+        )
+        self._model_call_index = 0
         self._workspace_dir = workspace_dir
         self._language = agent_config.language
         # Optional context-management strategy. When None, the agent keeps its
@@ -705,9 +714,53 @@ class QwenPawAgent(CodingModeMixin, Agent):
         so a second overflow propagates instead of entering a recovery loop.
         """
         self._index_tool_schemas(tools)
+
+        async def recorded_call(
+            *,
+            messages: list[Msg],
+            tools: list[dict],
+            tool_choice: Any,
+        ) -> Any:
+            return await self._call_model_with_manifest(
+                messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
+                attempt_kind="primary",
+            )
+
         return await call_with_overflow_recovery(
-            super()._call_model,
+            recorded_call,
             partial(self._recover_model_overflow, tool_choice=tool_choice),
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+        )
+
+    async def _call_model_with_manifest(
+        self,
+        *,
+        messages: list[Msg],
+        tools: list[dict],
+        tool_choice: Any,
+        attempt_kind: Literal["primary", "overflow_retry"],
+    ) -> Any:
+        """Persist privacy-safe input evidence before one provider call."""
+        compiler = getattr(self, "_context_manifest_compiler", None)
+        store = getattr(self, "_context_manifest_store", None)
+        if compiler is not None or store is not None:
+            if compiler is None or store is None:
+                raise RuntimeError(
+                    "context manifest compiler and store must be paired",
+                )
+            self._model_call_index = getattr(self, "_model_call_index", 0) + 1
+            manifest = compiler.compile(
+                messages=messages,
+                tools=tools,
+                model_call_index=self._model_call_index,
+                attempt_kind=attempt_kind,
+            )
+            await store.append(manifest)
+        return await super()._call_model(
             messages=messages,
             tools=tools,
             tool_choice=tool_choice,
@@ -755,10 +808,11 @@ class QwenPawAgent(CodingModeMixin, Agent):
             before,
             after,
         )
-        return await super()._call_model(
+        return await self._call_model_with_manifest(
             messages=refreshed_messages,
             tools=refreshed_tools,
             tool_choice=tool_choice,
+            attempt_kind="overflow_retry",
         )
 
     def _index_tool_schemas(self, tools: list[dict] | None) -> None:
@@ -937,7 +991,9 @@ class QwenPawAgent(CodingModeMixin, Agent):
             "model_input_thinking_block_ids",
         ):
             pending_seen_thinking_ids = (
-                context_manager.model_input_thinking_block_ids(self)
+                context_manager.model_input_thinking_block_ids(
+                    self,
+                )
             )
 
         def acknowledge_seen_inputs(evt: Any) -> None:

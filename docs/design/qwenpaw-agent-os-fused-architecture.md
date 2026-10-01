@@ -410,8 +410,11 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
   `ToolArtifactOutput`，由 Tool Coordinator 的统一 result processor 发布。
 - 将 Tool、Driver、MCP、Shell、Browser 与远程执行统一适配到
   `ActionRequest` / `ActionResult`，不为每类能力复制审批、重试和审计。
-- 将 `PromptFragment` 兼容演进为带来源、版本、信任级和哈希的
-  `ContextFragment`，为每次模型调用生成 `ContextManifest`。
+- [x] 将 `PromptFragment` 兼容演进为带来源、版本、信任级和哈希的
+  `ContextFragment`，并在 Provider 调用前为每次实际尝试生成不可变
+  `ContextManifest`。真实 Chat 验收覆盖 generation 11、93 个 Fragment 和
+  70 个 Tool Schema；Manifest 不含用户原文、Secret 或隐藏推理指纹，文件权限
+  为 `0600`，Conversation 目录键与 Manifest SHA256 均独立复算一致。
 - 冻结 `EnvironmentContract`，Lite 先由本地 Workspace / Sandbox 适配。
 - 从现有事件派生统一的 `MODEL`、`ACTION`、`GUARDRAIL`、`COMPACTION`、
   `HITL`、`INTERRUPT` 与 `VERIFICATION` 语义观测；区分模型意图、策略决定、
@@ -482,6 +485,11 @@ Slot 已实现；对应工作保留在 R0/R1/R2 路线图中。
    没有实现共享 Task ports 的多租户 adapter。
 6. 当前命名下载通过浏览器直连内容 URL；部署启用 header-only token 时，需要
    由统一下载客户端补齐认证头或改用一次性下载凭证。
+7. Context Manifest 的 Token 数量是稳定估算值，不是 Provider 的实际计费 Token；
+   当前捕获最终 AgentScope 输入及 Tool Schema，但 Provider Formatter 仍可能做
+   厂商特定序列化。后续 Model Call Plane 应记录实际 Provider usage 和格式版本。
+8. `ContextManifestStore` 已具备按 `ChatSpec.id` 查询的公共 Port，当前尚未开放
+   HTTP / UI 查看入口；Task Workbench 继续按既定顺序后置。
 
 ### 13.2 回滚原则
 

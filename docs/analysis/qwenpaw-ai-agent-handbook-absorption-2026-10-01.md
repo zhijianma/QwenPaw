@@ -310,8 +310,8 @@ Lite 默认仍是确定性的单 Provider 直连；重试和降级必须形成�
 不改变“Chat-first、Task 页面后置”的原则，建议顺序调整为：
 
 1. 保持已完成的 Chat 工具产物 Artifact / Evidence 宿主捕获；
-2. 完成正在实施的 Context Manifest，覆盖每次真实模型调用的消息、Tool Schema、
-   来源、信任和 generation；
+2. 保持已完成的 Context Manifest 调用前留证，覆盖每次真实模型调用的消息、
+   Tool Schema、来源、信任和 generation；
 3. 冻结并实现统一 Action Plane，使内置和插件不再只在 Tool Adapter 层对齐；
 4. 冻结 Environment Contract，并让 Lite 本地 Runtime 兑现；
 5. 统一语义观测，先从现有 Event 派生，不另建第二套运行状态机；

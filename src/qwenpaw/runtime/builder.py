@@ -778,6 +778,26 @@ class AgentBuilder:
             workspace_dir=workspace_dir,
         )
 
+        if invocation is not None and workspace_dir is not None:
+            from .context_manifests import (
+                ContextManifestCompiler,
+                lite_context_manifest_store,
+            )
+
+            request_context[
+                "_context_manifest_compiler"
+            ] = ContextManifestCompiler(
+                invocation,
+                tool_owners=request_context.get(
+                    "_tool_provider_owners",
+                ),
+            )
+            request_context[
+                "_context_manifest_store"
+            ] = lite_context_manifest_store(
+                Path(workspace_dir),
+            )
+
         # System prompt.
         sys_prompt = await self._build_prompt_from_providers(
             ctx,

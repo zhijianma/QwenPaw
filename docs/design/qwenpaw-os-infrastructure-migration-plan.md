@@ -682,8 +682,13 @@ Cron 不形成独立审批或产物事实源。
 ### I8：基建完成门禁
 
 - [ ] 完成 Handbook 增量基础契约，不把它们下放到 Task 页面私有状态：
-  - [ ] `ContextPolicy` / `ContextManifest` 覆盖每次真实模型调用的来源、版本、
-    信任级、裁剪、能力披露和内容哈希；不保存隐藏推理或 Secret。
+  - [x] `ContextPolicy` / `ContextManifest` 覆盖每次真实模型调用的来源、版本、
+    信任级、裁剪、能力披露和内容哈希；不保存隐藏推理或 Secret。固定 Chat
+    `1ee31988-b37a-48b9-b6ce-423c52f6a3a9` 已真实验证 generation 11 的调用前
+    Manifest：93 个 Fragment、70 个 Tool Schema、7 个无指纹隐藏推理占位，
+    用户原文未落盘，文件模式 `0600`，Conversation key 与 Manifest hash 复算一致。
+    当前 Token 为估算值，且记录的是最终 AgentScope 输入而非 Provider SDK 的
+    序列化字节；实际 usage 与 formatter 版本留给 Model Call Plane。
   - [ ] `ActionRequest` / `ActionResult` 统一 Tool、Driver、MCP、Shell、Browser
     与 Harness Remote Action 的身份、风险、幂等、审批、结果和 Evidence。
   - [ ] `EnvironmentContract` 冻结 Workspace、Sandbox、Harness 和 Hub runtime

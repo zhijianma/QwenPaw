@@ -68,6 +68,24 @@ async def test_context_overflow_forces_scroll_rebuilds_and_retries_once(
     monkeypatch,
 ):
     calls = []
+    compiled_attempts = []
+    stored_attempts = []
+
+    class _ManifestCompiler:
+        def compile(self, **kwargs):
+            compiled_attempts.append(
+                (
+                    kwargs["model_call_index"],
+                    kwargs["attempt_kind"],
+                    kwargs["messages"],
+                    kwargs["tools"],
+                ),
+            )
+            return kwargs["attempt_kind"]
+
+    class _ManifestStore:
+        async def append(self, manifest):
+            stored_attempts.append(manifest)
 
     async def fake_call_model(self, messages, tools, tool_choice=None):
         calls.append((messages, tools, tool_choice))
@@ -81,6 +99,9 @@ async def test_context_overflow_forces_scroll_rebuilds_and_retries_once(
     monkeypatch.setattr(Agent, "_call_model", fake_call_model)
     scroll = _ScrollManager(["compacted"])
     agent = _agent(context_manager=scroll)
+    agent._context_manifest_compiler = _ManifestCompiler()
+    agent._context_manifest_store = _ManifestStore()
+    agent._model_call_index = 0
     agent.compress_context = AsyncMock(wraps=agent.compress_context)
 
     result = await agent._call_model(
@@ -106,6 +127,21 @@ async def test_context_overflow_forces_scroll_rebuilds_and_retries_once(
             "auto",
         ),
     ]
+    assert compiled_attempts == [
+        (
+            1,
+            "primary",
+            ["system", "old-1", "old-2"],
+            [{"name": "old-tool"}],
+        ),
+        (
+            2,
+            "overflow_retry",
+            ["system", "compacted"],
+            [{"name": "tool-after-compact"}],
+        ),
+    ]
+    assert stored_attempts == ["primary", "overflow_retry"]
 
 
 @pytest.mark.asyncio

@@ -27,6 +27,7 @@ from .models import (
     CommandDefinition,
     CommandRequest,
     CommandResult,
+    ContextManifest,
     CostAccountingMode,
     DriverApprovalRequest,
     DriverToolDefinition,
@@ -1145,6 +1146,22 @@ class CheckpointStore(Protocol):
         task_id: UUID,
     ) -> ExecutionCheckpoint | None:
         """Return the newest checkpoint marked safe to resume."""
+
+
+@runtime_checkable
+class ContextManifestStore(Protocol):
+    """Durable audit boundary for actual provider model-call inputs."""
+
+    async def append(self, manifest: ContextManifest) -> None:
+        """Persist one immutable manifest before the provider call."""
+
+    async def list_for_conversation(
+        self,
+        conversation_id: str,
+        *,
+        limit: int = 100,
+    ) -> Sequence[ContextManifest]:
+        """Return newest manifests for one ChatSpec identity."""
 
 
 @runtime_checkable

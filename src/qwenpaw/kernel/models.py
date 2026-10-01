@@ -1025,6 +1025,143 @@ class PromptFragment(KernelModel):
     priority: int = 100
 
 
+class ContextTrustLevel(str, Enum):
+    """Host-assigned trust boundary for one model-visible input unit."""
+
+    SYSTEM = "system"
+    PROVIDER = "provider"
+    USER = "user"
+    MODEL = "model"
+    TOOL = "tool"
+    EXTERNAL = "external"
+
+
+class ContextFragmentKind(str, Enum):
+    """Model-input unit represented in a privacy-safe manifest."""
+
+    MESSAGE = "message"
+    TOOL_SCHEMA = "tool_schema"
+    REDACTED = "redacted"
+
+
+class ContextPolicy(KernelModel):
+    """Stable capture policy applied before every provider model call."""
+
+    policy_id: NamespacedId = "qwenpaw.system.context.default"
+    version: NonEmptyStr = "1.0.0"
+    hash_algorithm: Literal["sha256"] = "sha256"
+    hidden_reasoning: Literal["redact"] = "redact"
+    secret_material: Literal["hash_only"] = "hash_only"
+    record_tool_schemas: Literal[True] = True
+    max_fragments: int = Field(default=10_000, ge=1)
+    token_estimate_divisor: float = Field(default=4.0, gt=0)
+
+
+class ContextFragment(KernelModel):
+    """Content-free provenance for one unit sent to a model provider."""
+
+    fragment_id: NamespacedId
+    kind: ContextFragmentKind
+    source: NamespacedId
+    source_version: NonEmptyStr
+    trust_level: ContextTrustLevel
+    selection_reason: NonEmptyStr
+    transformations: tuple[NamespacedId, ...] = ()
+    content_hash: (
+        Annotated[
+            str,
+            StringConstraints(
+                strip_whitespace=True,
+                pattern=r"^sha256:[0-9a-f]{64}$",
+            ),
+        ]
+        | None
+    ) = None
+    size_bytes: int | None = Field(default=None, ge=0)
+    estimated_tokens: int | None = Field(default=None, ge=0)
+    redaction_reason: NamespacedId | None = None
+    metadata: JsonObject = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_redaction(self) -> Self:
+        """Require captured hashes and keep redactions fingerprint-free."""
+        if self.kind is ContextFragmentKind.REDACTED:
+            if self.redaction_reason is None:
+                raise ValueError("redacted context requires a reason")
+            if any(
+                value is not None
+                for value in (
+                    self.content_hash,
+                    self.size_bytes,
+                    self.estimated_tokens,
+                )
+            ):
+                raise ValueError(
+                    "redacted context cannot retain content fingerprints",
+                )
+            return self
+        if self.content_hash is None:
+            raise ValueError("captured context requires a content hash")
+        if self.size_bytes is None or self.estimated_tokens is None:
+            raise ValueError("captured context requires size and token data")
+        if self.redaction_reason is not None:
+            raise ValueError("captured context cannot have a redaction reason")
+        return self
+
+
+class ContextManifest(KernelModel):
+    """Durable, content-free account of one actual provider model call."""
+
+    manifest_id: UUID = Field(default_factory=uuid4)
+    invocation_id: UUID
+    correlation_id: UUID
+    conversation_id: NonEmptyStr | None = None
+    registry_generation: int = Field(ge=1)
+    model_call_index: int = Field(ge=1)
+    attempt_kind: Literal["primary", "overflow_retry"] = "primary"
+    policy_id: NamespacedId
+    policy_version: NonEmptyStr
+    fragments: tuple[ContextFragment, ...] = ()
+    total_size_bytes: int = Field(ge=0)
+    total_estimated_tokens: int = Field(ge=0)
+    disclosed_tool_count: int = Field(ge=0)
+    manifest_hash: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True,
+            pattern=r"^sha256:[0-9a-f]{64}$",
+        ),
+    ]
+    created_at: AwareDatetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def validate_totals(self) -> Self:
+        """Keep aggregate accounting derived from captured fragments."""
+        fragment_ids = [fragment.fragment_id for fragment in self.fragments]
+        if len(fragment_ids) != len(set(fragment_ids)):
+            raise ValueError("context fragment IDs must be unique")
+        captured = tuple(
+            fragment
+            for fragment in self.fragments
+            if fragment.kind is not ContextFragmentKind.REDACTED
+        )
+        if self.total_size_bytes != sum(
+            fragment.size_bytes or 0 for fragment in captured
+        ):
+            raise ValueError("context byte total does not match fragments")
+        if self.total_estimated_tokens != sum(
+            fragment.estimated_tokens or 0 for fragment in captured
+        ):
+            raise ValueError("context token total does not match fragments")
+        tool_count = sum(
+            fragment.kind is ContextFragmentKind.TOOL_SCHEMA
+            for fragment in self.fragments
+        )
+        if self.disclosed_tool_count != tool_count:
+            raise ValueError("disclosed tool count does not match fragments")
+        return self
+
+
 class CommandDefinition(KernelModel):
     """Static, provider-owned slash-command catalog entry."""
 
