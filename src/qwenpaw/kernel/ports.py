@@ -96,7 +96,7 @@ from .delivery import DeliveryAttempt, DeliveryReceipt, DeliveryRequest
 from .inbox import InboxItem
 from .operational import OperationalEvent
 from .observations import ObservationPage, RuntimeObservation
-from .waits import WaitCondition
+from .waits import ConversationContinuation, WaitCondition
 
 
 @runtime_checkable
@@ -466,6 +466,7 @@ class InteractionPort(Protocol):
         *,
         detail: str,
         include_non_blocking: bool = True,
+        exclude_interaction_ids: tuple[UUID, ...] = (),
     ) -> Sequence[InteractionResolution]:
         """Cancel invocation interactions, optionally retaining suggestions."""
 
@@ -508,6 +509,37 @@ class WaitConditionProjectionPort(Protocol):
 
 
 @runtime_checkable
+class ConversationContinuationPort(Protocol):
+    """Durable outbox for user-input conversation continuations."""
+
+    async def get_request(
+        self,
+        interaction_id: UUID,
+    ) -> InteractionRequest | None:
+        """Load the immutable interaction source for dispatch."""
+
+    async def get_resolution(
+        self,
+        interaction_id: UUID,
+    ) -> InteractionResolution | None:
+        """Load the terminal response used to materialize the next turn."""
+
+    async def list_ready_continuations(
+        self,
+        *,
+        agent_id: str,
+    ) -> Sequence[ConversationContinuation]:
+        """List unresolved outbox entries owned by one Agent."""
+
+    async def mark_continuation_dispatched(
+        self,
+        interaction_id: UUID,
+        submission_id: UUID,
+    ) -> ConversationContinuation:
+        """Bind one outbox entry to its durable Submission exactly once."""
+
+
+@runtime_checkable
 class RuntimeInteractionProducer(Protocol):
     """Invocation-bound producer surface shared by built-ins and plugins."""
 
@@ -524,6 +556,19 @@ class RuntimeInteractionProducer(Protocol):
         expires_at: datetime | None = None,
     ) -> InteractionResolution:
         """Persist and await one structured user-input interaction."""
+
+    async def defer_user_input(
+        self,
+        *,
+        title: str,
+        prompt: str,
+        options: tuple[InteractionOption, ...] = (),
+        response_schema: dict[str, object] | None = None,
+        metadata: dict[str, object] | None = None,
+        source_id: UUID | None = None,
+        expires_at: datetime | None = None,
+    ) -> InteractionRequest:
+        """Persist input and continue through a new conversation turn."""
 
     async def suggest(
         self,

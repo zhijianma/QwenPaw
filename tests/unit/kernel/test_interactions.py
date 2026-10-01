@@ -175,3 +175,20 @@ def test_checkpoint_continuation_requires_checkpoint_identity() -> None:
             availability=ContinuationAvailability.DETACHED,
             invocation_id=uuid4(),
         )
+
+
+def test_conversation_continuation_rejects_non_blocking_request() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="conversation continuation requires a blocking interaction",
+    ):
+        InteractionRequest(
+            kind=InteractionKind.USER_INPUT,
+            mode=InteractionMode.NON_BLOCKING,
+            agent_id="default",
+            conversation_id="chat-1",
+            invocation_id=uuid4(),
+            continuation_mode=ContinuationMode.CONVERSATION_TURN,
+            title="Need input",
+            prompt="Choose a path.",
+        )

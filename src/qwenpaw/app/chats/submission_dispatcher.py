@@ -5,14 +5,19 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
+import logging
 from typing import Any
+from uuid import UUID
 
 from ...invocation_control import (
     InvocationControlService,
     SubmissionDispatcher,
 )
 from ...kernel import (
+    ConversationContinuation,
     ControlReceipt,
+    InteractionStatus,
     SubmissionInputEnvelope,
     TurnSubmission,
     TurnSubmissionRequest,
@@ -20,6 +25,10 @@ from ...kernel import (
 from .input_context import persist_pending_project_dirs
 
 CONSOLE_SUBMISSION_ENVELOPE = "chat.console.native.v1"
+CONSOLE_INTERACTION_CONTINUATION_ENVELOPE = (
+    "chat.console.interaction-continuation.v1"
+)
+logger = logging.getLogger(__name__)
 
 
 class WorkspaceChatSubmissionDispatcher:
@@ -33,6 +42,9 @@ class WorkspaceChatSubmissionDispatcher:
     ) -> None:
         self._workspace = workspace
         self._control = control
+        self._interactions = getattr(workspace, "interaction_service", None)
+        self._continuation_event = asyncio.Event()
+        self._continuation_task: asyncio.Task[None] | None = None
         self._dispatcher = SubmissionDispatcher(
             agent_id=workspace.agent_id,
             control=control,
@@ -42,10 +54,115 @@ class WorkspaceChatSubmissionDispatcher:
     async def start(self) -> None:
         """Recover queued Console turns after workspace services start."""
         await self._dispatcher.start()
+        if self._interactions is not None and self._continuation_task is None:
+            self._continuation_task = asyncio.create_task(
+                self._run_continuations(),
+                name=(f"interaction-continuations:{self._workspace.agent_id}"),
+            )
+            self.wake_continuations()
 
     async def stop(self) -> None:
         """Release this workspace generation's dispatch ownership."""
+        task = self._continuation_task
+        self._continuation_task = None
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
         await self._dispatcher.stop()
+
+    def wake_continuations(self) -> None:
+        """Wake the durable continuation outbox worker."""
+        self._continuation_event.set()
+
+    async def _run_continuations(self) -> None:
+        """Retry ready outbox entries without coupling them to HTTP."""
+        retry_delay = 1.0
+        while True:
+            await self._continuation_event.wait()
+            self._continuation_event.clear()
+            try:
+                await self._dispatch_ready_continuations()
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "Failed to dispatch interaction continuation",
+                )
+                try:
+                    await asyncio.wait_for(
+                        self._continuation_event.wait(),
+                        timeout=retry_delay,
+                    )
+                except TimeoutError:
+                    pass
+                retry_delay = min(retry_delay * 2, 60.0)
+                self._continuation_event.set()
+            else:
+                retry_delay = 1.0
+
+    async def _dispatch_ready_continuations(self) -> None:
+        """Create one idempotent Submission per resolved interaction."""
+        continuations = await self._interactions.list_ready_continuations(
+            agent_id=self._workspace.agent_id,
+        )
+        first_error: Exception | None = None
+        for continuation in continuations:
+            try:
+                await self._dispatch_continuation(continuation)
+            except Exception as exc:  # pylint: disable=broad-except
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
+
+    async def _dispatch_continuation(
+        self,
+        continuation: ConversationContinuation,
+    ) -> None:
+        """Idempotently bind one outbox entry to one Submission."""
+        request = await self._interactions.get_request(
+            continuation.interaction_id,
+        )
+        if request is None:
+            raise RuntimeError(
+                "continuation interaction request is unavailable",
+            )
+        if (
+            request.agent_id != continuation.agent_id
+            or request.conversation_id != continuation.conversation_id
+        ):
+            raise RuntimeError(
+                "continuation interaction owner mismatch",
+            )
+        submission = TurnSubmissionRequest(
+            agent_id=continuation.agent_id,
+            conversation_id=continuation.conversation_id,
+            content="[interaction continuation]",
+            request_context={
+                "channel": "console",
+                "interaction_id": str(continuation.interaction_id),
+            },
+            input_envelope=SubmissionInputEnvelope(
+                kind=CONSOLE_INTERACTION_CONTINUATION_ENVELOPE,
+                payload={
+                    "interaction_id": str(continuation.interaction_id),
+                    "response_revision": continuation.response_revision,
+                },
+            ),
+            idempotency_key=(
+                "interaction-continuation:"
+                f"{continuation.interaction_id}:"
+                f"{continuation.response_revision}"
+            ),
+            correlation_id=request.correlation_id,
+        )
+        receipt = await self.enqueue(submission)
+        if receipt.submission_id is None:
+            raise RuntimeError(
+                "continuation enqueue returned no submission identity",
+            )
+        await self._interactions.mark_continuation_dispatched(
+            continuation.interaction_id,
+            receipt.submission_id,
+        )
 
     async def enqueue(
         self,
@@ -66,7 +183,10 @@ class WorkspaceChatSubmissionDispatcher:
         submission: TurnSubmission,
         envelope: SubmissionInputEnvelope,
     ) -> None:
-        if envelope.kind != CONSOLE_SUBMISSION_ENVELOPE:
+        if envelope.kind not in {
+            CONSOLE_SUBMISSION_ENVELOPE,
+            CONSOLE_INTERACTION_CONTINUATION_ENVELOPE,
+        }:
             raise ValueError(
                 f"unsupported submission input envelope: {envelope.kind}",
             )
@@ -79,7 +199,14 @@ class WorkspaceChatSubmissionDispatcher:
         if channel is None:
             raise RuntimeError("Console channel is unavailable")
 
-        payload = copy.deepcopy(envelope.payload)
+        if envelope.kind == CONSOLE_INTERACTION_CONTINUATION_ENVELOPE:
+            payload = await self._materialize_continuation_payload(
+                envelope,
+                chat,
+                submission,
+            )
+        else:
+            payload = copy.deepcopy(envelope.payload)
         self._bind_runtime_identity(payload, submission)
         self._validate_chat_ownership(payload, chat)
         chat = await persist_pending_project_dirs(
@@ -103,6 +230,89 @@ class WorkspaceChatSubmissionDispatcher:
         async for _ in tracker.stream_from_queue(queue, chat.id):
             pass
 
+    async def _materialize_continuation_payload(
+        self,
+        envelope: SubmissionInputEnvelope,
+        chat: Any,
+        submission: TurnSubmission,
+    ) -> dict[str, Any]:
+        """Resolve an outbox pointer into one Console user message."""
+        if self._interactions is None:
+            raise RuntimeError("Interaction service is unavailable")
+        try:
+            interaction_id = UUID(str(envelope.payload["interaction_id"]))
+            response_revision = int(
+                envelope.payload["response_revision"],
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                "invalid interaction continuation envelope",
+            ) from exc
+        request = await self._interactions.get_request(interaction_id)
+        resolution = await self._interactions.get_resolution(interaction_id)
+        if request is None or resolution is None:
+            raise ValueError("interaction continuation source is unavailable")
+        if (
+            request.agent_id != submission.agent_id
+            or request.conversation_id != submission.conversation_id
+            or request.conversation_id != chat.id
+        ):
+            raise ValueError(
+                "interaction continuation does not belong to its ChatSpec",
+            )
+        if (
+            resolution.status is not InteractionStatus.RESOLVED
+            or resolution.response is None
+            or resolution.revision != response_revision
+        ):
+            raise ValueError("interaction continuation is not resolved")
+        answer = self._format_interaction_answer(
+            request,
+            resolution.response,
+        )
+        return {
+            "channel_id": chat.channel,
+            "sender_id": chat.user_id,
+            "content_parts": [{"type": "text", "text": answer}],
+            "message_metadata": {
+                "qwenpaw_client_message_id": submission.idempotency_key,
+                "qwenpaw_interaction_continuation": str(interaction_id),
+            },
+            "message_id": submission.idempotency_key,
+            "meta": {
+                "session_id": chat.session_id,
+                "user_id": chat.user_id,
+                "request_context": {
+                    "interaction_id": str(interaction_id),
+                    "interaction_response_revision": response_revision,
+                },
+            },
+        }
+
+    @staticmethod
+    def _format_interaction_answer(request: Any, response: Any) -> str:
+        """Render one structured answer for the next model step."""
+        if response.text:
+            answer = response.text
+        elif response.selected_option_ids:
+            labels = {
+                option.option_id: option.label for option in request.options
+            }
+            answer = ", ".join(
+                labels.get(option_id, option_id)
+                for option_id in response.selected_option_ids
+            )
+        else:
+            answer = json.dumps(
+                response.values,
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        return (
+            "User response to QwenPaw interaction "
+            f"{request.interaction_id}: {answer}"
+        )
+
     @staticmethod
     def _bind_runtime_identity(
         payload: dict[str, Any],
@@ -121,6 +331,7 @@ class WorkspaceChatSubmissionDispatcher:
                 "os_submission_idempotency_key": (submission.idempotency_key),
                 "os_submission_id": str(submission.submission_id),
                 "os_submission_priority": submission.priority,
+                "os_correlation_id": str(submission.correlation_id),
             },
         )
         meta["request_context"] = request_context
@@ -147,6 +358,7 @@ class WorkspaceChatSubmissionDispatcher:
 
 
 __all__ = [
+    "CONSOLE_INTERACTION_CONTINUATION_ENVELOPE",
     "CONSOLE_SUBMISSION_ENVELOPE",
     "WorkspaceChatSubmissionDispatcher",
 ]

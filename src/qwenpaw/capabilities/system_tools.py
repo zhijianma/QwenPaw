@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Sequence
 
 from ..kernel.invocation import (
@@ -20,36 +19,10 @@ from ..kernel.models import (
 )
 from ..kernel.interactions import (
     InteractionOption,
-    InteractionResolution,
-    InteractionStatus,
 )
 from ..kernel.ports import RuntimeInteractionProducer, ToolHost
 
 SYSTEM_TOOL_PROVIDER_ID = "qwenpaw.system"
-
-
-def _format_user_answer(
-    resolution: InteractionResolution,
-    labels: dict[str, str],
-) -> str:
-    """Convert one structured response into bounded model-facing text."""
-    if (
-        resolution.status is not InteractionStatus.RESOLVED
-        or resolution.response is None
-    ):
-        return (
-            "User input request ended without an answer: "
-            f"{resolution.status.value}."
-        )
-    response = resolution.response
-    if response.text:
-        return response.text
-    if response.selected_option_ids:
-        return ", ".join(
-            labels.get(option_id, option_id)
-            for option_id in response.selected_option_ids
-        )
-    return json.dumps(response.values, ensure_ascii=False, sort_keys=True)
 
 
 def _ask_user_tool(
@@ -61,7 +34,7 @@ def _ask_user_tool(
         question: str,
         choices: list[str] | None = None,
     ) -> str:
-        """Ask the user for missing input and wait for their response."""
+        """Ask for input and continue through a durable future turn."""
         prompt = question.strip()
         if not prompt:
             return "User input request was rejected: question is empty."
@@ -72,7 +45,7 @@ def _ask_user_tool(
             f"choice_{index}": choice
             for index, choice in enumerate(normalized_choices, start=1)
         }
-        resolution = await broker.ask_user(
+        request = await broker.defer_user_input(
             title="Input requested",
             prompt=prompt,
             options=tuple(
@@ -81,7 +54,11 @@ def _ask_user_tool(
             ),
             metadata={"source": "qwenpaw.system.ask_user"},
         )
-        return _format_user_answer(resolution, labels)
+        return (
+            "User input requested. End this turn now; QwenPaw will "
+            "continue in a new turn after the user responds. "
+            f"Interaction: {request.interaction_id}."
+        )
 
     return ToolDefinition(
         function=ask_user,

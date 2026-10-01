@@ -9,7 +9,7 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, Field, model_validator
 
-from .models import KernelModel, NonEmptyStr
+from .models import KernelModel, NonEmptyStr, utc_now
 
 
 class WaitConditionKind(str, Enum):
@@ -36,6 +36,7 @@ class ContinuationMode(str, Enum):
 
     LIVE_INVOCATION = "live_invocation"
     CHECKPOINT = "checkpoint"
+    CONVERSATION_TURN = "conversation_turn"
 
 
 class ContinuationAvailability(str, Enum):
@@ -43,6 +44,38 @@ class ContinuationAvailability(str, Enum):
 
     ATTACHED = "attached"
     DETACHED = "detached"
+
+
+class ContinuationDispatchStatus(str, Enum):
+    """Delivery state for a durable conversation continuation."""
+
+    READY = "ready"
+    DISPATCHED = "dispatched"
+
+
+class ConversationContinuation(KernelModel):
+    """Content-free outbox entry that creates a later conversation turn."""
+
+    interaction_id: UUID
+    agent_id: NonEmptyStr
+    conversation_id: NonEmptyStr
+    response_revision: int = Field(ge=2)
+    status: ContinuationDispatchStatus = ContinuationDispatchStatus.READY
+    submission_id: UUID | None = None
+    created_at: AwareDatetime = Field(default_factory=utc_now)
+    updated_at: AwareDatetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def validate_dispatch(self) -> Self:
+        """Require a submission identity exactly after dispatch."""
+        dispatched = self.status is ContinuationDispatchStatus.DISPATCHED
+        if dispatched != (self.submission_id is not None):
+            raise ValueError(
+                "dispatched continuation requires submission_id",
+            )
+        if self.updated_at < self.created_at:
+            raise ValueError("updated_at cannot precede created_at")
+        return self
 
 
 class ContinuationRef(KernelModel):
@@ -67,6 +100,13 @@ class ContinuationRef(KernelModel):
         ):
             raise ValueError(
                 "live invocation continuation cannot reference a checkpoint",
+            )
+        if (
+            self.mode is ContinuationMode.CONVERSATION_TURN
+            and self.checkpoint_id is not None
+        ):
+            raise ValueError(
+                "conversation continuation cannot reference a checkpoint",
             )
         return self
 
@@ -100,8 +140,10 @@ class WaitCondition(KernelModel):
 
 __all__ = [
     "ContinuationAvailability",
+    "ContinuationDispatchStatus",
     "ContinuationMode",
     "ContinuationRef",
+    "ConversationContinuation",
     "WaitCondition",
     "WaitConditionKind",
     "WaitConditionStatus",

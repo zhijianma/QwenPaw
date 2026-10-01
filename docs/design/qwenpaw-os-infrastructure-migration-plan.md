@@ -294,8 +294,12 @@ Workbench。前端只能提交命令、订阅事件和展示服务端投影；�
   - [x] Task Approval Interaction 已关联真实 Ledger Checkpoint；丢失进程内 waiter
     后，决定先提交，并行 blocker 全部解除后以原始 run_id fencing 旧 Run，再通过
     稳定幂等键创建恢复 Run。恢复失败保留决定与 Checkpoint，并返回
-    `task_continuation_failed`。普通 Chat Ask User 的可序列化 continuation 和等待时
-    主动释放计算资源仍待实现。
+    `task_continuation_failed`。
+  - [x] 普通 Chat Ask User 已改为可序列化 Conversation Turn continuation：工具只
+    保存 Interaction 并结束当前 Invocation；回答与 outbox 在同一事务提交，workspace
+    worker 按稳定幂等键创建新 Submission，执行时再从 Interaction Store 装配回答。
+    服务重启以及“入队成功、outbox 标记前崩溃”均不会重复创建 Submission；并行
+    Ask User 会全部保留。定点测试已通过，真实浏览器续接验收仍待执行。
   - [x] Chat Runtime 已进入 queued -> admitted -> running -> terminal
     Submission 生命周期；如果存在更早 queued turn，当前 HTTP 输入
     不会被错配执行。
@@ -357,9 +361,10 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
 - [ ] 完成 Conversation Activity 只读投影；它从 Submission、Invocation、
   ModelCall、Action、Interaction、Artifact、Evidence 与 Verification 权威事实
   派生，不复制第二套状态，也不把恢复状态伪装成 Queue 项。
-- [ ] 完成 Chat Ask User durable continuation：响应决定与 continuation outbox
+- [x] 完成 Chat Ask User durable continuation：响应决定与 continuation outbox
   可原子提交或幂等恢复；新 Submission 继承原 correlation 并创建新 Invocation，
-  不恢复旧协程。
+  不恢复旧协程。Lite worker 启动即扫描未派发项，HTTP 只负责唤醒；Queue envelope
+  仅保存 Interaction 引用，模型输入在执行时从权威 Store 装配。
 - [ ] 冻结 Model Recovery Contract：
   - [ ] 区分 `transport_unavailable`、`stream_interrupted`、Provider overload、
     rate limit、quota、budget、auth、policy、context overflow、user interrupt 与

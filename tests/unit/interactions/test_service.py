@@ -2,6 +2,7 @@
 """Tests for the workspace-owned interaction infrastructure."""
 
 import asyncio
+import sqlite3
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -17,6 +18,9 @@ from qwenpaw.kernel import (
     ActorRef,
     ActorType,
     ContinuationAvailability,
+    ContinuationDispatchStatus,
+    ContinuationMode,
+    ConversationContinuationPort,
     InteractionKind,
     InteractionHistoryPort,
     InteractionMode,
@@ -68,6 +72,29 @@ def _response(
 
 
 @pytest.mark.asyncio
+async def test_schema_v1_migrates_to_continuation_outbox(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "interactions.sqlite3"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA user_version = 1")
+
+    service = InteractionService(database_path)
+    await service.start()
+
+    with sqlite3.connect(database_path) as connection:
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        table = connection.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type = 'table' AND name = ?",
+            ("interaction_continuations",),
+        ).fetchone()
+
+    assert version == 2
+    assert table == ("interaction_continuations",)
+
+
+@pytest.mark.asyncio
 async def test_parallel_interactions_are_owned_by_chat_spec(
     tmp_path: Path,
 ) -> None:
@@ -75,6 +102,7 @@ async def test_parallel_interactions_are_owned_by_chat_spec(
     assert isinstance(service, InteractionPort)
     assert isinstance(service, InteractionHistoryPort)
     assert isinstance(service, WaitConditionProjectionPort)
+    assert isinstance(service, ConversationContinuationPort)
     invocation_id = uuid4()
     first = _request(invocation_id)
     second = _request(
@@ -120,6 +148,57 @@ async def test_resolve_wakes_waiter_and_replays_same_response(
     )
     assert record.request == request
     assert record.resolution == resolution
+
+
+@pytest.mark.asyncio
+async def test_conversation_response_creates_idempotent_outbox(
+    tmp_path: Path,
+) -> None:
+    service = InteractionService(tmp_path / "interactions.sqlite3")
+    request = _request(
+        uuid4(),
+        kind=InteractionKind.USER_INPUT,
+    ).model_copy(
+        update={
+            "continuation_mode": ContinuationMode.CONVERSATION_TURN,
+        },
+    )
+    await service.open(request)
+    response = _response(request, option="approve")
+
+    resolution = await service.resolve(response)
+    replay = await service.resolve(response)
+    ready = await service.list_ready_continuations(agent_id="default")
+
+    assert replay == resolution
+    assert len(ready) == 1
+    assert ready[0].interaction_id == request.interaction_id
+    assert ready[0].response_revision == resolution.revision
+    assert ready[0].status is ContinuationDispatchStatus.READY
+
+    submission_id = uuid4()
+    dispatched = await service.mark_continuation_dispatched(
+        request.interaction_id,
+        submission_id,
+    )
+    replayed = await service.mark_continuation_dispatched(
+        request.interaction_id,
+        submission_id,
+    )
+
+    assert replayed == dispatched
+    assert dispatched.submission_id == submission_id
+    assert dispatched.status is ContinuationDispatchStatus.DISPATCHED
+    assert not await service.list_ready_continuations(agent_id="default")
+
+    with pytest.raises(
+        InteractionConflictError,
+        match="another submission",
+    ):
+        await service.mark_continuation_dispatched(
+            request.interaction_id,
+            uuid4(),
+        )
 
 
 @pytest.mark.asyncio

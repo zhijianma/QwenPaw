@@ -544,9 +544,11 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
 - [ ] 冻结 Model Recovery Contract：区分连接前失败、部分流中断、Provider 限流、
   quota/budget/auth/policy、用户 Interrupt 与 unknown；transport retry 不消耗业务
   retry，超过短等待预算后持久化 Resource Wait 并释放运行槽。
-- [ ] 完成长程恢复闭环：Interaction/Resource Wait 通过 durable outbox 创建后续
-  Submission；进程重启创建新 Invocation；成功 Action 不重做，uncertain Action
-  必须先对账或取得显式授权。
+- [ ] 完成长程恢复闭环：
+  - [x] Interaction conversation turn 已通过 durable outbox 创建后续 Submission，
+    继承 correlation 并创建新 Invocation；重启与 enqueue/mark 崩溃窗口保持幂等。
+  - [ ] Resource Wait、模型流恢复和进程级自动 continuation 仍待实现；成功 Action
+    不重做，uncertain Action 必须先对账或取得显式授权。
 - [ ] Workstation / Hub 再实现按能力、健康、成本和数据边界的动态路由；Lite 当前
   继续使用确定性主模型与显式 fallback 顺序，不冒充智能路由器。
 - 区分 Run Completion、Verification 与业务 Outcome，并预留 Trajectory 投影。

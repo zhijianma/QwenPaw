@@ -11,13 +11,6 @@ from qwenpaw.capabilities import GenerationRegistry
 from qwenpaw.capabilities.system_tools import WorkspaceToolProvider
 from qwenpaw.drivers.credentials.types import CredentialRecord
 from qwenpaw.kernel.invocation import InvocationScope
-from qwenpaw.kernel import (
-    ActorRef,
-    ActorType,
-    InteractionResolution,
-    InteractionResponse,
-    InteractionStatus,
-)
 from qwenpaw.kernel.models import (
     ActionKind,
     CapabilityBundle,
@@ -164,23 +157,14 @@ def test_tool_host_exposes_interaction_broker_without_private_key() -> None:
 
 @pytest.mark.asyncio
 async def test_workspace_provider_adds_real_ask_user_tool() -> None:
+    interaction_id = _scope().invocation_id
+
     class _Broker:
         def __init__(self) -> None:
-            self.ask_user = AsyncMock(
-                return_value=InteractionResolution(
-                    interaction_id=_scope().invocation_id,
-                    status=InteractionStatus.RESOLVED,
-                    revision=2,
-                    response=InteractionResponse(
-                        interaction_id=_scope().invocation_id,
-                        idempotency_key="answer-1",
-                        expected_revision=1,
-                        actor=ActorRef(
-                            type=ActorType.USER,
-                            id="local-user",
-                        ),
-                        selected_option_ids=("choice_2",),
-                    ),
+            self.ask_user = AsyncMock()
+            self.defer_user_input = AsyncMock(
+                return_value=SimpleNamespace(
+                    interaction_id=interaction_id,
                 ),
             )
             self.suggest = AsyncMock(return_value=SimpleNamespace())
@@ -207,9 +191,10 @@ async def test_workspace_provider_adds_real_ask_user_tool() -> None:
         choices=["Markdown", "HTML"],
     )
 
-    assert answer == "HTML"
-    broker.ask_user.assert_awaited_once()
-    request = broker.ask_user.await_args.kwargs
+    assert "End this turn now" in answer
+    assert str(interaction_id) in answer
+    broker.defer_user_input.assert_awaited_once()
+    request = broker.defer_user_input.await_args.kwargs
     assert request["prompt"] == "Which format?"
     assert [option.label for option in request["options"]] == [
         "Markdown",

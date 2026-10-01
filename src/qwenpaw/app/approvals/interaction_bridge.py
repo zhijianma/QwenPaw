@@ -13,6 +13,7 @@ from ...kernel import (
     ActorRef,
     ActorType,
     ApprovalBroker,
+    ContinuationMode,
     InteractionKind,
     InteractionMode,
     InteractionOption,
@@ -220,6 +221,11 @@ async def attach_pending_to_interaction(
         invocation_id=invocation_id,
         task_id=task_id,
         source_id=interaction_id,
+        continuation_mode=(
+            ContinuationMode.CHECKPOINT
+            if continuation_checkpoint_id is not None
+            else ContinuationMode.LIVE_INVOCATION
+        ),
         continuation_checkpoint_id=continuation_checkpoint_id,
         title=f"Approve {pending.tool_name}",
         prompt=pending.result_summary or "Approve protected execution?",

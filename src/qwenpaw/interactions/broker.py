@@ -3,12 +3,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 from uuid import UUID
 
 from ..kernel import (
+    ContinuationMode,
     InteractionKind,
     InteractionMode,
     InteractionOption,
@@ -16,6 +17,8 @@ from ..kernel import (
     InteractionRequest,
     InteractionResolution,
 )
+
+DEFERRED_INTERACTION_CONTEXT_KEY = "_deferred_interaction_ids"
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +29,8 @@ class RuntimeInteractionBroker:
     agent_id: str
     conversation_id: str
     invocation_id: UUID
+    request_context: dict[str, Any] = field(default_factory=dict)
+    correlation_id: UUID | None = None
 
     async def ask_user(
         self,
@@ -46,6 +51,7 @@ class RuntimeInteractionBroker:
             agent_id=self.agent_id,
             conversation_id=self.conversation_id,
             invocation_id=self.invocation_id,
+            correlation_id=self.correlation_id or self.invocation_id,
             source_id=source_id,
             title=title,
             prompt=prompt,
@@ -77,6 +83,7 @@ class RuntimeInteractionBroker:
             agent_id=self.agent_id,
             conversation_id=self.conversation_id,
             invocation_id=self.invocation_id,
+            correlation_id=self.correlation_id or self.invocation_id,
             source_id=source_id,
             title=title,
             prompt=prompt,
@@ -86,7 +93,48 @@ class RuntimeInteractionBroker:
         )
         return await self.service.open(request)
 
+    async def defer_user_input(
+        self,
+        *,
+        title: str,
+        prompt: str,
+        options: tuple[InteractionOption, ...] = (),
+        response_schema: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        source_id: UUID | None = None,
+        expires_at: datetime | None = None,
+    ) -> InteractionRequest:
+        """Persist input and park execution at the next Tool safe point."""
+        request = InteractionRequest(
+            kind=InteractionKind.USER_INPUT,
+            mode=InteractionMode.BLOCKING,
+            agent_id=self.agent_id,
+            conversation_id=self.conversation_id,
+            invocation_id=self.invocation_id,
+            correlation_id=self.correlation_id or self.invocation_id,
+            source_id=source_id,
+            continuation_mode=ContinuationMode.CONVERSATION_TURN,
+            title=title,
+            prompt=prompt,
+            options=options,
+            response_schema=dict(response_schema or {}),
+            metadata=dict(metadata or {}),
+            expires_at=expires_at,
+        )
+        opened = await self.service.open(request)
+        raw_ids = self.request_context.setdefault(
+            DEFERRED_INTERACTION_CONTEXT_KEY,
+            [],
+        )
+        deferred_ids = raw_ids if isinstance(raw_ids, list) else []
+        interaction_id = str(opened.interaction_id)
+        if interaction_id not in deferred_ids:
+            deferred_ids.append(interaction_id)
+        self.request_context[DEFERRED_INTERACTION_CONTEXT_KEY] = deferred_ids
+        return opened
 
+
+# pylint: disable-next=too-many-return-statements
 def runtime_interaction_broker_from_context(
     request_context: dict[str, Any],
 ) -> RuntimeInteractionBroker | None:
@@ -107,15 +155,25 @@ def runtime_interaction_broker_from_context(
         invocation_id = UUID(raw_invocation_id)
     except ValueError:
         return None
+    correlation_id = invocation_id
+    raw_correlation_id = request_context.get("os_correlation_id")
+    if raw_correlation_id is not None:
+        try:
+            correlation_id = UUID(str(raw_correlation_id))
+        except ValueError:
+            return None
     return RuntimeInteractionBroker(
         service=service,
         agent_id=agent_id,
         conversation_id=conversation_id,
         invocation_id=invocation_id,
+        request_context=request_context,
+        correlation_id=correlation_id,
     )
 
 
 __all__ = [
+    "DEFERRED_INTERACTION_CONTEXT_KEY",
     "RuntimeInteractionBroker",
     "runtime_interaction_broker_from_context",
 ]

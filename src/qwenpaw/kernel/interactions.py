@@ -16,6 +16,7 @@ from .models import (
     NonEmptyStr,
     utc_now,
 )
+from .waits import ContinuationMode
 
 
 class InteractionKind(str, Enum):
@@ -67,6 +68,7 @@ class InteractionRequest(KernelModel):
     correlation_id: UUID = Field(default_factory=uuid4)
     task_id: UUID | None = None
     source_id: UUID | None = None
+    continuation_mode: ContinuationMode = ContinuationMode.LIVE_INVOCATION
     continuation_checkpoint_id: UUID | None = None
     title: NonEmptyStr
     prompt: NonEmptyStr
@@ -97,6 +99,19 @@ class InteractionRequest(KernelModel):
         ):
             raise ValueError(
                 "checkpoint continuation requires a blocking interaction",
+            )
+        if (self.continuation_mode is ContinuationMode.CHECKPOINT) != (
+            self.continuation_checkpoint_id is not None
+        ):
+            raise ValueError(
+                "checkpoint continuation mode and checkpoint ID must agree",
+            )
+        if (
+            self.continuation_mode is ContinuationMode.CONVERSATION_TURN
+            and self.mode is not InteractionMode.BLOCKING
+        ):
+            raise ValueError(
+                "conversation continuation requires a blocking interaction",
             )
         option_ids = [option.option_id for option in self.options]
         if len(option_ids) != len(set(option_ids)):

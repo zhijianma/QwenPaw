@@ -14,8 +14,10 @@ from uuid import UUID
 
 from ..kernel import (
     ContinuationAvailability,
+    ContinuationDispatchStatus,
     ContinuationMode,
     ContinuationRef,
+    ConversationContinuation,
     InteractionKind,
     InteractionMode,
     InteractionRecord,
@@ -29,7 +31,7 @@ from ..kernel import (
 )
 from ..kernel.models import utc_now
 
-INTERACTION_SCHEMA_VERSION = 1
+INTERACTION_SCHEMA_VERSION = 2
 logger = logging.getLogger(__name__)
 
 InteractionTerminalHook = Callable[
@@ -105,7 +107,7 @@ class InteractionService:
             version = int(
                 connection.execute("PRAGMA user_version").fetchone()[0],
             )
-            if version not in {0, INTERACTION_SCHEMA_VERSION}:
+            if version not in {0, 1, INTERACTION_SCHEMA_VERSION}:
                 raise InteractionError(
                     f"unsupported interaction schema: {version}",
                 )
@@ -136,6 +138,22 @@ class InteractionService:
                 CREATE INDEX IF NOT EXISTS idx_interactions_invocation
                     ON runtime_interactions(
                         invocation_id,
+                        status,
+                        created_at
+                    );
+                CREATE TABLE IF NOT EXISTS interaction_continuations (
+                    interaction_id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL,
+                    conversation_id TEXT NOT NULL,
+                    response_revision INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    submission_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_continuations_ready
+                    ON interaction_continuations(
+                        agent_id,
                         status,
                         created_at
                     );
@@ -273,6 +291,98 @@ class InteractionService:
         return InteractionResolution.model_validate_json(
             row["resolution_json"],
         )
+
+    async def list_ready_continuations(
+        self,
+        *,
+        agent_id: str,
+    ) -> Sequence[ConversationContinuation]:
+        """List content-free continuation outbox entries in order."""
+        if not agent_id.strip():
+            raise ValueError("continuation owner cannot be empty")
+        await self.start()
+        return await asyncio.to_thread(
+            self._list_ready_continuations_sync,
+            agent_id,
+        )
+
+    def _list_ready_continuations_sync(
+        self,
+        agent_id: str,
+    ) -> tuple[ConversationContinuation, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM interaction_continuations "
+                "WHERE agent_id = ? AND status = ? "
+                "ORDER BY created_at, interaction_id",
+                (agent_id, ContinuationDispatchStatus.READY.value),
+            ).fetchall()
+        return tuple(
+            ConversationContinuation.model_validate(dict(row)) for row in rows
+        )
+
+    async def mark_continuation_dispatched(
+        self,
+        interaction_id: UUID,
+        submission_id: UUID,
+    ) -> ConversationContinuation:
+        """Bind one continuation to its durable Submission exactly once."""
+        await self.start()
+        async with self._write_lock:
+            return await asyncio.to_thread(
+                self._mark_continuation_dispatched_sync,
+                interaction_id,
+                submission_id,
+            )
+
+    def _mark_continuation_dispatched_sync(
+        self,
+        interaction_id: UUID,
+        submission_id: UUID,
+    ) -> ConversationContinuation:
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM interaction_continuations "
+                "WHERE interaction_id = ?",
+                (str(interaction_id),),
+            ).fetchone()
+            if row is None:
+                raise InteractionNotFoundError(str(interaction_id))
+            current = ConversationContinuation.model_validate(dict(row))
+            if current.status is ContinuationDispatchStatus.DISPATCHED:
+                if current.submission_id != submission_id:
+                    raise InteractionConflictError(
+                        "continuation is bound to another submission",
+                    )
+                connection.rollback()
+                return current
+            updated_at = utc_now()
+            connection.execute(
+                "UPDATE interaction_continuations SET status = ?, "
+                "submission_id = ?, updated_at = ? "
+                "WHERE interaction_id = ?",
+                (
+                    ContinuationDispatchStatus.DISPATCHED.value,
+                    str(submission_id),
+                    updated_at.isoformat(),
+                    str(interaction_id),
+                ),
+            )
+            connection.commit()
+            return current.model_copy(
+                update={
+                    "status": ContinuationDispatchStatus.DISPATCHED,
+                    "submission_id": submission_id,
+                    "updated_at": updated_at,
+                },
+            )
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     async def list_open(
         self,
@@ -481,11 +591,7 @@ class InteractionService:
             source_id=request.interaction_id,
             policy_source_id=request.source_id,
             continuation=ContinuationRef(
-                mode=(
-                    ContinuationMode.CHECKPOINT
-                    if request.continuation_checkpoint_id is not None
-                    else ContinuationMode.LIVE_INVOCATION
-                ),
+                mode=request.continuation_mode,
                 availability=(
                     ContinuationAvailability.ATTACHED
                     if attached
@@ -584,6 +690,12 @@ class InteractionService:
                 response=response,
             )
             self._persist_resolution(connection, resolution, response_json)
+            if request.continuation_mode is ContinuationMode.CONVERSATION_TURN:
+                self._insert_conversation_continuation(
+                    connection,
+                    request,
+                    resolution,
+                )
             connection.commit()
             return resolution
         except Exception:
@@ -618,12 +730,37 @@ class InteractionService:
             ),
         )
 
+    @staticmethod
+    def _insert_conversation_continuation(
+        connection: sqlite3.Connection,
+        request: InteractionRequest,
+        resolution: InteractionResolution,
+    ) -> None:
+        timestamp = resolution.resolved_at.isoformat()
+        connection.execute(
+            "INSERT INTO interaction_continuations "
+            "(interaction_id, agent_id, conversation_id, "
+            "response_revision, status, submission_id, created_at, "
+            "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(request.interaction_id),
+                request.agent_id,
+                request.conversation_id,
+                resolution.revision,
+                ContinuationDispatchStatus.READY.value,
+                None,
+                timestamp,
+                timestamp,
+            ),
+        )
+
     async def cancel_invocation(
         self,
         invocation_id: UUID,
         *,
         detail: str,
         include_non_blocking: bool = True,
+        exclude_interaction_ids: tuple[UUID, ...] = (),
     ) -> Sequence[InteractionResolution]:
         """Cancel invocation interactions in one durable transaction."""
         await self.start()
@@ -633,6 +770,7 @@ class InteractionService:
                 invocation_id,
                 detail,
                 include_non_blocking,
+                exclude_interaction_ids,
             )
         for resolution in resolutions:
             await self._publish_resolution(resolution)
@@ -695,6 +833,7 @@ class InteractionService:
         invocation_id: UUID,
         detail: str,
         include_non_blocking: bool,
+        exclude_interaction_ids: tuple[UUID, ...],
     ) -> tuple[InteractionResolution, ...]:
         connection = self._connect()
         try:
@@ -703,13 +842,21 @@ class InteractionService:
                 "SELECT interaction_id, revision FROM runtime_interactions "
                 "WHERE invocation_id = ? AND status = ? "
             )
-            parameters: tuple[str, ...] = (
+            parameters: tuple[object, ...] = (
                 str(invocation_id),
                 InteractionStatus.OPEN.value,
             )
             if not include_non_blocking:
                 query += "AND mode = ? "
                 parameters += (InteractionMode.BLOCKING.value,)
+            if exclude_interaction_ids:
+                placeholders = ",".join(
+                    "?" for _item in exclude_interaction_ids
+                )
+                query += f"AND interaction_id NOT IN ({placeholders}) "
+                parameters += tuple(
+                    str(item) for item in exclude_interaction_ids
+                )
             rows = connection.execute(
                 query + "ORDER BY created_at, interaction_id",
                 parameters,

@@ -203,10 +203,11 @@ Codex 的“边收流边执行工具”建立在其 Provider 事件协议、工�
 
 ### R0：先完成 durable continuation
 
-- 完成 Chat Ask User 的 conversation continuation outbox；
-- Interaction 决定与 continuation enqueue 必须同一事务或可幂等恢复；
-- continuation 创建新 Submission 和 Invocation，并继承 `correlation_id`；
-- 不恢复旧协程，不依赖浏览器在线。
+- [x] 完成 Chat Ask User 的 conversation continuation outbox；
+- [x] Interaction 决定与 outbox 同一事务提交，enqueue/mark 崩溃窗口幂等恢复；
+- [x] continuation 创建新 Submission 和 Invocation，并继承 `correlation_id`；
+- [x] 不恢复旧协程，不依赖浏览器在线；并行 Ask User 全部保留。
+- [ ] 在固定真实 Chat 中完成浏览器级回答、自动续接与最终消息验收。
 
 ### R1：冻结 Model Recovery Contract
 

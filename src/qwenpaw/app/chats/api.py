@@ -785,7 +785,11 @@ async def respond_chat_interaction(
             values=body.values,
         )
         await _reconcile_task_approval(interaction, response, request)
-        return await service.resolve(response)
+        resolution = await service.resolve(response)
+        dispatcher = getattr(workspace, "submission_dispatcher", None)
+        if dispatcher is not None:
+            dispatcher.wake_continuations()
+        return resolution
     except InteractionNotFoundError as exc:
         raise HTTPException(
             status_code=404,

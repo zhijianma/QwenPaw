@@ -12,6 +12,7 @@ from qwenpaw.interactions import (
     RuntimeInteractionBroker,
     runtime_interaction_broker_from_context,
 )
+from qwenpaw.interactions.broker import DEFERRED_INTERACTION_CONTEXT_KEY
 from qwenpaw.kernel import (
     ActorRef,
     ActorType,
@@ -19,6 +20,7 @@ from qwenpaw.kernel import (
     InteractionOption,
     InteractionResponse,
     InteractionStatus,
+    ContinuationMode,
 )
 
 INVOCATION_ID = UUID("00000000-0000-0000-0000-000000000401")
@@ -124,6 +126,39 @@ async def test_ask_user_timeout_is_durable(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_deferred_input_preserves_correlation_and_returns(
+    tmp_path,
+) -> None:
+    service = InteractionService(tmp_path / "interactions.sqlite3")
+    request_context = {}
+    correlation_id = UUID("00000000-0000-0000-0000-000000000499")
+    broker = RuntimeInteractionBroker(
+        service=service,
+        agent_id="default",
+        conversation_id="chat-spec-1",
+        invocation_id=INVOCATION_ID,
+        request_context=request_context,
+        correlation_id=correlation_id,
+    )
+
+    request = await broker.defer_user_input(
+        title="Need durable input",
+        prompt="Which path?",
+    )
+    second = await broker.defer_user_input(
+        title="Need another input",
+        prompt="Which format?",
+    )
+
+    assert request.correlation_id == correlation_id
+    assert request.continuation_mode is ContinuationMode.CONVERSATION_TURN
+    assert request_context[DEFERRED_INTERACTION_CONTEXT_KEY] == [
+        str(request.interaction_id),
+        str(second.interaction_id),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_suggestion_persists_without_blocking(tmp_path) -> None:
     broker, service = _broker(tmp_path)
 
@@ -149,6 +184,7 @@ def test_context_binding_requires_server_owned_identities(tmp_path) -> None:
         "agent_id": "default",
         "os_conversation_id": "chat-spec-1",
         "os_invocation_id": str(INVOCATION_ID),
+        "os_correlation_id": ("00000000-0000-0000-0000-000000000499"),
     }
 
     broker = runtime_interaction_broker_from_context(context)
@@ -157,6 +193,9 @@ def test_context_binding_requires_server_owned_identities(tmp_path) -> None:
     assert broker.service is service
     assert broker.conversation_id == "chat-spec-1"
     assert broker.invocation_id == INVOCATION_ID
+    assert broker.correlation_id == UUID(
+        "00000000-0000-0000-0000-000000000499",
+    )
     assert (
         runtime_interaction_broker_from_context(
             {**context, "os_invocation_id": "forged"},

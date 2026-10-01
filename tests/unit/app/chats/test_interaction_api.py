@@ -68,6 +68,10 @@ async def _context(tmp_path):
 @pytest.mark.asyncio
 async def test_list_and_resolve_chat_owned_interaction(tmp_path) -> None:
     manager, workspace, interaction = await _context(tmp_path)
+    continuation_wakes: list[bool] = []
+    workspace.submission_dispatcher = SimpleNamespace(
+        wake_continuations=lambda: continuation_wakes.append(True),
+    )
     http_request = SimpleNamespace(
         state=SimpleNamespace(user={"username": "console-admin"}),
     )
@@ -94,6 +98,7 @@ async def test_list_and_resolve_chat_owned_interaction(tmp_path) -> None:
     assert resolution.status is InteractionStatus.RESOLVED
     assert resolution.response is not None
     assert resolution.response.actor.id == "console-admin"
+    assert continuation_wakes == [True]
     assert (
         await list_chat_interactions(
             "chat-spec-1",
