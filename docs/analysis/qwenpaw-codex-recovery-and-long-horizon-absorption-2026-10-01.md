@@ -162,6 +162,17 @@ Runtime 默认持续执行，只有满足以下任一条件才允许产生 block
 `Submission`；它可投影为一条用户消息，但语义上仍属于原 `correlation_id` 的同一
 执行链。这样，用户可以在需要时参与决策，却不必成为长程任务的人工调度器。
 
+### 4.5 Activity 是投影，不是新状态机
+
+Chat Runtime snapshot 复用 `RuntimeObservation`，从 Model Call、Action、Interaction、
+Control、Compaction 和 Verification 的权威 Store 派生最近活动，并将有界
+`ObservationPage` 纳入 snapshot cursor。它不保存 prompt、回答、隐藏推理或第二份
+生命周期状态；每条 activity 都必须携带可回查的 `ObservationSource`。
+
+当前仍需补齐 Submission/Invocation 和独立 Artifact/Evidence registry 的 source。
+在各源 Store 具备 revision/notifier 之前，应控制重建频率；不能为了 UI 动画增加一套
+易漂移的事件表，也不能把当前状态 SSE 宣称为完整审计日志。
+
 ## 5. 类型化恢复模型
 
 ### 5.1 故障分类

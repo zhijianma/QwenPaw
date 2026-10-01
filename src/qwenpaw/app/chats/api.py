@@ -586,7 +586,20 @@ async def _chat_runtime_projection_context(
             status_code=503,
             detail="Interaction service is unavailable",
         )
-    return ConversationRuntimeProjectionService(control, interactions)
+    observations = lite_observation_projection(
+        Path(workspace.workspace_dir),
+        agent_id=workspace.agent_id,
+        interactions=interactions,
+        controls=control,
+        verifications=lite_verification_history(
+            Path(workspace.workspace_dir),
+        ),
+    )
+    return ConversationRuntimeProjectionService(
+        control,
+        interactions,
+        observations,
+    )
 
 
 async def _apply_chat_control(
@@ -1024,7 +1037,7 @@ async def get_chat_runtime_projection(
     mgr: ChatManager = Depends(get_chat_manager),
     workspace=Depends(get_workspace),
 ) -> ConversationRuntimeProjection:
-    """Read one recoverable Queue and Interaction snapshot."""
+    """Read current Queue, Interaction, and semantic activity."""
     service = await _chat_runtime_projection_context(
         chat_id,
         mgr,

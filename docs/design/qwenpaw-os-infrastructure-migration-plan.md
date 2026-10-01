@@ -362,6 +362,15 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
 - [ ] 完成 Conversation Activity 只读投影；它从 Submission、Invocation、
   ModelCall、Action、Interaction、Artifact、Evidence 与 Verification 权威事实
   派生，不复制第二套状态，也不把恢复状态伪装成 Queue 项。
+  - [x] Chat Runtime snapshot/SSE 已嵌入有界 `ObservationPage`，复用既有
+    ModelCall、Action、Interaction、Control、Compaction 与 Verification 派生器；
+    Activity 内容参与 v2 cursor，来源仍是权威 Store，未新增事实表。真实固定 Chat
+    返回 50 条最近活动，覆盖 model/action/guardrail/hitl 四类事实。
+  - [ ] 补齐 Submission/Invocation 生命周期以及独立 Artifact/Evidence registry
+    的 Observation source；在源 Store 提供 revision/notifier 前，不把全量重建频率
+    继续提高，也不以轮询结果冒充事件日志。
+  - [ ] Console 增加薄 Activity 投影；只显示语义状态和来源引用，不暴露隐藏推理，
+    不复制 Task Workbench 状态机。
 - [x] 完成 Chat Ask User durable continuation：响应决定与 continuation outbox
   可原子提交或幂等恢复；新 Submission 继承原 correlation 并创建新 Invocation，
   不恢复旧协程。Lite worker 启动即扫描未派发项，HTTP 只负责唤醒；Queue envelope

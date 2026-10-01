@@ -476,6 +476,9 @@ async def test_runtime_snapshot_stream_recovers_queue_and_interactions(
 
     assert "event: snapshot" in first_text
     assert '"interactions":[]' in first_text
+    assert '"activity":{"schema":"qwenpaw.observation-page.v1"' in (
+        first_text
+    )
     assert f"id: {first_cursor}" not in second_text
     assert str(interaction.interaction_id) in second_text
     await iterator.aclose()

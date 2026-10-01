@@ -17,6 +17,7 @@ from .models import (
     utc_now,
 )
 from .interactions import InteractionRequest
+from .observations import ObservationPage
 
 
 class SubmissionStatus(str, Enum):
@@ -392,6 +393,7 @@ class ConversationRuntimeProjection(KernelModel):
     conversation_id: NonEmptyStr
     queue: QueueProjection
     interactions: tuple[InteractionRequest, ...] = ()
+    activity: ObservationPage = Field(default_factory=ObservationPage)
     cursor: NonEmptyStr
     observed_at: AwareDatetime = Field(default_factory=utc_now)
 
@@ -412,6 +414,11 @@ class ConversationRuntimeProjection(KernelModel):
             if interaction.conversation_id != self.conversation_id:
                 raise ValueError(
                     "runtime projection interaction conversation_id mismatch",
+                )
+        for observation in self.activity.items:
+            if observation.conversation_id != self.conversation_id:
+                raise ValueError(
+                    "runtime projection activity conversation_id mismatch",
                 )
         return self
 

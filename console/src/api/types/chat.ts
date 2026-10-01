@@ -151,12 +151,47 @@ export interface QueueProjection {
   updated_at: string;
 }
 
+export type RuntimeObservationCategory =
+  | "model"
+  | "action"
+  | "control"
+  | "guardrail"
+  | "compaction"
+  | "hitl"
+  | "interrupt"
+  | "verification";
+
+export interface RuntimeObservation {
+  schema?: "qwenpaw.runtime-observation.v1";
+  observation_id: string;
+  category: RuntimeObservationCategory;
+  stage: "intent" | "policy" | "execution" | "evidence";
+  status: string;
+  source: { source_type: string; source_id: string };
+  task_id?: string | null;
+  run_id?: string | null;
+  conversation_id?: string | null;
+  invocation_id?: string | null;
+  correlation_id?: string | null;
+  registry_generation?: number | null;
+  title: string;
+  facts: Record<string, unknown>;
+  occurred_at: string;
+}
+
+export interface ObservationPage {
+  schema?: "qwenpaw.observation-page.v1";
+  items: RuntimeObservation[];
+  next_cursor?: string | null;
+}
+
 export interface ConversationRuntimeProjection {
   schema?: string;
   agent_id: string;
   conversation_id: string;
   queue: QueueProjection;
   interactions: ChatInteraction[];
+  activity?: ObservationPage;
   cursor: string;
   observed_at: string;
 }
