@@ -64,6 +64,13 @@ from ...kernel.operational import (
     OperationalSeverity,
     OperationalStatus,
 )
+from ...kernel.observations import (
+    ObservationCategory,
+    ObservationSource,
+    ObservationStage,
+    ObservationStatus,
+    RuntimeObservation,
+)
 from ...kernel.models import (
     ActionApprovalLink,
     ActionKind,
@@ -162,6 +169,7 @@ from ...kernel.ports import (
     DeliveryProjectionPort,
     InboxProjectionPort,
     OperationalEventPort,
+    ObservationProjectionPort,
     DriverHost,
     DriverCredentialHandle,
     DriverProvider,
@@ -267,6 +275,12 @@ __all__ = [
     "OperationalEventPort",
     "OperationalSeverity",
     "OperationalStatus",
+    "ObservationCategory",
+    "ObservationProjectionPort",
+    "ObservationSource",
+    "ObservationStage",
+    "ObservationStatus",
+    "RuntimeObservation",
     "ContextualTaskRunner",
     "ContextualProposalSensor",
     "CostAwareTaskRunner",

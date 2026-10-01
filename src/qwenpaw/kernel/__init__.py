@@ -246,6 +246,13 @@ from .operational import (
     OperationalSeverity,
     OperationalStatus,
 )
+from .observations import (
+    ObservationCategory,
+    ObservationSource,
+    ObservationStage,
+    ObservationStatus,
+    RuntimeObservation,
+)
 from .ports import (
     ActionStore,
     AgentFactory,
@@ -260,6 +267,7 @@ from .ports import (
     InvocationControlPort,
     ContextManifestStore,
     ModelCallStore,
+    ObservationProjectionPort,
     OperationalEventPort,
     RuntimeInteractionProducer,
     SchedulerPort,
@@ -384,6 +392,12 @@ __all__ = [
     "OperationalEventPort",
     "OperationalSeverity",
     "OperationalStatus",
+    "ObservationCategory",
+    "ObservationProjectionPort",
+    "ObservationSource",
+    "ObservationStage",
+    "ObservationStatus",
+    "RuntimeObservation",
     "InvocationControlPort",
     "InteractionPort",
     "RuntimeInteractionProducer",

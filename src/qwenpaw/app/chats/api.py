@@ -68,6 +68,7 @@ from ...kernel import (
     InteractionResolution,
     InteractionResponse,
     ModelCallRecord,
+    RuntimeObservation,
     ConversationRuntimeProjection,
     ControlReceipt,
     QueueProjection,
@@ -84,6 +85,7 @@ from ...kernel.models import ArtifactRenderDisposition
 from ...runtime.assembly import capability_registry_for
 from ...runtime.actions import lite_action_store, public_action_record
 from ...runtime.model_calls import lite_model_call_store
+from ...runtime.observations import lite_observation_projection
 from ...tasks.artifacts import (
     ArtifactIntegrityError,
     artifact_filename,
@@ -1378,6 +1380,32 @@ async def list_chat_model_calls(
         limit=limit,
     )
     return list(records)
+
+
+@router.get(
+    "/{chat_id}/observations",
+    response_model=list[RuntimeObservation],
+)
+async def list_chat_observations(
+    chat_id: str,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+) -> list[RuntimeObservation]:
+    """Return semantic observations for one owned ChatSpec."""
+    chat_spec = await mgr.get_chat(chat_id)
+    if not chat_spec:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Chat not found: {chat_id}",
+        )
+    observations = await lite_observation_projection(
+        Path(workspace.workspace_dir),
+    ).list_for_conversation(
+        chat_id,
+        limit=limit,
+    )
+    return list(observations)
 
 
 @router.get("/{chat_id}/status", response_model=ChatStatusResponse)

@@ -773,6 +773,14 @@ Cron 不形成独立审批或产物事实源。
   - [ ] 语义观测统一 `MODEL`、`ACTION`、`GUARDRAIL`、`COMPACTION`、
     `HITL`、`INTERRUPT` 与 `VERIFICATION`；模型意图、策略判定、实际执行和
     Runtime 独立 Evidence 使用稳定因果 ID 关联，不把 Agent 自报结果当作事实。
+    - [x] 冻结 `RuntimeObservation`、Category/Stage/Status、Source 和只读
+      `ObservationProjectionPort`，并从权威 Model Call 与 Action Record 动态派生，
+      不复制 Prompt、消息、工具正文或隐藏推理。Chat-owned
+      `GET /api/chats/{ChatSpec.id}/observations?limit=` 已接入；固定 Chat 的真实
+      查询在同一时间线返回 11 条 MODEL 和 9 条 ACTION（limit=20），覆盖 policy、
+      execution、intent、evidence，且 Action 结果保留 Artifact/Evidence 引用。
+    - [ ] 接入 GUARDRAIL、COMPACTION、HITL、INTERRUPT 与 VERIFICATION 的权威
+      来源；完成跨来源 cursor/pagination，替代 Lite 当前每类最多 1000 条的有界扫描。
   - [ ] 完成 Model Call Plane 全部路由与成本能力：
     - [x] 冻结 `RouteDecision` / `ModelCallAttempt` / `ModelCallResult` / Store Port，
       并在 `TokenRecordingModelWrapper` 的真实 Provider 网络边界留证。每个实际请求

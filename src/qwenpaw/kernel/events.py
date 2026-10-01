@@ -55,18 +55,18 @@ EventType = Annotated[
 ]
 
 
-def _assert_payload_safe(value: JsonValue, path: str = "payload") -> None:
+def assert_payload_safe(value: JsonValue, path: str = "payload") -> None:
     """Reject fields that could persist hidden model reasoning."""
     if isinstance(value, dict):
         for key, nested in value.items():
             normalized = key.strip().lower().replace("-", "_")
             if normalized in _FORBIDDEN_PAYLOAD_FIELDS:
                 raise ValueError(f"forbidden field at {path}.{key}")
-            _assert_payload_safe(nested, f"{path}.{key}")
+            assert_payload_safe(nested, f"{path}.{key}")
         return
     if isinstance(value, list):
         for index, nested in enumerate(value):
-            _assert_payload_safe(nested, f"{path}[{index}]")
+            assert_payload_safe(nested, f"{path}[{index}]")
 
 
 class ExecutionEvent(CausalIdentity):
@@ -92,7 +92,7 @@ class ExecutionEvent(CausalIdentity):
     @classmethod
     def validate_payload(cls, payload: JsonObject) -> JsonObject:
         """Enforce privacy and bounded-inline-payload invariants."""
-        _assert_payload_safe(payload)
+        assert_payload_safe(payload)
         encoded = json.dumps(
             payload,
             ensure_ascii=False,

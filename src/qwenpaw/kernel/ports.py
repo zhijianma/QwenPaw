@@ -91,6 +91,7 @@ from .conversations import (
 from .delivery import DeliveryAttempt, DeliveryReceipt, DeliveryRequest
 from .inbox import InboxItem
 from .operational import OperationalEvent
+from .observations import RuntimeObservation
 
 
 @runtime_checkable
@@ -1223,6 +1224,19 @@ class ModelCallStore(Protocol):
         limit: int = 100,
     ) -> Sequence[ModelCallRecord]:
         """Return newest provider attempts for one ChatSpec identity."""
+
+
+@runtime_checkable
+class ObservationProjectionPort(Protocol):
+    """Read-only semantic projection over authoritative runtime facts."""
+
+    async def list_for_conversation(
+        self,
+        conversation_id: str,
+        *,
+        limit: int = 100,
+    ) -> Sequence[RuntimeObservation]:
+        """Return newest observations for one ChatSpec identity."""
 
 
 @runtime_checkable
