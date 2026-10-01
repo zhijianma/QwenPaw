@@ -299,7 +299,8 @@ Workbench。前端只能提交命令、订阅事件和展示服务端投影；�
     保存 Interaction 并结束当前 Invocation；回答与 outbox 在同一事务提交，workspace
     worker 按稳定幂等键创建新 Submission，执行时再从 Interaction Store 装配回答。
     服务重启以及“入队成功、outbox 标记前崩溃”均不会重复创建 Submission；并行
-    Ask User 会全部保留。定点测试已通过，真实浏览器续接验收仍待执行。
+    Ask User 会全部保留。固定 Chat 已验证原 Invocation 结束后交互卡仍保留，选择
+    HTML 后自动创建 continuation 并只输出 `HTML`。
   - [x] Chat Runtime 已进入 queued -> admitted -> running -> terminal
     Submission 生命周期；如果存在更早 queued turn，当前 HTTP 输入
     不会被错配执行。
@@ -365,6 +366,10 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
   可原子提交或幂等恢复；新 Submission 继承原 correlation 并创建新 Invocation，
   不恢复旧协程。Lite worker 启动即扫描未派发项，HTTP 只负责唤醒；Queue envelope
   仅保存 Interaction 引用，模型输入在执行时从权威 Store 装配。
+- [ ] 冻结 Human Interaction Policy：默认由目标、计划、事件、Action、Artifact、
+  Evidence 和 Verification 持续推进；只有缺少必要事实、关键偏好、权限或高影响
+  裁决时才 blocking Ask User。Suggestion、Steer、Interrupt 与 Approval 保持独立
+  语义，禁止用逐步追问或“是否继续”充当执行调度器。
 - [ ] 冻结 Model Recovery Contract：
   - [ ] 区分 `transport_unavailable`、`stream_interrupted`、Provider overload、
     rate limit、quota、budget、auth、policy、context overflow、user interrupt 与
@@ -388,7 +393,8 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
 验收：浏览器断连不停止执行；连接前失败可安全重试；部分流断开不误判成功或盲目
 重放；Action 成功后不会重复执行；Interaction 回答或资源恢复在崩溃窗口内恰好创建
 一个 continuation；quota/budget/auth/policy 和 Interrupt 不进入网络恢复；长程意图
-可跨多个 Invocation 保持同一 correlation，短问答仍走单 Invocation 快速路径。
+可跨多个 Invocation 保持同一 correlation，短问答仍走单 Invocation 快速路径；
+已授权且无歧义的多步骤任务自动推进，不要求用户逐步确认。
 
 ### I4：存储、产物与验证基建收口
 

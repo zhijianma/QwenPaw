@@ -29,6 +29,12 @@ QwenPaw 应吸收 Codex 的“分层恢复”思想，但不应复制其具体�
 因此，“一问一答”应从**内核生命周期模型**降级为**一种常见 UI 投影**。这既能
 保持当前 Chat 体验，也能支撑分钟、小时甚至跨进程的长程任务。
 
+这里还需要进一步修正 Handbook 常见的“模型提问、用户回答、模型继续”范式：
+`Ask User` 不是智能体每一步的默认推进器，而是 Runtime 在缺少必要事实或授权时
+创建的 durable suspension。正常路径应由目标、计划、事件、Action 结果、Artifact、
+Evidence 和 Verification 自主推进；Suggestion 是非阻塞提示，Steer 是异步控制输入，
+Approval 是策略裁决，三者都不能退化成追问用户的聊天话术。
+
 ## 2. 当前能力与真实缺口
 
 ### 2.1 已经具备的恢复基础
@@ -135,6 +141,27 @@ Chat 不需要改成 Task 页面。当前阶段只需让 Chat 投影表达：
 短对话仍可只显示用户消息和最终助手消息。只有执行跨越动作、等待或恢复边界时，
 才展开持续执行活动。Task Workbench 继续后置，不能为了长程执行复制第二套状态机。
 
+### 4.4 Human Interaction Policy
+
+Runtime 默认持续执行，只有满足以下任一条件才允许产生 blocking `Ask User`：
+
+- 缺少无法从 Workspace、Memory、Tool 或既有上下文取得的必要事实；
+- 存在多个会显著改变结果且无法由 Acceptance/Policy 判定的用户偏好；
+- 下一步需要新增权限、外部协调或扩大用户已经授权的范围；
+- 高影响动作无法由现有 Approval Policy 给出确定裁决。
+
+以下情况不得用 `Ask User` 代替基础设施能力：
+
+- 用追问确认 Runtime 已经知道的事实；
+- 每完成一个步骤就请求“是否继续”；
+- 用自然语言问题代替 Policy Approval、Side Effect reconciliation 或预算门禁；
+- 用下一轮普通聊天模拟 Steer、Interrupt、资源恢复或定时唤醒；
+- 为了保持 Python 协程存活而阻塞等待用户。
+
+回答必须提交为结构化 `InteractionResolution`，再经 outbox 创建 continuation
+`Submission`；它可投影为一条用户消息，但语义上仍属于原 `correlation_id` 的同一
+执行链。这样，用户可以在需要时参与决策，却不必成为长程任务的人工调度器。
+
 ## 5. 类型化恢复模型
 
 ### 5.1 故障分类
@@ -207,7 +234,7 @@ Codex 的“边收流边执行工具”建立在其 Provider 事件协议、工�
 - [x] Interaction 决定与 outbox 同一事务提交，enqueue/mark 崩溃窗口幂等恢复；
 - [x] continuation 创建新 Submission 和 Invocation，并继承 `correlation_id`；
 - [x] 不恢复旧协程，不依赖浏览器在线；并行 Ask User 全部保留。
-- [ ] 在固定真实 Chat 中完成浏览器级回答、自动续接与最终消息验收。
+- [x] 在固定真实 Chat 中完成浏览器级回答、自动续接与最终消息验收。
 
 ### R1：冻结 Model Recovery Contract
 
@@ -250,6 +277,10 @@ Codex 的“边收流边执行工具”建立在其 Provider 事件协议、工�
 10. Chat 可显示等待资源、等待用户和正在恢复，但不能把它们伪装成 Queue 项。
 11. 进程重启后不尝试恢复旧 Python stack，只从 durable boundary 恢复。
 12. macOS、Linux、Windows 分别验证 monotonic、sleep/suspend 与 deadline 语义。
+13. 无歧义、已授权的多步骤任务不得在每一步产生 `Ask User`；它应自动推进至完成、
+    明确失败、策略暂停、资源等待或用户 Interrupt。
+14. Suggestion、Steer、Approval 和 Ask User 必须保留独立语义，不能互相伪装成普通
+    问答消息。
 
 ## 9. 明确不做
 
