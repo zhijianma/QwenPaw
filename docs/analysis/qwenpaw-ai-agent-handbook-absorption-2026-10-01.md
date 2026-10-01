@@ -374,12 +374,18 @@ Observation identity 排序。该实现移除了原来每类最多扫描 1000 �
 阻塞 Interaction 现已投影为稳定 `WaitCondition`：Approval 与 Ask User 共享
 waiting / satisfied / expired / cancelled 生命周期，只公开 ChatSpec.id、Invocation、
 source identity、revision 和 `ContinuationRef`，不复制 prompt、选项或回答内容。
-Suggestion 明确不属于 WaitCondition。Lite 当前 continuation mode 如实标记为
-`live_invocation`；Interaction 状态可以在服务重启后恢复查询，但执行协程尚不能跨
-进程恢复。`ContinuationRef.availability` 会进一步标记 live waiter / resolution
-hook 是 `attached` 还是 `detached`，避免把孤立的开放请求误报为可续跑。下一阶段
-必须在安全 Checkpoint 上实现 `checkpoint` Continuation，才能把 HITL 等待从
-“持久化请求 + 内存 waiter”升级为真正释放计算资源的 durable wait。
+Suggestion 明确不属于 WaitCondition。普通 Chat Ask User 仍如实标记为
+`live_invocation`；Task Approval 则携带 Ledger 中真实 checkpoint pointer，投影为
+`checkpoint`。`ContinuationRef.availability` 进一步标记 live waiter / resolution
+hook 是 `attached` 还是 `detached`，避免把孤立的开放请求误报为活跃执行。
+
+Task Approval 已完成第一条跨进程 continuation：审批决定先提交；并行审批等到最后
+一个 blocker；随后以原始 run_id fencing 孤立 Run，并用稳定幂等键从审批 Checkpoint
+创建新 Run。恢复失败时决定和 Checkpoint 均保留，Task 停在可人工重试的 failed，
+不会伪装为 running。Task API 和 Chat Interaction response 均进入这套状态机；Chat
+入口先提交 Ledger 决定，再关闭 Interaction，并由 Interaction 独占 live waiter
+交付，避免双重 resolve。普通 Chat Ask User 还没有可序列化 Tool continuation，
+运行中也尚未主动释放计算资源，这两项仍不能宣称完成。
 
 ### A9. Model Call Plane 与显式 Route Decision
 

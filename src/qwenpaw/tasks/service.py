@@ -1420,7 +1420,12 @@ class TaskService:  # pylint: disable=too-many-public-methods
         )
         return updated_task
 
-    async def recover_orphaned_task(self, task_id: UUID) -> Task:
+    async def recover_orphaned_task(
+        self,
+        task_id: UUID,
+        *,
+        expected_run_id: UUID | None = None,
+    ) -> Task:
         """Fail one run whose process-local execution handle was lost.
 
         Approval boundaries are safe checkpoints, so the failed Task can be
@@ -1428,6 +1433,11 @@ class TaskService:  # pylint: disable=too-many-public-methods
         finalized is marked uncertain before the run becomes terminal.
         """
         current = await self._required_task(task_id)
+        if (
+            expected_run_id is not None
+            and current.active_run_id != expected_run_id
+        ):
+            return current
         if current.status not in {
             TaskStatus.RUNNING,
             TaskStatus.WAITING_APPROVAL,

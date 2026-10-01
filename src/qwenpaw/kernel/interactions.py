@@ -65,7 +65,9 @@ class InteractionRequest(KernelModel):
     conversation_id: NonEmptyStr
     invocation_id: UUID
     correlation_id: UUID = Field(default_factory=uuid4)
+    task_id: UUID | None = None
     source_id: UUID | None = None
+    continuation_checkpoint_id: UUID | None = None
     title: NonEmptyStr
     prompt: NonEmptyStr
     options: tuple[InteractionOption, ...] = ()
@@ -89,6 +91,13 @@ class InteractionRequest(KernelModel):
             and self.mode is not InteractionMode.BLOCKING
         ):
             raise ValueError("approval interactions must be blocking")
+        if (
+            self.continuation_checkpoint_id is not None
+            and self.mode is not InteractionMode.BLOCKING
+        ):
+            raise ValueError(
+                "checkpoint continuation requires a blocking interaction",
+            )
         option_ids = [option.option_id for option in self.options]
         if len(option_ids) != len(set(option_ids)):
             raise ValueError("interaction option IDs must be unique")

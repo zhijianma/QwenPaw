@@ -289,9 +289,13 @@ Workbench。前端只能提交命令、订阅事件和展示服务端投影；�
     已验证选项回答后工具返回、reasoning 继续并形成最终消息。
   - [x] Kernel 已冻结内容最小化的 `WaitCondition` / `ContinuationRef` 契约；
     Lite 从 Interaction 权威表投影 Approval 与 Ask User 的等待、解决、过期和取消，
-    重启后可查询且不复制 prompt、选项或回答。当前仅承诺 `live_invocation`，基于
-    waiter / hook 的 attached 状态区分活跃与孤立 continuation；基于 Checkpoint
-    释放计算资源并跨进程续跑仍是后续独立模块。
+    重启后可查询且不复制 prompt、选项或回答；waiter / hook 的 attached 状态区分
+    活跃与孤立 continuation。
+  - [x] Task Approval Interaction 已关联真实 Ledger Checkpoint；丢失进程内 waiter
+    后，决定先提交，并行 blocker 全部解除后以原始 run_id fencing 旧 Run，再通过
+    稳定幂等键创建恢复 Run。恢复失败保留决定与 Checkpoint，并返回
+    `task_continuation_failed`。普通 Chat Ask User 的可序列化 continuation 和等待时
+    主动释放计算资源仍待实现。
   - [x] Chat Runtime 已进入 queued -> admitted -> running -> terminal
     Submission 生命周期；如果存在更早 queued turn，当前 HTTP 输入
     不会被错配执行。

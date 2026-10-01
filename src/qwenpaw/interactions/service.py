@@ -481,13 +481,18 @@ class InteractionService:
             source_id=request.interaction_id,
             policy_source_id=request.source_id,
             continuation=ContinuationRef(
-                mode=ContinuationMode.LIVE_INVOCATION,
+                mode=(
+                    ContinuationMode.CHECKPOINT
+                    if request.continuation_checkpoint_id is not None
+                    else ContinuationMode.LIVE_INVOCATION
+                ),
                 availability=(
                     ContinuationAvailability.ATTACHED
                     if attached
                     else ContinuationAvailability.DETACHED
                 ),
                 invocation_id=request.invocation_id,
+                checkpoint_id=request.continuation_checkpoint_id,
             ),
             revision=(
                 resolution.revision
@@ -510,6 +515,14 @@ class InteractionService:
         if unknown:
             raise InteractionConflictError(
                 f"unknown interaction option(s): {sorted(unknown)}",
+            )
+        if request.kind is InteractionKind.APPROVAL and (
+            len(response.selected_option_ids) != 1
+            or bool(response.text)
+            or bool(response.values)
+        ):
+            raise InteractionConflictError(
+                "approval interaction requires exactly one option",
             )
 
     async def resolve(

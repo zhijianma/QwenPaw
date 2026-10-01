@@ -277,6 +277,29 @@ async def test_suggestion_is_persisted_but_never_awaited(
 
 
 @pytest.mark.asyncio
+async def test_approval_rejects_ambiguous_multi_option_response(
+    tmp_path: Path,
+) -> None:
+    service = InteractionService(tmp_path / "interactions.sqlite3")
+    request = _request(uuid4())
+    await service.open(request)
+
+    with pytest.raises(
+        InteractionConflictError,
+        match="requires exactly one option",
+    ):
+        await service.resolve(
+            InteractionResponse(
+                interaction_id=request.interaction_id,
+                idempotency_key="ambiguous",
+                expected_revision=1,
+                actor=ActorRef(type=ActorType.USER, id="local-user"),
+                selected_option_ids=("approve", "deny"),
+            ),
+        )
+
+
+@pytest.mark.asyncio
 async def test_wait_projection_excludes_suggestions_and_cancels(
     tmp_path: Path,
 ) -> None:

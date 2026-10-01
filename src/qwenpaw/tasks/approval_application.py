@@ -18,9 +18,14 @@ from ..kernel.models import (
     ApprovalStatus,
     Proposal,
     TaskOrder,
+    TaskStatus,
 )
 from ..kernel.proposals import approved_task_order
-from .service import TaskNotFoundError, TaskService
+from .service import (
+    ApprovalAlreadyResolvedError,
+    TaskNotFoundError,
+    TaskService,
+)
 
 
 class RuntimeApprovalBridge(Protocol):
@@ -38,8 +43,20 @@ class RuntimeApprovalBridge(Protocol):
         """Wake the live runtime after the durable commit succeeds."""
 
 
+class TaskContinuationScheduler(Protocol):
+    """Resume one detached Task from its latest safe checkpoint."""
+
+    async def resume(
+        self,
+        task_id: UUID,
+        *,
+        idempotency_key: str | None = None,
+    ) -> object:
+        """Fence an orphaned run and attach a resumed attempt."""
+
+
 class TaskRuntimeLostError(RuntimeError):
-    """Raised when a durable approval outlives its runtime waiter."""
+    """Raised when automatic checkpoint continuation cannot attach."""
 
 
 class ProposalNotAvailableError(RuntimeError):
@@ -57,6 +74,7 @@ class DecideTaskApprovalCommand:
     reason: str
     scope: str = "exact"
     idempotency_key: str | None = None
+    delivery_managed_by_interaction: bool = False
 
 
 ApprovalRecord = tuple[ApprovalRequest, ApprovalDecision | None]
@@ -70,10 +88,12 @@ class TaskApprovalApplicationService:
         self,
         service: TaskService,
         runtime_bridge: RuntimeApprovalBridge,
+        continuation_scheduler: TaskContinuationScheduler,
         proposal_scheduler: ProposalScheduler,
     ) -> None:
         self._service = service
         self._runtime_bridge = runtime_bridge
+        self._continuation_scheduler = continuation_scheduler
         self._proposal_scheduler = proposal_scheduler
 
     async def list(
@@ -107,7 +127,7 @@ class TaskApprovalApplicationService:
         approval_record = await self._service.get_approval(
             command.approval_id,
         )
-        await self._assert_runtime_available(command, approval_record)
+        runtime_live = await self._runtime_is_live(approval_record)
         proposal = await self._approved_proposal(command, approval_record)
         decision = await self._service.decide_approval(
             command.task_id,
@@ -118,15 +138,21 @@ class TaskApprovalApplicationService:
             scope=command.scope,
             idempotency_key=command.idempotency_key,
         )
-        await self._runtime_bridge.resolve(
-            command.approval_id,
-            command.decision,
-            command.scope,
-        )
-        await self._resolve_cancelled_siblings(
-            command.approval_id,
-            pending_before,
-        )
+        if approval_record is not None and approval_record[1] is not None:
+            return decision
+        if runtime_live or proposal is not None:
+            if not command.delivery_managed_by_interaction:
+                await self._runtime_bridge.resolve(
+                    command.approval_id,
+                    command.decision,
+                    command.scope,
+                )
+            await self._resolve_cancelled_siblings(
+                command.approval_id,
+                pending_before,
+            )
+        else:
+            await self._continue_detached(command, approval_record)
         if proposal is not None and approval_record is not None:
             self._proposal_scheduler(
                 approved_task_order(
@@ -138,19 +164,64 @@ class TaskApprovalApplicationService:
             )
         return decision
 
-    async def _assert_runtime_available(
+    async def reconcile(
+        self,
+        command: DecideTaskApprovalCommand,
+    ) -> ApprovalDecision:
+        """Apply one Interaction decision or replay its durable outcome."""
+        approval_record = await self._service.get_approval(
+            command.approval_id,
+        )
+        if approval_record is not None and approval_record[1] is not None:
+            if approval_record[1].decision is command.decision:
+                return approval_record[1]
+            raise ApprovalAlreadyResolvedError(str(command.approval_id))
+        return await self.decide(command)
+
+    async def _runtime_is_live(
+        self,
+        approval_record: ApprovalRecord | None,
+    ) -> bool:
+        if approval_record is None or approval_record[1] is not None:
+            return True
+        if approval_record[0].action == "proposal.execute":
+            return False
+        return await self._runtime_bridge.is_live(
+            approval_record[0].approval_id,
+        )
+
+    async def _continue_detached(
         self,
         command: DecideTaskApprovalCommand,
         approval_record: ApprovalRecord | None,
     ) -> None:
-        if approval_record is None or approval_record[1] is not None:
+        """Resume only after the last durable blocker is resolved."""
+        task = await self._service.get_task(command.task_id)
+        if task is None:
+            raise TaskNotFoundError(str(command.task_id))
+        if task.status is TaskStatus.WAITING_APPROVAL:
             return
-        if approval_record[0].action == "proposal.execute":
+        if task.status is not TaskStatus.RUNNING:
             return
-        if await self._runtime_bridge.is_live(command.approval_id):
+        if approval_record is None:
             return
-        await self._service.recover_orphaned_task(command.task_id)
-        raise TaskRuntimeLostError(str(command.task_id))
+        try:
+            recovered = await self._service.recover_orphaned_task(
+                command.task_id,
+                expected_run_id=approval_record[0].run_id,
+            )
+            if recovered.active_run_id != approval_record[0].run_id:
+                return
+            if recovered.status is not TaskStatus.FAILED:
+                return
+            await self._continuation_scheduler.resume(
+                command.task_id,
+                idempotency_key=(
+                    f"approval-continuation:{command.approval_id}"
+                ),
+            )
+        except Exception as exc:
+            raise TaskRuntimeLostError(str(command.task_id)) from exc
 
     async def _approved_proposal(
         self,
@@ -201,6 +272,7 @@ __all__ = [
     "DecideTaskApprovalCommand",
     "ProposalNotAvailableError",
     "RuntimeApprovalBridge",
+    "TaskContinuationScheduler",
     "TaskApprovalApplicationService",
     "TaskRuntimeLostError",
 ]

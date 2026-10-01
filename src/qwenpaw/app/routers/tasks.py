@@ -598,9 +598,9 @@ async def decide_approval(
     except TaskRuntimeLostError as exc:
         raise _problem(
             409,
-            "task_runtime_lost",
-            "The original runtime was lost; resume the Task from its "
-            "approval checkpoint",
+            "task_continuation_failed",
+            "The decision was saved, but automatic continuation could "
+            "not attach; retry Task resume from the approval checkpoint",
         ) from exc
     except ProposalNotAvailableError as exc:
         raise _problem(

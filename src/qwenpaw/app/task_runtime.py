@@ -264,6 +264,7 @@ class TaskApplicationHost:
         approvals = TaskApprovalApplicationService(
             runtime.task_service,
             LiveRuntimeApprovalBridge(),
+            execution,
             lambda order: self._proposals.schedule(
                 workspace,
                 runtime.task_service,

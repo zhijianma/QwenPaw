@@ -12,6 +12,7 @@ from uuid import UUID
 from ...kernel import (
     ActorRef,
     ActorType,
+    ApprovalBroker,
     InteractionKind,
     InteractionMode,
     InteractionOption,
@@ -201,6 +202,15 @@ async def attach_pending_to_interaction(
         return True
     if interaction_id is None:
         return False
+    continuation_checkpoint_id = None
+    task_id = None
+    task_approval_broker = request_context.get("_task_approval_broker")
+    if isinstance(task_approval_broker, ApprovalBroker):
+        durable_record = await task_approval_broker.get(interaction_id)
+        if durable_record is None:
+            return False
+        task_id = durable_record[0].task_id
+        continuation_checkpoint_id = durable_record[0].checkpoint_id
     request = InteractionRequest(
         interaction_id=interaction_id,
         kind=InteractionKind.APPROVAL,
@@ -208,7 +218,9 @@ async def attach_pending_to_interaction(
         agent_id=pending.agent_id,
         conversation_id=str(conversation_id),
         invocation_id=invocation_id,
+        task_id=task_id,
         source_id=interaction_id,
+        continuation_checkpoint_id=continuation_checkpoint_id,
         title=f"Approve {pending.tool_name}",
         prompt=pending.result_summary or "Approve protected execution?",
         options=(

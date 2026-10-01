@@ -13,6 +13,7 @@ from qwenpaw.app.approvals.task_bridge import (
     task_approval_bridge_from_context,
 )
 from qwenpaw.interactions import InteractionService
+from qwenpaw.kernel import ContinuationMode
 from qwenpaw.kernel.models import PlanStep, RunStatus, TaskStatus
 from qwenpaw.security.tool_guard.approval import ApprovalDecision
 from qwenpaw.security.tool_guard.models import (
@@ -295,6 +296,15 @@ async def test_tool_guard_runtime_attaches_durable_task_bridge(
     assert [item.interaction_id for item in interactions] == [
         UUID(pending.request_id),
     ]
+    assert (
+        interactions[0].continuation_checkpoint_id == durable[0].checkpoint_id
+    )
+    waits = await interaction_service.list_wait_conditions(
+        agent_id="default",
+        conversation_id="chat-spec-approval",
+    )
+    assert waits[0].continuation.mode is ContinuationMode.CHECKPOINT
+    assert waits[0].continuation.checkpoint_id == durable[0].checkpoint_id
     await runtime_service.resolve_request(
         pending.request_id,
         ApprovalDecision.DENIED,

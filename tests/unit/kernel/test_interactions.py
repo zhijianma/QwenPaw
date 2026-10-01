@@ -79,6 +79,23 @@ def test_suggestion_cannot_pause_runtime() -> None:
         )
 
 
+def test_suggestion_cannot_reference_checkpoint_continuation() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="checkpoint continuation requires a blocking interaction",
+    ):
+        InteractionRequest(
+            kind=InteractionKind.SUGGESTION,
+            mode=InteractionMode.NON_BLOCKING,
+            agent_id="default",
+            conversation_id="chat-1",
+            invocation_id=uuid4(),
+            continuation_checkpoint_id=uuid4(),
+            title="Optional action",
+            prompt="You may continue later.",
+        )
+
+
 def test_approval_cannot_be_downgraded_to_notification() -> None:
     with pytest.raises(ValidationError, match="must be blocking"):
         _request(

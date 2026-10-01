@@ -63,7 +63,9 @@ from ...kernel import (
     ActionRecord,
     ActorRef,
     ActorType,
+    ApprovalDecisionValue,
     ArtifactRef,
+    InteractionKind,
     InteractionRequest,
     InteractionResolution,
     InteractionResponse,
@@ -609,6 +611,86 @@ async def _apply_chat_control(
     return receipt
 
 
+async def _reconcile_task_approval(
+    interaction: InteractionRequest,
+    response: InteractionResponse,
+    request: Request,
+) -> None:
+    """Bridge a durable Chat decision when its live hook was lost."""
+    if (
+        interaction.kind is not InteractionKind.APPROVAL
+        or interaction.task_id is None
+        or interaction.source_id is None
+    ):
+        return
+    if (
+        len(response.selected_option_ids) != 1
+        or response.text
+        or response.values
+    ):
+        raise InteractionConflictError(
+            "approval interaction requires exactly one option",
+        )
+    selected = response.selected_option_ids[0]
+    option_ids = {option.option_id for option in interaction.options}
+    if selected not in option_ids:
+        raise InteractionConflictError(
+            f"unknown interaction option: {selected}",
+        )
+    if selected not in {"approve_exact", "approve_similar", "deny"}:
+        raise InteractionConflictError(
+            "Task approval has an unsupported decision option",
+        )
+    decision = (
+        ApprovalDecisionValue.APPROVED
+        if selected in {"approve_exact", "approve_similar"}
+        else ApprovalDecisionValue.DENIED
+    )
+    scope = "similar" if selected == "approve_similar" else "exact"
+    from ...tasks.approval_application import (
+        DecideTaskApprovalCommand,
+        TaskRuntimeLostError,
+    )
+    from ...tasks.service import (
+        ApprovalAlreadyResolvedError,
+        TaskNotFoundError,
+    )
+    from ..task_runtime import task_application_bindings
+
+    try:
+        bindings = await task_application_bindings(request)
+        await bindings.approvals.reconcile(
+            DecideTaskApprovalCommand(
+                task_id=interaction.task_id,
+                approval_id=interaction.source_id,
+                decision=decision,
+                actor=response.actor,
+                reason="Resolved through Chat interaction",
+                scope=scope,
+                idempotency_key=(
+                    f"interaction:{interaction.interaction_id}:"
+                    f"{response.expected_revision}"
+                ),
+                delivery_managed_by_interaction=True,
+            ),
+        )
+    except TaskRuntimeLostError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=("Approval was saved, but checkpoint continuation failed"),
+        ) from exc
+    except ApprovalAlreadyResolvedError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Task approval already has another decision",
+        ) from exc
+    except TaskNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="Task approval source no longer exists",
+        ) from exc
+
+
 def _chat_submission_content(parts: tuple[dict[str, Any], ...]) -> str:
     """Return the first meaningful text without interpreting tool payloads."""
     for part in parts:
@@ -693,17 +775,17 @@ async def respond_chat_interaction(
     if not actor_id:
         actor_id = chat.user_id or "local-user"
     try:
-        return await service.resolve(
-            InteractionResponse(
-                interaction_id=interaction_id,
-                idempotency_key=body.idempotency_key,
-                expected_revision=body.expected_revision,
-                actor=ActorRef(type=ActorType.USER, id=actor_id),
-                selected_option_ids=body.selected_option_ids,
-                text=body.text,
-                values=body.values,
-            ),
+        response = InteractionResponse(
+            interaction_id=interaction_id,
+            idempotency_key=body.idempotency_key,
+            expected_revision=body.expected_revision,
+            actor=ActorRef(type=ActorType.USER, id=actor_id),
+            selected_option_ids=body.selected_option_ids,
+            text=body.text,
+            values=body.values,
         )
+        await _reconcile_task_approval(interaction, response, request)
+        return await service.resolve(response)
     except InteractionNotFoundError as exc:
         raise HTTPException(
             status_code=404,

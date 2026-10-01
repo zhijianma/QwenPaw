@@ -21,6 +21,7 @@ from qwenpaw.app.chats.models import (
 from qwenpaw.app.chats.repo import JsonChatRepository
 from qwenpaw.interactions import InteractionService
 from qwenpaw.kernel import (
+    ApprovalDecisionValue,
     InteractionKind,
     InteractionMode,
     InteractionOption,
@@ -140,6 +141,70 @@ async def test_response_rejects_cross_chat_interaction(tmp_path) -> None:
         )
 
     assert rejected.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_task_approval_response_reconciles_durable_decision(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    manager, workspace, _interaction = await _context(tmp_path)
+    task_id = uuid4()
+    approval_id = uuid4()
+    interaction = InteractionRequest(
+        kind=InteractionKind.APPROVAL,
+        mode=InteractionMode.BLOCKING,
+        agent_id="default",
+        conversation_id="chat-spec-1",
+        invocation_id=uuid4(),
+        task_id=task_id,
+        source_id=approval_id,
+        title="Approve command",
+        prompt="Allow execution?",
+        options=(
+            InteractionOption(
+                option_id="approve_exact",
+                label="Approve once",
+            ),
+            InteractionOption(option_id="deny", label="Deny"),
+        ),
+    )
+    await workspace.interaction_service.open(interaction)
+    commands = []
+
+    class _Approvals:
+        async def reconcile(self, command):
+            commands.append(command)
+
+    async def _bindings(_request):
+        return SimpleNamespace(approvals=_Approvals())
+
+    monkeypatch.setattr(
+        "qwenpaw.app.task_runtime.task_application_bindings",
+        _bindings,
+    )
+    request = SimpleNamespace(
+        state=SimpleNamespace(user={"username": "console-admin"}),
+    )
+
+    await respond_chat_interaction(
+        "chat-spec-1",
+        interaction.interaction_id,
+        ChatInteractionDecisionRequest(
+            idempotency_key="approve-task",
+            expected_revision=1,
+            selected_option_ids=("approve_exact",),
+        ),
+        request,
+        manager,
+        workspace,
+    )
+
+    assert len(commands) == 1
+    assert commands[0].task_id == task_id
+    assert commands[0].approval_id == approval_id
+    assert commands[0].decision is ApprovalDecisionValue.APPROVED
+    assert commands[0].delivery_managed_by_interaction is True
 
 
 @pytest.mark.asyncio

@@ -519,10 +519,27 @@ by approval projections, not an event scan or global in-memory waiter list.
 
 `POST /api/tasks/{task_id}/approvals/{approval_id}/decision`
 
-If the durable request has lost its process-local waiter, the endpoint returns
-`task_runtime_lost`, fails the orphaned Run, cancels pending approvals and
-preserves the approval checkpoint. It never changes the Task to a false
-`running` state.
+If the durable request has lost its process-local waiter, the decision is still
+committed before continuation. While sibling approvals remain pending, the
+Task stays at the same durable wait boundary. After the last blocker resolves,
+the application fences the exact orphaned Run and resumes through the approval
+checkpoint as a new Run with a stable continuation idempotency key. A repeated
+decision cannot fail the newly attached Run because orphan recovery is guarded
+by the approval request's original `run_id`.
+
+If runner resolution or startup fails, the endpoint returns
+`task_continuation_failed`; the decision remains committed and the Task remains
+`failed` with its safe checkpoint available for explicit retry. A denial or
+other terminal decision never creates a continuation Run.
+
+The Chat Interaction response adapter follows the same state machine. A
+Task-bound Interaction carries `task_id`, approval `source_id`, and the safe
+checkpoint pointer. It reconciles the Task decision before closing the
+Interaction projection. The Interaction owns delivery to the live waiter, so
+the application does not redeliver the primary decision and create an
+idempotency loop; cancelled sibling approvals are still drained through the
+runtime bridge. After restart, the same adapter commits the decision and uses
+checkpoint continuation even when the terminal hook no longer exists.
 
 ### 5.7 Side-effect recovery
 
