@@ -49,6 +49,10 @@ from qwenpaw.runtime.actions import (
     FilesystemActionStore,
     RuntimeActionRecorder,
 )
+from qwenpaw.runtime.environments import (
+    LiteEnvironmentResolver,
+    default_lite_environment_contract,
+)
 from qwenpaw.runtime.tool_artifacts import (
     TOOL_ARTIFACT_ERRORS_KEY,
     TOOL_ARTIFACT_LINKS_KEY,
@@ -152,6 +156,45 @@ async def test_action_store_is_private_and_never_persists_raw_values(
     assert record.request.arguments_hash != f"sha256:{raw_arguments_hash}"
     assert stat.S_IMODE(request_path.stat().st_mode) == 0o600
     assert stat.S_IMODE(result_path.stat().st_mode) == 0o600
+
+
+@pytest.mark.asyncio
+async def test_action_request_references_resolved_environment(
+    tmp_path: Path,
+) -> None:
+    invocation_id = uuid4()
+    contract = default_lite_environment_contract(tmp_path)
+    resolution = await LiteEnvironmentResolver().resolve(
+        contract,
+        invocation_id=invocation_id,
+        workspace_dir=str(tmp_path),
+    )
+    scope = InvocationScope(
+        invocation_id=invocation_id,
+        agent_id="default",
+        conversation_id="chat-1",
+        session_id="transport-session",
+        root_agent_id="default",
+        root_session_id="transport-session",
+        workspace_dir=str(tmp_path),
+        registry_generation=7,
+        selection=CapabilitySelection(),
+        environment_contract=contract,
+        environment_resolution=resolution,
+    )
+    recorder = RuntimeActionRecorder(scope, FilesystemActionStore(tmp_path))
+
+    request = await recorder.begin(
+        _context(tool_name="read_file"),
+        effect=ToolEffect.NONE,
+        policy_decision="allow",
+    )
+
+    assert request.environment_ref is not None
+    assert request.environment_ref.resolution_id == resolution.resolution_id
+    assert request.environment_ref.contract_id == contract.contract_id
+    assert request.environment_ref.contract_version == contract.version
+    assert request.environment_ref.resolver_id == resolution.resolver_id
 
 
 @pytest.mark.asyncio

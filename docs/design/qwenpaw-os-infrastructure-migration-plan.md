@@ -718,6 +718,17 @@ Cron 不形成独立审批或产物事实源。
       防重放权威，不迁移为第二状态机。
   - [ ] `EnvironmentContract` 冻结 Workspace、Sandbox、Harness 和 Hub runtime
     共同需要的挂载、网络、凭据引用、依赖、资源、快照与清理语义。
+    - [x] Kernel 已冻结 Contract、Resolution、Ref 与 Resolver/Store Port；Lite
+      Chat 在 Agent 建立前解析并持久化 Invocation 环境事实，Action 通过 Ref
+      关联，环境不满足时不会进入模型或工具执行，generation lease 正常释放。
+    - [x] Lite 只报告能证明的 Host、继承网络、Workspace/Mount 访问与依赖；
+      隔离网络、Secret、硬资源、超时/并发、快照和清理要求均显式失败关闭。
+      Plugin SDK 仅公开稳定数据模型，不公开 host-owned Resolver/Store。
+      固定 Chat `1ee31988-b37a-48b9-b6ce-423c52f6a3a9` 已在 `/clear` 后完成真实
+      `read_file`：Resolution 为 `satisfied`，环境 JSON 为 `0600`，Tool Action
+      的 Invocation、ChatSpec.id 与 EnvironmentRef 均和环境证据一致。
+    - [ ] 现有 Sandbox、Harness Remote、Workstation 与 Hub runner 仍需实现
+      等价 Adapter 和真实约束兑现；完成前父项保持未完成。
   - [ ] 语义观测统一 `MODEL`、`ACTION`、`GUARDRAIL`、`COMPACTION`、
     `HITL`、`INTERRUPT` 与 `VERIFICATION`；模型意图、策略判定、实际执行和
     Runtime 独立 Evidence 使用稳定因果 ID 关联，不把 Agent 自报结果当作事实。

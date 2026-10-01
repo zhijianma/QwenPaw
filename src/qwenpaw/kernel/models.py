@@ -135,6 +135,195 @@ class ActionStatus(str, Enum):
     DENIED = "denied"
 
 
+class EnvironmentIsolation(str, Enum):
+    """Execution isolation required by an environment contract."""
+
+    HOST = "host"
+    SANDBOX = "sandbox"
+    CONTAINER = "container"
+    REMOTE = "remote"
+
+
+class EnvironmentNetworkMode(str, Enum):
+    """Network posture required before execution starts."""
+
+    INHERIT = "inherit"
+    DENY = "deny"
+    RESTRICTED = "restricted"
+
+
+class EnvironmentMountAccess(str, Enum):
+    """Filesystem access granted by one logical mount."""
+
+    READ_ONLY = "read_only"
+    READ_WRITE = "read_write"
+
+
+class EnvironmentDependencyKind(str, Enum):
+    """Dependency classes the Lite resolver can verify locally."""
+
+    EXECUTABLE = "executable"
+    PATH = "path"
+
+
+class EnvironmentResolutionStatus(str, Enum):
+    """Whether a concrete runtime satisfies its declared contract."""
+
+    SATISFIED = "satisfied"
+    UNSATISFIED = "unsatisfied"
+
+
+class EnvironmentMount(KernelModel):
+    """Logical mount requirement independent of a sandbox backend."""
+
+    source: NonEmptyStr
+    target: NonEmptyStr
+    access: EnvironmentMountAccess = EnvironmentMountAccess.READ_ONLY
+    required: bool = True
+    executable: bool = False
+
+
+class EnvironmentDependency(KernelModel):
+    """One host-verifiable dependency requirement."""
+
+    kind: EnvironmentDependencyKind
+    name: NonEmptyStr
+    version_constraint: NonEmptyStr | None = None
+    required: bool = True
+
+
+class EnvironmentResourceLimits(KernelModel):
+    """Resource ceilings requested from an execution backend."""
+
+    cpu_cores: float | None = Field(default=None, gt=0)
+    memory_mb: int | None = Field(default=None, gt=0)
+    storage_mb: int | None = Field(default=None, gt=0)
+    max_processes: int | None = Field(default=None, gt=0)
+
+    @property
+    def constrained(self) -> bool:
+        """Return whether any hard resource ceiling was requested."""
+        return any(
+            value is not None
+            for value in (
+                self.cpu_cores,
+                self.memory_mb,
+                self.storage_mb,
+                self.max_processes,
+            )
+        )
+
+
+class EnvironmentContract(KernelModel):
+    """Backend-neutral requirements fixed before one invocation starts."""
+
+    contract_id: NamespacedId = "qwenpaw.system.environment.lite-local"
+    version: NonEmptyStr = "1.0.0"
+    os_families: tuple[Literal["linux", "macos", "windows"], ...] = ()
+    architectures: tuple[NonEmptyStr, ...] = ()
+    isolation: EnvironmentIsolation = EnvironmentIsolation.HOST
+    runtime_image: NonEmptyStr | None = None
+    workspace: EnvironmentMount
+    mounts: tuple[EnvironmentMount, ...] = ()
+    network_mode: EnvironmentNetworkMode = EnvironmentNetworkMode.INHERIT
+    allowed_hosts: tuple[NonEmptyStr, ...] = ()
+    credential_refs: tuple[NonEmptyStr, ...] = ()
+    dependencies: tuple[EnvironmentDependency, ...] = ()
+    resources: EnvironmentResourceLimits = Field(
+        default_factory=EnvironmentResourceLimits,
+    )
+    timeout_seconds: int | None = Field(default=None, gt=0)
+    max_concurrency: int | None = Field(default=None, gt=0)
+    snapshot_required: bool = False
+    cleanup_policy: Literal["retain", "delete_temporary"] = "retain"
+
+    @model_validator(mode="after")
+    def validate_environment_requirements(self) -> Self:
+        """Reject ambiguous mounts, dependencies, and network policy."""
+        mounts = (self.workspace, *self.mounts)
+        targets = tuple(mount.target for mount in mounts)
+        if len(targets) != len(set(targets)):
+            raise ValueError("environment mount targets must be unique")
+        dependencies = tuple(
+            (dependency.kind, dependency.name)
+            for dependency in self.dependencies
+        )
+        if len(dependencies) != len(set(dependencies)):
+            raise ValueError("environment dependencies must be unique")
+        if (
+            self.network_mode is EnvironmentNetworkMode.RESTRICTED
+            and not self.allowed_hosts
+        ):
+            raise ValueError("restricted network requires allowed_hosts")
+        if (
+            self.network_mode is not EnvironmentNetworkMode.RESTRICTED
+            and self.allowed_hosts
+        ):
+            raise ValueError(
+                "allowed_hosts require restricted network mode",
+            )
+        if len(self.credential_refs) != len(set(self.credential_refs)):
+            raise ValueError("environment credential refs must be unique")
+        return self
+
+
+class EnvironmentResolution(KernelModel):
+    """Immutable evidence produced by an edition-specific resolver."""
+
+    resolution_id: UUID = Field(default_factory=uuid4)
+    invocation_id: UUID
+    contract_id: NamespacedId
+    contract_version: NonEmptyStr
+    resolver_id: NamespacedId
+    status: EnvironmentResolutionStatus
+    os_family: Literal["linux", "macos", "windows"]
+    architecture: NonEmptyStr
+    workspace_root: NonEmptyStr
+    enforced_constraints: tuple[NonEmptyStr, ...] = ()
+    violations: tuple[NonEmptyStr, ...] = ()
+    resolved_at: AwareDatetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def validate_status(self) -> Self:
+        """Keep terminal status and violation evidence coherent."""
+        if (
+            self.status is EnvironmentResolutionStatus.SATISFIED
+            and self.violations
+        ):
+            raise ValueError("satisfied environment cannot have violations")
+        if (
+            self.status is EnvironmentResolutionStatus.UNSATISFIED
+            and not self.violations
+        ):
+            raise ValueError("unsatisfied environment requires violations")
+        return self
+
+
+class EnvironmentRef(KernelModel):
+    """Stable Action reference to its invocation environment evidence."""
+
+    resolution_id: UUID
+    contract_id: NamespacedId
+    contract_version: NonEmptyStr
+    resolver_id: NamespacedId
+
+
+class EnvironmentRecord(KernelModel):
+    """Durable pair of declared requirements and observed resolution."""
+
+    contract: EnvironmentContract
+    resolution: EnvironmentResolution
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> Self:
+        """Require durable evidence to describe the same contract."""
+        if self.resolution.contract_id != self.contract.contract_id:
+            raise ValueError("environment record contract mismatch")
+        if self.resolution.contract_version != self.contract.version:
+            raise ValueError("environment record version mismatch")
+        return self
+
+
 class ActionApprovalLink(KernelModel):
     """Immutable relation for approvals discovered during an action."""
 
@@ -158,6 +347,7 @@ class ActionRequest(KernelModel):
     correlation_id: UUID
     conversation_id: NonEmptyStr | None = None
     registry_generation: int = Field(ge=1)
+    environment_ref: EnvironmentRef | None = None
     capability_id: NamespacedId
     kind: ActionKind
     action_name: NonEmptyStr

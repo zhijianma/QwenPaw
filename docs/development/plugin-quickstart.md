@@ -348,6 +348,19 @@ not derive or persist legacy `session_id` values. Fork ownership, completed
 response validation, idempotency, and lineage authorization remain Kernel
 infrastructure rather than a replaceable plugin contribution.
 
+The public SDK also exposes `EnvironmentContract`, `EnvironmentResolution`,
+and `EnvironmentRef`. A Chat provider may inspect
+`InvocationScope.environment_contract` and
+`InvocationScope.environment_resolution` to understand the environment the
+Host actually resolved. Treat the Resolution as evidence, not as permission:
+it does not expand the provider's tool or credential access.
+
+Do not implement or import an environment store or resolver from a plugin.
+Resolution, immutable evidence storage, Sandbox enforcement, and edition
+selection are host-owned infrastructure. If a contract cannot be enforced,
+the Host fails the Invocation before the provider runs instead of silently
+downgrading it.
+
 ### Delivery Adapter
 
 A `delivery.adapter` contribution translates an already committed public

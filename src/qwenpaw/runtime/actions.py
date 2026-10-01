@@ -23,6 +23,7 @@ from ..kernel import (
     ApprovalSource,
     ArtifactRef,
     EvidenceRef,
+    EnvironmentRef,
     DriverToolDefinition,
     InvocationScope,
     RiskLevel,
@@ -367,6 +368,24 @@ class RuntimeActionRecorder:
             ),
             conversation_id=self._scope.conversation_id,
             registry_generation=self._scope.registry_generation,
+            environment_ref=(
+                EnvironmentRef(
+                    resolution_id=(
+                        self._scope.environment_resolution.resolution_id
+                    ),
+                    contract_id=(
+                        self._scope.environment_resolution.contract_id
+                    ),
+                    contract_version=(
+                        self._scope.environment_resolution.contract_version
+                    ),
+                    resolver_id=(
+                        self._scope.environment_resolution.resolver_id
+                    ),
+                )
+                if self._scope.environment_resolution is not None
+                else None
+            ),
             capability_id=capability_id,
             kind=kind,
             action_name=action_name,

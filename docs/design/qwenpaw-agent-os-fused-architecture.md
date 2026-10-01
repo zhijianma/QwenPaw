@@ -116,7 +116,7 @@ Model Call Plane 和可派生的 Budget Lease 是 Handbook 比对后确认的增
 | Console 后台任务 | `app/routers/console.py` | Compatibility API | 保留响应形状，生命周期写入 Task Ledger | 已实现兼容桥 |
 | Durable Task | `kernel/*`、`tasks/*`、`app/routers/tasks.py` | Kernel + Application | 新稳定主干 | 已实现 Lite 基线 |
 | Tool Guard | `security/tool_guard/*` | Runtime policy adapter | 保留，禁止 Kernel 依赖具体实现 | Agent Profile 策略与 Task 审批桥已实现 |
-| Sandbox | `sandbox/*` | Runtime isolation adapter | 保留，与 Tool Guard 共同执行 | 已有能力待统一审计事件 |
+| Environment / Sandbox | `kernel/models.py`、`runtime/environments.py`、`sandbox/*` | Kernel contract + Edition adapter | Invocation 前解析；Edition 只能承诺可证明的约束 | Lite Chat 已接本地证据与失败关闭；隔离型 Adapter 待接 |
 | Approval | `app/approvals/*` | Application adapter | 活跃等待由旧服务承担，决定写入 Ledger | 双向决策与 fail-closed bridge 已实现 |
 | Checkpoint | `checkpoints/*`、`tasks/replay.py` | Infrastructure adapter | 保留旧快照，实现安全恢复契约 | Task 安全 checkpoint 已实现；运行时快照待接 |
 | Memory | `agents/memory/*`、`memory/*` | `memory.provider` Contribution | 核心只定义 port/session，后端外迁 | 已接入 Chat 固定 generation |
@@ -423,7 +423,16 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
   `ContextManifest`。真实 Chat 验收覆盖 generation 11、93 个 Fragment 和
   70 个 Tool Schema；Manifest 不含用户原文、Secret 或隐藏推理指纹，文件权限
   为 `0600`，Conversation 目录键与 Manifest SHA256 均独立复算一致。
-- 冻结 `EnvironmentContract`，Lite 先由本地 Workspace / Sandbox 适配。
+- [ ] 完成统一 Environment Plane：
+  - [x] 冻结 `EnvironmentContract` / `EnvironmentResolution` /
+    `EnvironmentRef` 与 host-owned Resolver/Store；Lite Chat 在 Agent 建立前解析，
+    把不可变证据绑定到 Invocation，并由 Action 保存 resolution 引用。
+  - [x] Lite 对 Workspace/Mount、OS/架构和依赖做真实校验；对不能兑现的隔离、
+    网络、Secret、资源、超时、并发、快照和清理约束在执行前失败关闭。
+    固定 Chat 已在 `/clear` 后以真实 `read_file` 验证环境 Resolution 与 Tool
+    Action 引用一致，环境证据文件模式为 `0600`。
+  - [ ] 将现有 Sandbox、Harness Remote 和 Hub runner 适配到同一契约；在这些
+    Adapter 完成前，不把枚举存在误报为平台已具备隔离能力。
 - 从现有事件派生统一的 `MODEL`、`ACTION`、`GUARDRAIL`、`COMPACTION`、
   `HITL`、`INTERRUPT` 与 `VERIFICATION` 语义观测；区分模型意图、策略决定、
   实际执行和 Runtime 独立证据。

@@ -212,13 +212,35 @@ Context 的相关性和信任等级也不能直接转化为执行授权：`Actio
 
 ### A4. Environment Contract
 
-优先级：P1，先冻结接口，Lite 使用本地适配器。
+优先级：P1。2026-10-01 已冻结 Kernel 契约并接入 Lite Chat 本地解析器。
 
 契约包含：镜像 / OS / 架构、文件挂载与读写范围、网络出入站、Secret 引用、
 依赖和版本、CPU / 内存 / 存储、超时与并发、快照需求、审计与清理策略。
 
 这会把当前分散在 `project_dir`、Sandbox、Harness 与 Hub runtime 的假设统一起来，
 也使 Workstation / Hub 的差异落在 Adapter，而不是 Task 领域模型。
+
+当前垂直切片包含 `EnvironmentContract`、`EnvironmentResolution`、
+`EnvironmentRef`、host-owned `EnvironmentResolver` / `EnvironmentStore`：
+
+- 每次 Chat Invocation 在 Agent 建立前解析并写入不可变环境证据；不满足时在
+  模型或工具运行前失败关闭，并释放 generation lease。
+- Lite 只承诺能在本机证明的 Host isolation、继承网络、Workspace/Mount
+  读写和依赖存在性；Sandbox/Container、网络隔离、Secret 注入、硬资源限额、
+  快照和自动清理不会被静默忽略。
+- Action 只保存 `EnvironmentRef`，通过 resolution identity 关联同一次调用的
+  环境事实，不复制挂载路径或凭据。
+- Plugin SDK 公开环境数据模型供 Provider 读取，但不公开 Resolver/Store；
+  环境兑现属于 Kernel 与 Edition 基建，不是可任意热替换的外设插件。
+
+固定 Chat `1ee31988-b37a-48b9-b6ce-423c52f6a3a9` 已在 `/clear` 后完成真实
+`read_file` 验收：macOS arm64 Lite Resolver 在模型运行前生成 `satisfied`
+Resolution，JSON 权限为 `0600`；Tool Action 的 Invocation、ChatSpec.id、
+contract/version、resolver 和 resolution identity 全部与环境证据一致。
+
+尚未完成：现有 Sandbox、Harness Remote 与 Hub runner 的 Adapter 映射，以及
+Workstation/Hub 对隔离、网络、资源、快照和清理约束的真实兑现。完成这些之前，
+不能宣称 Environment Plane 全量完成。
 
 ### A5. Budget Lease
 

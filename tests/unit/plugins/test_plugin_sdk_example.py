@@ -250,6 +250,18 @@ def test_public_sdk_exports_action_models_but_not_host_store() -> None:
     assert sdk.ActionStatus is not None
 
 
+def test_public_sdk_exports_environment_models_but_not_host_services() -> None:
+    from qwenpaw.plugins import sdk
+
+    assert sdk.EnvironmentContract is not None
+    assert sdk.EnvironmentMount is not None
+    assert sdk.EnvironmentRef is not None
+    assert sdk.EnvironmentResolution is not None
+    assert not hasattr(sdk, "EnvironmentResolver")
+    assert not hasattr(sdk, "EnvironmentStore")
+    assert not hasattr(sdk, "EnvironmentRecord")
+
+
 @pytest.mark.asyncio
 async def test_scheduler_provider_activates_and_persists_definition(
     tmp_path: Path,

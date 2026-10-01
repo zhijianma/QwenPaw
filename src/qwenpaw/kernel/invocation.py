@@ -10,6 +10,8 @@ from pydantic import AwareDatetime, Field, model_validator
 
 from .models import (
     ApprovalLevel,
+    EnvironmentContract,
+    EnvironmentResolution,
     KernelModel,
     NamespacedId,
     NonEmptyStr,
@@ -104,10 +106,31 @@ class InvocationScope(KernelModel):
     workspace_dir: NonEmptyStr
     registry_generation: int = Field(ge=1)
     approval_level: ApprovalLevel = ApprovalLevel.AGENT_PROFILE
+    environment_contract: EnvironmentContract | None = None
+    environment_resolution: EnvironmentResolution | None = None
     selection: CapabilitySelection = Field(
         default_factory=CapabilitySelection,
     )
     started_at: AwareDatetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def validate_environment_identity(self) -> Self:
+        """Bind environment evidence to this immutable invocation."""
+        contract = self.environment_contract
+        resolution = self.environment_resolution
+        if contract is None and resolution is None:
+            return self
+        if contract is None or resolution is None:
+            raise ValueError(
+                "environment contract and resolution must be paired",
+            )
+        if resolution.invocation_id != self.invocation_id:
+            raise ValueError("environment resolution invocation mismatch")
+        if resolution.contract_id != contract.contract_id:
+            raise ValueError("environment resolution contract mismatch")
+        if resolution.contract_version != contract.version:
+            raise ValueError("environment resolution version mismatch")
+        return self
 
     @property
     def capability_ids(self) -> tuple[str, ...]:

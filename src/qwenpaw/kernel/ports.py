@@ -35,6 +35,9 @@ from .models import (
     CostAccountingMode,
     DriverApprovalRequest,
     DriverToolDefinition,
+    EnvironmentContract,
+    EnvironmentRecord,
+    EnvironmentResolution,
     HookDefinition,
     HookOutcome,
     StopGateDecision,
@@ -84,6 +87,33 @@ from .conversations import (
 from .delivery import DeliveryAttempt, DeliveryReceipt, DeliveryRequest
 from .inbox import InboxItem
 from .operational import OperationalEvent
+
+
+@runtime_checkable
+class EnvironmentResolver(Protocol):
+    """Resolve one backend-neutral contract against a concrete edition."""
+
+    async def resolve(
+        self,
+        contract: EnvironmentContract,
+        *,
+        invocation_id: UUID,
+        workspace_dir: str,
+    ) -> EnvironmentResolution:
+        """Return explicit satisfied or unsatisfied environment evidence."""
+
+
+@runtime_checkable
+class EnvironmentStore(Protocol):
+    """Persist immutable environment evidence outside execution events."""
+
+    async def record(
+        self,
+        record: EnvironmentRecord,
+        *,
+        conversation_id: str | None,
+    ) -> None:
+        """Persist one contract and its concrete resolution exactly once."""
 
 
 @runtime_checkable

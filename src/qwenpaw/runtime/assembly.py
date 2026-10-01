@@ -50,8 +50,20 @@ from ..kernel.invocation import (
     CapabilitySelectionOverrides,
     InvocationScope,
 )
-from ..kernel.models import ApprovalLevel
-from ..kernel.models import CapabilityDescriptor
+from ..kernel.models import (
+    ApprovalLevel,
+    CapabilityDescriptor,
+    EnvironmentContract,
+    EnvironmentRecord,
+    EnvironmentResolutionStatus,
+)
+from ..kernel.ports import EnvironmentResolver, EnvironmentStore
+from .environments import (
+    EnvironmentContractUnsatisfiedError,
+    FilesystemEnvironmentStore,
+    LiteEnvironmentResolver,
+    default_lite_environment_contract,
+)
 
 
 class CapabilityUnavailableError(RuntimeError):
@@ -200,6 +212,9 @@ class RuntimeAssemblyFactory:
         registry_generation: int | None = None,
         invocation_id: UUID | None = None,
         correlation_id: UUID | None = None,
+        environment_contract: EnvironmentContract | None = None,
+        environment_resolver: EnvironmentResolver | None = None,
+        environment_store: EnvironmentStore | None = None,
     ) -> InvocationAssembly:
         """Pin the catalog and return one task-independent scope."""
         if selection is not None and selection_overrides is not None:
@@ -273,24 +288,54 @@ class RuntimeAssemblyFactory:
         else:
             resolved_selection = selection
         resolved_invocation_id = invocation_id or uuid4()
-        scope = InvocationScope(
-            invocation_id=resolved_invocation_id,
-            correlation_id=(correlation_id or resolved_invocation_id),
-            agent_id=agent_id,
-            conversation_id=conversation_id,
-            session_id=session_id,
-            root_agent_id=root_agent_id,
-            root_session_id=root_session_id,
-            workspace_dir=str(Path(workspace_dir).resolve(strict=False)),
-            registry_generation=lease.generation,
-            approval_level=approval_level,
-            selection=resolved_selection,
+        resolved_workspace_dir = str(Path(workspace_dir).resolve(strict=False))
+        contract = environment_contract or default_lite_environment_contract(
+            resolved_workspace_dir,
         )
-        assembly = InvocationAssembly(scope=scope, _lease=lease)
+        resolver = environment_resolver or LiteEnvironmentResolver()
+        store = environment_store or FilesystemEnvironmentStore(
+            resolved_workspace_dir,
+        )
         try:
+            resolution = await resolver.resolve(
+                contract,
+                invocation_id=resolved_invocation_id,
+                workspace_dir=resolved_workspace_dir,
+            )
+            if (
+                environment_store is not None
+                or Path(
+                    resolved_workspace_dir,
+                ).is_dir()
+            ):
+                await store.record(
+                    EnvironmentRecord(
+                        contract=contract,
+                        resolution=resolution,
+                    ),
+                    conversation_id=conversation_id,
+                )
+            if resolution.status is EnvironmentResolutionStatus.UNSATISFIED:
+                raise EnvironmentContractUnsatisfiedError(resolution)
+            scope = InvocationScope(
+                invocation_id=resolved_invocation_id,
+                correlation_id=(correlation_id or resolved_invocation_id),
+                agent_id=agent_id,
+                conversation_id=conversation_id,
+                session_id=session_id,
+                root_agent_id=root_agent_id,
+                root_session_id=root_session_id,
+                workspace_dir=resolved_workspace_dir,
+                registry_generation=lease.generation,
+                approval_level=approval_level,
+                environment_contract=contract,
+                environment_resolution=resolution,
+                selection=resolved_selection,
+            )
+            assembly = InvocationAssembly(scope=scope, _lease=lease)
             assembly.validate_selection()
         except Exception:
-            await assembly.close()
+            await lease.close()
             raise
         return assembly
 
