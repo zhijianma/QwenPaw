@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Model wrapper that records token usage from LLM responses."""
 
+import asyncio
 from datetime import date, datetime, timezone
 from typing import Any, AsyncGenerator, Literal
 
@@ -8,7 +9,12 @@ from agentscope.model import ChatModelBase
 from agentscope.model._model_response import ChatResponse
 from agentscope.model._model_usage import ChatUsage
 
-from ..kernel.models import UsageDelta, UsageMeter
+from ..kernel.models import (
+    ModelCallAttempt,
+    ModelCallStatus,
+    UsageDelta,
+    UsageMeter,
+)
 from ..utils.model_response import safe_attr
 from .buffer import _UsageEvent
 from .manager import _usage_agent_id, get_token_usage_manager
@@ -209,6 +215,59 @@ class TokenRecordingModelWrapper(ChatModelBase):
             source=f"model:{self._provider_id}",
         )
 
+    async def _begin_model_attempt(self) -> ModelCallAttempt | None:
+        """Record the concrete provider route before network dispatch."""
+        from ..runtime.model_calls import begin_current_model_attempt
+
+        return await begin_current_model_attempt(
+            provider_id=self._provider_id,
+            model_id=str(self.model),
+        )
+
+    @staticmethod
+    async def _complete_model_attempt(
+        attempt: ModelCallAttempt | None,
+        *,
+        status: ModelCallStatus,
+        usage: ChatUsage | None = None,
+        error: BaseException | None = None,
+        emitted_content: bool = False,
+    ) -> None:
+        """Record a content-free result after one concrete attempt."""
+        from ..runtime.model_calls import complete_current_model_attempt
+
+        input_tokens = (
+            max(int(getattr(usage, "input_tokens", 0) or 0), 0)
+            if usage is not None
+            else None
+        )
+        output_tokens = (
+            max(int(getattr(usage, "output_tokens", 0) or 0), 0)
+            if usage is not None
+            else None
+        )
+        error_kind = ""
+        retryable = False
+        if isinstance(error, Exception):
+            from ..providers.model_error_policy import (
+                classify_model_error,
+                is_retryable_same_model,
+            )
+
+            error_kind = classify_model_error(error).kind
+            retryable = is_retryable_same_model(error)
+        elif error is not None:
+            error_kind = type(error).__name__.lower()
+        await complete_current_model_attempt(
+            attempt,
+            status=status,
+            error_kind=error_kind,
+            retryable=retryable,
+            emitted_content=emitted_content,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+
     @classmethod
     def pop_usage_for_session(cls, session_id: str) -> dict[str, Any] | None:
         return cls._usage_by_session.pop(session_id, None)
@@ -256,9 +315,34 @@ class TokenRecordingModelWrapper(ChatModelBase):
         *args: Any,
         **kwargs: Any,
     ) -> Any:
-        result = await self._model.generate_structured_output(*args, **kwargs)
+        attempt = await self._begin_model_attempt()
+        try:
+            result = await self._model.generate_structured_output(
+                *args,
+                **kwargs,
+            )
+        except asyncio.CancelledError as exc:
+            await self._complete_model_attempt(
+                attempt,
+                status=ModelCallStatus.CANCELLED,
+                error=exc,
+            )
+            raise
+        except Exception as exc:
+            await self._complete_model_attempt(
+                attempt,
+                status=ModelCallStatus.FAILED,
+                error=exc,
+            )
+            raise
         self._record_usage(safe_attr(result, "usage"))
         await self._record_task_budget(safe_attr(result, "usage"))
+        await self._complete_model_attempt(
+            attempt,
+            status=ModelCallStatus.SUCCEEDED,
+            usage=safe_attr(result, "usage"),
+            emitted_content=True,
+        )
         return result
 
     async def __call__(
@@ -282,30 +366,103 @@ class TokenRecordingModelWrapper(ChatModelBase):
         if tool_choice == "auto":
             tool_choice = None
 
-        result = await self._model(
-            messages=messages,
-            tools=tools,
-            tool_choice=tool_choice,
-            **kwargs,
-        )
+        attempt = await self._begin_model_attempt()
+        try:
+            result = await self._model(
+                messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
+                **kwargs,
+            )
+        except asyncio.CancelledError as exc:
+            await self._complete_model_attempt(
+                attempt,
+                status=ModelCallStatus.CANCELLED,
+                error=exc,
+            )
+            raise
+        except Exception as exc:
+            await self._complete_model_attempt(
+                attempt,
+                status=ModelCallStatus.FAILED,
+                error=exc,
+            )
+            raise
 
         if isinstance(result, AsyncGenerator):
-            return self._wrap_stream(result)
+            return self._wrap_stream(result, attempt)
         self._record_usage(safe_attr(result, "usage"))
         await self._record_task_budget(safe_attr(result, "usage"))
+        await self._complete_model_attempt(
+            attempt,
+            status=ModelCallStatus.SUCCEEDED,
+            usage=safe_attr(result, "usage"),
+            emitted_content=True,
+        )
         return result
 
     async def _wrap_stream(
         self,
         stream: AsyncGenerator[ChatResponse, None],
+        attempt: ModelCallAttempt | None = None,
     ) -> AsyncGenerator[ChatResponse, None]:
+        from ..providers.stream_progress import (
+            has_meaningful_stream_content,
+        )
+
         last_usage: ChatUsage | None = None
+        emitted_content = False
+        terminal_chunk_seen = False
         try:
             async for chunk in stream:
                 usage = safe_attr(chunk, "usage")
                 if usage is not None:
                     last_usage = usage
+                emitted_content = emitted_content or (
+                    has_meaningful_stream_content(chunk.content)
+                )
+                terminal_chunk_seen = terminal_chunk_seen or bool(
+                    safe_attr(chunk, "is_last"),
+                )
                 yield chunk
+        except asyncio.CancelledError as exc:
+            await self._complete_model_attempt(
+                attempt,
+                status=ModelCallStatus.CANCELLED,
+                usage=last_usage,
+                error=exc,
+                emitted_content=emitted_content,
+            )
+            raise
+        except GeneratorExit as exc:
+            await self._complete_model_attempt(
+                attempt,
+                status=(
+                    ModelCallStatus.SUCCEEDED
+                    if terminal_chunk_seen
+                    else ModelCallStatus.CANCELLED
+                ),
+                usage=last_usage,
+                error=None if terminal_chunk_seen else exc,
+                emitted_content=emitted_content,
+            )
+            raise
+        except Exception as exc:
+            await self._complete_model_attempt(
+                attempt,
+                status=ModelCallStatus.FAILED,
+                usage=last_usage,
+                error=exc,
+                emitted_content=emitted_content,
+            )
+            raise
+        else:
+            await self._complete_model_attempt(
+                attempt,
+                status=ModelCallStatus.SUCCEEDED,
+                usage=last_usage,
+                emitted_content=emitted_content,
+            )
         finally:
             await stream.aclose()
             self._record_usage(last_usage)

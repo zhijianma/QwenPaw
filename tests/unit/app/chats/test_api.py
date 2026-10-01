@@ -13,11 +13,19 @@ from qwenpaw.app.chats.api import (
     get_chat,
     get_chat_status,
     list_chat_actions,
+    list_chat_model_calls,
     list_chats,
 )
 from qwenpaw.app.chats.models import ChatHistory, ChatSpec
-from qwenpaw.kernel import ActionKind, ActionRequest
+from qwenpaw.kernel import (
+    ActionKind,
+    ActionRequest,
+    ModelCallAttempt,
+    ModelRouteReason,
+    RouteDecision,
+)
 from qwenpaw.runtime.actions import lite_action_store
+from qwenpaw.runtime.model_calls import lite_model_call_store
 from qwenpaw.schemas import DataContent, Message
 
 
@@ -186,6 +194,76 @@ async def test_list_chat_actions_rejects_unknown_chat(tmp_path):
 
     with pytest.raises(HTTPException) as raised:
         await list_chat_actions(
+            chat_id=str(uuid4()),
+            limit=20,
+            mgr=manager,
+            workspace=SimpleNamespace(workspace_dir=tmp_path),
+        )
+
+    assert raised.value.status_code == 404
+    assert not (tmp_path / ".qwenpaw").exists()
+
+
+@pytest.mark.asyncio
+async def test_list_chat_model_calls_returns_content_free_records(tmp_path):
+    chat_id = "chat-model-calls"
+    manager = SimpleNamespace(
+        get_chat=AsyncMock(return_value=_chat(chat_id)),
+    )
+    invocation_id = uuid4()
+    manifest_id = uuid4()
+    attempt_id = uuid4()
+    decision_id = uuid4()
+    route = RouteDecision(
+        route_decision_id=decision_id,
+        attempt_id=attempt_id,
+        invocation_id=invocation_id,
+        correlation_id=invocation_id,
+        conversation_id=chat_id,
+        registry_generation=7,
+        context_manifest_id=manifest_id,
+        model_call_index=1,
+        attempt_index=1,
+        provider_id="provider-a",
+        model_id="model-a",
+        reason=ModelRouteReason.PRIMARY,
+    )
+    attempt = ModelCallAttempt(
+        attempt_id=attempt_id,
+        route_decision_id=decision_id,
+        invocation_id=invocation_id,
+        correlation_id=invocation_id,
+        conversation_id=chat_id,
+        registry_generation=7,
+        context_manifest_id=manifest_id,
+        model_call_index=1,
+        attempt_index=1,
+        provider_id="provider-a",
+        model_id="model-a",
+    )
+    await lite_model_call_store(tmp_path).begin(route, attempt)
+
+    records = await list_chat_model_calls(
+        chat_id=chat_id,
+        limit=20,
+        mgr=manager,
+        workspace=SimpleNamespace(workspace_dir=tmp_path),
+    )
+
+    [record] = records
+    assert record.route.reason is ModelRouteReason.PRIMARY
+    assert record.attempt.context_manifest_id == manifest_id
+    assert record.result is None
+    assert "messages" not in record.model_dump_json()
+    manager.get_chat.assert_awaited_once_with(chat_id)
+
+
+@pytest.mark.asyncio
+async def test_list_chat_model_calls_rejects_unknown_chat(tmp_path):
+    manager = SimpleNamespace(get_chat=AsyncMock(return_value=None))
+
+    with pytest.raises(HTTPException) as raised:
+        await list_chat_model_calls(
             chat_id=str(uuid4()),
             limit=20,
             mgr=manager,

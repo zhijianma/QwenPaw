@@ -358,6 +358,14 @@ Lite 默认仍是确定性的单 Provider 直连；重试和降级必须形成�
 健康度的路由。这使 Harness、上下文和模型故障能够分别归因，也避免把 Provider
 偶发问题误判成 Agent Loop 设计缺陷。
 
+截至 2026-10-01，Lite 已冻结 `RouteDecision`、`ModelCallAttempt`、
+`ModelCallResult` 与 Store Port，并接入真实 Provider 边界。每个 ContextManifest
+建立独立调用 Session；底层 Provider 每次网络尝试在发送前写入 route/attempt，按
+实际调用顺序区分 primary、same-model retry、fallback 与 overflow retry，流式终态、
+取消、错误分类和 Provider usage 在完成后留证。Chat 通过所有权校验后的
+`GET /api/chats/{ChatSpec.id}/model-calls` 查询内容最小化记录。当前仍未实现按成本、
+健康度或数据边界自动选路，也不把既有静态 fallback 配置冒充智能路由器。
+
 ## 5. 不建议直接吸收的内容
 
 | 内容 | 决策 | 原因 |
@@ -411,6 +419,9 @@ Lite 不为未来形态提前承担其部署复杂度。
   为 `unknown` 且副作用状态为 `uncertain`。
 - 每次模型重试或降级都有独立 Attempt 与 Route Decision，不在 Provider Adapter
   内静默切换模型。
+- Model Call 记录只关联 ContextManifest 和实际 usage，不保存消息、Prompt、隐藏
+  推理或 Secret；流看到终态 chunk 后被消费者关闭仍记为成功，未见终态的提前关闭
+  才记为取消。
 
 ## 8. 参考章节
 

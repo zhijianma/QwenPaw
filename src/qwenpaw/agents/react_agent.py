@@ -203,6 +203,14 @@ class QwenPawAgent(CodingModeMixin, Agent):
             "_context_manifest_store",
             None,
         )
+        self._model_call_scope = self._request_context.pop(
+            "_model_call_scope",
+            None,
+        )
+        self._model_call_store = self._request_context.pop(
+            "_model_call_store",
+            None,
+        )
         self._model_call_index = 0
         self._workspace_dir = workspace_dir
         self._language = agent_config.language
@@ -747,6 +755,7 @@ class QwenPawAgent(CodingModeMixin, Agent):
         """Persist privacy-safe input evidence before one provider call."""
         compiler = getattr(self, "_context_manifest_compiler", None)
         store = getattr(self, "_context_manifest_store", None)
+        manifest = None
         if compiler is not None or store is not None:
             if compiler is None or store is None:
                 raise RuntimeError(
@@ -760,10 +769,35 @@ class QwenPawAgent(CodingModeMixin, Agent):
                 attempt_kind=attempt_kind,
             )
             await store.append(manifest)
-        return await super()._call_model(
-            messages=messages,
-            tools=tools,
-            tool_choice=tool_choice,
+        parent_call = super()._call_model
+
+        async def invoke() -> Any:
+            return await parent_call(
+                messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
+            )
+
+        model_call_scope = getattr(self, "_model_call_scope", None)
+        model_call_store = getattr(self, "_model_call_store", None)
+        if (
+            manifest is None
+            or model_call_scope is None
+            or model_call_store is None
+        ):
+            return await invoke()
+        from ..runtime.model_calls import (
+            ModelCallSession,
+            call_with_model_session,
+        )
+
+        return await call_with_model_session(
+            ModelCallSession(
+                model_call_scope,
+                manifest,
+                model_call_store,
+            ),
+            invoke,
         )
 
     async def _recover_model_overflow(

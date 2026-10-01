@@ -135,6 +135,23 @@ class ActionStatus(str, Enum):
     DENIED = "denied"
 
 
+class ModelRouteReason(str, Enum):
+    """Why one concrete provider/model was selected for an attempt."""
+
+    PRIMARY = "primary"
+    SAME_MODEL_RETRY = "same_model_retry"
+    FALLBACK = "fallback"
+    OVERFLOW_RETRY = "overflow_retry"
+
+
+class ModelCallStatus(str, Enum):
+    """Terminal state of one concrete upstream model attempt."""
+
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
 class EnvironmentIsolation(str, Enum):
     """Execution isolation required by an environment contract."""
 
@@ -1513,7 +1530,7 @@ class ContextFragment(KernelModel):
 
 
 class ContextManifest(KernelModel):
-    """Durable, content-free account of one actual provider model call."""
+    """Content-free input evidence shared by one logical model call."""
 
     manifest_id: UUID = Field(default_factory=uuid4)
     invocation_id: UUID
@@ -1562,6 +1579,88 @@ class ContextManifest(KernelModel):
         )
         if self.disclosed_tool_count != tool_count:
             raise ValueError("disclosed tool count does not match fragments")
+        return self
+
+
+class RouteDecision(KernelModel):
+    """Immutable selection of one concrete provider/model attempt."""
+
+    route_decision_id: UUID = Field(default_factory=uuid4)
+    attempt_id: UUID = Field(default_factory=uuid4)
+    invocation_id: UUID
+    correlation_id: UUID
+    conversation_id: NonEmptyStr | None = None
+    registry_generation: int = Field(ge=1)
+    context_manifest_id: UUID
+    model_call_index: int = Field(ge=1)
+    attempt_index: int = Field(ge=1)
+    provider_id: NonEmptyStr
+    model_id: NonEmptyStr
+    reason: ModelRouteReason
+    previous_attempt_id: UUID | None = None
+    policy_id: NamespacedId = "qwenpaw.system.model-route"
+    policy_version: NonEmptyStr = "1"
+    decided_at: AwareDatetime = Field(default_factory=utc_now)
+
+
+class ModelCallAttempt(KernelModel):
+    """Durable intent recorded before one concrete upstream request."""
+
+    attempt_id: UUID
+    route_decision_id: UUID
+    invocation_id: UUID
+    correlation_id: UUID
+    conversation_id: NonEmptyStr | None = None
+    registry_generation: int = Field(ge=1)
+    context_manifest_id: UUID
+    model_call_index: int = Field(ge=1)
+    attempt_index: int = Field(ge=1)
+    provider_id: NonEmptyStr
+    model_id: NonEmptyStr
+    started_at: AwareDatetime = Field(default_factory=utc_now)
+
+
+class ModelCallResult(KernelModel):
+    """Content-free terminal evidence for one upstream model attempt."""
+
+    attempt_id: UUID
+    invocation_id: UUID
+    conversation_id: NonEmptyStr | None = None
+    status: ModelCallStatus
+    error_kind: str = ""
+    retryable: bool = False
+    emitted_content: bool = False
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    completed_at: AwareDatetime = Field(default_factory=utc_now)
+
+
+class ModelCallRecord(KernelModel):
+    """Queryable route, attempt intent and optional terminal result."""
+
+    route: RouteDecision
+    attempt: ModelCallAttempt
+    result: ModelCallResult | None = None
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> Self:
+        """Require every record part to identify the same attempt."""
+        if self.route.attempt_id != self.attempt.attempt_id:
+            raise ValueError("route and model attempt identity mismatch")
+        if self.route.route_decision_id != self.attempt.route_decision_id:
+            raise ValueError("route decision identity mismatch")
+        if self.route.invocation_id != self.attempt.invocation_id:
+            raise ValueError("route and model invocation mismatch")
+        if self.route.context_manifest_id != self.attempt.context_manifest_id:
+            raise ValueError("route and model context manifest mismatch")
+        if self.result is None:
+            return self
+        if self.result.attempt_id != self.attempt.attempt_id:
+            raise ValueError("model result attempt identity mismatch")
+        if self.result.invocation_id != self.attempt.invocation_id:
+            raise ValueError("model result invocation mismatch")
+        if self.result.conversation_id != self.attempt.conversation_id:
+            raise ValueError("model result conversation mismatch")
         return self
 
 

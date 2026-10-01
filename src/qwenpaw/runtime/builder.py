@@ -807,6 +807,7 @@ class AgentBuilder:
                 ContextManifestCompiler,
                 lite_context_manifest_store,
             )
+            from .model_calls import lite_model_call_store
 
             request_context["_action_recorder"].bind_tool_owners(
                 request_context.get("_tool_provider_owners"),
@@ -822,6 +823,10 @@ class AgentBuilder:
             request_context[
                 "_context_manifest_store"
             ] = lite_context_manifest_store(
+                Path(workspace_dir),
+            )
+            request_context["_model_call_scope"] = invocation
+            request_context["_model_call_store"] = lite_model_call_store(
                 Path(workspace_dir),
             )
 

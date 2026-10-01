@@ -773,9 +773,23 @@ Cron 不形成独立审批或产物事实源。
   - [ ] 语义观测统一 `MODEL`、`ACTION`、`GUARDRAIL`、`COMPACTION`、
     `HITL`、`INTERRUPT` 与 `VERIFICATION`；模型意图、策略判定、实际执行和
     Runtime 独立 Evidence 使用稳定因果 ID 关联，不把 Agent 自报结果当作事实。
-  - [ ] `ModelCallAttempt` / `RouteDecision` 覆盖实际 Provider / Model、策略版本、
-    选择原因、Context Manifest、重试、降级、成本和失败分类；Lite 不静默切换，
-    Workstation / Hub 再实现多模型路由策略。
+  - [ ] 完成 Model Call Plane 全部路由与成本能力：
+    - [x] 冻结 `RouteDecision` / `ModelCallAttempt` / `ModelCallResult` / Store Port，
+      并在 `TokenRecordingModelWrapper` 的真实 Provider 网络边界留证。每个实际请求
+      发送前记录 Provider/Model、generation、ContextManifest、策略版本、选择原因和
+      previous attempt；同模型重试、跨模型 fallback 与 overflow retry 分别建独立
+      Attempt。流式终态、提前关闭、取消、错误分类和 Provider usage 在结果中明确
+      区分，不保存消息、Prompt、隐藏推理或 Secret。
+    - [x] Chat 提供所有权约束的
+      `GET /api/chats/{ChatSpec.id}/model-calls?limit=`。固定 Chat
+      `1ee31988-b37a-48b9-b6ce-423c52f6a3a9` 在 `/clear` 后真实返回
+      `MODEL_CALL_PLANE_E2E_OK_3`；只读记录为 DashScope `qwen3.8-max`、generation
+      11、primary、succeeded、input 40042 / output 74 tokens，Invocation 与
+      ContextManifest 均有稳定引用。真实验收发现并修复了 ContextVar 跨异步关闭和
+      terminal chunk 被误判为取消两类仅流式路径问题。
+    - [ ] Cost、formatter/wire 版本、逻辑模型约束与 Route 选择依据尚未全部进入
+      Attempt；Workstation / Hub 的健康度、成本和数据边界动态路由仍待实现。Lite
+      当前继续使用确定性主模型与显式 fallback 顺序，不静默切换。
   - [ ] Run Completion、Verification 与业务 Outcome 分层；Event 能派生可回放
     Trajectory，但本阶段不建设完整 Evaluation UI。
   - [ ] `BudgetLease` 与现有 `ExecutionBudget`、Usage Scope、Capability lease

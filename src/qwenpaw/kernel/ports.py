@@ -46,10 +46,14 @@ from .models import (
     ExecutionCheckpoint,
     IdempotencyRecord,
     JsonObject,
+    ModelCallAttempt,
+    ModelCallRecord,
+    ModelCallResult,
     Plan,
     PlanStep,
     PromptFragment,
     Proposal,
+    RouteDecision,
     SensorContext,
     Run,
     SideEffectRecord,
@@ -1196,6 +1200,29 @@ class ContextManifestStore(Protocol):
         limit: int = 100,
     ) -> Sequence[ContextManifest]:
         """Return newest manifests for one ChatSpec identity."""
+
+
+@runtime_checkable
+class ModelCallStore(Protocol):
+    """Durable route and attempt evidence for actual provider calls."""
+
+    async def begin(
+        self,
+        route: RouteDecision,
+        attempt: ModelCallAttempt,
+    ) -> None:
+        """Persist route selection and attempt intent before dispatch."""
+
+    async def complete(self, result: ModelCallResult) -> None:
+        """Persist one immutable terminal outcome."""
+
+    async def list_for_conversation(
+        self,
+        conversation_id: str,
+        *,
+        limit: int = 100,
+    ) -> Sequence[ModelCallRecord]:
+        """Return newest provider attempts for one ChatSpec identity."""
 
 
 @runtime_checkable

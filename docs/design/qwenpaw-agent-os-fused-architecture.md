@@ -455,8 +455,11 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
 - 从现有事件派生统一的 `MODEL`、`ACTION`、`GUARDRAIL`、`COMPACTION`、
   `HITL`、`INTERRUPT` 与 `VERIFICATION` 语义观测；区分模型意图、策略决定、
   实际执行和 Runtime 独立证据。
-- 冻结 `ModelCallAttempt` / `RouteDecision`；Lite 对直连、重试和失败留证，
-  Workstation / Hub 再实现多模型路由与自动降级。
+- [x] 冻结 `ModelCallAttempt` / `RouteDecision` / `ModelCallResult` 和 Store Port；
+  Lite 已在真实 Provider 网络边界记录直连、同模型重试、跨模型 fallback、overflow
+  retry、流式成功/取消/失败和 usage，并提供 Chat-owned 只读查询。
+- [ ] Workstation / Hub 再实现按能力、健康、成本和数据边界的动态路由；Lite 当前
+  继续使用确定性主模型与显式 fallback 顺序，不冒充智能路由器。
 - 区分 Run Completion、Verification 与业务 Outcome，并预留 Trajectory 投影。
 - Task Workbench 继续后置；上述契约先在真实 Chat 中完成验证。
 

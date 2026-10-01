@@ -67,6 +67,7 @@ from ...kernel import (
     InteractionRequest,
     InteractionResolution,
     InteractionResponse,
+    ModelCallRecord,
     ConversationRuntimeProjection,
     ControlReceipt,
     QueueProjection,
@@ -82,6 +83,7 @@ from ...config.config import load_agent_config_async
 from ...kernel.models import ArtifactRenderDisposition
 from ...runtime.assembly import capability_registry_for
 from ...runtime.actions import lite_action_store, public_action_record
+from ...runtime.model_calls import lite_model_call_store
 from ...tasks.artifacts import (
     ArtifactIntegrityError,
     artifact_filename,
@@ -1353,6 +1355,29 @@ async def list_chat_actions(
         limit=limit,
     )
     return [public_action_record(record) for record in records]
+
+
+@router.get("/{chat_id}/model-calls", response_model=list[ModelCallRecord])
+async def list_chat_model_calls(
+    chat_id: str,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+) -> list[ModelCallRecord]:
+    """Return content-free provider attempts for one owned ChatSpec."""
+    chat_spec = await mgr.get_chat(chat_id)
+    if not chat_spec:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Chat not found: {chat_id}",
+        )
+    records = await lite_model_call_store(
+        Path(workspace.workspace_dir),
+    ).list_for_conversation(
+        chat_id,
+        limit=limit,
+    )
+    return list(records)
 
 
 @router.get("/{chat_id}/status", response_model=ChatStatusResponse)
