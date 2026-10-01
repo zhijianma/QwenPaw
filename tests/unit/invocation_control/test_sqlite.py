@@ -201,11 +201,18 @@ async def test_control_command_is_durable_and_replay_safe(
         agent_id="default",
         conversation_id="chat-1",
     )
+    history = await restarted.list_for_conversation(
+        agent_id="default",
+        conversation_id="chat-1",
+    )
 
     assert receipt.status is ControlCommandStatus.APPLIED
     assert receipt.revision == 2
     assert replay == receipt
     assert accepted == ()
+    assert len(history) == 1
+    assert history[0].command == command
+    assert history[0].receipt == receipt
     queue = await restarted.read_queue(
         agent_id="default",
         conversation_id="chat-1",

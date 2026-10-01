@@ -452,14 +452,16 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
   - [ ] 将 Harness Remote 和 Hub runner 适配到同一契约并提供
     `provider_attested` 证据；在这些 Adapter 完成前，不把 Provider 声明或枚举存在
     误报为平台已具备远端隔离能力。
-- 从现有事件派生统一的 `MODEL`、`ACTION`、`GUARDRAIL`、`COMPACTION`、
-  `HITL`、`INTERRUPT` 与 `VERIFICATION` 语义观测；区分模型意图、策略决定、
+- 从现有事件派生统一的 `MODEL`、`ACTION`、`CONTROL`、`GUARDRAIL`、
+  `COMPACTION`、`HITL`、`INTERRUPT` 与 `VERIFICATION` 语义观测；区分模型意图、策略决定、
   实际执行和 Runtime 独立证据。稳定 `RuntimeObservation` 只读契约以
   `INTENT/POLICY/EXECUTION/EVIDENCE` 表示责任边界，并通过 `source_type +
   source_id` 回指权威事实，不形成第二份事实库。Lite 已接入 Model Call 和 Action，
   Action Policy 单独派生 GUARDRAIL；统一 Interaction Request/Resolution 已接入 HITL，
-  且不复制 prompt、自由文本回答或结构化 values。其余类别按同一 Projection Port
-  增量接入。
+  且不复制 prompt、自由文本回答或结构化 values。Control Command/Receipt 通过独立
+  只读 History Port 派生 CONTROL 与 INTERRUPT，保留 revision 和 Steer safe point，
+  但不复制 instruction、idempotency key 或 receipt detail。其余类别按同一
+  Projection Port 增量接入。
 - [x] 冻结 `ModelCallAttempt` / `RouteDecision` / `ModelCallResult` 和 Store Port；
   Lite 已在真实 Provider 网络边界记录直连、同模型重试、跨模型 fallback、overflow
   retry、流式成功/取消/失败和 usage，并提供 Chat-owned 只读查询。Route 区分逻辑

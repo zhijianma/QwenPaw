@@ -770,8 +770,8 @@ Cron 不形成独立审批或产物事实源。
       Environment、Sandbox、Action 与 SDK 共 120 项定点测试通过。
     - [ ] Harness Remote、Workstation 与 Hub runner 仍需实现等价 Adapter、真实
       约束兑现和可验证 attestation；完成前父项保持未完成。
-  - [ ] 语义观测统一 `MODEL`、`ACTION`、`GUARDRAIL`、`COMPACTION`、
-    `HITL`、`INTERRUPT` 与 `VERIFICATION`；模型意图、策略判定、实际执行和
+  - [ ] 语义观测统一 `MODEL`、`ACTION`、`CONTROL`、`GUARDRAIL`、
+    `COMPACTION`、`HITL`、`INTERRUPT` 与 `VERIFICATION`；模型意图、策略判定、实际执行和
     Runtime 独立 Evidence 使用稳定因果 ID 关联，不把 Agent 自报结果当作事实。
     - [x] 冻结 `RuntimeObservation`、Category/Stage/Status、Source 和只读
       `ObservationProjectionPort`，并从权威 Model Call 与 Action Record 动态派生，
@@ -786,7 +786,13 @@ Cron 不形成独立审批或产物事实源。
       独立派生 GUARDRAIL policy，不与 Action 结果混写。固定
       Chat 真实查询共返回 89 条观察项：MODEL 11、ACTION 28、GUARDRAIL 14、HITL
       36；未复制 prompt、回答正文、values、用户 ID 或隐藏推理。
-    - [ ] 接入 COMPACTION、INTERRUPT 与 VERIFICATION 的权威
+    - [x] `ControlRecord` 冻结 command + latest receipt 查询契约，独立
+      `ControlHistoryPort` 不扩张运行控制 Port；Steer、Cancel 与 Reorder 派生
+      CONTROL，Interrupt Current 与 Stop and Clear 派生 INTERRUPT。投影保留目标、
+      revision、状态和 Steer safe point，不复制 instruction、idempotency key 或
+      receipt detail。固定 Chat 真实查询共返回 101 条观察项：MODEL 11、ACTION 28、
+      GUARDRAIL 14、HITL 36、CONTROL 8、INTERRUPT 4；精确递归检查未发现禁止字段。
+    - [ ] 接入 COMPACTION 与 VERIFICATION 的权威
       来源；完成跨来源 cursor/pagination，替代 Lite 当前每类最多 1000 条的有界扫描。
   - [ ] 完成 Model Call Plane 全部路由与成本能力：
     - [x] 冻结 `RouteDecision` / `ModelCallAttempt` / `ModelCallResult` / Store Port，

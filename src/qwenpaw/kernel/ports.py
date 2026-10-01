@@ -67,6 +67,7 @@ from .models import (
 from .invocation import InvocationScope
 from .invocation_control import (
     ControlCommand,
+    ControlRecord,
     ControlReceipt,
     QueueProjection,
     TurnSubmission,
@@ -173,6 +174,20 @@ class InvocationControlPort(Protocol):
         after_revision: int,
     ) -> AsyncIterator[QueueProjection]:
         """Replay and follow projections newer than one revision."""
+
+
+@runtime_checkable
+class ControlHistoryPort(Protocol):
+    """Optional read-only history surface over runtime control commands."""
+
+    async def list_for_conversation(
+        self,
+        *,
+        agent_id: str,
+        conversation_id: str,
+        limit: int = 100,
+    ) -> Sequence[ControlRecord]:
+        """List newest command requests with their latest receipts."""
 
 
 @runtime_checkable

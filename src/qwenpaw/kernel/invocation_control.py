@@ -319,6 +319,27 @@ class ControlReceipt(KernelModel):
         return self
 
 
+class ControlRecord(KernelModel):
+    """Queryable control request and its latest authoritative receipt."""
+
+    command: ControlCommand
+    receipt: ControlReceipt
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> "ControlRecord":
+        """Require the command and receipt to describe one mutation."""
+        if self.receipt.command_id != self.command.command_id:
+            raise ValueError("control receipt command identity mismatch")
+        if self.receipt.kind != self.command.kind:
+            raise ValueError("control receipt kind mismatch")
+        if (
+            self.receipt.agent_id != self.command.agent_id
+            or self.receipt.conversation_id != self.command.conversation_id
+        ):
+            raise ValueError("control receipt owner mismatch")
+        return self
+
+
 class QueueProjection(KernelModel):
     """Consistent server-side view of one conversation queue."""
 
@@ -402,6 +423,7 @@ __all__ = [
     "ControlCommand",
     "ControlCommandKind",
     "ControlCommandStatus",
+    "ControlRecord",
     "ControlReceipt",
     "ConversationRuntimeProjection",
     "InvalidSubmissionTransition",

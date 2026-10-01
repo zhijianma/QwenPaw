@@ -13,6 +13,11 @@ from qwenpaw.kernel import (
     ActionStatus,
     ActorRef,
     ActorType,
+    ControlCommand,
+    ControlCommandKind,
+    ControlCommandStatus,
+    ControlReceipt,
+    ControlRecord,
     InteractionKind,
     InteractionMode,
     InteractionOption,
@@ -22,8 +27,10 @@ from qwenpaw.kernel import (
     ModelCallResult,
     ModelCallStatus,
     ModelRouteReason,
+    ObservationCategory,
     ObservationStage,
     ObservationStatus,
+    SteerSafePoint,
     ToolEffect,
     RouteDecision,
 )
@@ -224,3 +231,101 @@ async def test_interaction_projects_hitl_without_response_content(
     assert "structured answer" not in serialized
     assert "private-user" not in serialized
     assert "Private label" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_control_projects_safe_audit_without_instruction_content(
+    tmp_path,
+) -> None:
+    conversation_id = "chat-control"
+    invocation_id = uuid4()
+    requested_at = datetime.now(timezone.utc)
+    steer = ControlCommand(
+        kind=ControlCommandKind.STEER,
+        agent_id="default",
+        conversation_id=conversation_id,
+        idempotency_key="PRIVATE IDEMPOTENCY KEY",
+        expected_revision=3,
+        target_invocation_id=invocation_id,
+        instruction="PRIVATE STEER CONTENT",
+        requested_at=requested_at,
+    )
+    steer_receipt = ControlReceipt(
+        command_id=steer.command_id,
+        kind=steer.kind,
+        status=ControlCommandStatus.APPLIED,
+        agent_id=steer.agent_id,
+        conversation_id=steer.conversation_id,
+        revision=4,
+        detail="PRIVATE RECEIPT DETAIL",
+        applied_at_safe_point=SteerSafePoint.BEFORE_TOOL_BATCH,
+        recorded_at=requested_at + timedelta(seconds=1),
+    )
+    interrupt = ControlCommand(
+        kind=ControlCommandKind.INTERRUPT_CURRENT,
+        agent_id="default",
+        conversation_id=conversation_id,
+        idempotency_key="interrupt-private",
+        expected_revision=4,
+        target_invocation_id=invocation_id,
+        requested_at=requested_at + timedelta(seconds=2),
+    )
+    interrupt_receipt = ControlReceipt(
+        command_id=interrupt.command_id,
+        kind=interrupt.kind,
+        status=ControlCommandStatus.ACCEPTED,
+        agent_id=interrupt.agent_id,
+        conversation_id=interrupt.conversation_id,
+        revision=5,
+        detail="PRIVATE INTERRUPT DETAIL",
+        recorded_at=requested_at + timedelta(seconds=3),
+    )
+
+    class History:
+        async def list_for_conversation(self, **_kwargs):
+            return (
+                ControlRecord(command=steer, receipt=steer_receipt),
+                ControlRecord(
+                    command=interrupt,
+                    receipt=interrupt_receipt,
+                ),
+            )
+
+    observations = await lite_observation_projection(
+        tmp_path,
+        agent_id="default",
+        controls=History(),
+    ).list_for_conversation(conversation_id)
+
+    assert len(observations) == 4
+    assert {item.category for item in observations} == {
+        ObservationCategory.CONTROL,
+        ObservationCategory.INTERRUPT,
+    }
+    steer_evidence = next(
+        item
+        for item in observations
+        if item.category is ObservationCategory.CONTROL
+        and item.stage is ObservationStage.EVIDENCE
+    )
+    interrupt_evidence = next(
+        item
+        for item in observations
+        if item.category is ObservationCategory.INTERRUPT
+        and item.stage is ObservationStage.EVIDENCE
+    )
+    assert steer_evidence.status is ObservationStatus.APPLIED
+    assert steer_evidence.facts["applied_at_safe_point"] == "before_tool_batch"
+    assert interrupt_evidence.status is ObservationStatus.ACCEPTED
+    intent = next(
+        item
+        for item in observations
+        if item.category is ObservationCategory.CONTROL
+        and item.stage is ObservationStage.INTENT
+    )
+    assert intent.facts["has_instruction"] is True
+    serialized = "".join(item.model_dump_json() for item in observations)
+    assert "PRIVATE STEER CONTENT" not in serialized
+    assert "PRIVATE RECEIPT DETAIL" not in serialized
+    assert "PRIVATE INTERRUPT DETAIL" not in serialized
+    assert "PRIVATE IDEMPOTENCY KEY" not in serialized

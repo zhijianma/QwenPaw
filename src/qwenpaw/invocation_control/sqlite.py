@@ -17,6 +17,7 @@ from ..kernel import (
     ControlCommand,
     ControlCommandKind,
     ControlCommandStatus,
+    ControlRecord,
     ControlReceipt,
     QueueProjection,
     SteerSafePoint,
@@ -1258,6 +1259,51 @@ class SQLiteInvocationControl:
             self._list_accepted_sync,
             agent_id,
             conversation_id,
+        )
+
+    async def list_for_conversation(
+        self,
+        *,
+        agent_id: str,
+        conversation_id: str,
+        limit: int = 100,
+    ) -> tuple[ControlRecord, ...]:
+        """List newest control commands with their latest receipts."""
+        if not agent_id.strip() or not conversation_id.strip():
+            raise ValueError("control owner cannot be empty")
+        if limit < 1 or limit > 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        await self.initialize()
+        return await asyncio.to_thread(
+            self._list_for_conversation_sync,
+            agent_id,
+            conversation_id,
+            limit,
+        )
+
+    def _list_for_conversation_sync(
+        self,
+        agent_id: str,
+        conversation_id: str,
+        limit: int,
+    ) -> tuple[ControlRecord, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT model_json, receipt_json FROM control_commands "
+                "WHERE agent_id = ? AND conversation_id = ? "
+                "ORDER BY updated_at DESC, command_id DESC LIMIT ?",
+                (agent_id, conversation_id, limit),
+            ).fetchall()
+        return tuple(
+            ControlRecord(
+                command=ControlCommand.model_validate_json(
+                    row["model_json"],
+                ),
+                receipt=ControlReceipt.model_validate_json(
+                    row["receipt_json"],
+                ),
+            )
+            for row in rows
         )
 
     def _lookup_control_sync(

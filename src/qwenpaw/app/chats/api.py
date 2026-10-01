@@ -1403,6 +1403,7 @@ async def list_chat_observations(
         Path(workspace.workspace_dir),
         agent_id=workspace.agent_id,
         interactions=workspace.interaction_service,
+        controls=workspace.invocation_control,
     ).list_for_conversation(
         chat_id,
         limit=limit,

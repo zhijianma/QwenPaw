@@ -12,6 +12,10 @@ from ..kernel import (
     ActionRecord,
     ActionStatus,
     ActionStore,
+    ControlCommandKind,
+    ControlCommandStatus,
+    ControlHistoryPort,
+    ControlRecord,
     InteractionHistoryPort,
     InteractionRecord,
     InteractionStatus,
@@ -64,6 +68,26 @@ def _interaction_status(status: InteractionStatus) -> ObservationStatus:
         InteractionStatus.EXPIRED: ObservationStatus.EXPIRED,
         InteractionStatus.CANCELLED: ObservationStatus.CANCELLED,
     }[status]
+
+
+def _control_status(status: ControlCommandStatus) -> ObservationStatus:
+    return {
+        ControlCommandStatus.ACCEPTED: ObservationStatus.ACCEPTED,
+        ControlCommandStatus.APPLIED: ObservationStatus.APPLIED,
+        ControlCommandStatus.REJECTED: ObservationStatus.REJECTED,
+        ControlCommandStatus.CONFLICT: ObservationStatus.CONFLICT,
+    }[status]
+
+
+def _control_category(
+    kind: ControlCommandKind,
+) -> ObservationCategory:
+    if kind in {
+        ControlCommandKind.INTERRUPT_CURRENT,
+        ControlCommandKind.STOP_AND_CLEAR,
+    }:
+        return ObservationCategory.INTERRUPT
+    return ObservationCategory.CONTROL
 
 
 def _model_observations(
@@ -361,7 +385,86 @@ def _interaction_observations(
     return opened, resolved
 
 
+def _control_observations(
+    record: ControlRecord,
+) -> tuple[RuntimeObservation, ...]:
+    command = record.command
+    receipt = record.receipt
+    common = {
+        "category": _control_category(command.kind),
+        "conversation_id": command.conversation_id,
+        "invocation_id": command.target_invocation_id,
+        "correlation_id": None,
+        "registry_generation": None,
+    }
+    requested = RuntimeObservation(
+        observation_id=_observation_id(
+            command.command_id,
+            ObservationStage.INTENT,
+        ),
+        stage=ObservationStage.INTENT,
+        status=ObservationStatus.RECORDED,
+        source=ObservationSource(
+            source_type="qwenpaw.control.command",
+            source_id=str(command.command_id),
+        ),
+        title="Runtime control requested",
+        facts={
+            "command_id": str(command.command_id),
+            "kind": command.kind.value,
+            "expected_revision": command.expected_revision,
+            "target_submission_id": _optional_uuid(
+                command.target_submission_id,
+            ),
+            "target_invocation_id": _optional_uuid(
+                command.target_invocation_id,
+            ),
+            "has_instruction": command.instruction is not None,
+            "ordered_submission_ids": [
+                str(submission_id)
+                for submission_id in command.ordered_submission_ids
+            ],
+            "ordered_submission_count": len(
+                command.ordered_submission_ids,
+            ),
+        },
+        occurred_at=command.requested_at,
+        **common,
+    )
+    resolved = RuntimeObservation(
+        observation_id=_observation_id(
+            command.command_id,
+            ObservationStage.EVIDENCE,
+        ),
+        stage=ObservationStage.EVIDENCE,
+        status=_control_status(receipt.status),
+        source=ObservationSource(
+            source_type="qwenpaw.control.receipt",
+            source_id=str(receipt.receipt_id),
+        ),
+        title="Runtime control resolved",
+        facts={
+            "command_id": str(command.command_id),
+            "kind": command.kind.value,
+            "revision": receipt.revision,
+            "applied_at_safe_point": (
+                receipt.applied_at_safe_point.value
+                if receipt.applied_at_safe_point is not None
+                else None
+            ),
+            "has_detail": bool(receipt.detail),
+        },
+        occurred_at=receipt.recorded_at,
+        **common,
+    )
+    return requested, resolved
+
+
 async def _empty_interactions() -> Sequence[InteractionRecord]:
+    return ()
+
+
+async def _empty_controls() -> Sequence[ControlRecord]:
     return ()
 
 
@@ -375,11 +478,13 @@ class LiteObservationProjection(ObservationProjectionPort):
         *,
         agent_id: str | None = None,
         interactions: InteractionHistoryPort | None = None,
+        controls: ControlHistoryPort | None = None,
     ) -> None:
         self._model_calls = model_calls
         self._actions = actions
         self._agent_id = agent_id
         self._interactions = interactions
+        self._controls = controls
 
     async def list_for_conversation(
         self,
@@ -392,7 +497,6 @@ class LiteObservationProjection(ObservationProjectionPort):
             raise ValueError("conversation_id cannot be empty")
         if limit < 1 or limit > 1000:
             raise ValueError("limit must be between 1 and 1000")
-        interaction_records = None
         if self._interactions is not None:
             if self._agent_id is None:
                 raise ValueError("interaction projection requires agent_id")
@@ -401,18 +505,34 @@ class LiteObservationProjection(ObservationProjectionPort):
                 conversation_id=conversation_id,
                 limit=_SOURCE_SCAN_LIMIT,
             )
-        model_records, action_records, resolved_interactions = (
-            await asyncio.gather(
-                self._model_calls.list_for_conversation(
-                    conversation_id,
-                    limit=_SOURCE_SCAN_LIMIT,
-                ),
-                self._actions.list_for_conversation(
-                    conversation_id,
-                    limit=_SOURCE_SCAN_LIMIT,
-                ),
-                interaction_records or _empty_interactions(),
+        else:
+            interaction_records = _empty_interactions()
+        if self._controls is not None:
+            if self._agent_id is None:
+                raise ValueError("control projection requires agent_id")
+            control_records = self._controls.list_for_conversation(
+                agent_id=self._agent_id,
+                conversation_id=conversation_id,
+                limit=_SOURCE_SCAN_LIMIT,
             )
+        else:
+            control_records = _empty_controls()
+        (
+            model_records,
+            action_records,
+            resolved_interactions,
+            resolved_controls,
+        ) = await asyncio.gather(
+            self._model_calls.list_for_conversation(
+                conversation_id,
+                limit=_SOURCE_SCAN_LIMIT,
+            ),
+            self._actions.list_for_conversation(
+                conversation_id,
+                limit=_SOURCE_SCAN_LIMIT,
+            ),
+            interaction_records,
+            control_records,
         )
         observations = [
             observation
@@ -429,6 +549,11 @@ class LiteObservationProjection(ObservationProjectionPort):
             for record in resolved_interactions
             for observation in _interaction_observations(record)
         )
+        observations.extend(
+            observation
+            for record in resolved_controls
+            for observation in _control_observations(record)
+        )
         observations.sort(
             key=lambda item: (item.occurred_at, str(item.observation_id)),
             reverse=True,
@@ -441,6 +566,7 @@ def lite_observation_projection(
     *,
     agent_id: str | None = None,
     interactions: InteractionHistoryPort | None = None,
+    controls: ControlHistoryPort | None = None,
 ) -> LiteObservationProjection:
     """Return the Lite semantic projection over workspace source facts."""
     return LiteObservationProjection(
@@ -448,6 +574,7 @@ def lite_observation_projection(
         lite_action_store(workspace_dir),
         agent_id=agent_id,
         interactions=interactions,
+        controls=controls,
     )
 
 

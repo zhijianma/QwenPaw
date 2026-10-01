@@ -21,6 +21,7 @@ class ObservationCategory(str, Enum):
 
     MODEL = "model"
     ACTION = "action"
+    CONTROL = "control"
     GUARDRAIL = "guardrail"
     COMPACTION = "compaction"
     HITL = "hitl"
@@ -50,6 +51,10 @@ class ObservationStatus(str, Enum):
     UNKNOWN = "unknown"
     CANCELLED = "cancelled"
     DENIED = "denied"
+    ACCEPTED = "accepted"
+    APPLIED = "applied"
+    REJECTED = "rejected"
+    CONFLICT = "conflict"
     RESOLVED = "resolved"
     EXPIRED = "expired"
     BLOCKED = "blocked"

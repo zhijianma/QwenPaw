@@ -330,8 +330,8 @@ Lite 先做本地 Registry 与关键词发现，不引入 Nacos、向量数据�
 
 当前 QwenPaw 已有 AgentScope 流事件、Task 因果事件、Operational Event 和
 Langfuse Tool Span，但它们还不是一套跨 Harness 可比较的语义观测契约。应统一
-最小语义类别：`MODEL`、`ACTION`、`GUARDRAIL`、`COMPACTION`、`HITL`、
-`INTERRUPT`、`VERIFICATION`，并明确：
+最小语义类别：`MODEL`、`ACTION`、`CONTROL`、`GUARDRAIL`、`COMPACTION`、
+`HITL`、`INTERRUPT`、`VERIFICATION`，并明确：
 
 - 模型生成 Action 意图与系统实际执行是两个事件；
 - Approval 的等待时间不计入 Action 执行耗时；
@@ -342,6 +342,9 @@ Langfuse Tool Span，但它们还不是一套跨 Harness 可比较的语义观�
 
 Lite 不新建重型 Observability 服务，先从现有 Event / Context Manifest /
 Action Result 派生语义投影；Workstation / Hub 再接 OTEL、集中审计和成本归因。
+运行控制使用同一原则：Control Command/Receipt 是权威事实，Steer、Cancel 与
+Reorder 派生 CONTROL，Interrupt Current 与 Stop and Clear 派生 INTERRUPT；
+指令和回执正文不进入观察 API，只公开存在性、状态、revision 与安全点。
 
 ### A9. Model Call Plane 与显式 Route Decision
 

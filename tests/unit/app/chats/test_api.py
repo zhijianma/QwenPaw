@@ -18,12 +18,17 @@ from qwenpaw.app.chats.api import (
     list_chats,
 )
 from qwenpaw.app.chats.models import ChatHistory, ChatSpec
+from qwenpaw.invocation_control import (
+    InvocationControlService,
+    SQLiteInvocationControl,
+)
 from qwenpaw.kernel import (
     ActionKind,
     ActionRequest,
     ModelCallAttempt,
     ModelRouteReason,
     RouteDecision,
+    TurnSubmissionRequest,
 )
 from qwenpaw.runtime.actions import lite_action_store
 from qwenpaw.runtime.model_calls import lite_model_call_store
@@ -312,6 +317,24 @@ async def test_list_chat_observations_uses_owned_projection(tmp_path):
         model_id="model-a",
     )
     await lite_model_call_store(tmp_path).begin(route, attempt)
+    control_store = SQLiteInvocationControl(tmp_path / "control.sqlite3")
+    control_service = InvocationControlService(store=control_store)
+    submitted = await control_store.submit(
+        TurnSubmissionRequest(
+            agent_id="default",
+            conversation_id=chat_id,
+            content="queued content",
+            idempotency_key="queued-turn",
+        ),
+        expected_revision=0,
+    )
+    assert submitted.submission_id is not None
+    await control_service.cancel_queued(
+        agent_id="default",
+        conversation_id=chat_id,
+        submission_id=submitted.submission_id,
+        idempotency_key="cancel-turn",
+    )
 
     observations = await list_chat_observations(
         chat_id=chat_id,
@@ -321,16 +344,21 @@ async def test_list_chat_observations_uses_owned_projection(tmp_path):
             workspace_dir=tmp_path,
             agent_id="default",
             interaction_service=None,
+            invocation_control=control_service,
         ),
     )
 
     assert {item.stage.value for item in observations} == {
+        "intent",
         "policy",
         "execution",
+        "evidence",
     }
     assert {item.source.source_type for item in observations} == {
         "qwenpaw.model.route-decision",
         "qwenpaw.model.attempt",
+        "qwenpaw.control.command",
+        "qwenpaw.control.receipt",
     }
     manager.get_chat.assert_awaited_once_with(chat_id)
 
@@ -348,6 +376,7 @@ async def test_list_chat_observations_rejects_unknown_chat(tmp_path):
                 workspace_dir=tmp_path,
                 agent_id="default",
                 interaction_service=None,
+                invocation_control=None,
             ),
         )
 

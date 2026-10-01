@@ -15,6 +15,7 @@ from ..kernel import (
     ControlCommandKind,
     ControlCommandStatus,
     ControlReceipt,
+    ControlRecord,
     SteerSafePoint,
     QueueProjection,
     SubmissionStatus,
@@ -168,6 +169,22 @@ class InvocationControlService:  # pylint: disable=too-many-public-methods
             return ()
         return await self.store.recover_orphaned_submissions(
             agent_id=agent_id,
+        )
+
+    async def list_for_conversation(
+        self,
+        *,
+        agent_id: str,
+        conversation_id: str,
+        limit: int = 100,
+    ) -> tuple[ControlRecord, ...]:
+        """List durable control history without exposing the SQLite store."""
+        if self.store is None:
+            return ()
+        return await self.store.list_for_conversation(
+            agent_id=agent_id,
+            conversation_id=conversation_id,
+            limit=limit,
         )
 
     async def bind_interrupt(

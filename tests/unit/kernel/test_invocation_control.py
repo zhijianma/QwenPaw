@@ -9,6 +9,9 @@ import pytest
 from qwenpaw.kernel import (
     ControlCommand,
     ControlCommandKind,
+    ControlCommandStatus,
+    ControlReceipt,
+    ControlRecord,
     InvalidSubmissionTransition,
     QueueProjection,
     SteerSafePoint,
@@ -207,8 +210,6 @@ def test_stop_and_clear_accepts_only_captured_invocation_target() -> None:
 
 
 def test_only_applied_steer_receipt_can_record_safe_point() -> None:
-    from qwenpaw.kernel import ControlCommandStatus, ControlReceipt
-
     command_id = uuid4()
     receipt = ControlReceipt(
         command_id=command_id,
@@ -232,3 +233,25 @@ def test_only_applied_steer_receipt_can_record_safe_point() -> None:
             revision=5,
             applied_at_safe_point=SteerSafePoint.AFTER_TOOL_BATCH,
         )
+
+
+def test_control_record_rejects_mismatched_receipt() -> None:
+    command = ControlCommand(
+        kind=ControlCommandKind.INTERRUPT_CURRENT,
+        agent_id="default",
+        conversation_id="chat-1",
+        idempotency_key="interrupt-record",
+        expected_revision=3,
+        target_invocation_id=uuid4(),
+    )
+    receipt = ControlReceipt(
+        command_id=uuid4(),
+        kind=command.kind,
+        status=ControlCommandStatus.APPLIED,
+        agent_id=command.agent_id,
+        conversation_id=command.conversation_id,
+        revision=4,
+    )
+
+    with pytest.raises(ValidationError, match="command identity mismatch"):
+        ControlRecord(command=command, receipt=receipt)

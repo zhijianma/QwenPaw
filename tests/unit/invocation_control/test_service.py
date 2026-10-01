@@ -18,6 +18,7 @@ from qwenpaw.kernel import (
     ControlCommand,
     ControlCommandKind,
     ControlCommandStatus,
+    ControlHistoryPort,
     SteerSafePoint,
     SubmissionStatus,
     TurnSubmissionRequest,
@@ -162,11 +163,19 @@ async def test_durable_dispatch_resolves_only_after_safe_point(
     command = _steer(invocation_id, expected_revision=3)
 
     accepted = await service.accept_control(command)
+    history = await service.list_for_conversation(
+        agent_id="default",
+        conversation_id="chat-1",
+    )
     pending = await store.list_accepted_commands(
         agent_id="default",
         conversation_id="chat-1",
     )
     assert accepted.status is ControlCommandStatus.ACCEPTED
+    assert isinstance(service, ControlHistoryPort)
+    assert len(history) == 1
+    assert history[0].command == command
+    assert history[0].receipt == accepted
     assert pending == (command,)
 
     async def inject(_delivery, _safe_point):
