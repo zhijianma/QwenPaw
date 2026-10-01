@@ -6,7 +6,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
-from agentscope.message import Msg
+from agentscope.message import Msg, TextBlock, ToolResultBlock
+
+from qwenpaw.kernel import ArtifactRef, EvidenceRef
+from qwenpaw.runtime.tool_artifacts import TOOL_ARTIFACT_LINKS_KEY
 
 from qwenpaw.app.chats.utils import (
     _abspath_from_url,
@@ -23,6 +26,55 @@ from qwenpaw.constant import (
     SCROLL_MEMORY_MESSAGE_TAG,
     SYNTHETIC_USER_MESSAGE_TAGS,
 )
+
+
+def test_tool_result_exposes_canonical_artifact_links() -> None:
+    artifact = ArtifactRef(
+        kind="chat.file",
+        uri=f"qwenpaw-artifact://sha256/{'0' * 64}",
+        media_type="text/markdown",
+        content_hash=f"sha256:{'0' * 64}",
+        size_bytes=4,
+        metadata={"name": "report.md"},
+    )
+    evidence = EvidenceRef(
+        artifact_id=artifact.artifact_id,
+        claim="Generated report",
+        producer="example.tool",
+    )
+    msg = Msg(
+        name="assistant",
+        role="assistant",
+        content=[
+            ToolResultBlock(
+                id="call-1",
+                name="plugin_export",
+                output=[TextBlock(text="done")],
+                state="success",
+                metadata={
+                    TOOL_ARTIFACT_LINKS_KEY: [
+                        {
+                            "chat_id": "chat-1",
+                            "artifact_ref": artifact.model_dump(mode="json"),
+                            "evidence_ref": evidence.model_dump(mode="json"),
+                            "artifact_receipt": "receipt-1",
+                        },
+                    ],
+                },
+            ),
+        ],
+    )
+
+    [message] = agentscope_msg_to_message(msg)
+
+    assert message.artifact_refs == [artifact]
+    assert message.evidence_refs == [evidence]
+    assert message.content[0].data["artifact_links"][0] == {
+        "chat_id": "chat-1",
+        "artifact_ref": artifact.model_dump(mode="json"),
+        "evidence_ref": evidence.model_dump(mode="json"),
+        "artifact_receipt": "receipt-1",
+    }
 
 
 # ---------------------------------------------------------------------------

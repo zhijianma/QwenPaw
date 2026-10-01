@@ -108,6 +108,8 @@ from ...kernel.models import (
     RuntimeContext,
     RuntimeLaunchConfig,
     TaskOrder,
+    ToolArtifactOutput,
+    TOOL_ARTIFACT_OUTPUTS_METADATA_KEY,
     ToolDefinition,
     ToolSelection,
 )
@@ -290,6 +292,8 @@ __all__ = [
     "TaskOrder",
     "TaskPlanner",
     "TaskRunner",
+    "ToolArtifactOutput",
+    "TOOL_ARTIFACT_OUTPUTS_METADATA_KEY",
     "ToolHost",
     "ToolDefinition",
     "ToolProvider",

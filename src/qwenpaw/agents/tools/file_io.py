@@ -21,6 +21,10 @@ from ...config.context import (
     get_tool_base_dir,
 )
 from ...runtime.tool_registry import tool_descriptor
+from ...runtime.tool_artifacts import (
+    TOOL_ARTIFACT_OUTPUTS_KEY,
+    tool_artifact_output,
+)
 from ...utils.io_utils import (
     append_text_async,
     get_path_lock,
@@ -335,6 +339,16 @@ async def write_file(
         return ToolChunk(
             is_last=True,
             state=ToolResultState.SUCCESS,
+            metadata={
+                TOOL_ARTIFACT_OUTPUTS_KEY: [
+                    tool_artifact_output(
+                        path_parameter="file_path",
+                        kind="chat.file",
+                        evidence_claim="File written by write_file",
+                        media_type="text/plain",
+                    ),
+                ],
+            },
             content=[
                 TextBlock(
                     type="text",
@@ -477,6 +491,16 @@ async def edit_file(
     return ToolChunk(
         is_last=True,
         state=ToolResultState.SUCCESS,
+        metadata={
+            TOOL_ARTIFACT_OUTPUTS_KEY: [
+                tool_artifact_output(
+                    path_parameter="file_path",
+                    kind="chat.file",
+                    evidence_claim="File updated by edit_file",
+                    media_type="text/plain",
+                ),
+            ],
+        },
         content=[
             TextBlock(
                 type="text",
@@ -535,6 +559,16 @@ async def append_file(
         return ToolChunk(
             is_last=True,
             state=ToolResultState.SUCCESS,
+            metadata={
+                TOOL_ARTIFACT_OUTPUTS_KEY: [
+                    tool_artifact_output(
+                        path_parameter="file_path",
+                        kind="chat.file",
+                        evidence_claim="File updated by append_file",
+                        media_type="text/plain",
+                    ),
+                ],
+            },
             content=[
                 TextBlock(
                     type="text",

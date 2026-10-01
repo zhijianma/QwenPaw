@@ -34,6 +34,7 @@ NamespacedId = Annotated[
     ),
 ]
 JsonObject = dict[str, JsonValue]
+TOOL_ARTIFACT_OUTPUTS_METADATA_KEY = "qwenpaw_artifact_outputs"
 
 
 def utc_now() -> datetime:
@@ -110,6 +111,24 @@ class ToolEffect(str, Enum):
     LOCAL_WRITE = "local_write"
     EXTERNAL_WRITE = "external_write"
     PROCESS = "process"
+
+
+class ToolArtifactOutput(KernelModel):
+    """Host-captured artifact declared by one successful tool result.
+
+    ``path_parameter`` names an already-governed tool input instead of
+    accepting a new path from result metadata. The host resolves and reads
+    that value only after the tool succeeds, then replaces this declaration
+    with canonical Artifact/Evidence references.
+    """
+
+    path_parameter: NonEmptyStr
+    kind: NamespacedId
+    evidence_claim: NonEmptyStr
+    media_type: NonEmptyStr | None = None
+    name: NonEmptyStr | None = None
+    path_normalization: Literal["native", "url"] = "native"
+    metadata: JsonObject = Field(default_factory=dict)
 
 
 class SideEffectStatus(str, Enum):

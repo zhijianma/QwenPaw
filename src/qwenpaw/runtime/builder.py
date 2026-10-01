@@ -416,6 +416,7 @@ class AgentBuilder:
                     )
                 owners[tool_name] = provider_id
                 tools.append(tool)
+        request_context["_tool_provider_owners"] = dict(owners)
         return tools
 
     @staticmethod

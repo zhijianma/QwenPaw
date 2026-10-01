@@ -189,6 +189,38 @@ function hasDeliveredFile(output: unknown): boolean {
   return output.some((block) => record(block)?.type === "data");
 }
 
+function appendCanonicalArtifacts(
+  artifacts: Map<string, ResponseArtifact>,
+  resultData: Record<string, unknown>,
+  toolName: string,
+): boolean {
+  const links = resultData.artifact_links;
+  if (!Array.isArray(links)) return false;
+  let appended = false;
+  for (const rawLink of links) {
+    const link = record(rawLink);
+    const artifact = record(link?.artifact_ref);
+    const metadata = record(artifact?.metadata) ?? {};
+    const chatId = link ? firstString(link, ["chat_id"]) : "";
+    const artifactId = artifact ? firstString(artifact, ["artifact_id"]) : "";
+    if (!chatId || !artifactId) continue;
+    const name = firstString(metadata, ["name"]) || `artifact-${artifactId}`;
+    artifacts.set(`artifact:${artifactId}`, {
+      id: `artifact:${artifactId}`,
+      name,
+      path: name,
+      target: {
+        source: "attachment",
+        path: name,
+        artifactUrl: chatApi.artifactContentUrl(chatId, artifactId),
+      },
+      toolName,
+    });
+    appended = true;
+  }
+  return appended;
+}
+
 function extractResponseArtifacts(messages: unknown): ResponseArtifact[] {
   const artifacts = new Map<string, ResponseArtifact>();
   for (const value of mergeArtifactToolMessages(messages)) {
@@ -216,6 +248,10 @@ function extractResponseArtifacts(messages: unknown): ResponseArtifact[] {
     const toolName =
       firstString(callData, ["name"]) || firstString(item, ["name"]);
     const normalized = normalizedToolName(toolName);
+
+    if (appendCanonicalArtifacts(artifacts, resultData, toolName)) {
+      continue;
+    }
 
     if (normalized === SEND_FILE_TOOL) {
       if (!hasDeliveredFile(resultData.output)) continue;

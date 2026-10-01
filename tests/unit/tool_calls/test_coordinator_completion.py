@@ -336,6 +336,117 @@ async def test_after_hook_transforms_final_response_and_blocks_caller():
 
 
 @pytest.mark.asyncio
+async def test_result_processor_commits_after_tool_and_before_return():
+    coordinator = ToolCoordinator()
+    tool_call = _ToolCall(name="artifact_tool")
+
+    async def next_handler(
+        tool_call: _ToolCall,
+    ) -> AsyncGenerator[Any, None]:
+        yield _text_response(tool_call.id, "done")
+
+    async def result_processor(
+        response: ToolResponse,
+        context: ToolCallContext,
+    ) -> ToolResponse:
+        assert context.extra["tool_input"] == {"path": "result.md"}
+        response.metadata["artifact_committed"] = True
+        return response
+
+    tool_call.input = {"path": "result.md"}
+    events = await _collect(
+        coordinator.execute(
+            tool_call=tool_call,
+            next_handler=next_handler,
+            session_id="session-1",
+            agent_id="agent-1",
+            root_session_id="root-1",
+            result_processor=result_processor,
+        ),
+    )
+
+    assert events[-1].metadata["artifact_committed"] is True
+
+
+@pytest.mark.asyncio
+async def test_result_processor_receives_agentscope_json_tool_input():
+    coordinator = ToolCoordinator()
+    tool_call = _ToolCall(name="artifact_tool")
+    tool_call.input = '{"path":"result.md","overwrite":true}'
+
+    async def next_handler(
+        tool_call: _ToolCall,
+    ) -> AsyncGenerator[Any, None]:
+        yield _text_response(tool_call.id, "done")
+
+    async def result_processor(
+        response: ToolResponse,
+        context: ToolCallContext,
+    ) -> ToolResponse:
+        assert context.extra["tool_input"] == {
+            "path": "result.md",
+            "overwrite": True,
+        }
+        response.metadata["artifact_committed"] = True
+        return response
+
+    events = await _collect(
+        coordinator.execute(
+            tool_call=tool_call,
+            next_handler=next_handler,
+            session_id="session-1",
+            agent_id="agent-1",
+            root_session_id="root-1",
+            result_processor=result_processor,
+        ),
+    )
+
+    assert events[-1].metadata["artifact_committed"] is True
+
+
+@pytest.mark.asyncio
+async def test_result_processor_also_commits_offloaded_completion():
+    coordinator = ToolCoordinator(
+        default_timeout_secs=0.01,
+        offload_on_deadline=True,
+    )
+    tool_call = _ToolCall(name="background_artifact_tool")
+
+    async def next_handler(
+        tool_call: _ToolCall,
+    ) -> AsyncGenerator[Any, None]:
+        await asyncio.sleep(0.03)
+        yield _text_response(tool_call.id, "done")
+
+    async def result_processor(
+        response: ToolResponse,
+        context: ToolCallContext,
+    ) -> ToolResponse:
+        response.metadata["artifact_committed"] = context.tool_call_id
+        return response
+
+    events = await _collect(
+        coordinator.execute(
+            tool_call=tool_call,
+            next_handler=next_handler,
+            session_id="session-1",
+            agent_id="agent-1",
+            root_session_id="root-1",
+            result_processor=result_processor,
+        ),
+    )
+    assert events[-1].metadata["offloaded"] is True
+
+    await asyncio.wait_for(
+        _wait_for_hint(coordinator, "session-1"),
+        timeout=1,
+    )
+    entry = coordinator.get(tool_call.id)
+    assert entry is not None
+    assert entry.final_response.metadata["artifact_committed"] == tool_call.id
+
+
+@pytest.mark.asyncio
 async def test_middleware_caller_observes_coordinator_response():
     coordinator = ToolCoordinator()
     usage_meter = _ConcurrencyMeter()

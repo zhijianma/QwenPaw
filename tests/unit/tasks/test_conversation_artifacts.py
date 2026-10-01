@@ -131,6 +131,35 @@ async def test_receipt_allows_read_only_fork_lineage(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_host_generated_receipt_is_owned_at_creation(tmp_path) -> None:
+    store = conversation_artifact_receipts(tmp_path)
+    artifact = _artifact()
+    evidence = EvidenceRef(
+        artifact_id=artifact.artifact_id,
+        claim="Generated output",
+        producer="test",
+    )
+
+    receipt_id = await store.create_owned(
+        artifact,
+        evidence,
+        chat_id="chat-a",
+    )
+
+    assert await store.resolve(
+        receipt_id=receipt_id,
+        chat_id="chat-a",
+        artifact_id=artifact.artifact_id,
+    ) == (artifact, evidence)
+    with pytest.raises(ConversationArtifactOwnershipError):
+        await store.resolve(
+            receipt_id=receipt_id,
+            chat_id="chat-b",
+            artifact_id=artifact.artifact_id,
+        )
+
+
+@pytest.mark.asyncio
 async def test_console_claim_canonicalizes_and_rejects_partial_link(
     tmp_path,
 ) -> None:

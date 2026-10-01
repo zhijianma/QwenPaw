@@ -912,3 +912,13 @@ Harness 的定点契约测试已验证“创建超时 = 等待超时 = durable
 `expires_at`”，以及 Task/Interaction 双桥 fail-closed。真实
 `tool_safety=True` Cron 复验在 90 秒内停留于模型生成阶段，未产生
 Tool Call，因此不将该次运行记为真实 Approval E2E 通过。
+
+2026-10-01 完成 Chat 工具输出的宿主 Artifact/Evidence 捕获。工具只声明受
+Tool Guard 治理过的路径参数，Tool Coordinator 在成功结果之后读取固定输入，
+生成内容寻址 `ArtifactRef`、`EvidenceRef` 和 Chat-owned opaque receipt；历史
+恢复与 Console 成果卡只消费 canonical 引用。真实 Chat
+`1ee31988-b37a-48b9-b6ce-423c52f6a3a9` 通过 `write_file` 生成 Artifact
+`f570158f-8658-4e1c-ad76-f1eecc09f690`，固定 registry generation 11；内容端点
+返回 200、`text/plain`、23 字节，响应 SHA-256 与 Artifact 引用一致，并携带
+`nosniff`、sandbox CSP 和 renderer generation。后端相关定点测试 135 项、前端
+成果卡测试 16 项通过。

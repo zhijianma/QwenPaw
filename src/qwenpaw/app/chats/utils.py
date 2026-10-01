@@ -4,7 +4,7 @@ import logging
 import platform
 import re
 from datetime import datetime, timezone
-from typing import List, Optional, Union
+from typing import Any, List, Optional, Union
 from urllib.parse import unquote, urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -36,6 +36,7 @@ from ...constant import (
     SYNTHETIC_USER_MESSAGE_TAGS,
 )
 from ...kernel.models import ArtifactRef, EvidenceRef
+from ...runtime.tool_artifacts import TOOL_ARTIFACT_LINKS_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -552,6 +553,44 @@ def _original_user_message(msg: Msg, metadata: dict) -> Message | None:
     return message
 
 
+def _canonical_tool_artifact_links(
+    block: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Validate host-produced links before exposing them in Chat history."""
+    raw_metadata = block.get("metadata")
+    if not isinstance(raw_metadata, dict):
+        return []
+    raw_links = raw_metadata.get(TOOL_ARTIFACT_LINKS_KEY)
+    if not isinstance(raw_links, list):
+        return []
+    links: list[dict[str, Any]] = []
+    for raw_link in raw_links:
+        if not isinstance(raw_link, dict):
+            continue
+        chat_id = raw_link.get("chat_id")
+        receipt = raw_link.get("artifact_receipt")
+        if not isinstance(chat_id, str) or not chat_id:
+            continue
+        if not isinstance(receipt, str) or not receipt:
+            continue
+        try:
+            artifact = ArtifactRef.model_validate(raw_link.get("artifact_ref"))
+            evidence = EvidenceRef.model_validate(raw_link.get("evidence_ref"))
+        except ValidationError:
+            continue
+        if evidence.artifact_id != artifact.artifact_id:
+            continue
+        links.append(
+            {
+                "chat_id": chat_id,
+                "artifact_ref": artifact.model_dump(mode="json"),
+                "evidence_ref": evidence.model_dump(mode="json"),
+                "artifact_receipt": receipt,
+            },
+        )
+    return links
+
+
 # pylint: disable=too-many-branches,too-many-statements, too-many-nested-blocks
 def agentscope_msg_to_message(
     messages: Union[Msg, List[Msg]],
@@ -778,6 +817,18 @@ def agentscope_msg_to_message(
                     tool_state = tool_state.value
                 if tool_state is not None:
                     output_data["state"] = tool_state
+
+                artifact_links = _canonical_tool_artifact_links(block)
+                if artifact_links:
+                    output_data["artifact_links"] = artifact_links
+                    current_message.artifact_refs = [
+                        ArtifactRef.model_validate(link["artifact_ref"])
+                        for link in artifact_links
+                    ]
+                    current_message.evidence_refs = [
+                        EvidenceRef.model_validate(link["evidence_ref"])
+                        for link in artifact_links
+                    ]
 
                 data_content = DataContent(
                     delta=False,

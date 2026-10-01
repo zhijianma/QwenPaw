@@ -78,6 +78,30 @@ class ConversationArtifactReceiptStore:
             )
         return str(receipt.receipt_id)
 
+    async def create_owned(
+        self,
+        artifact: ArtifactRef,
+        evidence: EvidenceRef,
+        *,
+        chat_id: str,
+    ) -> str:
+        """Persist a host-generated artifact already owned by one Chat."""
+        if not chat_id.strip():
+            raise ValueError("chat_id cannot be empty")
+        receipt = _Receipt(
+            receipt_id=uuid4(),
+            artifact=artifact,
+            evidence=evidence,
+            chat_id=chat_id,
+        )
+        path = self._path(receipt.receipt_id)
+        async with get_path_lock(path):
+            await write_json_atomic_async(
+                path,
+                receipt.model_dump(mode="json"),
+            )
+        return str(receipt.receipt_id)
+
     async def _read(self, receipt_id: UUID) -> _Receipt:
         try:
             payload = await read_json_async(self._path(receipt_id))

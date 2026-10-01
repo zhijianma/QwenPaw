@@ -141,6 +141,15 @@ class ToolCoordinatorMiddleware(MiddlewareBase):
         root_session_id = request_context.get("root_session_id", "")
         root_agent_id = request_context.get("root_agent_id", "")
         usage_meter = request_context.get("_task_usage_meter")
+        result_processor = None
+        if request_context.get("os_conversation_id"):
+            from ..runtime.tool_artifacts import (
+                ConversationToolArtifactPublisher,
+            )
+
+            result_processor = ConversationToolArtifactPublisher(
+                request_context,
+            )
 
         # Fallback refresh (e.g. flows that bypass on_reasoning).
         _capture_f1_reasoning(agent)
@@ -153,6 +162,7 @@ class ToolCoordinatorMiddleware(MiddlewareBase):
             root_session_id=root_session_id,
             root_agent_id=root_agent_id,
             usage_meter=usage_meter,
+            result_processor=result_processor,
             background_result_processor=self._background_result_processor,
         ):
             yield item

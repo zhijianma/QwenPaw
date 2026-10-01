@@ -11,6 +11,10 @@ from agentscope.message import ToolResultState
 from agentscope.message import TextBlock, DataBlock, URLSource
 
 from ...runtime.tool_registry import tool_descriptor
+from ...runtime.tool_artifacts import (
+    TOOL_ARTIFACT_OUTPUTS_KEY,
+    tool_artifact_output,
+)
 from .file_io import _resolve_file_path, _path_to_file_url
 
 
@@ -92,6 +96,17 @@ async def send_file_to_user(
         return ToolChunk(
             is_last=True,
             state=ToolResultState.SUCCESS,
+            metadata={
+                TOOL_ARTIFACT_OUTPUTS_KEY: [
+                    tool_artifact_output(
+                        path_parameter="file_path",
+                        kind="chat.file",
+                        evidence_claim="File delivered by send_file_to_user",
+                        media_type=mime_type,
+                        path_normalization="url",
+                    ),
+                ],
+            },
             content=[
                 DataBlock(
                     source=URLSource(

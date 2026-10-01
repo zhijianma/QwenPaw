@@ -1445,13 +1445,34 @@ def _artifact_receipt_from_history(
             if isinstance(part, dict):
                 raw_artifact = part.get("artifact_ref")
                 receipt = part.get("artifact_receipt")
+                data = part.get("data")
             else:
                 raw_artifact = getattr(part, "artifact_ref", None)
                 receipt = getattr(part, "artifact_receipt", None)
+                data = getattr(part, "data", None)
             if not isinstance(raw_artifact, dict) or not receipt:
-                continue
-            if str(raw_artifact.get("artifact_id")) == str(artifact_id):
+                raw_artifact = None
+            if raw_artifact is not None and str(
+                raw_artifact.get("artifact_id"),
+            ) == str(artifact_id):
                 return str(receipt)
+            if not isinstance(data, dict):
+                continue
+            links = data.get("artifact_links")
+            if not isinstance(links, list):
+                continue
+            for link in links:
+                if not isinstance(link, dict):
+                    continue
+                linked_artifact = link.get("artifact_ref")
+                linked_receipt = link.get("artifact_receipt")
+                if (
+                    isinstance(linked_artifact, dict)
+                    and linked_receipt
+                    and str(linked_artifact.get("artifact_id"))
+                    == str(artifact_id)
+                ):
+                    return str(linked_receipt)
     return None
 
 

@@ -3,12 +3,19 @@
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from uuid import UUID
 
 import pytest
 from fastapi import HTTPException
 
-from qwenpaw.app.chats.api import get_chat, get_chat_status, list_chats
-from qwenpaw.app.chats.models import ChatSpec
+from qwenpaw.app.chats.api import (
+    _artifact_receipt_from_history,
+    get_chat,
+    get_chat_status,
+    list_chats,
+)
+from qwenpaw.app.chats.models import ChatHistory, ChatSpec
+from qwenpaw.schemas import DataContent, Message
 
 
 def _chat(chat_id: str, *, app_id: str | None = None) -> ChatSpec:
@@ -28,6 +35,38 @@ def _chat(chat_id: str, *, app_id: str | None = None) -> ChatSpec:
         user_id="default",
         channel="console",
         meta=meta,
+    )
+
+
+def test_artifact_receipt_resolves_from_tool_result_link() -> None:
+    artifact_id = "b6f55fc5-8b5a-470b-b7d1-f01f05b20c44"
+    history = ChatHistory(
+        messages=[
+            Message(
+                content=[
+                    DataContent(
+                        data={
+                            "artifact_links": [
+                                {
+                                    "artifact_ref": {
+                                        "artifact_id": artifact_id,
+                                    },
+                                    "artifact_receipt": "receipt-1",
+                                },
+                            ],
+                        },
+                    ),
+                ],
+            ),
+        ],
+    )
+
+    assert (
+        _artifact_receipt_from_history(
+            history,
+            UUID(artifact_id),
+        )
+        == "receipt-1"
     )
 
 

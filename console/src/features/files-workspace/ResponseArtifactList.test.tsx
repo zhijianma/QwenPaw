@@ -115,6 +115,58 @@ function failedSendFile(path: string) {
 }
 
 describe("ResponseArtifactList", () => {
+  it("prefers canonical immutable artifacts from any tool provider", () => {
+    const listener = vi.fn();
+    window.addEventListener("qwenpaw:open-file-preview", listener);
+    render(
+      <ResponseArtifactList
+        messages={[
+          {
+            type: "plugin_call_output",
+            content: [
+              {
+                data: {
+                  call_id: "plugin-call",
+                  name: "plugin_export_report",
+                  arguments: JSON.stringify({ output_path: "mutable.md" }),
+                },
+              },
+              {
+                data: {
+                  state: "success",
+                  artifact_links: [
+                    {
+                      chat_id: "chat/1",
+                      artifact_ref: {
+                        artifact_id: "artifact/1",
+                        metadata: { name: "report-it.md" },
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "report-it.md report-it.md",
+      }),
+    );
+    const event = listener.mock.calls[0][0] as CustomEvent;
+    expect(event.detail.target).toEqual({
+      source: "attachment",
+      path: "report-it.md",
+      artifactUrl:
+        "/api/chats/chat%2F1/artifacts/artifact%2F1/content?disposition=inline",
+    });
+    expect(screen.queryByText("mutable.md")).not.toBeInTheDocument();
+    window.removeEventListener("qwenpaw:open-file-preview", listener);
+  });
+
   it("renders each file as a flat preview entry", () => {
     render(
       <ResponseArtifactList

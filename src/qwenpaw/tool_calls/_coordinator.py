@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from collections import OrderedDict
@@ -36,6 +37,10 @@ CompletionHandler = Callable[[ToolCallEntry], Awaitable[None]]
 OffloadedHandler = Callable[[ToolCallEntry], Awaitable[None]]
 BackgroundResultProcessor = Callable[
     [ToolResponse],
+    Awaitable[ToolResponse],
+]
+ToolResultProcessor = Callable[
+    [ToolResponse, ToolCallContext],
     Awaitable[ToolResponse],
 ]
 
@@ -107,6 +112,7 @@ class ToolCoordinator:
         root_agent_id: str = "",
         usage_meter: UsageMeter | None = None,
         deadline_override: float | None = None,
+        result_processor: ToolResultProcessor | None = None,
         background_result_processor: BackgroundResultProcessor | None = None,
     ) -> AsyncGenerator[Any, None]:
         entry = self._create_entry(
@@ -120,6 +126,7 @@ class ToolCoordinator:
         ctx = entry.ctx
         if usage_meter is not None:
             ctx.extra["usage_meter"] = usage_meter
+        ctx.extra["tool_input"] = _parse_tool_input(tool_call)
 
         async with self._entries_lock:
             self._entries[ctx.tool_call_id] = entry
@@ -128,7 +135,12 @@ class ToolCoordinator:
         entry.stream.add_subscriber(chunk_queue)
 
         entry.background_task = asyncio.create_task(
-            self._run_tool_with_hooks(next_handler, tool_call, entry),
+            self._run_tool_with_hooks(
+                next_handler,
+                tool_call,
+                entry,
+                result_processor,
+            ),
             name=f"toolcall-{ctx.tool_call_id}",
         )
 
@@ -784,6 +796,7 @@ class ToolCoordinator:
         next_handler: Callable[..., AsyncGenerator[Any, None]],
         tool_call: Any,
         entry: ToolCallEntry,
+        result_processor: ToolResultProcessor | None,
     ) -> None:
         hooks = self.hooks.get(entry.ctx.tool_name)
         token = set_call_context(entry.ctx)
@@ -805,6 +818,9 @@ class ToolCoordinator:
                     )
                     if modified is not None:
                         _update_tool_input(tool_call, modified)
+                        entry.ctx.extra["tool_input"] = _parse_tool_input(
+                            tool_call,
+                        )
                 except Exception as exc:
                     logger.warning(
                         "before_call failed: %s",
@@ -855,6 +871,7 @@ class ToolCoordinator:
                         exc,
                         exc_info=True,
                     )
+            await self._apply_result_processor(entry, result_processor)
         except Exception:
             await entry.stream.close()
             raise
@@ -862,6 +879,25 @@ class ToolCoordinator:
             if concurrency_acquired:
                 usage_meter.release_concurrency()
             reset_call_context(token)
+
+    @staticmethod
+    async def _apply_result_processor(
+        entry: ToolCallEntry,
+        result_processor: ToolResultProcessor | None,
+    ) -> None:
+        if result_processor is None:
+            return
+        try:
+            entry.final_response = await result_processor(
+                entry.final_response,
+                entry.ctx,
+            )
+        except Exception as exc:
+            logger.warning(
+                "tool result processor failed: %s",
+                exc,
+                exc_info=True,
+            )
 
     async def _supervise(
         self,
@@ -1109,9 +1145,28 @@ def _parse_tool_input(tool_call: Any) -> dict[str, Any]:
     raw = getattr(tool_call, "input", None)
     if isinstance(raw, dict):
         return dict(raw)
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError):
+            return {}
+        if isinstance(parsed, dict):
+            return parsed
     return {}
 
 
 def _update_tool_input(tool_call: Any, modified: dict[str, Any]) -> None:
-    if hasattr(tool_call, "input") and isinstance(tool_call.input, dict):
-        tool_call.input.update(modified)
+    if not hasattr(tool_call, "input"):
+        return
+    raw = tool_call.input
+    if isinstance(raw, dict):
+        raw.update(modified)
+        return
+    if isinstance(raw, str):
+        parsed = _parse_tool_input(tool_call)
+        parsed.update(modified)
+        tool_call.input = json.dumps(
+            parsed,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )

@@ -357,7 +357,8 @@ POST /tasks
 Lite 当前已验证指定项目目录、真实 Console Agent Runtime、计划、时间线、
 最终对话、Markdown artifact 和 evidence。Task-scoped 内容 API 会验证内容
 摘要和归属，Console 提供 256 KiB 上限的文本/Markdown 预览及命名下载；
-工具直接产生 Artifact 仍需后续实现。
+Chat 工具输出也已由宿主在工具成功后捕获为不可变 Artifact/Evidence，历史消息
+只暴露 canonical 引用和 opaque receipt，不再依赖前端从文件路径猜测成果。
 
 Task Runtime 不注入 `approval_level=off`，也不使用 CLI 私有的
 `_headless_tool_guard` 标记。它显式传递 `agent_id`，由既有 Tool Guard 按
@@ -403,7 +404,9 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
 
 ### R0A：Handbook 吸收项（Chat-first）
 
-- 完成 Chat 工具输出到不可变 Artifact / Evidence 的宿主捕获。
+- [x] 完成 Chat 工具输出到不可变 Artifact / Evidence 的宿主捕获；内置
+  `write_file`、`edit_file`、`append_file`、`send_file_to_user` 与插件声明共享
+  `ToolArtifactOutput`，由 Tool Coordinator 的统一 result processor 发布。
 - 将 Tool、Driver、MCP、Shell、Browser 与远程执行统一适配到
   `ActionRequest` / `ActionResult`，不为每类能力复制审批、重试和审计。
 - 将 `PromptFragment` 兼容演进为带来源、版本、信任级和哈希的

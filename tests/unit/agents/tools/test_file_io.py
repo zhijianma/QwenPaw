@@ -32,6 +32,7 @@ from qwenpaw.agents.tools.utils import (
     TRUNCATION_METADATA_KEY,
     read_file_safe,
 )
+from qwenpaw.runtime.tool_artifacts import TOOL_ARTIFACT_OUTPUTS_KEY
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +219,14 @@ class TestWriteFile:
         f = tmp_path / "new.txt"
         result = await write_file(str(f), "hello")
         assert "Wrote" in result.content[0].text
+        assert (
+            result.metadata[TOOL_ARTIFACT_OUTPUTS_KEY][0]["path_parameter"]
+            == "file_path"
+        )
+        assert (
+            result.metadata[TOOL_ARTIFACT_OUTPUTS_KEY][0]["media_type"]
+            == "text/plain"
+        )
         # .txt uses utf-8-sig which adds BOM
         assert f.read_text(encoding="utf-8-sig") == "hello"
         if os.name != "nt":
@@ -268,6 +277,10 @@ class TestEditFile:
         f.write_text("hello world", encoding="utf-8")
         result = await edit_file(str(f), "hello", "goodbye")
         assert "Successfully replaced" in result.content[0].text
+        assert (
+            result.metadata[TOOL_ARTIFACT_OUTPUTS_KEY][0]["evidence_claim"]
+            == "File updated by edit_file"
+        )
         assert f.read_text(encoding="utf-8-sig") == "goodbye world"
 
     @pytest.mark.asyncio
@@ -312,6 +325,10 @@ class TestAppendFile:
         f.write_text("line1\n", encoding="utf-8")
         result = await append_file(str(f), "line2\n")
         assert "Appended" in result.content[0].text
+        assert (
+            result.metadata[TOOL_ARTIFACT_OUTPUTS_KEY][0]["kind"]
+            == "chat.file"
+        )
         assert f.read_text(encoding="utf-8") == "line1\nline2\n"
 
     @pytest.mark.asyncio
