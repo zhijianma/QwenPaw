@@ -136,13 +136,15 @@ async def test_plugin_memory_flows_through_builder_prompt_and_tool_guard(
         PluginManifest.from_dict(manifest_data),
         lambda _declaration: memory_module.create_provider(),
     )
+    workspace_dir = tmp_path / "contract-project"
+    workspace_dir.mkdir()
     assembly = await RuntimeAssemblyFactory(registry).open(
         agent_id="agent-contract",
         conversation_id="chat-contract",
         session_id="transport-contract",
         root_agent_id="agent-contract",
         root_session_id="transport-contract",
-        workspace_dir=tmp_path / "contract-project",
+        workspace_dir=workspace_dir,
         selection=CapabilitySelection(
             memory_provider_id="runtime-provider-kit.project-memory",
         ),

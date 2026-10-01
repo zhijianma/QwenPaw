@@ -141,13 +141,15 @@ async def test_plugin_command_flows_through_runtime_opening_pipeline(
         PluginManifest.from_dict(manifest_data),
         lambda _declaration: command_module.create_provider(),
     )
+    workspace_dir = tmp_path / "contract-project"
+    workspace_dir.mkdir()
     assembly = await RuntimeAssemblyFactory(registry).open(
         agent_id="default",
         conversation_id="chat-contract",
         session_id="transport-contract",
         root_agent_id="default",
         root_session_id="transport-contract",
-        workspace_dir=tmp_path / "contract-project",
+        workspace_dir=workspace_dir,
     )
     slash_registry = SlashCommandRegistry()
 
