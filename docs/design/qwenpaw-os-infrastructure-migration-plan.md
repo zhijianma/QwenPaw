@@ -722,8 +722,14 @@ Cron 不形成独立审批或产物事实源。
       `1ee31988-b37a-48b9-b6ce-423c52f6a3a9` 已在 `/clear` 后真实访问
       `https://example.com`，界面记录 7 个步骤和两次 Browser 调用，最终严格返回
       `BROWSER_ACTION_E2E_OK: Example Domain`。私有 Action Store 尚无只读投影，
-      因此该次真实调用的持久化 JSON 留证仍待专门验收；溢出输出与 Artifact 自动
-      关联也仍待闭环，不能把可见调用成功等同于 Action Plane 全量完成。
+      因此该次真实调用的持久化 JSON 留证仍待专门验收，不能把可见调用成功等同于
+      Action Plane 全量完成。
+    - [x] Browser 超限输出通过 Host-only 声明接入统一 Artifact Publisher，不向
+      插件开放任意结果路径，也拒绝捕获 Workspace 外文件。固定 Chat 在 generation
+      11 真实产生 1100022 字节 stdout：Browser Action 保持失败，完整输出生成
+      `browser.output` Artifact 与 Evidence，并绑定 ChatSpec.id、Invocation 和真实
+      Tool Call；256KB 内联预览正确返回 413，附件下载返回 200、1100022 字节且
+      源内容哈希一致。失败 Action 保留诊断 Artifact 引用，不伪装为执行成功。
     - [ ] Harness Remote 仍待接入；现有 Task `SideEffectRecord` 保持防重放权威，
       不迁移为第二状态机。
   - [ ] `EnvironmentContract` 冻结 Workspace、Sandbox、Harness 和 Hub runtime

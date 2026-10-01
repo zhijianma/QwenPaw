@@ -180,7 +180,8 @@ Artifact/Evidence 引用；系统与插件 Driver 共用 Driver Action、动态�
 通过兼容 Adapter 留证。统一与兼容 Browser 实现都在外层受治理执行边界显式声明
 `ActionKind.BROWSER`；插件可通过同一 `ToolDefinition.action_kind` 接入，Host 不按
 工具名或 Policy 名猜测。Browser 内部逐方法副作用分类与溢出输出 Artifact 关联仍由
-Browser 子系统继续闭环。Harness Remote 仍属于后续迁移范围。
+Browser 子系统继续闭环；其中溢出输出 Artifact 关联已经完成，逐方法副作用分类仍待
+收敛。Harness Remote 仍属于后续迁移范围。
 MCP 标准 `readOnlyHint=true` 会被保留并映射为低风险无副作用 Action；服务未声明
 注解时保持 `external_write/high` 的保守默认值，禁止根据工具名称猜测权限。
 
@@ -189,6 +190,12 @@ Browser 可见链路：访问 `https://example.com`，记录 7 个步骤和两�
 最终返回 `BROWSER_ACTION_E2E_OK: Example Domain`。当前 Action Store 没有安全的
 只读投影，因此该次真实调用的私有 Action JSON 留证仍待专门验收；这一限制不以直接
 暴露工作区私有目录规避。
+
+同一固定 Chat 还完成了 Browser 溢出实测：1100022 字节 stdout 超过 1048576 字节
+控制帧上限后，Action 保持失败语义，同时发布 1 个 `browser.output` Artifact 和
+1 个 Evidence；Artifact 绑定 ChatSpec.id、Invocation 和 generation 11。内联预览按
+256KB 上限返回 413，附件下载返回 200 和完整 1100022 字节，下载响应的源内容哈希与
+Artifact 哈希一致。
 
 ```text
 ActionRequest

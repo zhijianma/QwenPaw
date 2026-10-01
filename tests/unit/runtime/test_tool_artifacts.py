@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from agentscope.message import TextBlock
+from agentscope.message import TextBlock, ToolResultState
 from agentscope.tool import ToolResponse
 
 from qwenpaw.kernel import ArtifactRef, EvidenceRef
@@ -15,6 +15,7 @@ from qwenpaw.runtime.tool_artifacts import (
     TOOL_ARTIFACT_ERRORS_KEY,
     TOOL_ARTIFACT_LINKS_KEY,
     TOOL_ARTIFACT_OUTPUTS_KEY,
+    register_host_tool_artifact,
     tool_artifact_output,
 )
 from qwenpaw.tasks.artifacts import lite_artifact_store
@@ -135,3 +136,80 @@ async def test_missing_declared_output_is_not_presented_as_artifact(
         },
     ]
     assert "do not claim" in published.content[-1].text
+
+
+@pytest.mark.asyncio
+async def test_host_generated_error_output_becomes_owned_artifact(
+    tmp_path,
+) -> None:
+    output_path = tmp_path / "browser_output.txt"
+    output_path.write_text("full browser output\n", encoding="utf-8")
+    context = _context("")
+    context.tool_name = "browser"
+    register_host_tool_artifact(
+        context,
+        path=output_path,
+        kind="browser.output",
+        evidence_claim="Browser preserved its overflow output",
+        media_type="text/plain",
+        metadata={"origin": "browser.overflow"},
+    )
+    publisher = ConversationToolArtifactPublisher(
+        {
+            "workspace_dir": str(tmp_path),
+            "os_conversation_id": "chat-1",
+            "os_invocation_id": "invocation-1",
+        },
+    )
+    response = ToolResponse(
+        content=[TextBlock(text="output_too_large")],
+        state=ToolResultState.ERROR,
+    )
+
+    published = await publisher(response, context)
+
+    [link] = published.metadata[TOOL_ARTIFACT_LINKS_KEY]
+    artifact = ArtifactRef.model_validate(link["artifact_ref"])
+    evidence = EvidenceRef.model_validate(link["evidence_ref"])
+    assert published.state is ToolResultState.ERROR
+    assert artifact.kind == "browser.output"
+    assert artifact.metadata["source"] == "chat.tool-output"
+    assert artifact.metadata["origin"] == "browser.overflow"
+    assert evidence.claim == "Browser preserved its overflow output"
+    assert await lite_artifact_store(tmp_path).read(artifact) == (
+        b"full browser output\n"
+    )
+
+
+@pytest.mark.asyncio
+async def test_host_generated_artifact_cannot_escape_workspace(
+    tmp_path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("private\n", encoding="utf-8")
+    context = _context("")
+    register_host_tool_artifact(
+        context,
+        path=outside,
+        kind="browser.output",
+        evidence_claim="Browser preserved its overflow output",
+    )
+    publisher = ConversationToolArtifactPublisher(
+        {
+            "workspace_dir": str(workspace),
+            "os_conversation_id": "chat-1",
+        },
+    )
+    response = ToolResponse(
+        content=[TextBlock(text="output_too_large")],
+        state=ToolResultState.ERROR,
+    )
+
+    published = await publisher(response, context)
+
+    assert TOOL_ARTIFACT_LINKS_KEY not in published.metadata
+    assert published.metadata[TOOL_ARTIFACT_ERRORS_KEY] == [
+        {"code": "artifact_capture_failed", "source": "host"},
+    ]

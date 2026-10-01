@@ -316,6 +316,56 @@ async def test_action_result_links_published_artifacts_and_partial_status(
 
 
 @pytest.mark.asyncio
+async def test_failed_action_keeps_diagnostic_artifact_evidence(
+    tmp_path: Path,
+) -> None:
+    scope = _scope(tmp_path)
+    store = FilesystemActionStore(tmp_path)
+    recorder = RuntimeActionRecorder(scope, store)
+    context = _context("browser")
+    await recorder.begin(
+        context,
+        effect=ToolEffect.EXTERNAL_WRITE,
+        policy_decision="allow",
+        kind=ActionKind.BROWSER,
+    )
+    artifact = ArtifactRef(
+        kind="browser.output",
+        uri="qwenpaw://artifact/browser-output",
+        media_type="text/plain",
+        content_hash="sha256:" + "d" * 64,
+        size_bytes=20,
+    )
+    evidence = EvidenceRef(
+        artifact_id=artifact.artifact_id,
+        claim="Browser preserved its overflow output",
+        producer="qwenpaw.system.workspace-tools.browser",
+    )
+    response = ToolResponse(
+        content=[TextBlock(type="text", text="output_too_large")],
+        id=context.tool_call_id,
+        state=ToolResultState.ERROR,
+        metadata={
+            TOOL_ARTIFACT_LINKS_KEY: [
+                {
+                    "artifact_ref": artifact.model_dump(mode="json"),
+                    "evidence_ref": evidence.model_dump(mode="json"),
+                },
+            ],
+        },
+    )
+
+    await recorder.complete(response, context)
+
+    [record] = await store.list_for_conversation("chat-1")
+    assert record.request.kind is ActionKind.BROWSER
+    assert record.result is not None
+    assert record.result.status is ActionStatus.FAILED
+    assert record.result.artifact_refs == (artifact,)
+    assert record.result.evidence_refs == (evidence,)
+
+
+@pytest.mark.asyncio
 async def test_result_without_request_is_rejected(tmp_path: Path) -> None:
     store = FilesystemActionStore(tmp_path)
     invocation_id = uuid4()

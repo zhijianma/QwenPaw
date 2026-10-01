@@ -18,6 +18,8 @@ from ..config.context import (
     get_current_workspace_dir,
 )
 from ..constant import WORKING_DIR
+from ..runtime.tool_artifacts import register_host_tool_artifact
+from ..tool_calls._ctxvars import get_call_context
 from ..utils.io_utils import (
     make_dirs_async,
     read_bytes_async,
@@ -35,12 +37,14 @@ from .execution.wire import ExecRequest
 logger = logging.getLogger(__name__)
 
 
-async def relocate_overflow_output_async(error: dict) -> dict:
+async def relocate_overflow_output_async(
+    error: dict,
+) -> tuple[dict, Path | None]:
     """Move worker-staged stdout into the active workspace for the model."""
     resolved = dict(error)
     staged_value = resolved.pop("overflow_stdout_path", None)
     if not staged_value:
-        return resolved
+        return resolved, None
     staged = Path(str(staged_value))
     try:
         contents = await read_bytes_async(staged)
@@ -49,7 +53,7 @@ async def relocate_overflow_output_async(error: dict) -> dict:
         resolved["teaching"] = (
             f"{teaching} The full output was lost; re-run this step."
         ).strip()
-        return resolved
+        return resolved, None
     directory = get_current_workspace_dir() or (
         WORKING_DIR / "workspaces" / "default"
     )
@@ -64,7 +68,7 @@ async def relocate_overflow_output_async(error: dict) -> dict:
         f"{teaching} Full output saved to {target.resolve()}; read it with "
         "Read or Grep."
     ).strip()
-    return resolved
+    return resolved, target.resolve()
 
 
 def render_error_text(error: dict, stdout: str) -> str:
@@ -144,7 +148,22 @@ async def run_browser_tool(code: str = "", **legacy: Any) -> ToolChunk:
     )
     outcome = await get_default_kernel_manager().execute(request)
     if outcome.error is not None:
-        error = await relocate_overflow_output_async(outcome.error)
+        error, overflow_path = await relocate_overflow_output_async(
+            outcome.error,
+        )
+        context = get_call_context()
+        if overflow_path is not None and context is not None:
+            register_host_tool_artifact(
+                context,
+                path=overflow_path,
+                kind="browser.output",
+                evidence_claim="Browser preserved its overflow output",
+                media_type="text/plain",
+                metadata={
+                    "origin": "browser.overflow",
+                    "browser_error": str(error.get("reason") or ""),
+                },
+            )
         text = render_error_text(error, outcome.stdout or "")
         if _is_chrome_unavailable(error):
             self_test = await collect_self_test_async()
