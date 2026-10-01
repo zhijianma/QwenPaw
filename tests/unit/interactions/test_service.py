@@ -259,13 +259,23 @@ async def test_runtime_finalization_retains_non_blocking_suggestion(
         kind=InteractionKind.SUGGESTION,
         mode=InteractionMode.NON_BLOCKING,
     )
+    deferred = _request(
+        invocation_id,
+        kind=InteractionKind.USER_INPUT,
+    ).model_copy(
+        update={
+            "continuation_mode": ContinuationMode.CONVERSATION_TURN,
+        },
+    )
     await service.open(blocking)
     await service.open(suggestion)
+    await service.open(deferred)
 
     cancelled = await service.cancel_invocation(
         invocation_id,
         detail="invocation finished as succeeded",
         include_non_blocking=False,
+        preserve_conversation_continuations=True,
     )
     opened = await service.list_open(
         agent_id="default",
@@ -275,7 +285,7 @@ async def test_runtime_finalization_retains_non_blocking_suggestion(
     assert [item.interaction_id for item in cancelled] == [
         blocking.interaction_id,
     ]
-    assert opened == (suggestion,)
+    assert opened == (suggestion, deferred)
 
 
 @pytest.mark.asyncio

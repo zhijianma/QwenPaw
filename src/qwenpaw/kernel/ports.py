@@ -466,7 +466,7 @@ class InteractionPort(Protocol):
         *,
         detail: str,
         include_non_blocking: bool = True,
-        exclude_interaction_ids: tuple[UUID, ...] = (),
+        preserve_conversation_continuations: bool = False,
     ) -> Sequence[InteractionResolution]:
         """Cancel invocation interactions, optionally retaining suggestions."""
 
@@ -542,6 +542,10 @@ class ConversationContinuationPort(Protocol):
 @runtime_checkable
 class RuntimeInteractionProducer(Protocol):
     """Invocation-bound producer surface shared by built-ins and plugins."""
+
+    @property
+    def has_deferred_user_input(self) -> bool:
+        """Return whether execution awaits a future conversation turn."""
 
     async def ask_user(
         self,

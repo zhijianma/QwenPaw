@@ -301,7 +301,7 @@ async def test_runtime_terminal_state_cancels_open_interactions() -> None:
         invocation_id,
         detail="invocation finished as succeeded",
         include_non_blocking=False,
-        exclude_interaction_ids=(),
+        preserve_conversation_continuations=True,
     )
     control.finish_turn.assert_awaited_once_with(
         lease,
@@ -311,20 +311,10 @@ async def test_runtime_terminal_state_cancels_open_interactions() -> None:
 
 @pytest.mark.asyncio
 async def test_successful_runtime_retains_deferred_interaction() -> None:
-    interaction_id = uuid4()
-    second_interaction_id = uuid4()
     invocation_id = uuid4()
     interactions = SimpleNamespace(cancel_invocation=AsyncMock())
     context = SimpleNamespace(
         extras={"interaction_service": interactions},
-        request=SimpleNamespace(
-            request_context={
-                "_deferred_interaction_ids": [
-                    str(interaction_id),
-                    str(second_interaction_id),
-                ],
-            },
-        ),
         session_id="session",
     )
 
@@ -338,7 +328,7 @@ async def test_successful_runtime_retains_deferred_interaction() -> None:
         invocation_id,
         detail="invocation finished as succeeded",
         include_non_blocking=False,
-        exclude_interaction_ids=(interaction_id, second_interaction_id),
+        preserve_conversation_continuations=True,
     )
 
 

@@ -161,6 +161,7 @@ async def test_workspace_provider_adds_real_ask_user_tool() -> None:
 
     class _Broker:
         def __init__(self) -> None:
+            self.has_deferred_user_input = False
             self.ask_user = AsyncMock()
             self.defer_user_input = AsyncMock(
                 return_value=SimpleNamespace(

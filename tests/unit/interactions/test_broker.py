@@ -12,7 +12,6 @@ from qwenpaw.interactions import (
     RuntimeInteractionBroker,
     runtime_interaction_broker_from_context,
 )
-from qwenpaw.interactions.broker import DEFERRED_INTERACTION_CONTEXT_KEY
 from qwenpaw.kernel import (
     ActorRef,
     ActorType,
@@ -130,14 +129,12 @@ async def test_deferred_input_preserves_correlation_and_returns(
     tmp_path,
 ) -> None:
     service = InteractionService(tmp_path / "interactions.sqlite3")
-    request_context = {}
     correlation_id = UUID("00000000-0000-0000-0000-000000000499")
     broker = RuntimeInteractionBroker(
         service=service,
         agent_id="default",
         conversation_id="chat-spec-1",
         invocation_id=INVOCATION_ID,
-        request_context=request_context,
         correlation_id=correlation_id,
     )
 
@@ -152,9 +149,10 @@ async def test_deferred_input_preserves_correlation_and_returns(
 
     assert request.correlation_id == correlation_id
     assert request.continuation_mode is ContinuationMode.CONVERSATION_TURN
-    assert request_context[DEFERRED_INTERACTION_CONTEXT_KEY] == [
-        str(request.interaction_id),
-        str(second.interaction_id),
+    assert broker.has_deferred_user_input is True
+    assert broker.deferred_interaction_ids == [
+        request.interaction_id,
+        second.interaction_id,
     ]
 
 

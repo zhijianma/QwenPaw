@@ -760,7 +760,7 @@ class InteractionService:
         *,
         detail: str,
         include_non_blocking: bool = True,
-        exclude_interaction_ids: tuple[UUID, ...] = (),
+        preserve_conversation_continuations: bool = False,
     ) -> Sequence[InteractionResolution]:
         """Cancel invocation interactions in one durable transaction."""
         await self.start()
@@ -770,7 +770,7 @@ class InteractionService:
                 invocation_id,
                 detail,
                 include_non_blocking,
-                exclude_interaction_ids,
+                preserve_conversation_continuations,
             )
         for resolution in resolutions:
             await self._publish_resolution(resolution)
@@ -833,13 +833,14 @@ class InteractionService:
         invocation_id: UUID,
         detail: str,
         include_non_blocking: bool,
-        exclude_interaction_ids: tuple[UUID, ...],
+        preserve_conversation_continuations: bool,
     ) -> tuple[InteractionResolution, ...]:
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
             query = (
-                "SELECT interaction_id, revision FROM runtime_interactions "
+                "SELECT interaction_id, revision, request_json "
+                "FROM runtime_interactions "
                 "WHERE invocation_id = ? AND status = ? "
             )
             parameters: tuple[object, ...] = (
@@ -849,14 +850,6 @@ class InteractionService:
             if not include_non_blocking:
                 query += "AND mode = ? "
                 parameters += (InteractionMode.BLOCKING.value,)
-            if exclude_interaction_ids:
-                placeholders = ",".join(
-                    "?" for _item in exclude_interaction_ids
-                )
-                query += f"AND interaction_id NOT IN ({placeholders}) "
-                parameters += tuple(
-                    str(item) for item in exclude_interaction_ids
-                )
             rows = connection.execute(
                 query + "ORDER BY created_at, interaction_id",
                 parameters,
@@ -869,6 +862,13 @@ class InteractionService:
                     detail=detail,
                 )
                 for row in rows
+                if not (
+                    preserve_conversation_continuations
+                    and InteractionRequest.model_validate_json(
+                        row["request_json"],
+                    ).continuation_mode
+                    is ContinuationMode.CONVERSATION_TURN
+                )
             )
             for resolution in resolutions:
                 self._persist_resolution(connection, resolution, None)

@@ -18,8 +18,6 @@ from ..kernel import (
     InteractionResolution,
 )
 
-DEFERRED_INTERACTION_CONTEXT_KEY = "_deferred_interaction_ids"
-
 
 @dataclass(frozen=True, slots=True)
 class RuntimeInteractionBroker:
@@ -29,8 +27,13 @@ class RuntimeInteractionBroker:
     agent_id: str
     conversation_id: str
     invocation_id: UUID
-    request_context: dict[str, Any] = field(default_factory=dict)
     correlation_id: UUID | None = None
+    deferred_interaction_ids: list[UUID] = field(default_factory=list)
+
+    @property
+    def has_deferred_user_input(self) -> bool:
+        """Return whether this Invocation must end at its Tool safe point."""
+        return bool(self.deferred_interaction_ids)
 
     async def ask_user(
         self,
@@ -122,15 +125,8 @@ class RuntimeInteractionBroker:
             expires_at=expires_at,
         )
         opened = await self.service.open(request)
-        raw_ids = self.request_context.setdefault(
-            DEFERRED_INTERACTION_CONTEXT_KEY,
-            [],
-        )
-        deferred_ids = raw_ids if isinstance(raw_ids, list) else []
-        interaction_id = str(opened.interaction_id)
-        if interaction_id not in deferred_ids:
-            deferred_ids.append(interaction_id)
-        self.request_context[DEFERRED_INTERACTION_CONTEXT_KEY] = deferred_ids
+        if opened.interaction_id not in self.deferred_interaction_ids:
+            self.deferred_interaction_ids.append(opened.interaction_id)
         return opened
 
 
@@ -167,13 +163,11 @@ def runtime_interaction_broker_from_context(
         agent_id=agent_id,
         conversation_id=conversation_id,
         invocation_id=invocation_id,
-        request_context=request_context,
         correlation_id=correlation_id,
     )
 
 
 __all__ = [
-    "DEFERRED_INTERACTION_CONTEXT_KEY",
     "RuntimeInteractionBroker",
     "runtime_interaction_broker_from_context",
 ]

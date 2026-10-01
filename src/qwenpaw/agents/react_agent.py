@@ -1067,14 +1067,13 @@ class QwenPawAgent(CodingModeMixin, Agent):
         self._coerce_tool_call_input(tool_call)
         async for evt in super()._execute_tool_call(tool_call, kept_rules):
             yield evt
-        from ..interactions.broker import (
-            DEFERRED_INTERACTION_CONTEXT_KEY,
+        broker = (self._request_context or {}).get(
+            "_interaction_broker",
         )
-
-        deferred_id = (self._request_context or {}).get(
-            DEFERRED_INTERACTION_CONTEXT_KEY,
-        )
-        if deferred_id and self._gate_pending_stop is None:
+        if (
+            getattr(broker, "has_deferred_user_input", False)
+            and self._gate_pending_stop is None
+        ):
             self._gate_pending_stop = StopHandlerResult(
                 action=StopAction.TERMINATE,
                 reason="Waiting for user input.",

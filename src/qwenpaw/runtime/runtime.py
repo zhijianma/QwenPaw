@@ -588,34 +588,14 @@ class Runtime:
         interaction_service = ctx.extras.get("interaction_service")
         if interaction_service is None:
             return
-        excluded: tuple[uuid.UUID, ...] = ()
-        if terminal_status is SubmissionStatus.SUCCEEDED:
-            from ..interactions.broker import (
-                DEFERRED_INTERACTION_CONTEXT_KEY,
-            )
-
-            request = getattr(ctx, "request", None)
-            request_context = getattr(request, "request_context", None)
-            raw_ids = (
-                request_context.get(DEFERRED_INTERACTION_CONTEXT_KEY)
-                if isinstance(request_context, dict)
-                else None
-            )
-            if isinstance(raw_ids, str):
-                raw_ids = [raw_ids]
-            if isinstance(raw_ids, list):
-                parsed_ids: list[uuid.UUID] = []
-                try:
-                    parsed_ids = [uuid.UUID(str(item)) for item in raw_ids]
-                except (TypeError, ValueError):
-                    parsed_ids = []
-                excluded = tuple(dict.fromkeys(parsed_ids))
         try:
             await interaction_service.cancel_invocation(
                 invocation_id,
                 detail=f"invocation finished as {terminal_status.value}",
                 include_non_blocking=False,
-                exclude_interaction_ids=excluded,
+                preserve_conversation_continuations=(
+                    terminal_status is SubmissionStatus.SUCCEEDED
+                ),
             )
         except Exception:  # pylint: disable=broad-except
             logger.warning(
