@@ -369,6 +369,120 @@ async def test_result_processor_commits_after_tool_and_before_return():
 
 
 @pytest.mark.asyncio
+async def test_result_processor_failure_surfaces_unknown_outcome():
+    coordinator = ToolCoordinator()
+    tool_call = _ToolCall(name="write_file")
+
+    async def next_handler(
+        tool_call: _ToolCall,
+    ) -> AsyncGenerator[Any, None]:
+        yield _text_response(tool_call.id, "executed")
+
+    async def result_processor(
+        response: ToolResponse,
+        context: ToolCallContext,
+    ) -> ToolResponse:
+        raise OSError("durable store unavailable")
+
+    events = await _collect(
+        coordinator.execute(
+            tool_call=tool_call,
+            next_handler=next_handler,
+            session_id="session-1",
+            agent_id="agent-1",
+            root_session_id="root-1",
+            result_processor=result_processor,
+        ),
+    )
+
+    final = events[-1]
+    assert final.state is ToolResultState.ERROR
+    assert final.metadata["qwenpaw_result_verification"] == "recording_failed"
+    assert final.metadata["qwenpaw_execution_outcome"] == "unknown"
+    assert final.metadata["original_tool_state"] == "success"
+    assert "do not retry automatically" in final.content[0].text
+
+
+@pytest.mark.asyncio
+async def test_denial_is_preserved_when_audit_result_cannot_be_recorded():
+    coordinator = ToolCoordinator()
+    tool_call = _ToolCall(name="denied_tool")
+
+    async def next_handler(
+        tool_call: _ToolCall,
+    ) -> AsyncGenerator[Any, None]:
+        yield ToolResponse(
+            content=[TextBlock(type="text", text="denied")],
+            id=tool_call.id,
+            state=ToolResultState.DENIED,
+        )
+
+    async def result_processor(
+        response: ToolResponse,
+        context: ToolCallContext,
+    ) -> ToolResponse:
+        raise OSError("durable store unavailable")
+
+    events = await _collect(
+        coordinator.execute(
+            tool_call=tool_call,
+            next_handler=next_handler,
+            session_id="session-1",
+            agent_id="agent-1",
+            root_session_id="root-1",
+            result_processor=result_processor,
+        ),
+    )
+
+    final = events[-1]
+    assert final.state is ToolResultState.DENIED
+    assert final.metadata["qwenpaw_execution_outcome"] == "known"
+    assert final.metadata["original_tool_state"] == "denied"
+    assert "audit result" in final.content[0].text
+
+
+@pytest.mark.asyncio
+async def test_before_hook_failure_is_still_processed_as_action_result():
+    coordinator = ToolCoordinator()
+    tool_call = _ToolCall(name="blocked_before_execution")
+    processed_states = []
+    tool_executed = False
+
+    async def before_hook(_tool_input, _context):
+        raise ValueError("invalid normalized input")
+
+    async def next_handler(
+        _tool_call: _ToolCall,
+    ) -> AsyncGenerator[Any, None]:
+        nonlocal tool_executed
+        tool_executed = True
+        yield _text_response(_tool_call.id, "must not run")
+
+    async def result_processor(
+        response: ToolResponse,
+        _context: ToolCallContext,
+    ) -> ToolResponse:
+        processed_states.append(response.state)
+        return response
+
+    coordinator.hooks.register(tool_call.name, before=before_hook)
+    events = await _collect(
+        coordinator.execute(
+            tool_call=tool_call,
+            next_handler=next_handler,
+            session_id="session-1",
+            agent_id="agent-1",
+            root_session_id="root-1",
+            result_processor=result_processor,
+        ),
+    )
+
+    assert events[-1].state is ToolResultState.ERROR
+    assert processed_states == [ToolResultState.ERROR]
+    assert tool_executed is False
+
+
+@pytest.mark.asyncio
 async def test_result_processor_receives_agentscope_json_tool_input():
     coordinator = ToolCoordinator()
     tool_call = _ToolCall(name="artifact_tool")

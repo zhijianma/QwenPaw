@@ -838,6 +838,10 @@ class ToolCoordinator:
                         state=ToolResultState.ERROR,
                     )
                     await entry.stream.close()
+                    await self._apply_result_processor(
+                        entry,
+                        result_processor,
+                    )
                     return
 
             if entry.ctx.is_cancelled:
@@ -852,6 +856,10 @@ class ToolCoordinator:
                     state=ToolResultState.INTERRUPTED,
                 )
                 await entry.stream.close()
+                await self._apply_result_processor(
+                    entry,
+                    result_processor,
+                )
                 return
 
             await self._drain(next_handler, tool_call, entry)
@@ -897,6 +905,50 @@ class ToolCoordinator:
                 "tool result processor failed: %s",
                 exc,
                 exc_info=True,
+            )
+            original_state = getattr(entry.final_response, "state", None)
+            known_non_execution = original_state in {
+                ToolResultState.DENIED,
+                ToolResultState.INTERRUPTED,
+            }
+            if original_state is ToolResultState.DENIED:
+                verification_text = (
+                    "The tool action was denied, but its audit result could "
+                    "not be recorded. Do not retry automatically."
+                )
+            elif original_state is ToolResultState.INTERRUPTED:
+                verification_text = (
+                    "The tool action was interrupted, but its audit result "
+                    "could not be recorded. Do not retry automatically."
+                )
+            else:
+                verification_text = (
+                    "The tool finished, but post-execution verification "
+                    "could not be recorded. Its outcome is unknown; do not "
+                    "retry automatically."
+                )
+            entry.final_response = ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text=verification_text,
+                    ),
+                ],
+                id=entry.ctx.tool_call_id,
+                state=(
+                    original_state
+                    if known_non_execution
+                    else ToolResultState.ERROR
+                ),
+                metadata={
+                    "qwenpaw_result_verification": "recording_failed",
+                    "qwenpaw_execution_outcome": (
+                        "known" if known_non_execution else "unknown"
+                    ),
+                    "original_tool_state": (
+                        original_state.value if original_state else "unknown"
+                    ),
+                },
             )
 
     async def _supervise(

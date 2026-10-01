@@ -12,6 +12,11 @@ from .driver import (
     DriverCredentialUnavailableError,
 )
 from .models import (
+    ActionKind,
+    ActionRecord,
+    ActionRequest,
+    ActionResult,
+    ActionStatus,
     ActorRef,
     ActorType,
     ApprovalDecision,
@@ -219,6 +224,7 @@ from .operational import (
     OperationalStatus,
 )
 from .ports import (
+    ActionStore,
     AgentFactory,
     CostAwareTaskRunner,
     ConversationForkPort,
@@ -234,6 +240,12 @@ from .ports import (
 )
 
 __all__ = [
+    "ActionKind",
+    "ActionRecord",
+    "ActionRequest",
+    "ActionResult",
+    "ActionStatus",
+    "ActionStore",
     "ActorRef",
     "ActorType",
     "ApprovalDecision",

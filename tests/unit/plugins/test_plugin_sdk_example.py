@@ -195,6 +195,12 @@ def test_public_sdk_exports_runtime_interaction_contract() -> None:
     from qwenpaw.plugins import sdk
 
     assert not hasattr(sdk, "AgentFactory")
+    assert not hasattr(sdk, "ActionStore")
+    assert sdk.ActionKind is not None
+    assert sdk.ActionRecord is not None
+    assert sdk.ActionRequest is not None
+    assert sdk.ActionResult is not None
+    assert sdk.ActionStatus is not None
     assert sdk.CapabilityCredentialHandle is not None
     assert sdk.CapabilityCredentialUnavailableError is not None
     assert sdk.CostAccountingMode is not None

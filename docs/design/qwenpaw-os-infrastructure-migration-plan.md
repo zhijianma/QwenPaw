@@ -691,6 +691,22 @@ Cron 不形成独立审批或产物事实源。
     序列化字节；实际 usage 与 formatter 版本留给 Model Call Plane。
   - [ ] `ActionRequest` / `ActionResult` 统一 Tool、Driver、MCP、Shell、Browser
     与 Harness Remote Action 的身份、风险、幂等、审批、结果和 Evidence。
+    - [x] 冻结 `ActionKind` / `ActionStatus` / `ActionRequest` /
+      `ActionResult` / `ActionRecord` 与 host-owned `ActionStore`；纯领域模型从
+      Plugin SDK 导出，文件存储和 Recorder 不作为插件 API 暴露。
+    - [x] 内置与插件 `ToolDefinition` 共用
+      `PolicyGuardedTool -> ToolCoordinator -> ToolActionRecorder`：执行前请求
+      留证，Artifact/Evidence 发布后写结果；内容类参数只留
+      `[CONTENT OMITTED]`，参数与结果摘要仅覆盖安全投影，不生成原始 Secret 或
+      工具输出的可猜测指纹，JSON 权限为 `0600`。
+    - [x] 后处理落盘失败不再被 Coordinator 静默吞掉：已执行动作返回
+      `unknown` 且禁止自动重试；请求落盘失败则 fail closed，并明确声明工具未执行。
+    - [x] 2026-10-01 固定 Chat
+      `1ee31988-b37a-48b9-b6ce-423c52f6a3a9` 在 generation 11 真实调用
+      `write_file`：Action 与 ChatSpec.id、Invocation 和 provider 对齐，结果关联
+      1 个 Artifact 与 1 个 Evidence，正文未进入 Action JSON，最终 SSE 完整结束。
+    - [ ] Driver、MCP、Browser 与 Harness Remote 通过显式 Adapter 接入同一
+      Recorder；现有 Task `SideEffectRecord` 保持防重放权威，不迁移为第二状态机。
   - [ ] `EnvironmentContract` 冻结 Workspace、Sandbox、Harness 和 Hub runtime
     共同需要的挂载、网络、凭据引用、依赖、资源、快照与清理语义。
   - [ ] 语义观测统一 `MODEL`、`ACTION`、`GUARDRAIL`、`COMPACTION`、

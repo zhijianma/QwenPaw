@@ -173,6 +173,11 @@ ContextManifest
 
 优先级：P0，在完成当前 Chat Artifact/Evidence 捕获后推进。
 
+截至 2026-10-01，第一条真实垂直切片已经完成：内置与插件 Tool 共用稳定
+Action 契约、执行前不可变请求、执行后内容最小化结果以及 Artifact/Evidence 引用。
+这证明融合方向可行，但不改变分阶段结论：Driver、MCP、Browser 与 Harness Remote
+尚未接入同一 Recorder，仍属于后续迁移范围。
+
 ```text
 ActionRequest
 ├── action_id / invocation_id / parent_event_id

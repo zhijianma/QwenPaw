@@ -408,8 +408,12 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
 - [x] 完成 Chat 工具输出到不可变 Artifact / Evidence 的宿主捕获；内置
   `write_file`、`edit_file`、`append_file`、`send_file_to_user` 与插件声明共享
   `ToolArtifactOutput`，由 Tool Coordinator 的统一 result processor 发布。
-- 将 Tool、Driver、MCP、Shell、Browser 与远程执行统一适配到
+- [ ] 将 Tool、Driver、MCP、Shell、Browser 与远程执行统一适配到
   `ActionRequest` / `ActionResult`，不为每类能力复制审批、重试和审计。
+  - [x] Tool 垂直切片已落地：系统 Tool 与插件 Tool 共用执行前 Request、执行后
+    Result、内容最小化、Artifact/Evidence 关联和 fail-closed 语义。
+  - [ ] Driver、MCP、Browser 与 Harness Remote 仍通过后续显式 Adapter 迁移；
+    不能因枚举和模型已存在就宣称 Action Plane 全量完成。
 - [x] 将 `PromptFragment` 兼容演进为带来源、版本、信任级和哈希的
   `ContextFragment`，并在 Provider 调用前为每次实际尝试生成不可变
   `ContextManifest`。真实 Chat 验收覆盖 generation 11、93 个 Fragment 和

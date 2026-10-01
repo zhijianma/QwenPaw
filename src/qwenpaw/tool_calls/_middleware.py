@@ -141,15 +141,28 @@ class ToolCoordinatorMiddleware(MiddlewareBase):
         root_session_id = request_context.get("root_session_id", "")
         root_agent_id = request_context.get("root_agent_id", "")
         usage_meter = request_context.get("_task_usage_meter")
-        result_processor = None
+        result_processors = []
         if request_context.get("os_conversation_id"):
             from ..runtime.tool_artifacts import (
                 ConversationToolArtifactPublisher,
             )
 
-            result_processor = ConversationToolArtifactPublisher(
-                request_context,
+            result_processors.append(
+                ConversationToolArtifactPublisher(request_context),
             )
+        action_recorder = request_context.get("_action_recorder")
+        if action_recorder is not None:
+            result_processors.append(action_recorder.complete)
+
+        result_processor = None
+        if result_processors:
+
+            async def _process_result(response: Any, context: Any) -> Any:
+                for processor in result_processors:
+                    response = await processor(response, context)
+                return response
+
+            result_processor = _process_result
 
         # Fallback refresh (e.g. flows that bypass on_reasoning).
         _capture_f1_reasoning(agent)

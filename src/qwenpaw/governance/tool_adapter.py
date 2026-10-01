@@ -464,6 +464,37 @@ def _tool_call_id() -> str:
         return ""
 
 
+def _active_tool_call_context() -> Any | None:
+    """Return the supervised call context without exposing ContextVar APIs."""
+    try:
+        from ..tool_calls._ctxvars import get_call_context
+
+        return get_call_context()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def _begin_tool_action(tool: Any) -> None:
+    """Fail closed if runtime-owned action intent cannot be recorded."""
+    request_context = getattr(tool, "_qp_request_context", {}) or {}
+    recorder = request_context.get("_action_recorder")
+    if recorder is None:
+        return
+    context = _active_tool_call_context()
+    if context is None:
+        raise RuntimeError("action recorder requires supervised tool context")
+    tc_spec = getattr(tool, "_qp_tc_spec", None) or tool._build_tc_spec()
+    decision = getattr(tool, "_qp_policy_decision", None)
+    await recorder.begin(
+        context,
+        effect=ToolEffect(tc_spec.effect),
+        policy_decision=(
+            decision.action.value if decision is not None else "allow"
+        ),
+        approval_id=_optional_uuid(getattr(tool, "_qp_approval_id", "")),
+    )
+
+
 async def _begin_tool_side_effect(
     tool: Any,
 ) -> SideEffectReservation | None:
@@ -574,6 +605,7 @@ async def _policy_tool_call(
     **kwargs: Any,
 ) -> Any:
     """Execute one governed call with durable side-effect accounting."""
+    await _begin_tool_action(self)
     reservation = await _begin_tool_side_effect(self)
     if (
         reservation is not None

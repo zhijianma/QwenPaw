@@ -113,6 +113,121 @@ class ToolEffect(str, Enum):
     PROCESS = "process"
 
 
+class ActionKind(str, Enum):
+    """Executor family behind one observable Agent OS action."""
+
+    TOOL = "tool"
+    DRIVER = "driver"
+    MCP = "mcp"
+    SHELL = "shell"
+    BROWSER = "browser"
+    HARNESS_REMOTE = "harness_remote"
+
+
+class ActionStatus(str, Enum):
+    """Terminal outcome of an action at the verification boundary."""
+
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    PARTIAL = "partial"
+    UNKNOWN = "unknown"
+    CANCELLED = "cancelled"
+    DENIED = "denied"
+
+
+class ActionRequest(KernelModel):
+    """Privacy-safe durable intent recorded before external execution.
+
+    ``arguments`` is available only to the in-memory executor. Durable
+    stores serialize the redacted projection and its integrity hash.
+    """
+
+    action_id: UUID = Field(default_factory=uuid4)
+    invocation_id: UUID
+    correlation_id: UUID
+    conversation_id: NonEmptyStr | None = None
+    registry_generation: int = Field(ge=1)
+    capability_id: NamespacedId
+    kind: ActionKind
+    action_name: NonEmptyStr
+    arguments: SkipJsonSchema[JsonObject] = Field(
+        default_factory=dict,
+        exclude=True,
+    )
+    redacted_arguments: JsonObject = Field(default_factory=dict)
+    arguments_hash: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True,
+            pattern=r"^sha256:[0-9a-f]{64}$",
+        ),
+    ] = Field(
+        description=(
+            "SHA256 of redacted_arguments; never a fingerprint of raw "
+            "secret or omitted content"
+        ),
+    )
+    effect: ToolEffect = ToolEffect.NONE
+    risk: RiskLevel = RiskLevel.LOW
+    reversible: bool = True
+    idempotency_key: NonEmptyStr
+    approval_id: UUID | None = None
+    policy_decision: NonEmptyStr = "allow"
+    requested_at: AwareDatetime = Field(default_factory=utc_now)
+
+
+class ActionResult(KernelModel):
+    """Content-minimal terminal evidence for one action request."""
+
+    action_id: UUID
+    invocation_id: UUID
+    conversation_id: NonEmptyStr | None = None
+    status: ActionStatus
+    observation: SkipJsonSchema[object | None] = Field(
+        default=None,
+        exclude=True,
+    )
+    observation_digest: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True,
+            pattern=r"^sha256:[0-9a-f]{64}$",
+        ),
+    ] = Field(
+        description=(
+            "SHA256 of content-free status and durable evidence references"
+        ),
+    )
+    artifact_refs: tuple["ArtifactRef", ...] = ()
+    evidence_refs: tuple["EvidenceRef", ...] = ()
+    error_code: str = ""
+    retryable: bool = False
+    side_effect_status: SideEffectStatus | None = None
+    completed_at: AwareDatetime = Field(default_factory=utc_now)
+
+
+class ActionRecord(KernelModel):
+    """Queryable action projection with an optional terminal result."""
+
+    request: ActionRequest
+    result: ActionResult | None = None
+
+    @model_validator(mode="after")
+    def validate_result_identity(self) -> Self:
+        """Require request and result to describe the same execution."""
+        if self.result is None:
+            return self
+        if self.result.action_id != self.request.action_id:
+            raise ValueError("action result does not match request")
+        if self.result.invocation_id != self.request.invocation_id:
+            raise ValueError("action result invocation does not match request")
+        if self.result.conversation_id != self.request.conversation_id:
+            raise ValueError(
+                "action result conversation does not match request",
+            )
+        return self
+
+
 class ToolArtifactOutput(KernelModel):
     """Host-captured artifact declared by one successful tool result.
 

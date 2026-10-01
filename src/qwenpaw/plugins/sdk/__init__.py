@@ -65,6 +65,11 @@ from ...kernel.operational import (
     OperationalStatus,
 )
 from ...kernel.models import (
+    ActionKind,
+    ActionRecord,
+    ActionRequest,
+    ActionResult,
+    ActionStatus,
     ArtifactEmitter,
     ArtifactPreviewDescriptor,
     ArtifactRenderDisposition,
@@ -167,6 +172,11 @@ SDK_VERSION = "1.0"
 
 __all__ = [
     "SDK_VERSION",
+    "ActionKind",
+    "ActionRecord",
+    "ActionRequest",
+    "ActionResult",
+    "ActionStatus",
     "ArtifactEmitter",
     "ArtifactPreviewDescriptor",
     "ArtifactRenderDisposition",

@@ -16,6 +16,9 @@ from .events import (
     TaskProjectionSnapshot,
 )
 from .models import (
+    ActionRecord,
+    ActionRequest,
+    ActionResult,
     ApprovalDecision,
     ApprovalRequest,
     ApprovalStatus,
@@ -1162,6 +1165,25 @@ class ContextManifestStore(Protocol):
         limit: int = 100,
     ) -> Sequence[ContextManifest]:
         """Return newest manifests for one ChatSpec identity."""
+
+
+@runtime_checkable
+class ActionStore(Protocol):
+    """Durable request/result boundary for observable Agent OS actions."""
+
+    async def begin(self, request: ActionRequest) -> None:
+        """Persist immutable action intent before execution."""
+
+    async def complete(self, result: ActionResult) -> None:
+        """Persist one immutable terminal result after verification."""
+
+    async def list_for_conversation(
+        self,
+        conversation_id: str,
+        *,
+        limit: int = 100,
+    ) -> Sequence[ActionRecord]:
+        """Return newest action records for one ChatSpec identity."""
 
 
 @runtime_checkable

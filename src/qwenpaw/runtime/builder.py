@@ -779,11 +779,17 @@ class AgentBuilder:
         )
 
         if invocation is not None and workspace_dir is not None:
+            from .actions import ToolActionRecorder, lite_action_store
             from .context_manifests import (
                 ContextManifestCompiler,
                 lite_context_manifest_store,
             )
 
+            request_context["_action_recorder"] = ToolActionRecorder(
+                invocation,
+                lite_action_store(Path(workspace_dir)),
+                tool_owners=request_context.get("_tool_provider_owners"),
+            )
             request_context[
                 "_context_manifest_compiler"
             ] = ContextManifestCompiler(
