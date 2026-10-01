@@ -791,11 +791,20 @@ class QwenPawAgent(CodingModeMixin, Agent):
             call_with_model_session,
         )
 
+        logical_key = str(self._get_model_key() or "")
+        requested_provider_id, separator, requested_model_id = (
+            logical_key.partition(":")
+        )
+        if not separator:
+            requested_provider_id = None
+            requested_model_id = logical_key
         return await call_with_model_session(
             ModelCallSession(
                 model_call_scope,
                 manifest,
                 model_call_store,
+                requested_provider_id=requested_provider_id,
+                requested_model_id=requested_model_id or None,
             ),
             invoke,
         )

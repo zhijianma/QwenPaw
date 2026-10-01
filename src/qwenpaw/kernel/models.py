@@ -1596,6 +1596,8 @@ class RouteDecision(KernelModel):
     attempt_index: int = Field(ge=1)
     provider_id: NonEmptyStr
     model_id: NonEmptyStr
+    requested_provider_id: NonEmptyStr | None = None
+    requested_model_id: NonEmptyStr | None = None
     reason: ModelRouteReason
     previous_attempt_id: UUID | None = None
     policy_id: NamespacedId = "qwenpaw.system.model-route"
@@ -1617,6 +1619,10 @@ class ModelCallAttempt(KernelModel):
     attempt_index: int = Field(ge=1)
     provider_id: NonEmptyStr
     model_id: NonEmptyStr
+    adapter_id: NonEmptyStr | None = None
+    adapter_version: NonEmptyStr | None = None
+    formatter_id: NonEmptyStr | None = None
+    formatter_version: NonEmptyStr | None = None
     started_at: AwareDatetime = Field(default_factory=utc_now)
 
 
@@ -1632,7 +1638,16 @@ class ModelCallResult(KernelModel):
     emitted_content: bool = False
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
+    cost_micros: int | None = Field(default=None, ge=0)
+    cost_unknown: bool = True
     completed_at: AwareDatetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def validate_cost(self) -> Self:
+        """Never turn unavailable pricing into a known zero cost."""
+        if self.cost_unknown == (self.cost_micros is not None):
+            raise ValueError("model call cost value and unknown flag conflict")
+        return self
 
 
 class ModelCallRecord(KernelModel):

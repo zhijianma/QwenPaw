@@ -787,9 +787,13 @@ Cron 不形成独立审批或产物事实源。
       11、primary、succeeded、input 40042 / output 74 tokens，Invocation 与
       ContextManifest 均有稳定引用。真实验收发现并修复了 ContextVar 跨异步关闭和
       terminal chunk 被误判为取消两类仅流式路径问题。
-    - [ ] Cost、formatter/wire 版本、逻辑模型约束与 Route 选择依据尚未全部进入
-      Attempt；Workstation / Hub 的健康度、成本和数据边界动态路由仍待实现。Lite
-      当前继续使用确定性主模型与显式 fallback 顺序，不静默切换。
+    - [x] Route 已同时记录逻辑请求和实际 Provider/Model，Attempt 记录实际 Adapter、
+      Formatter 及其包版本；Provider 返回的微单位成本直接留证，缺失价格明确记录
+      `cost_unknown=true`，不冒充零成本。固定 Chat 再次 `/clear` 后真实返回
+      `MODEL_CALL_FACTS_E2E_OK`，记录 requested/actual 均为 DashScope
+      `qwen3.8-max`，Adapter/Formatter 版本为 `2.2.2b1`，调用成功且价格未知。
+    - [ ] Workstation / Hub 的健康度、成本和数据边界动态路由仍待实现。Lite 当前
+      继续使用确定性主模型与显式 fallback 顺序，不静默切换。
   - [ ] Run Completion、Verification 与业务 Outcome 分层；Event 能派生可回放
     Trajectory，但本阶段不建设完整 Evaluation UI。
   - [ ] `BudgetLease` 与现有 `ExecutionBudget`、Usage Scope、Capability lease

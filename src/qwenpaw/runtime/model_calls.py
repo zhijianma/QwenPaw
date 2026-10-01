@@ -212,12 +212,17 @@ class ModelCallSession:
         scope: InvocationScope,
         manifest: ContextManifest,
         store: ModelCallStore,
+        *,
+        requested_provider_id: str | None,
+        requested_model_id: str | None,
     ) -> None:
         if manifest.invocation_id != scope.invocation_id:
             raise ValueError("model-call manifest invocation mismatch")
         self._scope = scope
         self._manifest = manifest
         self._store = store
+        self._requested_provider_id = requested_provider_id
+        self._requested_model_id = requested_model_id
         self._attempt_index = 0
         self._previous_attempt: ModelCallAttempt | None = None
 
@@ -226,6 +231,10 @@ class ModelCallSession:
         *,
         provider_id: str,
         model_id: str,
+        adapter_id: str,
+        adapter_version: str | None,
+        formatter_id: str | None,
+        formatter_version: str | None,
     ) -> ModelCallAttempt:
         """Persist one actual provider attempt before network dispatch."""
         self._attempt_index += 1
@@ -262,6 +271,8 @@ class ModelCallSession:
             attempt_index=self._attempt_index,
             provider_id=provider_id,
             model_id=model_id,
+            requested_provider_id=self._requested_provider_id,
+            requested_model_id=self._requested_model_id,
             reason=reason,
             previous_attempt_id=(
                 previous.attempt_id if previous is not None else None
@@ -279,6 +290,10 @@ class ModelCallSession:
             attempt_index=route.attempt_index,
             provider_id=provider_id,
             model_id=model_id,
+            adapter_id=adapter_id,
+            adapter_version=adapter_version,
+            formatter_id=formatter_id,
+            formatter_version=formatter_version,
         )
         try:
             await self._store.begin(route, attempt)
@@ -301,6 +316,7 @@ class ModelCallSession:
         emitted_content: bool = False,
         input_tokens: int | None = None,
         output_tokens: int | None = None,
+        cost_micros: int | None = None,
     ) -> None:
         """Persist content-free terminal evidence for one attempt."""
         result = ModelCallResult(
@@ -313,6 +329,8 @@ class ModelCallSession:
             emitted_content=emitted_content,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cost_micros=cost_micros,
+            cost_unknown=cost_micros is None,
         )
         try:
             await self._store.complete(result)
@@ -327,12 +345,23 @@ async def begin_current_model_attempt(
     *,
     provider_id: str,
     model_id: str,
+    adapter_id: str,
+    adapter_version: str | None,
+    formatter_id: str | None,
+    formatter_version: str | None,
 ) -> ModelCallAttempt | None:
     """Begin an attempt when a logical call session is active."""
     session = _CURRENT_MODEL_CALL.get()
     if session is None:
         return None
-    return await session.begin(provider_id=provider_id, model_id=model_id)
+    return await session.begin(
+        provider_id=provider_id,
+        model_id=model_id,
+        adapter_id=adapter_id,
+        adapter_version=adapter_version,
+        formatter_id=formatter_id,
+        formatter_version=formatter_version,
+    )
 
 
 async def complete_current_model_attempt(
@@ -344,6 +373,7 @@ async def complete_current_model_attempt(
     emitted_content: bool = False,
     input_tokens: int | None = None,
     output_tokens: int | None = None,
+    cost_micros: int | None = None,
 ) -> None:
     """Complete an attempt when it belongs to the active logical call."""
     if attempt is None:
@@ -359,6 +389,7 @@ async def complete_current_model_attempt(
         emitted_content=emitted_content,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
+        cost_micros=cost_micros,
     )
 
 

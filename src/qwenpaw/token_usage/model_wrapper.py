@@ -3,6 +3,8 @@
 
 import asyncio
 from datetime import date, datetime, timezone
+from functools import lru_cache
+from importlib.metadata import PackageNotFoundError, version
 from typing import Any, AsyncGenerator, Literal
 
 from agentscope.model import ChatModelBase
@@ -33,6 +35,34 @@ _CACHE_USAGE_MODEL_MODULES = (
     "agentscope.model._openai_response",
     "agentscope.model._xai",
 )
+
+
+@lru_cache(maxsize=32)
+def _component_version(module_name: str) -> str | None:
+    """Resolve the owning package version without provider imports."""
+    package_name = module_name.partition(".")[0]
+    if package_name == "qwenpaw":
+        from ..__version__ import __version__
+
+        return __version__
+    try:
+        return version(package_name.replace("_", "-"))
+    except PackageNotFoundError:
+        return None
+
+
+def _component_identity(
+    component: Any,
+) -> tuple[str | None, str | None]:
+    """Return a stable qualified class and its owning package version."""
+    if component is None:
+        return None, None
+    component_type = type(component)
+    module_name = component_type.__module__
+    return (
+        f"{module_name}.{component_type.__qualname__}",
+        _component_version(module_name),
+    )
 
 
 def _cache_usage_metrics(
@@ -219,9 +249,17 @@ class TokenRecordingModelWrapper(ChatModelBase):
         """Record the concrete provider route before network dispatch."""
         from ..runtime.model_calls import begin_current_model_attempt
 
+        adapter_id, adapter_version = _component_identity(self._model)
+        formatter_id, formatter_version = _component_identity(
+            getattr(self._model, "formatter", None),
+        )
         return await begin_current_model_attempt(
             provider_id=self._provider_id,
             model_id=str(self.model),
+            adapter_id=adapter_id or type(self._model).__qualname__,
+            adapter_version=adapter_version,
+            formatter_id=formatter_id,
+            formatter_version=formatter_version,
         )
 
     @staticmethod
@@ -246,6 +284,8 @@ class TokenRecordingModelWrapper(ChatModelBase):
             if usage is not None
             else None
         )
+        raw_cost = getattr(usage, "cost_micros", None)
+        cost_micros = max(int(raw_cost), 0) if raw_cost is not None else None
         error_kind = ""
         retryable = False
         if isinstance(error, Exception):
@@ -266,6 +306,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
             emitted_content=emitted_content,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cost_micros=cost_micros,
         )
 
     @classmethod

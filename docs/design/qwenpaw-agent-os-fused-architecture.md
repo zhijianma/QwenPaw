@@ -457,7 +457,9 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
   实际执行和 Runtime 独立证据。
 - [x] 冻结 `ModelCallAttempt` / `RouteDecision` / `ModelCallResult` 和 Store Port；
   Lite 已在真实 Provider 网络边界记录直连、同模型重试、跨模型 fallback、overflow
-  retry、流式成功/取消/失败和 usage，并提供 Chat-owned 只读查询。
+  retry、流式成功/取消/失败和 usage，并提供 Chat-owned 只读查询。Route 区分逻辑
+  请求与实际 Provider/Model，Attempt 记录 Adapter/Formatter 身份和版本；缺失价格
+  以 `cost_unknown` 留证，不折算为零。
 - [ ] Workstation / Hub 再实现按能力、健康、成本和数据边界的动态路由；Lite 当前
   继续使用确定性主模型与显式 fallback 顺序，不冒充智能路由器。
 - 区分 Run Completion、Verification 与业务 Outcome，并预留 Trajectory 投影。

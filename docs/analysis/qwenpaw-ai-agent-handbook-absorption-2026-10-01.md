@@ -362,7 +362,9 @@ Lite 默认仍是确定性的单 Provider 直连；重试和降级必须形成�
 `ModelCallResult` 与 Store Port，并接入真实 Provider 边界。每个 ContextManifest
 建立独立调用 Session；底层 Provider 每次网络尝试在发送前写入 route/attempt，按
 实际调用顺序区分 primary、same-model retry、fallback 与 overflow retry，流式终态、
-取消、错误分类和 Provider usage 在完成后留证。Chat 通过所有权校验后的
+取消、错误分类和 Provider usage 在完成后留证。Route 同时区分逻辑请求与实际
+Provider/Model，Attempt 记录实际 Adapter、Formatter 及版本；Provider 不返回价格时
+显式记录 `cost_unknown=true`，不把未知成本伪装为零。Chat 通过所有权校验后的
 `GET /api/chats/{ChatSpec.id}/model-calls` 查询内容最小化记录。当前仍未实现按成本、
 健康度或数据边界自动选路，也不把既有静态 fallback 配置冒充智能路由器。
 

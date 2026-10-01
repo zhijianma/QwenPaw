@@ -17,6 +17,9 @@ from agentscope.model._model_response import ChatResponse
 from qwenpaw.kernel import (
     ContextManifest,
     InvocationScope,
+    ModelCallAttempt,
+    ModelCallResult,
+    ModelCallStore,
     ModelCallStatus,
     ModelRouteReason,
 )
@@ -63,35 +66,70 @@ def _manifest(
     )
 
 
+def _session(
+    scope: InvocationScope,
+    manifest: ContextManifest,
+    store: ModelCallStore,
+) -> ModelCallSession:
+    return ModelCallSession(
+        scope,
+        manifest,
+        store,
+        requested_provider_id="provider-a",
+        requested_model_id="m1",
+    )
+
+
+async def _begin_attempt(
+    session: ModelCallSession,
+    *,
+    provider_id: str = "provider-a",
+    model_id: str = "m1",
+) -> ModelCallAttempt:
+    return await session.begin(
+        provider_id=provider_id,
+        model_id=model_id,
+        adapter_id="agentscope.model.fake.Adapter",
+        adapter_version="2.0.7.post1",
+        formatter_id="qwenpaw.fake.Formatter",
+        formatter_version="2.2.2b1",
+    )
+
+
 @pytest.mark.asyncio
 async def test_session_classifies_retry_and_fallback_attempts(
     tmp_path: Path,
 ) -> None:
     scope = _scope(tmp_path)
     store = lite_model_call_store(tmp_path)
-    session = ModelCallSession(scope, _manifest(scope), store)
+    session = _session(scope, _manifest(scope), store)
 
-    primary = await session.begin(provider_id="provider-a", model_id="m1")
+    primary = await _begin_attempt(session)
     await session.complete(
         primary,
         status=ModelCallStatus.FAILED,
         error_kind="rate_limit",
         retryable=True,
     )
-    retry = await session.begin(provider_id="provider-a", model_id="m1")
+    retry = await _begin_attempt(session)
     await session.complete(
         retry,
         status=ModelCallStatus.FAILED,
         error_kind="timeout",
         retryable=True,
     )
-    fallback = await session.begin(provider_id="provider-b", model_id="m2")
+    fallback = await _begin_attempt(
+        session,
+        provider_id="provider-b",
+        model_id="m2",
+    )
     await session.complete(
         fallback,
         status=ModelCallStatus.SUCCEEDED,
         emitted_content=True,
         input_tokens=11,
         output_tokens=7,
+        cost_micros=23,
     )
 
     records = sorted(
@@ -109,6 +147,12 @@ async def test_session_classifies_retry_and_fallback_attempts(
     assert records[2].result is not None
     assert records[2].result.input_tokens == 11
     assert records[2].result.output_tokens == 7
+    assert records[2].result.cost_micros == 23
+    assert records[2].result.cost_unknown is False
+    assert records[2].route.requested_provider_id == "provider-a"
+    assert records[2].route.requested_model_id == "m1"
+    assert records[2].attempt.adapter_version == "2.0.7.post1"
+    assert records[2].attempt.formatter_version == "2.2.2b1"
 
 
 @pytest.mark.asyncio
@@ -117,13 +161,13 @@ async def test_overflow_retry_has_explicit_first_route_reason(
 ) -> None:
     scope = _scope(tmp_path)
     store = lite_model_call_store(tmp_path)
-    session = ModelCallSession(
+    session = _session(
         scope,
         _manifest(scope, model_call_index=2, attempt_kind="overflow_retry"),
         store,
     )
 
-    attempt = await session.begin(provider_id="provider-a", model_id="m1")
+    attempt = await _begin_attempt(session)
     await session.complete(
         attempt,
         status=ModelCallStatus.SUCCEEDED,
@@ -134,6 +178,9 @@ async def test_overflow_retry_has_explicit_first_route_reason(
     assert (
         record.route.context_manifest_id == record.attempt.context_manifest_id
     )
+    assert record.result is not None
+    assert record.result.cost_micros is None
+    assert record.result.cost_unknown is True
 
 
 @pytest.mark.asyncio
@@ -142,7 +189,7 @@ async def test_token_wrapper_records_actual_provider_attempt(
 ) -> None:
     scope = _scope(tmp_path)
     store = lite_model_call_store(tmp_path)
-    session = ModelCallSession(scope, _manifest(scope), store)
+    session = _session(scope, _manifest(scope), store)
     provider = AsyncMock()
     provider.model = "model-a"
     provider.credential = None
@@ -165,6 +212,10 @@ async def test_token_wrapper_records_actual_provider_attempt(
     assert response.content[0].text == "ok"
     assert record.attempt.provider_id == "provider-a"
     assert record.attempt.model_id == "model-a"
+    assert record.attempt.adapter_id is not None
+    assert record.attempt.adapter_version is None
+    assert record.attempt.formatter_id == "builtins.object"
+    assert record.attempt.formatter_version is None
     assert record.result is not None
     assert record.result.status is ModelCallStatus.SUCCEEDED
     assert record.result.emitted_content is True
@@ -176,7 +227,7 @@ async def test_stream_can_be_consumed_and_closed_in_different_contexts(
 ) -> None:
     scope = _scope(tmp_path)
     store = lite_model_call_store(tmp_path)
-    session = ModelCallSession(scope, _manifest(scope), store)
+    session = _session(scope, _manifest(scope), store)
     provider = AsyncMock()
     provider.model = "model-a"
     provider.credential = None
@@ -218,7 +269,7 @@ async def test_closing_after_terminal_chunk_is_success(
 ) -> None:
     scope = _scope(tmp_path)
     store = lite_model_call_store(tmp_path)
-    session = ModelCallSession(scope, _manifest(scope), store)
+    session = _session(scope, _manifest(scope), store)
     provider = AsyncMock()
     provider.model = "model-a"
     provider.credential = None
@@ -248,3 +299,39 @@ async def test_closing_after_terminal_chunk_is_success(
     assert record.result is not None
     assert record.result.status is ModelCallStatus.SUCCEEDED
     assert record.result.error_kind == ""
+
+
+def test_historical_result_defaults_to_unknown_cost() -> None:
+    result = ModelCallResult.model_validate(
+        {
+            "attempt_id": str(uuid4()),
+            "invocation_id": str(uuid4()),
+            "conversation_id": "chat-1",
+            "status": "succeeded",
+        },
+    )
+
+    assert result.cost_micros is None
+    assert result.cost_unknown is True
+
+
+@pytest.mark.parametrize(
+    ("cost_micros", "cost_unknown"),
+    [(None, False), (0, True)],
+)
+def test_result_rejects_conflicting_cost_evidence(
+    cost_micros: int | None,
+    cost_unknown: bool,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="model call cost value and unknown flag conflict",
+    ):
+        ModelCallResult(
+            attempt_id=uuid4(),
+            invocation_id=uuid4(),
+            conversation_id="chat-1",
+            status=ModelCallStatus.SUCCEEDED,
+            cost_micros=cost_micros,
+            cost_unknown=cost_unknown,
+        )
