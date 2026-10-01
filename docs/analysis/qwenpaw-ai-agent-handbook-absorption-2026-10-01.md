@@ -112,7 +112,7 @@ Handbook 给出了 `WAITING_INPUT`、`WAITING_APPROVAL`、`WAITING_EVENT`、
 
 这能避免 Ask User、Approval、后台 Tool、Suggestion 和外部事件各自创造平行状态机。
 
-## 4. 建议吸收的七项设计
+## 4. 建议吸收的九项设计
 
 ### A1. 明确 Productized Harness 与 OS Substrate
 
@@ -197,6 +197,10 @@ Tool、Driver、MCP、Shell、Browser 和 Harness Remote Action 都适配到这�
 `ask_user`、Approval、Suggestion 继续属于 Interaction Plane，不伪装成 Tool。
 
 Host 统一提交 Task / Conversation Patch，第三方能力不得直接修改权威状态。
+Context 的相关性和信任等级也不能直接转化为执行授权：`ActionRequest` 必须保留
+所依据 Fragment 的来源和 trust label，Policy 再根据调用主体、资源范围、风险与
+当前授权独立判定。来自网页、工具结果或远端 Agent 的内容即使已进入模型上下文，
+仍不能扩大可执行权限。
 
 ### A4. Environment Contract
 
@@ -255,6 +259,40 @@ Lite 先做本地 Registry 与关键词发现，不引入 Nacos、向量数据�
 
 先保证事件携带稳定因果 ID、版本和证据引用，再建设自动评分与仿真界面。
 
+### A8. 语义观测与独立 Runtime Evidence
+
+优先级：P1；契约现在冻结，先复用现有 Ledger 和 Middleware。
+
+当前 QwenPaw 已有 AgentScope 流事件、Task 因果事件、Operational Event 和
+Langfuse Tool Span，但它们还不是一套跨 Harness 可比较的语义观测契约。应统一
+最小语义类别：`MODEL`、`ACTION`、`GUARDRAIL`、`COMPACTION`、`HITL`、
+`INTERRUPT`、`VERIFICATION`，并明确：
+
+- 模型生成 Action 意图与系统实际执行是两个事件；
+- Approval 的等待时间不计入 Action 执行耗时；
+- 跨请求 HITL 等待结束当前 Trace，恢复时以因果关系连接新 Trace；
+- Interrupt 记录发起者、原因、安全点和已经产生的有效结果，不伪装成失败或完成；
+- Runtime 从进程、文件、网络或远端执行器采集的事实是独立 Evidence，不能只信
+  Tool / Agent 自报成功。
+
+Lite 不新建重型 Observability 服务，先从现有 Event / Context Manifest /
+Action Result 派生语义投影；Workstation / Hub 再接 OTEL、集中审计和成本归因。
+
+### A9. Model Call Plane 与显式 Route Decision
+
+优先级：P1；Lite 先做记录，不先做复杂路由器。
+
+Handbook 调研中，多模型路由与自动降级是比例最高的网关需求之一。QwenPaw
+3.0 应把每次模型尝试建模为 `ModelCallAttempt`，把选择建模为
+`RouteDecision`，至少记录：请求目的、逻辑模型约束、实际 Provider / Model、
+策略版本、选择原因、超时、成本、失败分类、是否重试或降级，以及所使用的
+`ContextManifest`。
+
+Lite 默认仍是确定性的单 Provider 直连；重试和降级必须形成新的 Attempt，不能
+在 Adapter 内静默切换。Workstation / Hub 再实现按能力、延迟、成本、数据边界和
+健康度的路由。这使 Harness、上下文和模型故障能够分别归因，也避免把 Provider
+偶发问题误判成 Agent Loop 设计缺陷。
+
 ## 5. 不建议直接吸收的内容
 
 | 内容 | 决策 | 原因 |
@@ -271,14 +309,17 @@ Lite 先做本地 Registry 与关键词发现，不引入 Nacos、向量数据�
 
 不改变“Chat-first、Task 页面后置”的原则，建议顺序调整为：
 
-1. 完成 Chat 工具产物的真实 Artifact / Evidence 捕获；
-2. 冻结并实现统一 Action Plane，使内置和插件不再只在 Tool Adapter 层对齐；
-3. 实现 Context Manifest，先覆盖每次模型调用的系统 Fragment、Task / Chat 状态、
-   Tool Schema 和 Skill；
+1. 保持已完成的 Chat 工具产物 Artifact / Evidence 宿主捕获；
+2. 完成正在实施的 Context Manifest，覆盖每次真实模型调用的消息、Tool Schema、
+   来源、信任和 generation；
+3. 冻结并实现统一 Action Plane，使内置和插件不再只在 Tool Adapter 层对齐；
 4. 冻结 Environment Contract，并让 Lite 本地 Runtime 兑现；
-5. 把 Checkpoint 与 Workspace snapshot / Action uncertainty 对齐，完成失败恢复；
-6. 预留 Outcome / Trajectory 事件，不先建设评估平台；
-7. 基础模块全部通过真实 Chat 验收后，再恢复 Task Workbench。
+5. 统一语义观测，先从现有 Event 派生，不另建第二套运行状态机；
+6. 冻结 Model Call Attempt / Route Decision；Lite 记录直连与重试，后续 Edition
+   再实现自动路由；
+7. 把 Checkpoint 与 Workspace snapshot / Action uncertainty 对齐，完成失败恢复；
+8. 预留 Outcome / Trajectory 事件，不先建设评估平台；
+9. 基础模块全部通过真实 Chat 验收后，再恢复 Task Workbench。
 
 Workstation / Hub 后续增加 Budget Lease、外置 Registry、分布式状态和隔离 Runtime；
 Lite 不为未来形态提前承担其部署复杂度。
@@ -295,13 +336,23 @@ Lite 不为未来形态提前承担其部署复杂度。
 - generation 热替换不会改变运行中 Context / Capability / Action 版本。
 - Run 成功但业务 Outcome 未确认时，界面和 API 不得显示为“业务已完成”。
 - 轨迹可从因果事件重建，并能定位某次 Action 使用的 Context、能力版本和审批。
+- Tool Call 意图、策略判定和真实副作用分别留证；Tool 自报成功不能代替 Runtime
+  Evidence。
+- HITL 与 Interrupt 的等待、恢复、拒绝、中断点和有效结果可跨请求还原。
+- 每次模型重试或降级都有独立 Attempt 与 Route Decision，不在 Provider Adapter
+  内静默切换模型。
 
 ## 8. 参考章节
 
+- [2026 Agent 开发者调研报告](https://github.com/aliyun/ai-agent-handbook/blob/main/2026-agent-survey-report.md)
 - [第 3 章：Harness 的责任边界](https://github.com/aliyun/ai-agent-handbook/blob/main/02-build/%E7%AC%AC%203%20%E7%AB%A0%20%E8%8C%83%E5%BC%8F%EF%BC%9AHarness%20%E7%9A%84%E4%B8%BB%E6%B5%81%E6%9E%84%E5%BB%BA%E6%96%B9%E5%BC%8F%E5%92%8C%E8%B4%A3%E4%BB%BB%E8%BE%B9%E7%95%8C.md)
 - [第 4 章：任务、长程推进与完成证据](https://github.com/aliyun/ai-agent-handbook/blob/main/02-build/%E7%AC%AC%204%20%E7%AB%A0%20%E4%BB%BB%E5%8A%A1%EF%BC%9A%E7%BC%96%E6%8E%92%E3%80%81%E9%95%BF%E7%A8%8B%E6%8E%A8%E8%BF%9B%E4%B8%8E%E5%8D%8F%E4%BD%9C%E6%B5%81%E8%BD%AC.md)
 - [第 5 章：Context、State 与 Workspace](https://github.com/aliyun/ai-agent-handbook/blob/main/02-build/%E7%AC%AC%205%20%E7%AB%A0%20%E4%BF%A1%E6%81%AF%EF%BC%9A%E4%B8%8A%E4%B8%8B%E6%96%87%E3%80%81%E7%8A%B6%E6%80%81%E4%B8%8E%E5%8F%AF%E5%A4%8D%E7%94%A8%E8%83%BD%E5%8A%9B%E8%B5%84%E4%BA%A7.md)
 - [第 6 章：Action Plane 与 HITL](https://github.com/aliyun/ai-agent-handbook/blob/main/02-build/%E7%AC%AC%206%20%E7%AB%A0%20%E8%A1%8C%E5%8A%A8%EF%BC%9A%E5%8F%97%E6%8E%A7%E6%89%A7%E8%A1%8C%E3%80%81%E9%AA%8C%E8%AF%81%E5%8F%8D%E9%A6%88%E4%B8%8E%E4%BA%A4%E4%BB%98%E5%87%86%E5%A4%87.md)
 - [第 8 章：状态、Checkpoint 与 Artifact](https://github.com/aliyun/ai-agent-handbook/blob/main/03-run/%E7%AC%AC%208%20%E7%AB%A0%20Agent%20%E7%8A%B6%E6%80%81%E5%AD%98%E5%82%A8%E4%B8%8E%E8%AF%AD%E4%B9%89%E8%B5%84%E4%BA%A7.md)
+- [第 9 章：AI 网关与统一流量治理](https://github.com/aliyun/ai-agent-handbook/blob/main/03-run/%E7%AC%AC%209%20%E7%AB%A0%20%20AI%20%E7%BD%91%E5%85%B3%E4%B8%8E%E7%BB%9F%E4%B8%80%E6%B5%81%E9%87%8F%E6%B2%BB%E7%90%86.md)
+- [第 13 章：Agent 的可观测性](https://github.com/aliyun/ai-agent-handbook/blob/main/04-governance/%E7%AC%AC%2013%20%E7%AB%A0%E3%80%80Agent%20%E7%9A%84%E5%8F%AF%E8%A7%82%E6%B5%8B%E6%80%A7.md)
+- [第 14 章：Agent 安全](https://github.com/aliyun/ai-agent-handbook/blob/main/04-governance/%E7%AC%AC%2014%20%E7%AB%A0%E3%80%80Agent%20%E5%AE%89%E5%85%A8.md)
 - [第 15 章：AI 资产注册与发现](https://github.com/aliyun/ai-agent-handbook/blob/main/04-governance/%E7%AC%AC%2015%20%E7%AB%A0%E3%80%80AI%20%E8%B5%84%E4%BA%A7%E7%9A%84%E5%8F%91%E7%8E%B0%E4%B8%8E%E7%AE%A1%E7%90%86.md)
+- [第 19 章：Agent 轨迹数据](https://github.com/aliyun/ai-agent-handbook/blob/main/05-optimization/%E7%AC%AC%2019%20%E7%AB%A0%E3%80%80Agent%20%E8%BD%A8%E8%BF%B9%E6%95%B0%E6%8D%AE.md)
 - [第 30 章：Agentic OS](https://github.com/aliyun/ai-agent-handbook/blob/main/07-conclusion/%E7%AC%AC%2030%20%E7%AB%A0%20%E4%BB%8E%20Agentic%20Application%20%E5%88%B0%20Agentic%20OS.md)

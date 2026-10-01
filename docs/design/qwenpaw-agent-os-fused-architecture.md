@@ -93,8 +93,9 @@ Agentic OS Substrate
 Runtime / Sandbox / Storage adapters
 ```
 
-其中 Context Compiler、统一 Action Plane、Environment Contract 和可派生的
-Budget Lease 是 Handbook 比对后确认的增量基础设施，不由 Task Workbench 私有实现。
+其中 Context Compiler、统一 Action Plane、Environment Contract、语义观测、
+Model Call Plane 和可派生的 Budget Lease 是 Handbook 比对后确认的增量基础设施，
+不由 Task Workbench 私有实现。
 
 | 能力域 | 稳定契约 | 当前主要实现 |
 |---|---|---|
@@ -412,6 +413,11 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
 - 将 `PromptFragment` 兼容演进为带来源、版本、信任级和哈希的
   `ContextFragment`，为每次模型调用生成 `ContextManifest`。
 - 冻结 `EnvironmentContract`，Lite 先由本地 Workspace / Sandbox 适配。
+- 从现有事件派生统一的 `MODEL`、`ACTION`、`GUARDRAIL`、`COMPACTION`、
+  `HITL`、`INTERRUPT` 与 `VERIFICATION` 语义观测；区分模型意图、策略决定、
+  实际执行和 Runtime 独立证据。
+- 冻结 `ModelCallAttempt` / `RouteDecision`；Lite 对直连、重试和失败留证，
+  Workstation / Hub 再实现多模型路由与自动降级。
 - 区分 Run Completion、Verification 与业务 Outcome，并预留 Trajectory 投影。
 - Task Workbench 继续后置；上述契约先在真实 Chat 中完成验证。
 

@@ -688,6 +688,12 @@ Cron 不形成独立审批或产物事实源。
     与 Harness Remote Action 的身份、风险、幂等、审批、结果和 Evidence。
   - [ ] `EnvironmentContract` 冻结 Workspace、Sandbox、Harness 和 Hub runtime
     共同需要的挂载、网络、凭据引用、依赖、资源、快照与清理语义。
+  - [ ] 语义观测统一 `MODEL`、`ACTION`、`GUARDRAIL`、`COMPACTION`、
+    `HITL`、`INTERRUPT` 与 `VERIFICATION`；模型意图、策略判定、实际执行和
+    Runtime 独立 Evidence 使用稳定因果 ID 关联，不把 Agent 自报结果当作事实。
+  - [ ] `ModelCallAttempt` / `RouteDecision` 覆盖实际 Provider / Model、策略版本、
+    选择原因、Context Manifest、重试、降级、成本和失败分类；Lite 不静默切换，
+    Workstation / Hub 再实现多模型路由策略。
   - [ ] Run Completion、Verification 与业务 Outcome 分层；Event 能派生可回放
     Trajectory，但本阶段不建设完整 Evaluation UI。
   - [ ] `BudgetLease` 与现有 `ExecutionBudget`、Usage Scope、Capability lease
