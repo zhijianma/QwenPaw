@@ -416,8 +416,12 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
     共用 Driver Action；运行中审批通过不可变 `ActionApprovalLink` 关联，拒绝与
     执行失败分开。MCP 作为 Driver 协议随该路径接入；显式 `readOnlyHint` 映射为
     低风险无副作用，缺少注解时保持保守默认值，不按名称推断。
-  - [ ] Browser 与 Harness Remote 仍通过后续显式 Adapter 迁移；不能因枚举和
-    模型已存在就宣称 Action Plane 全量完成。
+  - [x] Browser 外层受治理执行边界已迁移：统一与兼容实现、内置与插件均用
+    显式 `ActionKind.BROWSER`，执行前后复用同一 Request / Result 管线，不按名称
+    推断；真实 Chromium 公共 Tool journey 已通过，Browser 内部逐方法副作用、
+    固定 Chat Action 留证与输出 Artifact 仍由对应子系统继续闭环。
+  - [ ] Harness Remote 仍通过后续显式 Adapter 迁移；不能因枚举和模型已存在就
+    宣称 Action Plane 全量完成。
 - [x] 将 `PromptFragment` 兼容演进为带来源、版本、信任级和哈希的
   `ContextFragment`，并在 Provider 调用前为每次实际尝试生成不可变
   `ContextManifest`。真实 Chat 验收覆盖 generation 11、93 个 Fragment 和

@@ -5040,6 +5040,7 @@ def _workspace_dir_key(workspace_dir: str | Path) -> str:
 
 @tool_descriptor(
     async_execution=True,
+    action_kind="browser",
     tool_type="network",
     target_param="url",
     # Preserve the stable policy identity used before unified browser support.

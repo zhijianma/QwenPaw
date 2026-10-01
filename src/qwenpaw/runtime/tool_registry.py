@@ -80,6 +80,7 @@ class ToolDescriptor:
     requires_sandbox: tuple[str, ...] = ()
     async_execution: bool = False
     description: str = ""
+    action_kind: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
     governance: ToolGovernanceSpec = field(
         default_factory=ToolGovernanceSpec,
@@ -224,6 +225,7 @@ def tool_descriptor(
     requires_sandbox: tuple[str, ...] = (),
     async_execution: bool | None = None,
     description: str = "",
+    action_kind: str = "",
     # Governance (packed into ToolGovernanceSpec)
     tool_type: str = "",
     target_param: str = "",
@@ -257,6 +259,7 @@ def tool_descriptor(
     def deco(fn: Callable[..., Any]) -> Callable[..., Any]:
         import inspect
 
+        from ..kernel.models import ActionKind
         from ..governance.tool_registry import (
             validate_default_policy,
             validate_tool_effect,
@@ -276,6 +279,9 @@ def tool_descriptor(
             resolved_tool_type = validate_tool_type(resolved_tool_type)
         resolved_default_policy = validate_default_policy(default_policy)
         resolved_effect = validate_tool_effect(effect)
+        resolved_action_kind = (
+            ActionKind(action_kind).value if action_kind else ""
+        )
         # pylint: disable=protected-access
         fn._tool_descriptor = ToolDescriptor(  # type: ignore[attr-defined]
             name=resolved_name,
@@ -291,6 +297,7 @@ def tool_descriptor(
                 if fn.__doc__
                 else description
             ),
+            action_kind=resolved_action_kind,
             metadata=dict(metadata),
             governance=ToolGovernanceSpec(
                 tool_type=resolved_tool_type,

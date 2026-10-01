@@ -19,6 +19,7 @@ from qwenpaw.kernel import (
     InteractionStatus,
 )
 from qwenpaw.kernel.models import (
+    ActionKind,
     CapabilityBundle,
     CapabilityContribution,
     CapabilityProviderKind,
@@ -248,6 +249,7 @@ class _DefinedToolProvider:
                 function=_defined_provider_tool,
                 name="_defined_provider_tool",
                 tool_type="internal",
+                action_kind=ActionKind.BROWSER,
             ),
         ]
 
@@ -454,6 +456,7 @@ async def test_tool_definition_registers_provider_owned_governance() -> None:
         assert DEFAULT_REGISTRY.get_owner("_defined_provider_tool") == (
             "example.defined-tools"
         )
+        assert getattr(tools[0], "_qp_action_kind") is ActionKind.BROWSER
     finally:
         DEFAULT_REGISTRY.unregister_owner("example.defined-tools")
 

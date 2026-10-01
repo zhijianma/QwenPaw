@@ -176,6 +176,15 @@ should not use them. Use `file`, `network`, `shell`, or `internal` as the
 governance type, and set `target_param` when policy must inspect a path, URL,
 command, or other target.
 
+`action_kind` is an optional executor-family declaration, separate from the
+governance type. Most tools should omit it: the host maps process effects to
+`shell` and other ordinary tools to `tool`. A provider that owns a real browser
+execution boundary may set `action_kind=ActionKind.BROWSER`; the same applies
+to future executor families exposed by the SDK. Never use `action_kind` merely
+to change approval behavior, and never infer it from a tool or policy name.
+The host still owns Policy, Approval, Action Request/Result, and environment
+evidence for both system and plugin providers.
+
 The process-wide governance registry is used for discovery, conflict checks,
 and deferred unload cleanup. Each guarded invocation tool also captures its
 own governance snapshot. A hot replacement may change the same tool's type,

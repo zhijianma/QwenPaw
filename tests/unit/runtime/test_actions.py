@@ -160,6 +160,26 @@ async def test_action_store_is_private_and_never_persists_raw_values(
 
 
 @pytest.mark.asyncio
+async def test_explicit_browser_kind_replaces_legacy_tool_inference(
+    tmp_path: Path,
+) -> None:
+    scope = _scope(tmp_path, conversation_id="chat-browser")
+    store = FilesystemActionStore(tmp_path)
+    recorder = RuntimeActionRecorder(scope, store)
+
+    request = await recorder.begin(
+        _context(tool_name="browser", tool_call_id="call-browser"),
+        effect=ToolEffect.EXTERNAL_WRITE,
+        policy_decision="allow",
+        kind=ActionKind.BROWSER,
+    )
+
+    assert request.kind is ActionKind.BROWSER
+    assert request.risk is RiskLevel.HIGH
+    assert request.reversible is False
+
+
+@pytest.mark.asyncio
 async def test_action_request_references_resolved_environment(
     tmp_path: Path,
 ) -> None:
@@ -405,16 +425,28 @@ def test_request_persistence_error_has_safe_public_message() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("provider_id", "tool_name"),
+    ("provider_id", "tool_name", "action_kind", "expected_kind"),
     [
-        ("qwenpaw.system.workspace-tools", "builtin_probe"),
-        ("example.probe-tools", "plugin_probe"),
+        (
+            "qwenpaw.system.workspace-tools",
+            "builtin_probe",
+            None,
+            ActionKind.TOOL,
+        ),
+        (
+            "example.probe-tools",
+            "plugin_probe",
+            ActionKind.BROWSER,
+            ActionKind.BROWSER,
+        ),
     ],
 )
 async def test_governed_system_and_plugin_tools_share_action_pipeline(
     tmp_path: Path,
     provider_id: str,
     tool_name: str,
+    action_kind: ActionKind | None,
+    expected_kind: ActionKind,
 ) -> None:
     scope = _scope(tmp_path, conversation_id=f"chat-{tool_name}")
     store = FilesystemActionStore(tmp_path)
@@ -456,7 +488,11 @@ async def test_governed_system_and_plugin_tools_share_action_pipeline(
         "os_correlation_id": str(scope.correlation_id or scope.invocation_id),
         "_action_recorder": recorder,
     }
-    tool = PolicyGuardedTool(probe, request_context=request_context)
+    tool = PolicyGuardedTool(
+        probe,
+        request_context=request_context,
+        action_kind=action_kind,
+    )
     coordinator = ToolCoordinator()
 
     async def next_handler(tool_call):
@@ -489,6 +525,7 @@ async def test_governed_system_and_plugin_tools_share_action_pipeline(
         scope.conversation_id or "",
     )
     assert record.request.capability_id == provider_id
+    assert record.request.kind is expected_kind
     assert record.result is not None
     assert record.result.status is ActionStatus.SUCCEEDED
 

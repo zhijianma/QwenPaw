@@ -50,7 +50,11 @@ from qwenpaw.plugins.api import (
 )
 from qwenpaw.runtime.tool_registry import ToolRegistry as RuntimeToolRegistry
 from qwenpaw.plugins.registry import PluginRegistry
-from qwenpaw.runtime.tool_registry import ToolDescriptor, ToolGovernanceSpec
+from qwenpaw.runtime.tool_registry import (
+    ToolDescriptor,
+    ToolGovernanceSpec,
+    tool_descriptor,
+)
 
 
 def _tc(tool_name: str, target: str = "") -> ToolCallSpec:
@@ -130,6 +134,25 @@ class TestRegisterToolGovernance:
 
 
 class TestBuiltinDescriptorGovernance:
+    def test_action_kind_is_explicit_and_validated(self):
+        @tool_descriptor(action_kind="browser")
+        def browser_probe():
+            return None
+
+        descriptor = getattr(browser_probe, "_tool_descriptor")
+        assert descriptor.action_kind == "browser"
+
+        with pytest.raises(ValueError, match="not a valid ActionKind"):
+
+            @tool_descriptor(action_kind="unknown")
+            def invalid_action_probe():
+                return None
+
+    def test_unified_browser_declares_browser_action_kind(self):
+        from qwenpaw.agents.tools.browser import browser as unified_browser
+
+        assert unified_browser._tool_descriptor.action_kind == "browser"
+
     def test_no_governance_gaps(self):
         gaps = assert_no_governance_gaps()
         assert not gaps

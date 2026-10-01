@@ -422,6 +422,7 @@ class RuntimeActionRecorder:
         policy_decision: str,
         approval_id: UUID | None = None,
         environment_ref: EnvironmentRef | None = None,
+        kind: ActionKind | None = None,
     ) -> ActionRequest:
         """Persist and bind a request before the executor is called."""
         existing = context.extra.get(ACTION_REQUEST_CONTEXT_KEY)
@@ -434,9 +435,12 @@ class RuntimeActionRecorder:
                 "qwenpaw.system.workspace-tools",
             ),
             kind=(
-                ActionKind.SHELL
-                if effect is ToolEffect.PROCESS
-                else ActionKind.TOOL
+                kind
+                or (
+                    ActionKind.SHELL
+                    if effect is ToolEffect.PROCESS
+                    else ActionKind.TOOL
+                )
             ),
             action_name=context.tool_name,
             effect=effect,

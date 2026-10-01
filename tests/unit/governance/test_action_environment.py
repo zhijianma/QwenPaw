@@ -109,4 +109,5 @@ async def test_sandbox_resolution_is_recorded_before_admission(
         policy_decision="allow",
         approval_id=None,
         environment_ref=reference,
+        kind=ActionKind.SHELL,
     )

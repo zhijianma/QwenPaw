@@ -122,6 +122,7 @@ class QwenPawLocalWorkspace(AgentScopeLocalWorkspace):
                 d.func,
                 governor=self._governor,
                 request_context=request_context,
+                action_kind=d.action_kind,
             )
             for d in descs
         ]

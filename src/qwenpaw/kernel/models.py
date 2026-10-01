@@ -1703,6 +1703,7 @@ class ToolDefinition(KernelModel):
     function: SkipJsonSchema[Callable[..., object]] = Field(exclude=True)
     name: NonEmptyStr
     tool_type: Literal["file", "network", "shell", "internal"]
+    action_kind: ActionKind | None = None
     target_param: str = ""
     pattern_param: str = ""
     policy_name: str = ""

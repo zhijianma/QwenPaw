@@ -714,8 +714,14 @@ Cron 不形成独立审批或产物事实源。
       系统 Driver Provider 和真实 capability 对齐，结果成功且 JSON 权限为
       `0600`。远端未声明 `readOnlyHint`，因此按 `external_write/high` 保守记录；
       标准 MCP 只读注解的低风险映射已有定点合同覆盖，不根据工具名猜测权限。
-    - [ ] Browser 与 Harness Remote 仍待接入；现有 Task `SideEffectRecord` 保持
-      防重放权威，不迁移为第二状态机。
+    - [x] 统一与兼容 Browser 均通过显式 `ActionKind.BROWSER` 接入同一
+      `PolicyGuardedTool -> ToolCoordinator -> RuntimeActionRecorder` 外层行动
+      边界；内置 descriptor 和插件 `ToolDefinition` 使用同一元数据，不根据工具
+      名或 Policy 名推断。Browser 内部逐方法副作用分类仍由 Browser 子系统负责，
+      不复制第二套 OS 状态机。真实 Chromium 公共 Tool journey 已通过；固定 Chat
+      的 Browser Action 留证、溢出输出与 Artifact 自动关联仍待整体验收。
+    - [ ] Harness Remote 仍待接入；现有 Task `SideEffectRecord` 保持防重放权威，
+      不迁移为第二状态机。
   - [ ] `EnvironmentContract` 冻结 Workspace、Sandbox、Harness 和 Hub runtime
     共同需要的挂载、网络、凭据引用、依赖、资源、快照与清理语义。
     - [x] Kernel 已冻结 Contract、Resolution、Ref 与 Resolver/Store Port；Lite

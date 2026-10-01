@@ -20,6 +20,7 @@ from ...browser.tool_entrypoint import (
     enabled_by_default=True,
     async_execution=True,
     description=_BROWSER_TOOL_DESCRIPTION,
+    action_kind="browser",
     tool_type="network",
     policy_name="Browser",
     effect="external_write",

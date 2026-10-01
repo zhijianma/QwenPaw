@@ -173,11 +173,14 @@ ContextManifest
 
 优先级：P0，在完成当前 Chat Artifact/Evidence 捕获后推进。
 
-截至 2026-10-01，Tool 与 Driver 两条垂直切片已经完成。内置与插件 Tool 共用
+截至 2026-10-01，Tool、Driver 与 Browser 三条垂直切片已经完成。内置与插件 Tool 共用
 稳定 Action 契约、执行前不可变请求、执行后内容最小化结果以及
 Artifact/Evidence 引用；系统与插件 Driver 共用 Driver Action、动态审批关联和
 策略拒绝语义。MCP 作为 Driver 协议已经随 Driver 接入，旧 Driver Manager 路径也
-通过兼容 Adapter 留证。Browser 与 Harness Remote 仍属于后续迁移范围。
+通过兼容 Adapter 留证。统一与兼容 Browser 实现都在外层受治理执行边界显式声明
+`ActionKind.BROWSER`；插件可通过同一 `ToolDefinition.action_kind` 接入，Host 不按
+工具名或 Policy 名猜测。Browser 内部逐方法副作用分类与溢出输出 Artifact 关联仍由
+Browser 子系统继续闭环。Harness Remote 仍属于后续迁移范围。
 MCP 标准 `readOnlyHint=true` 会被保留并映射为低风险无副作用 Action；服务未声明
 注解时保持 `external_write/high` 的保守默认值，禁止根据工具名称猜测权限。
 

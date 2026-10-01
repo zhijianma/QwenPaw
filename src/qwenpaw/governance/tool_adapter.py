@@ -164,6 +164,7 @@ def _policy_tool_init(
     governor: Optional[ResourceGovernor] = None,
     request_context: dict[str, str] | None = None,
     governance_registry: Any = None,
+    action_kind: ActionKind | str | None = None,
     **kwargs: Any,
 ) -> None:
     from agentscope.tool import FunctionTool
@@ -172,6 +173,7 @@ def _policy_tool_init(
     self._qp_governor = governor
     self._qp_request_context = request_context or {}
     self._qp_governance_registry = governance_registry or DEFAULT_REGISTRY
+    self._qp_action_kind = ActionKind(action_kind) if action_kind else None
     # A plugin backend can retain a stable public tool name while selecting a
     # more precise governance identity. Remote searches can therefore opt into
     # a network policy while local backends keep the internal policy identity.
@@ -476,6 +478,16 @@ def _active_tool_call_context() -> Any | None:
         return None
 
 
+def _runtime_action_kind(tool: Any, effect: ToolEffect) -> ActionKind:
+    """Resolve an explicit executor family before using legacy inference."""
+    explicit = getattr(tool, "_qp_action_kind", None)
+    if explicit is not None:
+        return ActionKind(explicit)
+    if effect is ToolEffect.PROCESS:
+        return ActionKind.SHELL
+    return ActionKind.TOOL
+
+
 async def _begin_tool_action(tool: Any) -> None:
     """Fail closed if runtime-owned action intent cannot be recorded."""
     request_context = getattr(tool, "_qp_request_context", {}) or {}
@@ -488,9 +500,7 @@ async def _begin_tool_action(tool: Any) -> None:
     tc_spec = getattr(tool, "_qp_tc_spec", None) or tool._build_tc_spec()
     decision = getattr(tool, "_qp_policy_decision", None)
     effect = ToolEffect(tc_spec.effect)
-    kind = (
-        ActionKind.SHELL if effect is ToolEffect.PROCESS else ActionKind.TOOL
-    )
+    kind = _runtime_action_kind(tool, effect)
     environment_ref = None
     environment_resolution = None
     sandbox_config = (
@@ -512,6 +522,7 @@ async def _begin_tool_action(tool: Any) -> None:
         ),
         approval_id=_optional_uuid(getattr(tool, "_qp_approval_id", "")),
         environment_ref=environment_ref,
+        kind=kind,
     )
     if (
         environment_resolution is not None

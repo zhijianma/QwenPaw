@@ -436,6 +436,7 @@ class AgentBuilder:
         from ..kernel.models import ToolDefinition
 
         governance_registry = None
+        action_kind = None
         if isinstance(tool, ToolDefinition):
             from ..governance.tool_registry import (
                 DEFAULT_REGISTRY,
@@ -466,6 +467,7 @@ class AgentBuilder:
                 effect=tool.effect.value,
                 owner=provider_id,
             )
+            action_kind = tool.action_kind
             tool = tool.function
         if not callable(tool):
             raise TypeError(
@@ -478,6 +480,7 @@ class AgentBuilder:
             governor=governor,
             request_context=request_context,
             governance_registry=governance_registry,
+            action_kind=action_kind,
         )
 
     @staticmethod
