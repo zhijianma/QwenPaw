@@ -184,6 +184,12 @@ Browser 子系统继续闭环。Harness Remote 仍属于后续迁移范围。
 MCP 标准 `readOnlyHint=true` 会被保留并映射为低风险无副作用 Action；服务未声明
 注解时保持 `external_write/high` 的保守默认值，禁止根据工具名称猜测权限。
 
+固定 Chat `1ee31988-b37a-48b9-b6ce-423c52f6a3a9` 已在 `/clear` 后完成真实
+Browser 可见链路：访问 `https://example.com`，记录 7 个步骤和两次 Browser 调用，
+最终返回 `BROWSER_ACTION_E2E_OK: Example Domain`。当前 Action Store 没有安全的
+只读投影，因此该次真实调用的私有 Action JSON 留证仍待专门验收；这一限制不以直接
+暴露工作区私有目录规避。
+
 ```text
 ActionRequest
 ├── action_id / invocation_id / parent_event_id

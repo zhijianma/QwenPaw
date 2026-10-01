@@ -718,8 +718,12 @@ Cron 不形成独立审批或产物事实源。
       `PolicyGuardedTool -> ToolCoordinator -> RuntimeActionRecorder` 外层行动
       边界；内置 descriptor 和插件 `ToolDefinition` 使用同一元数据，不根据工具
       名或 Policy 名推断。Browser 内部逐方法副作用分类仍由 Browser 子系统负责，
-      不复制第二套 OS 状态机。真实 Chromium 公共 Tool journey 已通过；固定 Chat
-      的 Browser Action 留证、溢出输出与 Artifact 自动关联仍待整体验收。
+      不复制第二套 OS 状态机。真实 Chromium 公共 Tool journey 已通过。固定 Chat
+      `1ee31988-b37a-48b9-b6ce-423c52f6a3a9` 已在 `/clear` 后真实访问
+      `https://example.com`，界面记录 7 个步骤和两次 Browser 调用，最终严格返回
+      `BROWSER_ACTION_E2E_OK: Example Domain`。私有 Action Store 尚无只读投影，
+      因此该次真实调用的持久化 JSON 留证仍待专门验收；溢出输出与 Artifact 自动
+      关联也仍待闭环，不能把可见调用成功等同于 Action Plane 全量完成。
     - [ ] Harness Remote 仍待接入；现有 Task `SideEffectRecord` 保持防重放权威，
       不迁移为第二状态机。
   - [ ] `EnvironmentContract` 冻结 Workspace、Sandbox、Harness 和 Hub runtime
