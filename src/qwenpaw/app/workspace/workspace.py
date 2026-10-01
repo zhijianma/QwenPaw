@@ -332,12 +332,19 @@ class Workspace:  # pylint: disable=too-many-public-methods
         """Return the lazily-created third-party agent runtime."""
         if self._harness_runtime is None:
             from ...harnesses import HarnessRuntime
+            from ...runtime.environments import FilesystemEnvironmentStore
+            from ...runtime.harness_environments import (
+                RuntimeHarnessEnvironmentManager,
+            )
 
             self._harness_runtime = HarnessRuntime(
                 self.workspace_dir,
                 self.session,
                 self.agent_id,
                 self,
+                RuntimeHarnessEnvironmentManager(
+                    FilesystemEnvironmentStore(self.workspace_dir),
+                ),
             )
         return self._harness_runtime
 

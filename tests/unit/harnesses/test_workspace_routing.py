@@ -26,6 +26,16 @@ class FakeHarnessRuntime:
         yield "harness-output"
 
 
+def test_workspace_composes_harness_environment_manager(
+    tmp_path: Path,
+) -> None:
+    workspace = Workspace("agent-1", str(tmp_path / "workspace"))
+
+    runtime = workspace.harness_runtime
+
+    assert runtime._environment_manager is not None
+
+
 @pytest.mark.asyncio
 async def test_coding_mode_routes_directly_to_harness(
     tmp_path: Path,

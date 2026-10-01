@@ -189,6 +189,14 @@ class EnvironmentResolutionStatus(str, Enum):
     UNSATISFIED = "unsatisfied"
 
 
+class EnvironmentEvidenceLevel(str, Enum):
+    """Strength of the evidence behind a concrete environment claim."""
+
+    HOST_VERIFIED = "host_verified"
+    PROVIDER_DECLARED = "provider_declared"
+    PROVIDER_ATTESTED = "provider_attested"
+
+
 class EnvironmentMount(KernelModel):
     """Logical mount requirement independent of a sandbox backend."""
 
@@ -327,10 +335,14 @@ class EnvironmentResolution(KernelModel):
     contract_version: NonEmptyStr
     resolver_id: NamespacedId
     status: EnvironmentResolutionStatus
+    evidence_level: EnvironmentEvidenceLevel = (
+        EnvironmentEvidenceLevel.HOST_VERIFIED
+    )
     os_family: Literal["linux", "macos", "windows"]
     architecture: NonEmptyStr
     workspace_root: NonEmptyStr
     enforced_constraints: tuple[NonEmptyStr, ...] = ()
+    declared_constraints: tuple[NonEmptyStr, ...] = ()
     violations: tuple[NonEmptyStr, ...] = ()
     resolved_at: AwareDatetime = Field(default_factory=utc_now)
 

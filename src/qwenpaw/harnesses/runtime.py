@@ -61,10 +61,12 @@ class HarnessRuntime:
         session: Any = None,
         agent_id: str = "default",
         workspace: Any = None,
+        environment_manager: Any = None,
     ) -> None:
         self._state_dir = workspace_dir / "harnesses"
         self._agent_id = agent_id
         self._workspace = workspace
+        self._environment_manager = environment_manager
         self._adapters: dict[str, HarnessAdapter] = {}
         self._adapter_keys: dict[str, tuple[Any, ...]] = {}
         self._adapter_lock = asyncio.Lock()
@@ -367,7 +369,6 @@ class HarnessRuntime:
         settings[
             "_runtime_capabilities"
         ] = await self._capability_resolver.resolve(request_context)
-        adapter = await self.adapter(backend, settings)
         session_id = str(getattr(request, "session_id", "") or "default")
         prompt, attachments = self._content_from_request(request)
         command, arguments = (
@@ -403,6 +404,7 @@ class HarnessRuntime:
 
         try:
             if command in {"new", "clear"}:
+                adapter = await self.adapter(backend, settings)
                 await adapter.reset_session(session_id)
                 events = [
                     HarnessEvent(
@@ -413,6 +415,12 @@ class HarnessRuntime:
                 ]
                 event_stream = self._iter_events(events)
             elif command:
+                await self._resolve_environment(
+                    backend=backend,
+                    cwd=cwd,
+                    settings=settings,
+                    request_context=request_context,
+                )
                 provider = get_provider(backend)
                 supported = {
                     item.name for item in provider.capabilities.commands
@@ -421,6 +429,7 @@ class HarnessRuntime:
                     raise ValueError(
                         f"Unsupported {provider.name} command: /{command}",
                     )
+                adapter = await self.adapter(backend, settings)
                 events = await adapter.run_command(
                     session_id=session_id,
                     command=command,
@@ -430,6 +439,13 @@ class HarnessRuntime:
                 )
                 event_stream = self._iter_events(events)
             else:
+                await self._resolve_environment(
+                    backend=backend,
+                    cwd=cwd,
+                    settings=settings,
+                    request_context=request_context,
+                )
+                adapter = await self.adapter(backend, settings)
                 await record_agent_activity()
                 event_stream = adapter.run_turn(
                     session_id=session_id,
@@ -523,6 +539,39 @@ class HarnessRuntime:
         if task_cancelled:
             raise asyncio.CancelledError
         yield tagged(response)
+
+    async def _resolve_environment(
+        self,
+        *,
+        backend: str,
+        cwd: Path,
+        settings: dict[str, Any],
+        request_context: dict[str, Any],
+    ) -> None:
+        """Resolve a controlled Harness launch before provider dispatch."""
+        raw_invocation_id = request_context.get("os_invocation_id")
+        if raw_invocation_id is None:
+            return
+        if self._environment_manager is None:
+            raise RuntimeError(
+                "controlled Harness invocation has no environment manager",
+            )
+        try:
+            invocation_id = uuid.UUID(str(raw_invocation_id))
+        except ValueError as exc:
+            raise ValueError(
+                "invalid Harness environment invocation identity",
+            ) from exc
+        conversation_id = request_context.get("os_conversation_id")
+        await self._environment_manager.resolve(
+            backend,
+            cwd,
+            settings,
+            invocation_id=invocation_id,
+            conversation_id=(
+                str(conversation_id) if conversation_id is not None else None
+            ),
+        )
 
     async def stop(self) -> None:
         """Stop every initialized adapter."""

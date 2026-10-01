@@ -734,8 +734,13 @@ Cron 不形成独立审批或产物事实源。
       105 项 Sandbox/Environment/Action/Governance 定点测试通过；固定 Chat 因用户
       配置 `security.sandbox_enabled=false`，真实 Shell 正确保留 Host Ref，未伪造
       Sandbox 证据。开启态端到端仍待隔离配置环境验证。
-    - [ ] Harness Remote、Workstation 与 Hub runner 仍需实现等价 Adapter 和真实
-      约束兑现；完成前父项保持未完成。
+    - [x] 本地 Codex/Qoder Harness 已接入 Chat 控制面：能力解析完成后、Provider
+      command/turn 调用前持久化确定性 Resolution；环境失败时 Adapter 不执行且
+      Queue lease 正常结算。Resolution 分开保存宿主验证的 Workspace/依赖和
+      Provider 声明的 sandbox/permission，Secret 值不进入 Contract。Harness、
+      Environment、Sandbox、Action 与 SDK 共 120 项定点测试通过。
+    - [ ] Harness Remote、Workstation 与 Hub runner 仍需实现等价 Adapter、真实
+      约束兑现和可验证 attestation；完成前父项保持未完成。
   - [ ] 语义观测统一 `MODEL`、`ACTION`、`GUARDRAIL`、`COMPACTION`、
     `HITL`、`INTERRUPT` 与 `VERIFICATION`；模型意图、策略判定、实际执行和
     Runtime 独立 Evidence 使用稳定因果 ID 关联，不把 Agent 自报结果当作事实。

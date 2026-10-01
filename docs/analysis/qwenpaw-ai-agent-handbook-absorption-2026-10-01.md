@@ -240,14 +240,20 @@ Context 的相关性和信任等级也不能直接转化为执行授权：`Actio
   Sandbox 开启态的真实执行验收仍待在不修改用户全局配置的隔离环境完成。
 - Plugin SDK 公开环境数据模型供 Provider 读取，但不公开 Resolver/Store；
   环境兑现属于 Kernel 与 Edition 基建，不是可任意热替换的外设插件。
+- 本地 Codex/Qoder Harness 已在受控 Chat Invocation 中接入同一环境管线。
+  `EnvironmentEvidenceLevel` 区分 `host_verified`、`provider_declared` 和
+  `provider_attested`；当前 Codex sandbox 与 Qoder permission 只能构成 Provider
+  声明，Workspace、Skill mount 和 MCP stdio 依赖才由本机独立校验。声明约束与
+  enforced constraints 分栏持久化，缺失 MCP 命令或未知模式会在 Provider 调用前
+  失败关闭。
 
 固定 Chat `1ee31988-b37a-48b9-b6ce-423c52f6a3a9` 已在 `/clear` 后完成真实
 `read_file` 验收：macOS arm64 Lite Resolver 在模型运行前生成 `satisfied`
 Resolution，JSON 权限为 `0600`；Tool Action 的 Invocation、ChatSpec.id、
 contract/version、resolver 和 resolution identity 全部与环境证据一致。
 
-尚未完成：Harness Remote 与 Hub runner 的 Adapter 映射，以及 Workstation/Hub
-对隔离、网络、资源、快照和清理约束的真实兑现。完成这些之前，
+尚未完成：Harness Remote 与 Hub runner 的 attested Adapter，以及
+Workstation/Hub 对隔离、网络、资源、快照和清理约束的真实兑现。完成这些之前，
 不能宣称 Environment Plane 全量完成。
 
 ### A5. Budget Lease

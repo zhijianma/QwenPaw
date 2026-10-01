@@ -254,6 +254,7 @@ def test_public_sdk_exports_environment_models_but_not_host_services() -> None:
     from qwenpaw.plugins import sdk
 
     assert sdk.EnvironmentContract is not None
+    assert sdk.EnvironmentEvidenceLevel is not None
     assert sdk.EnvironmentMount is not None
     assert sdk.EnvironmentRef is not None
     assert sdk.EnvironmentResolution is not None

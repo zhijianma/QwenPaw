@@ -355,6 +355,15 @@ and `EnvironmentRef`. A Chat provider may inspect
 Host actually resolved. Treat the Resolution as evidence, not as permission:
 it does not expand the provider's tool or credential access.
 
+Inspect `EnvironmentResolution.evidence_level` before relying on a claim.
+`host_verified` means the QwenPaw host checked the fact, `provider_declared`
+means an external Harness accepted or advertised the setting, and
+`provider_attested` is reserved for independently verifiable remote-runtime
+evidence. `declared_constraints` must never be treated as
+`enforced_constraints`; for example, Codex `workspace-write` and Qoder
+`acceptEdits` describe different Provider policies and neither proves a host
+Sandbox by itself.
+
 An Action may carry a different `EnvironmentRef` from the Invocation default
 when the Host applies a per-tool Sandbox. Resolve that reference through
 host-owned evidence; do not assume the Invocation's host environment proves

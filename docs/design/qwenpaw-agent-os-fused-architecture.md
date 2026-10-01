@@ -436,8 +436,13 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
     未兑现安全约束会在执行前失败关闭。固定 Chat 当前显式关闭 Sandbox，真实
     Shell 回归保持 Host EnvironmentRef，未虚构隔离证据；开启态真实验收待隔离
     配置环境完成。
-  - [ ] 将 Harness Remote 和 Hub runner 适配到同一契约；在这些 Adapter 完成前，
-    不把枚举存在误报为平台已具备隔离能力。
+  - [x] 本地 Codex/Qoder Harness 已在受控 Chat Invocation 的 Provider 调用前
+    生成同一 Contract/Resolution；Workspace、Skill 目录和 MCP stdio 依赖由宿主
+    校验，MCP Secret 只保存变量名和 opaque 引用。Codex sandbox 与 Qoder
+    permission 明确记录为 `provider_declared`，不冒充宿主 enforcement 或远端证明。
+  - [ ] 将 Harness Remote 和 Hub runner 适配到同一契约并提供
+    `provider_attested` 证据；在这些 Adapter 完成前，不把 Provider 声明或枚举存在
+    误报为平台已具备远端隔离能力。
 - 从现有事件派生统一的 `MODEL`、`ACTION`、`GUARDRAIL`、`COMPACTION`、
   `HITL`、`INTERRUPT` 与 `VERIFICATION` 语义观测；区分模型意图、策略决定、
   实际执行和 Runtime 独立证据。

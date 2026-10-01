@@ -32,6 +32,10 @@ from qwenpaw.kernel import (
     SubmissionStatus,
     TurnSubmissionRequest,
 )
+from qwenpaw.runtime.environments import FilesystemEnvironmentStore
+from qwenpaw.runtime.harness_environments import (
+    RuntimeHarnessEnvironmentManager,
+)
 from qwenpaw.schemas import (
     AgentRequest,
     FileContent,
@@ -203,6 +207,44 @@ class BlockingAdapter(FakeAdapter):
         self.cancelled = True
         self.release.set()
         return True
+
+
+class EnvironmentCheckingAdapter(FakeAdapter):
+    """Assert immutable environment evidence precedes provider execution."""
+
+    def __init__(self, workspace_dir: Path) -> None:
+        super().__init__()
+        self._environment_root = (
+            workspace_dir / ".qwenpaw" / "lite" / "environments"
+        )
+        self.environment_seen = False
+
+    async def run_turn(  # pylint: disable=invalid-overridden-method
+        self,
+        *,
+        session_id: str,
+        prompt: str,
+        cwd: Path,
+        settings: dict,
+        attachments: list[HarnessAttachment] | None = None,
+    ) -> AsyncIterator[HarnessEvent]:
+        self.environment_seen = bool(
+            list(self._environment_root.rglob("environment.json")),
+        )
+        async for event in super().run_turn(
+            session_id=session_id,
+            prompt=prompt,
+            cwd=cwd,
+            settings=settings,
+            attachments=attachments,
+        ):
+            yield event
+
+
+def _environment_manager(tmp_path: Path) -> RuntimeHarnessEnvironmentManager:
+    return RuntimeHarnessEnvironmentManager(
+        FilesystemEnvironmentStore(tmp_path),
+    )
 
 
 @pytest.mark.asyncio
@@ -482,7 +524,11 @@ async def test_harness_turn_uses_os_invocation_lifecycle(
             tmp_path / "interactions.sqlite3",
         ),
     )
-    runtime = HarnessRuntime(tmp_path, workspace=workspace)
+    runtime = HarnessRuntime(
+        tmp_path,
+        workspace=workspace,
+        environment_manager=_environment_manager(tmp_path),
+    )
     runtime._adapters["codex"] = FakeAdapter()
 
     output = [
@@ -501,6 +547,85 @@ async def test_harness_turn_uses_os_invocation_lifecycle(
     assert output[-1].status == "completed"
     assert queue.active_submission_id is None
     assert queue.submissions == ()
+
+
+@pytest.mark.asyncio
+async def test_controlled_harness_records_environment_before_dispatch(
+    tmp_path: Path,
+) -> None:
+    control = InvocationControlService(
+        store=SQLiteInvocationControl(tmp_path / "control.sqlite3"),
+    )
+    workspace = SimpleNamespace(
+        workspace_dir=tmp_path,
+        invocation_control=control,
+        interaction_service=InteractionService(
+            tmp_path / "interactions.sqlite3",
+        ),
+    )
+    runtime = HarnessRuntime(
+        tmp_path,
+        workspace=workspace,
+        environment_manager=_environment_manager(tmp_path),
+    )
+    adapter = EnvironmentCheckingAdapter(tmp_path)
+    runtime._adapters["codex"] = adapter
+
+    output = [
+        item
+        async for item in runtime.stream(
+            backend="codex",
+            request=_os_request(),
+            cwd=tmp_path.resolve(),
+        )
+    ]
+
+    assert output[-1].status == "completed"
+    assert adapter.environment_seen is True
+
+
+@pytest.mark.asyncio
+async def test_unsatisfied_environment_prevents_harness_dispatch(
+    tmp_path: Path,
+) -> None:
+    control = InvocationControlService(
+        store=SQLiteInvocationControl(tmp_path / "control.sqlite3"),
+    )
+    workspace = SimpleNamespace(
+        workspace_dir=tmp_path,
+        invocation_control=control,
+        interaction_service=InteractionService(
+            tmp_path / "interactions.sqlite3",
+        ),
+    )
+    runtime = HarnessRuntime(
+        tmp_path,
+        workspace=workspace,
+        environment_manager=_environment_manager(tmp_path),
+    )
+    adapter = FakeAdapter()
+    runtime._adapters["codex"] = adapter
+
+    output = [
+        item
+        async for item in runtime.stream(
+            backend="codex",
+            request=_os_request(),
+            cwd=tmp_path.resolve(),
+            settings={"sandbox": "imaginary"},
+        )
+    ]
+
+    assert output[-1].status == "failed"
+    assert "environment.harness.sandbox.unknown" in str(
+        output[-1].error,
+    )
+    assert adapter.prompt == ""
+    queue = await control.read_queue(
+        agent_id="default",
+        conversation_id="chat-spec-1",
+    )
+    assert queue.active_submission_id is None
 
 
 @pytest.mark.asyncio
@@ -526,7 +651,11 @@ async def test_harness_turn_adopts_prequeued_submission(
             tmp_path / "interactions.sqlite3",
         ),
     )
-    runtime = HarnessRuntime(tmp_path, workspace=workspace)
+    runtime = HarnessRuntime(
+        tmp_path,
+        workspace=workspace,
+        environment_manager=_environment_manager(tmp_path),
+    )
     runtime._adapters["codex"] = FakeAdapter()
 
     output = [
@@ -565,7 +694,11 @@ async def test_os_interrupt_cancels_active_harness_turn(
             tmp_path / "interactions.sqlite3",
         ),
     )
-    runtime = HarnessRuntime(tmp_path, workspace=workspace)
+    runtime = HarnessRuntime(
+        tmp_path,
+        workspace=workspace,
+        environment_manager=_environment_manager(tmp_path),
+    )
     adapter = BlockingAdapter()
     runtime._adapters["codex"] = adapter
 
