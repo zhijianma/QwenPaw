@@ -159,6 +159,22 @@ class EnvironmentMountAccess(str, Enum):
     READ_WRITE = "read_write"
 
 
+class EnvironmentFilesystemMode(str, Enum):
+    """Visibility posture required for paths outside declared mounts."""
+
+    HOST = "host"
+    READ_ALL = "read_all"
+    ALLOWLIST = "allowlist"
+
+
+class EnvironmentVariableMode(str, Enum):
+    """Host environment inheritance and injection posture."""
+
+    INHERIT = "inherit"
+    INJECT = "inject"
+    ALLOWLIST = "allowlist"
+
+
 class EnvironmentDependencyKind(str, Enum):
     """Dependency classes the Lite resolver can verify locally."""
 
@@ -192,6 +208,14 @@ class EnvironmentDependency(KernelModel):
     required: bool = True
 
 
+class EnvironmentPortRule(KernelModel):
+    """One TCP admission rule independent of an OS firewall backend."""
+
+    port: int = Field(ge=1, le=65535)
+    direction: Literal["connect", "bind"] = "connect"
+    allow: bool = True
+
+
 class EnvironmentResourceLimits(KernelModel):
     """Resource ceilings requested from an execution backend."""
 
@@ -223,12 +247,18 @@ class EnvironmentContract(KernelModel):
     architectures: tuple[NonEmptyStr, ...] = ()
     isolation: EnvironmentIsolation = EnvironmentIsolation.HOST
     runtime_image: NonEmptyStr | None = None
+    filesystem_mode: EnvironmentFilesystemMode = EnvironmentFilesystemMode.HOST
     workspace: EnvironmentMount
     mounts: tuple[EnvironmentMount, ...] = ()
+    denied_paths: tuple[NonEmptyStr, ...] = ()
     network_mode: EnvironmentNetworkMode = EnvironmentNetworkMode.INHERIT
     allowed_hosts: tuple[NonEmptyStr, ...] = ()
+    network_ports: tuple[EnvironmentPortRule, ...] = ()
+    environment_mode: EnvironmentVariableMode = EnvironmentVariableMode.INHERIT
+    environment_variables: tuple[NonEmptyStr, ...] = ()
     credential_refs: tuple[NonEmptyStr, ...] = ()
     dependencies: tuple[EnvironmentDependency, ...] = ()
+    native_constraint_names: tuple[NonEmptyStr, ...] = ()
     resources: EnvironmentResourceLimits = Field(
         default_factory=EnvironmentResourceLimits,
     )
@@ -264,6 +294,26 @@ class EnvironmentContract(KernelModel):
             )
         if len(self.credential_refs) != len(set(self.credential_refs)):
             raise ValueError("environment credential refs must be unique")
+        for values, label in (
+            (self.denied_paths, "denied paths"),
+            (self.environment_variables, "environment variables"),
+            (self.native_constraint_names, "native constraint names"),
+        ):
+            if len(values) != len(set(values)):
+                raise ValueError(f"environment {label} must be unique")
+        ports = tuple(
+            (rule.port, rule.direction, rule.allow)
+            for rule in self.network_ports
+        )
+        if len(ports) != len(set(ports)):
+            raise ValueError("environment port rules must be unique")
+        if (
+            self.environment_mode is EnvironmentVariableMode.INHERIT
+            and self.environment_variables
+        ):
+            raise ValueError(
+                "inherited environment cannot declare injected variables",
+            )
         return self
 
 
@@ -272,6 +322,7 @@ class EnvironmentResolution(KernelModel):
 
     resolution_id: UUID = Field(default_factory=uuid4)
     invocation_id: UUID
+    action_id: UUID | None = None
     contract_id: NamespacedId
     contract_version: NonEmptyStr
     resolver_id: NamespacedId

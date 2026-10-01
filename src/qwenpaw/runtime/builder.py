@@ -649,10 +649,20 @@ class AgentBuilder:
         invocation = getattr(ctx, "invocation_scope", None)
         if invocation is not None and workspace_dir is not None:
             from .actions import RuntimeActionRecorder, lite_action_store
+            from .environments import FilesystemEnvironmentStore
+            from .sandbox_environments import (
+                RuntimeSandboxEnvironmentManager,
+            )
 
             request_context["_action_recorder"] = RuntimeActionRecorder(
                 invocation,
                 lite_action_store(Path(workspace_dir)),
+            )
+            request_context[
+                "_sandbox_environment_manager"
+            ] = RuntimeSandboxEnvironmentManager(
+                invocation,
+                FilesystemEnvironmentStore(Path(workspace_dir)),
             )
 
         # Toolkit.

@@ -14,6 +14,7 @@ from uuid import UUID
 from ..kernel import (
     EnvironmentContract,
     EnvironmentDependencyKind,
+    EnvironmentFilesystemMode,
     EnvironmentIsolation,
     EnvironmentMount,
     EnvironmentMountAccess,
@@ -21,6 +22,7 @@ from ..kernel import (
     EnvironmentRecord,
     EnvironmentResolution,
     EnvironmentResolutionStatus,
+    EnvironmentVariableMode,
 )
 from ..utils.io_utils import (
     get_path_lock,
@@ -145,9 +147,30 @@ class LiteEnvironmentResolver:
                 None,
             ),
             (
+                contract.filesystem_mode is not EnvironmentFilesystemMode.HOST,
+                "environment.filesystem.unsupported",
+                "filesystem.host",
+            ),
+            (
+                bool(contract.denied_paths),
+                "environment.denied_paths.unsupported",
+                None,
+            ),
+            (
                 contract.network_mode is not EnvironmentNetworkMode.INHERIT,
                 "environment.network.unsupported",
                 "network.inherit",
+            ),
+            (
+                bool(contract.network_ports),
+                "environment.network_ports.unsupported",
+                None,
+            ),
+            (
+                contract.environment_mode
+                is not EnvironmentVariableMode.INHERIT,
+                "environment.variables.unsupported",
+                "environment.inherit",
             ),
             (
                 bool(contract.credential_refs),
@@ -172,6 +195,11 @@ class LiteEnvironmentResolver:
             (
                 contract.snapshot_required,
                 "environment.snapshot.unsupported",
+                None,
+            ),
+            (
+                bool(contract.native_constraint_names),
+                "environment.native_constraints.unsupported",
                 None,
             ),
             (
@@ -269,10 +297,15 @@ class FilesystemEnvironmentStore:
     ) -> Path:
         invocation_id = record.resolution.invocation_id
         owner = conversation_id or f"invocation:{invocation_id}"
+        invocation_root = (
+            self._root / self._owner_key(owner) / str(invocation_id)
+        )
+        if record.resolution.action_id is None:
+            return invocation_root / "environment.json"
         return (
-            self._root
-            / self._owner_key(owner)
-            / str(invocation_id)
+            invocation_root
+            / "actions"
+            / str(record.resolution.action_id)
             / "environment.json"
         )
 
@@ -291,7 +324,14 @@ class FilesystemEnvironmentStore:
                 existing_payload = None
             if existing_payload is not None:
                 existing = EnvironmentRecord.model_validate(existing_payload)
-                if existing != record:
+                comparable = {"resolution": {"resolved_at"}}
+                if existing.model_dump(
+                    mode="json",
+                    exclude=comparable,
+                ) != record.model_dump(
+                    mode="json",
+                    exclude=comparable,
+                ):
                     raise EnvironmentContractConflictError(
                         "invocation already has different environment "
                         "evidence",

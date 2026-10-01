@@ -37,6 +37,7 @@ from qwenpaw.kernel import (
     CapabilitySelection,
     DriverToolDefinition,
     EvidenceRef,
+    EnvironmentRef,
     InvocationScope,
     RiskLevel,
     ToolEffect,
@@ -195,6 +196,21 @@ async def test_action_request_references_resolved_environment(
     assert request.environment_ref.contract_id == contract.contract_id
     assert request.environment_ref.contract_version == contract.version
     assert request.environment_ref.resolver_id == resolution.resolver_id
+
+    action_environment = EnvironmentRef(
+        resolution_id=uuid4(),
+        contract_id="qwenpaw.system.environment.sandbox",
+        contract_version="1.0.0",
+        resolver_id="qwenpaw.system.environment.sandbox-resolver",
+    )
+    sandboxed = await recorder.begin(
+        _context(tool_name="Bash", tool_call_id="call-sandboxed"),
+        effect=ToolEffect.PROCESS,
+        policy_decision="sandbox_fallback",
+        environment_ref=action_environment,
+    )
+
+    assert sandboxed.environment_ref == action_environment
 
 
 @pytest.mark.asyncio

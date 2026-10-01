@@ -727,8 +727,15 @@ Cron 不形成独立审批或产物事实源。
       固定 Chat `1ee31988-b37a-48b9-b6ce-423c52f6a3a9` 已在 `/clear` 后完成真实
       `read_file`：Resolution 为 `satisfied`，环境 JSON 为 `0600`，Tool Action
       的 Invocation、ChatSpec.id 与 EnvironmentRef 均和环境证据一致。
-    - [ ] 现有 Sandbox、Harness Remote、Workstation 与 Hub runner 仍需实现
-      等价 Adapter 和真实约束兑现；完成前父项保持未完成。
+    - [x] 旧 SandboxConfig 已通过 Action 级 Adapter 映射到同一 Contract；
+      Resolution 以具体后端 `_enforced_fields` 为事实，环境变量只留名称，Action
+      Request 先关联不可变环境证据再准入执行。后端仅记录 warning 的内存、进程、
+      domain allowlist 等约束不再被当作已兑现，统一执行前失败关闭。
+      105 项 Sandbox/Environment/Action/Governance 定点测试通过；固定 Chat 因用户
+      配置 `security.sandbox_enabled=false`，真实 Shell 正确保留 Host Ref，未伪造
+      Sandbox 证据。开启态端到端仍待隔离配置环境验证。
+    - [ ] Harness Remote、Workstation 与 Hub runner 仍需实现等价 Adapter 和真实
+      约束兑现；完成前父项保持未完成。
   - [ ] 语义观测统一 `MODEL`、`ACTION`、`GUARDRAIL`、`COMPACTION`、
     `HITL`、`INTERRUPT` 与 `VERIFICATION`；模型意图、策略判定、实际执行和
     Runtime 独立 Evidence 使用稳定因果 ID 关联，不把 Agent 自报结果当作事实。

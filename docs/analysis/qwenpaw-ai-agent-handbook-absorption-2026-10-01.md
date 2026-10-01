@@ -230,6 +230,14 @@ Context 的相关性和信任等级也不能直接转化为执行授权：`Actio
   快照和自动清理不会被静默忽略。
 - Action 只保存 `EnvironmentRef`，通过 resolution identity 关联同一次调用的
   环境事实，不复制挂载路径或凭据。
+- 旧 Sandbox 已通过 Action 级 Adapter 接入：文件可见性、挂载、拒绝路径、
+  网络/端口、环境变量名、依赖、资源上限、超时和平台约束先转换为不含 Secret
+  值的 Contract，再依据具体后端的真实 enforcement 集合生成 Resolution。旧逻辑
+  仅警告的 `max_memory_mb`、`max_processes`、domain allowlist 等约束现在会在
+  Shell 执行前失败关闭。
+- 固定 Chat 的当前全局配置为 `security.sandbox_enabled=false`；真实 `pwd` 回归
+  因此正确保留 Invocation Host EnvironmentRef，没有伪造 Sandbox Resolution。
+  Sandbox 开启态的真实执行验收仍待在不修改用户全局配置的隔离环境完成。
 - Plugin SDK 公开环境数据模型供 Provider 读取，但不公开 Resolver/Store；
   环境兑现属于 Kernel 与 Edition 基建，不是可任意热替换的外设插件。
 
@@ -238,8 +246,8 @@ Context 的相关性和信任等级也不能直接转化为执行授权：`Actio
 Resolution，JSON 权限为 `0600`；Tool Action 的 Invocation、ChatSpec.id、
 contract/version、resolver 和 resolution identity 全部与环境证据一致。
 
-尚未完成：现有 Sandbox、Harness Remote 与 Hub runner 的 Adapter 映射，以及
-Workstation/Hub 对隔离、网络、资源、快照和清理约束的真实兑现。完成这些之前，
+尚未完成：Harness Remote 与 Hub runner 的 Adapter 映射，以及 Workstation/Hub
+对隔离、网络、资源、快照和清理约束的真实兑现。完成这些之前，
 不能宣称 Environment Plane 全量完成。
 
 ### A5. Budget Lease

@@ -355,6 +355,12 @@ and `EnvironmentRef`. A Chat provider may inspect
 Host actually resolved. Treat the Resolution as evidence, not as permission:
 it does not expand the provider's tool or credential access.
 
+An Action may carry a different `EnvironmentRef` from the Invocation default
+when the Host applies a per-tool Sandbox. Resolve that reference through
+host-owned evidence; do not assume the Invocation's host environment proves
+the Action's isolation. Environment variable names may appear in the Contract,
+but their values never belong in plugin-visible evidence.
+
 Do not implement or import an environment store or resolver from a plugin.
 Resolution, immutable evidence storage, Sandbox enforcement, and edition
 selection are host-owned infrastructure. If a contract cannot be enforced,

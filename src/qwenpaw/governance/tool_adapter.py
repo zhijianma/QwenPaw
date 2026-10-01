@@ -23,6 +23,7 @@ from agentscope.tool import ToolChunk
 from ..app.approvals.interaction_bridge import attach_pending_to_interaction
 from ..app.approvals.task_bridge import attach_pending_to_durable_task
 from ..kernel.models import (
+    ActionKind,
     ApprovalDisplay,
     ApprovalSource,
     SideEffectBroker,
@@ -30,6 +31,7 @@ from ..kernel.models import (
     SideEffectReservation,
     SideEffectStatus,
     ToolEffect,
+    EnvironmentResolutionStatus,
 )
 from .policy import (
     GovernanceDecision,
@@ -485,14 +487,42 @@ async def _begin_tool_action(tool: Any) -> None:
         raise RuntimeError("action recorder requires supervised tool context")
     tc_spec = getattr(tool, "_qp_tc_spec", None) or tool._build_tc_spec()
     decision = getattr(tool, "_qp_policy_decision", None)
+    effect = ToolEffect(tc_spec.effect)
+    kind = (
+        ActionKind.SHELL if effect is ToolEffect.PROCESS else ActionKind.TOOL
+    )
+    environment_ref = None
+    environment_resolution = None
+    sandbox_config = (
+        getattr(tool, "_qp_sandbox_config", None)
+        if getattr(tool, "_qp_sandbox_mode", False)
+        else None
+    )
+    manager = request_context.get("_sandbox_environment_manager")
+    if sandbox_config is not None and manager is not None:
+        environment_ref, environment_resolution = await manager.resolve(
+            sandbox_config,
+            action_id=recorder.action_id(context, kind=kind),
+        )
     await recorder.begin(
         context,
-        effect=ToolEffect(tc_spec.effect),
+        effect=effect,
         policy_decision=(
             decision.action.value if decision is not None else "allow"
         ),
         approval_id=_optional_uuid(getattr(tool, "_qp_approval_id", "")),
+        environment_ref=environment_ref,
     )
+    if (
+        environment_resolution is not None
+        and environment_resolution.status
+        is EnvironmentResolutionStatus.UNSATISFIED
+    ):
+        from ..runtime.environments import (
+            EnvironmentContractUnsatisfiedError,
+        )
+
+        raise EnvironmentContractUnsatisfiedError(environment_resolution)
 
 
 async def _begin_tool_side_effect(

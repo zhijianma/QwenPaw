@@ -431,8 +431,13 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
     网络、Secret、资源、超时、并发、快照和清理约束在执行前失败关闭。
     固定 Chat 已在 `/clear` 后以真实 `read_file` 验证环境 Resolution 与 Tool
     Action 引用一致，环境证据文件模式为 `0600`。
-  - [ ] 将现有 Sandbox、Harness Remote 和 Hub runner 适配到同一契约；在这些
-    Adapter 完成前，不把枚举存在误报为平台已具备隔离能力。
+  - [x] 现有 Sandbox 已作为 Action 级环境子契约接入；具体后端声明的真实
+    enforcement 决定 Resolution，环境变量只记录名称不记录值，原来仅告警的
+    未兑现安全约束会在执行前失败关闭。固定 Chat 当前显式关闭 Sandbox，真实
+    Shell 回归保持 Host EnvironmentRef，未虚构隔离证据；开启态真实验收待隔离
+    配置环境完成。
+  - [ ] 将 Harness Remote 和 Hub runner 适配到同一契约；在这些 Adapter 完成前，
+    不把枚举存在误报为平台已具备隔离能力。
 - 从现有事件派生统一的 `MODEL`、`ACTION`、`GUARDRAIL`、`COMPACTION`、
   `HITL`、`INTERRUPT` 与 `VERIFICATION` 语义观测；区分模型意图、策略决定、
   实际执行和 Runtime 独立证据。

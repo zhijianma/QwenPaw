@@ -126,6 +126,8 @@ class InvocationScope(KernelModel):
             )
         if resolution.invocation_id != self.invocation_id:
             raise ValueError("environment resolution invocation mismatch")
+        if resolution.action_id is not None:
+            raise ValueError("invocation environment cannot bind an action")
         if resolution.contract_id != contract.contract_id:
             raise ValueError("environment resolution contract mismatch")
         if resolution.contract_version != contract.version:

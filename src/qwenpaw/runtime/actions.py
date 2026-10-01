@@ -348,6 +348,7 @@ class RuntimeActionRecorder:
         reversible: bool,
         policy_decision: str,
         approval_id: UUID | None,
+        environment_ref: EnvironmentRef | None = None,
     ) -> ActionRequest:
         raw_input = context.extra.get("tool_input")
         arguments = _json_value(
@@ -356,10 +357,7 @@ class RuntimeActionRecorder:
         redacted_arguments = _minimize_arguments(
             redact_payload(arguments),
         )
-        action_id = uuid5(
-            self._scope.invocation_id,
-            f"{kind.value}:{context.tool_call_id}",
-        )
+        action_id = self.action_id(context, kind=kind)
         return ActionRequest(
             action_id=action_id,
             invocation_id=self._scope.invocation_id,
@@ -368,7 +366,8 @@ class RuntimeActionRecorder:
             ),
             conversation_id=self._scope.conversation_id,
             registry_generation=self._scope.registry_generation,
-            environment_ref=(
+            environment_ref=environment_ref
+            or (
                 EnvironmentRef(
                     resolution_id=(
                         self._scope.environment_resolution.resolution_id
@@ -403,6 +402,18 @@ class RuntimeActionRecorder:
             policy_decision=policy_decision or "unknown",
         )
 
+    def action_id(
+        self,
+        context: ToolCallContext,
+        *,
+        kind: ActionKind,
+    ) -> UUID:
+        """Return the deterministic identity used before request storage."""
+        return uuid5(
+            self._scope.invocation_id,
+            f"{kind.value}:{context.tool_call_id}",
+        )
+
     async def begin(
         self,
         context: ToolCallContext,
@@ -410,6 +421,7 @@ class RuntimeActionRecorder:
         effect: ToolEffect,
         policy_decision: str,
         approval_id: UUID | None = None,
+        environment_ref: EnvironmentRef | None = None,
     ) -> ActionRequest:
         """Persist and bind a request before the executor is called."""
         existing = context.extra.get(ACTION_REQUEST_CONTEXT_KEY)
@@ -432,6 +444,7 @@ class RuntimeActionRecorder:
             reversible=effect is ToolEffect.NONE,
             policy_decision=policy_decision,
             approval_id=approval_id,
+            environment_ref=environment_ref,
         )
         try:
             await self._store.begin(request)
