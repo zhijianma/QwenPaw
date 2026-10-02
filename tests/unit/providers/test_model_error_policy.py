@@ -3,12 +3,18 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import anthropic
 import httpx
 import openai
 import pytest
 
-from qwenpaw.providers.model_error_policy import classify_model_error
+from qwenpaw.kernel import ModelFailureClass, ModelRecoveryDisposition
+from qwenpaw.providers.model_error_policy import (
+    classify_model_error,
+    classify_model_recovery,
+)
 
 
 class HttpError(Exception):
@@ -85,7 +91,7 @@ def test_code_status_is_transient() -> None:
     decision = classify_model_error(CodeStatusError(529))
 
     assert decision.status_code == 529
-    assert decision.kind == "transient"
+    assert decision.kind == "provider_overloaded"
     assert decision.retryable is True
 
 
@@ -95,7 +101,7 @@ def test_streaming_status_is_transient() -> None:
     )
 
     assert decision.status_code == 503
-    assert decision.kind == "transient"
+    assert decision.kind == "provider_overloaded"
     assert decision.retryable is True
 
 
@@ -162,3 +168,37 @@ def test_unknown_error_does_not_allow_retry_or_fallback() -> None:
     assert decision.kind == "unknown"
     assert decision.retryable is False
     assert decision.fallback_eligible is False
+
+
+def test_quota_is_not_misclassified_as_short_rate_limit() -> None:
+    decision = classify_model_error(
+        ResponseStatusError(429, "insufficient_quota: usage limit reached"),
+    )
+    recovery = classify_model_recovery(
+        ResponseStatusError(429, "insufficient_quota"),
+    )
+
+    assert decision.kind == "quota_exhausted"
+    assert decision.retryable is False
+    assert recovery.failure_class is ModelFailureClass.QUOTA_EXHAUSTED
+    assert recovery.disposition is ModelRecoveryDisposition.WAIT_RESOURCE
+
+
+def test_partial_stream_uses_continuation_not_transport_replay() -> None:
+    recovery = classify_model_recovery(
+        ConnectionError("connection lost"),
+        emitted_content=True,
+    )
+
+    assert recovery.failure_class is ModelFailureClass.STREAM_INTERRUPTED
+    assert (
+        recovery.disposition
+        is ModelRecoveryDisposition.CONTINUE_MODEL_STEP
+    )
+
+
+def test_user_cancellation_never_enters_network_recovery() -> None:
+    recovery = classify_model_recovery(asyncio.CancelledError())
+
+    assert recovery.failure_class is ModelFailureClass.USER_INTERRUPTED
+    assert recovery.disposition is ModelRecoveryDisposition.STOP_INTERRUPTED

@@ -14,6 +14,8 @@ from agentscope.model._model_usage import ChatUsage
 from ..kernel.models import (
     ModelCallAttempt,
     ModelCallStatus,
+    ModelFailureClass,
+    ModelRecoveryDisposition,
     UsageDelta,
     UsageMeter,
 )
@@ -288,22 +290,34 @@ class TokenRecordingModelWrapper(ChatModelBase):
         cost_micros = max(int(raw_cost), 0) if raw_cost is not None else None
         error_kind = ""
         retryable = False
-        if isinstance(error, Exception):
+        failure_class: ModelFailureClass | None = None
+        recovery_disposition: ModelRecoveryDisposition | None = None
+        if error is not None:
             from ..providers.model_error_policy import (
                 classify_model_error,
+                classify_model_recovery,
                 is_retryable_same_model,
             )
 
-            error_kind = classify_model_error(error).kind
-            retryable = is_retryable_same_model(error)
-        elif error is not None:
-            error_kind = type(error).__name__.lower()
+            recovery = classify_model_recovery(
+                error,
+                emitted_content=emitted_content,
+            )
+            failure_class = recovery.failure_class
+            recovery_disposition = recovery.disposition
+            if isinstance(error, Exception):
+                error_kind = classify_model_error(error).kind
+                retryable = is_retryable_same_model(error)
+            else:
+                error_kind = type(error).__name__.lower()
         await complete_current_model_attempt(
             attempt,
             status=status,
             error_kind=error_kind,
             retryable=retryable,
             emitted_content=emitted_content,
+            failure_class=failure_class,
+            recovery_disposition=recovery_disposition,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cost_micros=cost_micros,

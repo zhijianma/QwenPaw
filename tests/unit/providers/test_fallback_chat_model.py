@@ -153,7 +153,7 @@ async def test_falls_back_on_transient_error_before_output() -> None:
             "from_model_id": "primary",
             "to_provider_id": "",
             "to_model_id": "fallback",
-            "reason_kind": "transient",
+            "reason_kind": "provider_overloaded",
         },
     ]
 
@@ -626,7 +626,7 @@ async def test_structured_output_reports_multi_hop_fallback() -> None:
             "from_model_id": "primary",
             "to_provider_id": "first-provider",
             "to_model_id": "first-fallback",
-            "reason_kind": "transient",
+            "reason_kind": "provider_overloaded",
         },
         {
             "type": "model_fallback",

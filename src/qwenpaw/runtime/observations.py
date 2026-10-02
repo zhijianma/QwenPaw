@@ -233,6 +233,16 @@ def _model_observations(
             "error_kind": result.error_kind,
             "retryable": result.retryable,
             "emitted_content": result.emitted_content,
+            "failure_class": (
+                result.failure_class.value
+                if result.failure_class is not None
+                else None
+            ),
+            "recovery_disposition": (
+                result.recovery_disposition.value
+                if result.recovery_disposition is not None
+                else None
+            ),
             "input_tokens": result.input_tokens,
             "output_tokens": result.output_tokens,
             "cost_micros": result.cost_micros,

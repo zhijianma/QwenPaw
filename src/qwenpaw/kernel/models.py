@@ -152,6 +152,35 @@ class ModelCallStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class ModelFailureClass(str, Enum):
+    """Provider-neutral reason why one model attempt did not complete."""
+
+    TRANSPORT_UNAVAILABLE = "transport_unavailable"
+    STREAM_INTERRUPTED = "stream_interrupted"
+    PROVIDER_OVERLOADED = "provider_overloaded"
+    RATE_LIMITED = "rate_limited"
+    QUOTA_EXHAUSTED = "quota_exhausted"
+    BUDGET_EXHAUSTED = "budget_exhausted"
+    AUTHENTICATION_REQUIRED = "authentication_required"
+    POLICY_DENIED = "policy_denied"
+    INVALID_REQUEST = "invalid_request"
+    CONTEXT_OVERFLOW = "context_overflow"
+    PROVIDER_UNAVAILABLE = "provider_unavailable"
+    USER_INTERRUPTED = "user_interrupted"
+    UNKNOWN = "unknown"
+
+
+class ModelRecoveryDisposition(str, Enum):
+    """Runtime action allowed after one unsuccessful model attempt."""
+
+    RETRY_TRANSPORT = "retry_transport"
+    CONTINUE_MODEL_STEP = "continue_model_step"
+    WAIT_RESOURCE = "wait_resource"
+    FAIL_TERMINAL = "fail_terminal"
+    RECONCILE_SIDE_EFFECT = "reconcile_side_effect"
+    STOP_INTERRUPTED = "stop_interrupted"
+
+
 class EnvironmentIsolation(str, Enum):
     """Execution isolation required by an environment contract."""
 
@@ -1648,6 +1677,8 @@ class ModelCallResult(KernelModel):
     error_kind: str = ""
     retryable: bool = False
     emitted_content: bool = False
+    failure_class: ModelFailureClass | None = None
+    recovery_disposition: ModelRecoveryDisposition | None = None
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
     cost_micros: int | None = Field(default=None, ge=0)
@@ -1656,9 +1687,25 @@ class ModelCallResult(KernelModel):
 
     @model_validator(mode="after")
     def validate_cost(self) -> Self:
-        """Never turn unavailable pricing into a known zero cost."""
+        """Keep cost and recovery evidence internally consistent."""
         if self.cost_unknown == (self.cost_micros is not None):
             raise ValueError("model call cost value and unknown flag conflict")
+        has_failure = self.failure_class is not None
+        has_disposition = self.recovery_disposition is not None
+        if has_failure != has_disposition:
+            raise ValueError(
+                "model failure class and recovery disposition must agree",
+            )
+        if self.status is ModelCallStatus.SUCCEEDED and has_failure:
+            raise ValueError("successful model call cannot require recovery")
+        if (
+            self.emitted_content
+            and self.recovery_disposition
+            is ModelRecoveryDisposition.RETRY_TRANSPORT
+        ):
+            raise ValueError(
+                "model call with emitted content cannot retry transport",
+            )
         return self
 
 

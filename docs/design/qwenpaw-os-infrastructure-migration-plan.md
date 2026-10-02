@@ -397,11 +397,17 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
   Action、Artifact、Evidence 和 Verification 持续推进；Suggestion、Steer、
   Interrupt 与 Approval 保持独立语义，禁止用逐步追问或“是否继续”充当执行调度器。
 - [ ] 冻结 Model Recovery Contract：
-  - [ ] 区分 `transport_unavailable`、`stream_interrupted`、Provider overload、
+  - [x] Kernel `ModelFailureClass` 已区分 `transport_unavailable`、
+    `stream_interrupted`、Provider overload、
     rate limit、quota、budget、auth、policy、context overflow、user interrupt 与
-    unknown；
-  - [ ] 区分 `retry_transport`、`continue_model_step`、`wait_resource`、
-    `fail_terminal`、`reconcile_side_effect` 与 `stop_interrupted`；
+    unknown；旧 `ModelCallResult` 缺省字段仍可读取。
+  - [x] Kernel `ModelRecoveryDisposition` 已区分 `retry_transport`、
+    `continue_model_step`、`wait_resource`、`fail_terminal`、
+    `reconcile_side_effect` 与 `stop_interrupted`；失败类别与处置必须成对出现，产生
+    内容后的尝试禁止标记为整请求 transport replay。
+  - [x] Token/Model Call 审计已把连接前传输失败、部分流中断和用户取消分别投影为
+    `retry_transport`、`continue_model_step` 与 `stop_interrupted`；短时 rate limit 和
+    quota exhausted 已分开，恢复字段进入内容安全 Activity。
   - [ ] transport retry 使用独立退避和预算，尊重 `Retry-After`，不消耗业务 retry；
   - [ ] 短等待超限后保存 Resource Wait 并释放槽位，禁止无限占槽重试。
 - [ ] 持久化 bounded stream outcome：产生部分输出后断流时，不盲目重放完整

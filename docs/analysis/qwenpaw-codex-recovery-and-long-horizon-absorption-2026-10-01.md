@@ -197,6 +197,18 @@ registry。两种投影都只公开 ID、类型、媒体、大小、哈希和 pr
 
 ## 5. 类型化恢复模型
 
+Kernel 已新增 `ModelFailureClass` 与 `ModelRecoveryDisposition`，并将它们作为可选兼容
+字段写入 `ModelCallResult`。连接前超时/断网映射为
+`transport_unavailable → retry_transport`；产生有效内容后断流映射为
+`stream_interrupted → continue_model_step`；用户取消映射为
+`user_interrupted → stop_interrupted`；短时 429 与 quota exhausted 分别映射到独立
+失败类别。旧结果没有这两个字段时仍可读取，但新结果一旦写入其中一个就必须同时写入
+另一个，且已产生内容的尝试不能声明整请求 transport replay。
+
+当前只完成了**裁决与审计契约**，尚未实现跨 Invocation 的 bounded partial-output
+存储和 Resource Wait scheduler，因此不能把 `continue_model_step` 或 `wait_resource`
+误报成已经自动恢复。
+
 ### 5.1 故障分类
 
 建议在现有 `ModelCallResult` 和 Runtime policy 上冻结以下稳定语义，而不是依赖

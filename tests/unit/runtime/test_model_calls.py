@@ -21,6 +21,8 @@ from qwenpaw.kernel import (
     ModelCallResult,
     ModelCallStore,
     ModelCallStatus,
+    ModelFailureClass,
+    ModelRecoveryDisposition,
     ModelRouteReason,
 )
 from qwenpaw.runtime.model_calls import (
@@ -219,6 +221,41 @@ async def test_token_wrapper_records_actual_provider_attempt(
     assert record.result is not None
     assert record.result.status is ModelCallStatus.SUCCEEDED
     assert record.result.emitted_content is True
+    assert record.result.failure_class is None
+    assert record.result.recovery_disposition is None
+
+
+@pytest.mark.asyncio
+async def test_token_wrapper_records_transport_recovery_contract(
+    tmp_path: Path,
+) -> None:
+    scope = _scope(tmp_path)
+    store = lite_model_call_store(tmp_path)
+    session = _session(scope, _manifest(scope), store)
+    provider = AsyncMock()
+    provider.model = "model-a"
+    provider.credential = None
+    provider.parameters = None
+    provider.stream = False
+    provider.context_size = 32_768
+    provider.formatter = object()
+    provider.side_effect = TimeoutError("provider timed out")
+    wrapper = TokenRecordingModelWrapper("provider-a", provider)
+
+    with pytest.raises(TimeoutError):
+        await call_with_model_session(
+            session,
+            lambda: wrapper(messages=[]),
+        )
+    [record] = await store.list_for_conversation("chat-1")
+
+    assert record.result is not None
+    assert record.result.failure_class is (
+        ModelFailureClass.TRANSPORT_UNAVAILABLE
+    )
+    assert record.result.recovery_disposition is (
+        ModelRecoveryDisposition.RETRY_TRANSPORT
+    )
 
 
 @pytest.mark.asyncio
@@ -261,6 +298,51 @@ async def test_stream_can_be_consumed_and_closed_in_different_contexts(
     assert record.result is not None
     assert record.result.status is ModelCallStatus.CANCELLED
     assert record.result.emitted_content is True
+    assert record.result.failure_class is ModelFailureClass.USER_INTERRUPTED
+    assert record.result.recovery_disposition is (
+        ModelRecoveryDisposition.STOP_INTERRUPTED
+    )
+
+
+@pytest.mark.asyncio
+async def test_partial_stream_records_continue_model_step(
+    tmp_path: Path,
+) -> None:
+    scope = _scope(tmp_path)
+    store = lite_model_call_store(tmp_path)
+    session = _session(scope, _manifest(scope), store)
+    provider = AsyncMock()
+    provider.model = "model-a"
+    provider.credential = None
+    provider.parameters = None
+    provider.stream = True
+    provider.context_size = 32_768
+    provider.formatter = object()
+
+    async def interrupted_stream() -> AsyncGenerator[ChatResponse, None]:
+        yield ChatResponse(
+            content=[TextBlock(text="partial")],
+            is_last=False,
+        )
+        raise ConnectionError("stream disconnected")
+
+    provider.return_value = interrupted_stream()
+    wrapper = TokenRecordingModelWrapper("provider-a", provider)
+    stream = await call_with_model_session(
+        session,
+        lambda: wrapper(messages=[]),
+    )
+
+    assert (await anext(stream)).content[0].text == "partial"
+    with pytest.raises(ConnectionError):
+        await anext(stream)
+    [record] = await store.list_for_conversation("chat-1")
+
+    assert record.result is not None
+    assert record.result.failure_class is ModelFailureClass.STREAM_INTERRUPTED
+    assert record.result.recovery_disposition is (
+        ModelRecoveryDisposition.CONTINUE_MODEL_STEP
+    )
 
 
 @pytest.mark.asyncio
@@ -313,6 +395,40 @@ def test_historical_result_defaults_to_unknown_cost() -> None:
 
     assert result.cost_micros is None
     assert result.cost_unknown is True
+    assert result.failure_class is None
+    assert result.recovery_disposition is None
+
+
+def test_result_requires_complete_recovery_contract() -> None:
+    with pytest.raises(
+        ValueError,
+        match="failure class and recovery disposition must agree",
+    ):
+        ModelCallResult(
+            attempt_id=uuid4(),
+            invocation_id=uuid4(),
+            conversation_id="chat-1",
+            status=ModelCallStatus.FAILED,
+            failure_class=ModelFailureClass.TRANSPORT_UNAVAILABLE,
+        )
+
+
+def test_partial_output_cannot_be_marked_for_transport_replay() -> None:
+    with pytest.raises(
+        ValueError,
+        match="emitted content cannot retry transport",
+    ):
+        ModelCallResult(
+            attempt_id=uuid4(),
+            invocation_id=uuid4(),
+            conversation_id="chat-1",
+            status=ModelCallStatus.FAILED,
+            emitted_content=True,
+            failure_class=ModelFailureClass.STREAM_INTERRUPTED,
+            recovery_disposition=(
+                ModelRecoveryDisposition.RETRY_TRANSPORT
+            ),
+        )
 
 
 @pytest.mark.parametrize(
