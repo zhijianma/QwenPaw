@@ -13,6 +13,7 @@ from qwenpaw.app.chats.models import ChatSpec
 from qwenpaw.app.chats.repo import JsonChatRepository
 from qwenpaw.app.chats.submission_dispatcher import (
     CONSOLE_INTERACTION_CONTINUATION_ENVELOPE,
+    CONSOLE_MODEL_RECOVERY_ENVELOPE,
     CONSOLE_SUBMISSION_ENVELOPE,
     WorkspaceChatSubmissionDispatcher,
 )
@@ -22,6 +23,7 @@ from qwenpaw.invocation_control import (
     SQLiteInvocationControl,
 )
 from qwenpaw.interactions import InteractionService
+from qwenpaw.recovery import ModelResourceWaitService
 from qwenpaw.kernel import (
     ActorRef,
     ActorType,
@@ -33,6 +35,11 @@ from qwenpaw.kernel import (
     InteractionRequest,
     UserInputReason,
     InteractionResponse,
+    ModelCallAttempt,
+    ModelCallResult,
+    ModelCallStatus,
+    ModelFailureClass,
+    ModelRecoveryDisposition,
     SubmissionInputEnvelope,
     SubmissionStatus,
     TurnSubmissionRequest,
@@ -285,6 +292,125 @@ async def test_workspace_dispatcher_recovers_interaction_continuation(
     assert dispatched.status is ContinuationDispatchStatus.DISPATCHED
 
     dispatcher.wake_continuations()
+    await asyncio.sleep(0.05)
+    assert len(observed) == 1
+    await dispatcher.stop()
+    await control.close()
+
+
+@pytest.mark.asyncio
+async def test_workspace_dispatcher_recovers_released_model_resource_wait(
+    tmp_path: Path,
+) -> None:
+    """A released quota wait creates one new correlated Invocation."""
+    manager = ChatManager(
+        repo=JsonChatRepository(tmp_path / "chats.json"),
+    )
+    chat = await manager.create_chat(
+        ChatSpec(
+            id="chat-1",
+            session_id="console:chat-1",
+            user_id="local-user",
+            channel="console",
+        ),
+    )
+    control = InvocationControlService(
+        store=SQLiteInvocationControl(tmp_path / "control.sqlite3"),
+    )
+    resource_waits = ModelResourceWaitService(
+        tmp_path / "resource-waits.sqlite3",
+        agent_id="default",
+    )
+    attempt = ModelCallAttempt(
+        attempt_id=uuid4(),
+        route_decision_id=uuid4(),
+        invocation_id=uuid4(),
+        correlation_id=uuid4(),
+        conversation_id=chat.id,
+        registry_generation=1,
+        context_manifest_id=uuid4(),
+        model_call_index=1,
+        attempt_index=1,
+        provider_id="provider-a",
+        model_id="model-a",
+    )
+    wait = await resource_waits.defer(
+        attempt,
+        ModelCallResult(
+            attempt_id=attempt.attempt_id,
+            invocation_id=attempt.invocation_id,
+            conversation_id=chat.id,
+            status=ModelCallStatus.FAILED,
+            failure_class=ModelFailureClass.QUOTA_EXHAUSTED,
+            recovery_disposition=ModelRecoveryDisposition.WAIT_RESOURCE,
+        ),
+    )
+    assert wait is not None
+    await resource_waits.release(wait.wait_id)
+    observed: list[dict] = []
+
+    class ConsoleChannel:
+        async def stream_one(self, payload):
+            observed.append(payload)
+            context = payload["meta"]["request_context"]
+            lease = await control.begin_submitted_turn(
+                UUID(context["os_submission_id"]),
+                invocation_id=uuid4(),
+                agent_id="default",
+                conversation_id=context["os_conversation_id"],
+            )
+            yield 'data: {"status":"running"}\n\n'
+            await control.finish_turn(lease, SubmissionStatus.SUCCEEDED)
+
+    class ChannelManager:
+        @staticmethod
+        async def get_channel(name: str):
+            return ConsoleChannel() if name == "console" else None
+
+    workspace = SimpleNamespace(
+        agent_id="default",
+        chat_manager=manager,
+        channel_manager=ChannelManager(),
+        task_tracker=TaskTracker(),
+        model_resource_wait_service=resource_waits,
+    )
+    dispatcher = WorkspaceChatSubmissionDispatcher(
+        workspace=workspace,
+        control=control,
+    )
+
+    original_mark = resource_waits.mark_dispatched
+
+    async def fail_after_enqueue(*_args, **_kwargs):
+        raise RuntimeError("simulated resource wait crash after enqueue")
+
+    resource_waits.mark_dispatched = fail_after_enqueue
+    # The second drain must obtain the same idempotent Submission.
+    # pylint: disable=protected-access
+    with pytest.raises(RuntimeError, match="simulated resource wait crash"):
+        await dispatcher._dispatch_ready_resource_waits()
+    resource_waits.mark_dispatched = original_mark
+    await dispatcher._dispatch_ready_resource_waits()
+    # pylint: enable=protected-access
+
+    await dispatcher.start()
+    async with asyncio.timeout(2):
+        while not observed:
+            await asyncio.sleep(0.01)
+
+    [payload] = observed
+    context = payload["meta"]["request_context"]
+    submission = await control.get_submission(
+        UUID(context["os_submission_id"]),
+    )
+    assert submission is not None
+    assert submission.correlation_id == attempt.correlation_id
+    assert submission.input_envelope is not None
+    assert submission.input_envelope.kind == CONSOLE_MODEL_RECOVERY_ENVELOPE
+    assert context["model_resource_wait_id"] == str(wait.wait_id)
+    assert context["recovered_attempt_id"] == str(attempt.attempt_id)
+
+    dispatcher.wake_resource_waits()
     await asyncio.sleep(0.05)
     assert len(observed) == 1
     await dispatcher.stop()

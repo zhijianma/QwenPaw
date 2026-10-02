@@ -258,6 +258,13 @@ class Workspace:  # pylint: disable=too-many-public-methods
         return self._service_manager.services.get("interaction_service")
 
     @property
+    def model_resource_wait_service(self):
+        """Get the durable model-resource recovery broker."""
+        return self._service_manager.services.get(
+            "model_resource_wait_service",
+        )
+
+    @property
     def submission_dispatcher(self):
         """Get the workspace-owned durable Chat submission consumer."""
         return self._service_manager.services.get("submission_dispatcher")
@@ -593,6 +600,7 @@ class Workspace:  # pylint: disable=too-many-public-methods
 
         from ...invocation_control import InvocationControlService
         from ...interactions import InteractionService
+        from ...recovery import ModelResourceWaitService
 
         sm.register(
             ServiceDescriptor(
@@ -625,6 +633,27 @@ class Workspace:  # pylint: disable=too-many-public-methods
                         / "runtime"
                         / "interactions.sqlite3"
                     ),
+                },
+                start_method="start",
+                stop_method="close",
+                require_clean_stop=True,
+                priority=10,
+                concurrent_init=False,
+            ),
+        )
+
+        sm.register(
+            ServiceDescriptor(
+                name="model_resource_wait_service",
+                service_class=ModelResourceWaitService,
+                init_args=lambda ws: {
+                    "database_path": (
+                        ws.workspace_dir
+                        / ".qwenpaw"
+                        / "runtime"
+                        / "model-resource-waits.sqlite3"
+                    ),
+                    "agent_id": ws.agent_id,
                 },
                 start_method="start",
                 stop_method="close",

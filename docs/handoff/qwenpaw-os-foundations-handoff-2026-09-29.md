@@ -134,6 +134,19 @@ Scheduling、Plugin Generation 和 Edition Profile 为核心的 OS 基础设施�
 
 ## 3. 明确未完成或不应误判为完成的部分
 
+### 2026-10-02 模型资源等待与长程续行
+
+- `ModelCallResult.wait_resource` 已接入独立 `ModelResourceWait` source of truth；
+  限流按 timer，额度耗尽按 external event，不复用用户 Queue 或 Interaction。
+- 等待成熟或释放后，durable outbox 创建新的 Submission / Invocation，沿用原
+  `ChatSpec.id` 与 `correlation_id`；稳定 idempotency key 覆盖 enqueue 后崩溃窗口。
+- Chat `wait-conditions` 合并资源等待与 Interaction 等待，Task 页面没有提前开发。
+- “一问一答”仅保留为短 Chat 快速路径；长程工作由 Agent Loop、typed wait、
+  continuation 和 checkpoint 推进，不要求用户发送“继续”。
+- 设计与未完成边界见
+  `docs/design/qwenpaw-model-resource-recovery.md`。真实 retry-after、Provider health
+  自动释放、部分流 continuation boundary 和副作用对账仍待完成。
+
 - Goal 已恢复，但 Task Workbench 仍按用户要求后置。
 - Task 页面不是当前阶段验收目标。仓库中的 `console/src/pages/Tasks/`
   来自此前累计实现，只能视为早期投影/原型，不能视为最终 Workbench。

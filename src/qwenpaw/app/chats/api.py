@@ -748,13 +748,33 @@ async def list_chat_wait_conditions(
 ) -> list[WaitCondition]:
     """List content-free blockers projected from authoritative facts."""
     _, service = await _chat_interaction_context(chat_id, mgr, workspace)
-    conditions = await service.list_wait_conditions(
-        agent_id=workspace.agent_id,
-        conversation_id=chat_id,
-        include_terminal=include_terminal,
-        limit=limit,
+    conditions = list(
+        await service.list_wait_conditions(
+            agent_id=workspace.agent_id,
+            conversation_id=chat_id,
+            include_terminal=include_terminal,
+            limit=limit,
+        ),
     )
-    return list(conditions)
+    resource_waits = getattr(
+        workspace,
+        "model_resource_wait_service",
+        None,
+    )
+    if resource_waits is not None:
+        conditions.extend(
+            await resource_waits.list_wait_conditions(
+                agent_id=workspace.agent_id,
+                conversation_id=chat_id,
+                include_terminal=include_terminal,
+                limit=limit,
+            ),
+        )
+    conditions.sort(
+        key=lambda item: (item.created_at, str(item.condition_id)),
+        reverse=True,
+    )
+    return conditions[:limit]
 
 
 @router.post(

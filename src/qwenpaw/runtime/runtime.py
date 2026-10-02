@@ -107,6 +107,15 @@ class Runtime:
             )
             if interaction_service is not None:
                 ctx.extras["interaction_service"] = interaction_service
+            resource_wait_service = getattr(
+                self.workspace,
+                "model_resource_wait_service",
+                None,
+            )
+            if resource_wait_service is not None:
+                ctx.extras[
+                    "model_resource_wait_service"
+                ] = resource_wait_service
             if control_service is not None:
                 ctx.extras["invocation_control_service"] = control_service
                 await self._open_invocation_control(

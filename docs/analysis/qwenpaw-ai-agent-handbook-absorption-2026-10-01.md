@@ -414,6 +414,15 @@ Provider/Model，Attempt 记录实际 Adapter、Formatter 及版本；Provider �
 `GET /api/chats/{ChatSpec.id}/model-calls` 查询内容最小化记录。当前仍未实现按成本、
 健康度或数据边界自动选路，也不把既有静态 fallback 配置冒充智能路由器。
 
+截至 2026-10-02，`WAIT_RESOURCE` 已从结果标签推进为可执行基础设施。Lite 新增
+独立 `ModelResourceWait` 与 SQLite source of truth：限流使用 timer，额度耗尽等待
+外部资源事件；成熟或被释放的等待通过 durable outbox 创建同一 `ChatSpec.id`、沿用
+原 `correlation_id` 的新 Submission / Invocation。它不进入普通用户 Queue，不创建
+Ask User，也不保存 Prompt、异常正文或隐藏 reasoning。enqueue 后、outbox 标记前
+崩溃由稳定 idempotency key 收敛到同一 Submission。当前仍缺 Provider health 自动
+释放、真实 retry-after hint、部分流 continuation boundary 和副作用自动对账，因此
+不能宣称任意网络中断已经可以无损续传。
+
 ### A10. 通信能力契约，而不是统一成一种传输
 
 优先级：P0，直接约束当前 Chat Queue、Continuation 与后续 Hub。
@@ -447,6 +456,10 @@ Agent Loop、显式等待和异步续行；不能因为其中部分 HTTP/SDK 示
 Submission、Invocation、Model Step、Action、Interaction 和恢复周期。Assistant
 message 只负责对人表达，不负责划定 Runtime 生命周期；等待和恢复也不要求用户再发
 一句话来“推动下一轮”。
+
+模型资源等待进一步验证了这一点：一次调用因限流或额度耗尽停止时，恢复由 Runtime
+自身的等待事实和 continuation 驱动，不制造“是否继续？”对话。只有资源恢复需要
+用户授权或高影响选择时，才正交地创建 Interaction；资源等待本身不是人机问答。
 
 这一边界已落实为可执行 `UserInputReason` 契约：新 Ask User 只能声明缺失必要事实、
 关键偏好、范围授权或高影响裁决，未分类请求在写入统一 Interaction Store 前被拒绝；

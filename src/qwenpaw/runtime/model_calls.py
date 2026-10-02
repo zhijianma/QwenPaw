@@ -226,6 +226,7 @@ class ModelCallSession:
         *,
         requested_provider_id: str | None,
         requested_model_id: str | None,
+        resource_waits: Any = None,
     ) -> None:
         if manifest.invocation_id != scope.invocation_id:
             raise ValueError("model-call manifest invocation mismatch")
@@ -234,8 +235,10 @@ class ModelCallSession:
         self._store = store
         self._requested_provider_id = requested_provider_id
         self._requested_model_id = requested_model_id
+        self._resource_waits = resource_waits
         self._attempt_index = 0
         self._previous_attempt: ModelCallAttempt | None = None
+        self._last_result: ModelCallResult | None = None
 
     async def begin(
         self,
@@ -354,6 +357,27 @@ class ModelCallSession:
                 "model attempt finished but its result could not be "
                 "durably recorded",
             ) from exc
+        self._last_result = result
+
+    async def defer_terminal_resource_wait(self) -> None:
+        """Persist a wait only after the whole logical call has failed."""
+        result = self._last_result
+        attempt = self._previous_attempt
+        if (
+            self._resource_waits is None
+            or result is None
+            or attempt is None
+            or result.recovery_disposition
+            is not ModelRecoveryDisposition.WAIT_RESOURCE
+        ):
+            return
+        try:
+            await self._resource_waits.defer(attempt, result)
+        except Exception as exc:
+            raise ModelCallPersistenceError(
+                "model result was recorded but its resource wait could "
+                "not be persisted",
+            ) from exc
 
 
 async def begin_current_model_attempt(
@@ -419,7 +443,11 @@ async def call_with_model_session(
     """Keep attempt recording active for call creation and stream use."""
     token = _CURRENT_MODEL_CALL.set(session)
     try:
-        result = await invoke()
+        try:
+            result = await invoke()
+        except BaseException:
+            await session.defer_terminal_resource_wait()
+            raise
     finally:
         _CURRENT_MODEL_CALL.reset(token)
     if not isinstance(result, AsyncGenerator):
@@ -434,6 +462,9 @@ async def call_with_model_session(
                     item = await anext(iterator)
                 except StopAsyncIteration:
                     return
+                except BaseException:
+                    await session.defer_terminal_resource_wait()
+                    raise
                 finally:
                     _CURRENT_MODEL_CALL.reset(stream_token)
                 yield item

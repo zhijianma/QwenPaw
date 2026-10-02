@@ -211,6 +211,10 @@ class QwenPawAgent(CodingModeMixin, Agent):
             "_model_call_store",
             None,
         )
+        self._model_resource_wait_service = self._request_context.pop(
+            "_model_resource_wait_service",
+            None,
+        )
         self._compaction_recorder = self._request_context.pop(
             "_compaction_recorder",
             None,
@@ -887,6 +891,7 @@ class QwenPawAgent(CodingModeMixin, Agent):
                 model_call_store,
                 requested_provider_id=requested_provider_id,
                 requested_model_id=requested_model_id or None,
+                resource_waits=self._model_resource_wait_service,
             ),
             invoke,
         )

@@ -834,6 +834,11 @@ class AgentBuilder:
                 Path(workspace_dir),
             )
             request_context[
+                "_model_resource_wait_service"
+            ] = getattr(ctx, "extras", {}).get(
+                "model_resource_wait_service",
+            )
+            request_context[
                 "_compaction_recorder"
             ] = RuntimeCompactionRecorder(
                 invocation,

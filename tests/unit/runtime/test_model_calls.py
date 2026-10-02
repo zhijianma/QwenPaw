@@ -30,6 +30,7 @@ from qwenpaw.runtime.model_calls import (
     call_with_model_session,
     lite_model_call_store,
 )
+from qwenpaw.recovery import ModelResourceWaitService
 from qwenpaw.token_usage.model_wrapper import TokenRecordingModelWrapper
 
 
@@ -72,6 +73,8 @@ def _session(
     scope: InvocationScope,
     manifest: ContextManifest,
     store: ModelCallStore,
+    *,
+    resource_waits=None,
 ) -> ModelCallSession:
     return ModelCallSession(
         scope,
@@ -79,6 +82,7 @@ def _session(
         store,
         requested_provider_id="provider-a",
         requested_model_id="m1",
+        resource_waits=resource_waits,
     )
 
 
@@ -256,6 +260,115 @@ async def test_token_wrapper_records_transport_recovery_contract(
     assert record.result.recovery_disposition is (
         ModelRecoveryDisposition.RETRY_TRANSPORT
     )
+
+
+@pytest.mark.asyncio
+async def test_model_session_persists_only_terminal_resource_wait(
+    tmp_path: Path,
+) -> None:
+    scope = _scope(tmp_path)
+    resource_waits = ModelResourceWaitService(
+        tmp_path / "resource-waits.sqlite3",
+        agent_id="default",
+    )
+    session = _session(
+        scope,
+        _manifest(scope),
+        lite_model_call_store(tmp_path),
+        resource_waits=resource_waits,
+    )
+    attempt = await _begin_attempt(session)
+
+    await session.complete(
+        attempt,
+        status=ModelCallStatus.FAILED,
+        error_kind="quota_exhausted",
+        failure_class=ModelFailureClass.QUOTA_EXHAUSTED,
+        recovery_disposition=ModelRecoveryDisposition.WAIT_RESOURCE,
+    )
+    await session.defer_terminal_resource_wait()
+
+    [condition] = await resource_waits.list_wait_conditions(
+        agent_id="default",
+        conversation_id="chat-1",
+    )
+    assert condition.source_id == attempt.attempt_id
+
+
+@pytest.mark.asyncio
+async def test_successful_fallback_suppresses_intermediate_resource_wait(
+    tmp_path: Path,
+) -> None:
+    scope = _scope(tmp_path)
+    resource_waits = ModelResourceWaitService(
+        tmp_path / "resource-waits.sqlite3",
+        agent_id="default",
+    )
+    session = _session(
+        scope,
+        _manifest(scope),
+        lite_model_call_store(tmp_path),
+        resource_waits=resource_waits,
+    )
+    primary = await _begin_attempt(session)
+    await session.complete(
+        primary,
+        status=ModelCallStatus.FAILED,
+        error_kind="rate_limited",
+        failure_class=ModelFailureClass.RATE_LIMITED,
+        recovery_disposition=ModelRecoveryDisposition.WAIT_RESOURCE,
+    )
+    fallback = await _begin_attempt(
+        session,
+        provider_id="provider-b",
+        model_id="m2",
+    )
+    await session.complete(fallback, status=ModelCallStatus.SUCCEEDED)
+
+    await session.defer_terminal_resource_wait()
+
+    assert not await resource_waits.list_wait_conditions(
+        agent_id="default",
+        conversation_id="chat-1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_failed_logical_call_creates_resource_wait_automatically(
+    tmp_path: Path,
+) -> None:
+    scope = _scope(tmp_path)
+    resource_waits = ModelResourceWaitService(
+        tmp_path / "resource-waits.sqlite3",
+        agent_id="default",
+    )
+    session = _session(
+        scope,
+        _manifest(scope),
+        lite_model_call_store(tmp_path),
+        resource_waits=resource_waits,
+    )
+    provider = AsyncMock()
+    provider.model = "model-a"
+    provider.credential = None
+    provider.parameters = None
+    provider.stream = False
+    provider.context_size = 32_768
+    provider.formatter = object()
+    provider.side_effect = RuntimeError("insufficient_quota")
+    wrapper = TokenRecordingModelWrapper("provider-a", provider)
+
+    with pytest.raises(RuntimeError, match="insufficient_quota"):
+        await call_with_model_session(
+            session,
+            lambda: wrapper(messages=[]),
+        )
+
+    [condition] = await resource_waits.list_wait_conditions(
+        agent_id="default",
+        conversation_id="chat-1",
+    )
+    assert condition.source_type == "qwenpaw.model-resource"
 
 
 @pytest.mark.asyncio

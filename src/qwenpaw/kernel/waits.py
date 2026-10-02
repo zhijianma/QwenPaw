@@ -3,13 +3,19 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from enum import Enum
 from typing import Self
 from uuid import UUID
 
 from pydantic import AwareDatetime, Field, model_validator
 
-from .models import KernelModel, NonEmptyStr, utc_now
+from .models import (
+    KernelModel,
+    ModelFailureClass,
+    NonEmptyStr,
+    utc_now,
+)
 
 
 class WaitConditionKind(str, Enum):
@@ -51,6 +57,107 @@ class ContinuationDispatchStatus(str, Enum):
 
     READY = "ready"
     DISPATCHED = "dispatched"
+
+
+class ResourceWaitTrigger(str, Enum):
+    """Fact that can make a model resource available again."""
+
+    TIMER = "timer"
+    EXTERNAL_EVENT = "external_event"
+
+
+class ResourceWaitStatus(str, Enum):
+    """Lifecycle of one model-resource continuation outbox entry."""
+
+    WAITING = "waiting"
+    READY = "ready"
+    DISPATCHED = "dispatched"
+    CANCELLED = "cancelled"
+
+
+class ModelResourceWait(KernelModel):
+    """Content-free durable wait created by a failed model attempt."""
+
+    wait_id: UUID
+    attempt_id: UUID
+    invocation_id: UUID
+    correlation_id: UUID
+    agent_id: NonEmptyStr
+    conversation_id: NonEmptyStr
+    failure_class: ModelFailureClass
+    trigger: ResourceWaitTrigger
+    status: ResourceWaitStatus = ResourceWaitStatus.WAITING
+    not_before: AwareDatetime | None = None
+    submission_id: UUID | None = None
+    revision: int = Field(default=1, ge=1)
+    created_at: AwareDatetime = Field(default_factory=utc_now)
+    updated_at: AwareDatetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def validate_resource_wait(self) -> Self:
+        """Keep trigger, failure, and dispatch state unambiguous."""
+        supported = {
+            ModelFailureClass.RATE_LIMITED,
+            ModelFailureClass.QUOTA_EXHAUSTED,
+        }
+        if self.failure_class not in supported:
+            raise ValueError("unsupported model resource failure class")
+        if self.trigger is ResourceWaitTrigger.TIMER:
+            if self.not_before is None:
+                raise ValueError("timer resource wait requires not_before")
+        elif self.not_before is not None:
+            raise ValueError(
+                "external-event resource wait cannot set not_before",
+            )
+        dispatched = self.status is ResourceWaitStatus.DISPATCHED
+        if dispatched != (self.submission_id is not None):
+            raise ValueError(
+                "dispatched resource wait requires submission_id",
+            )
+        if self.updated_at < self.created_at:
+            raise ValueError("updated_at cannot precede created_at")
+        return self
+
+    @classmethod
+    def for_model_failure(
+        cls,
+        *,
+        wait_id: UUID,
+        attempt_id: UUID,
+        invocation_id: UUID,
+        correlation_id: UUID,
+        agent_id: str,
+        conversation_id: str,
+        failure_class: ModelFailureClass,
+        retry_delay_seconds: int = 60,
+        created_at: AwareDatetime | None = None,
+    ) -> "ModelResourceWait":
+        """Build the default Lite wait without provider payloads."""
+        if retry_delay_seconds < 1:
+            raise ValueError("resource retry delay must be positive")
+        created_at = created_at or utc_now()
+        timed = failure_class is ModelFailureClass.RATE_LIMITED
+        return cls(
+            wait_id=wait_id,
+            attempt_id=attempt_id,
+            invocation_id=invocation_id,
+            correlation_id=correlation_id,
+            agent_id=agent_id,
+            conversation_id=conversation_id,
+            failure_class=failure_class,
+            trigger=(
+                ResourceWaitTrigger.TIMER
+                if timed
+                else ResourceWaitTrigger.EXTERNAL_EVENT
+            ),
+            not_before=(
+                created_at + timedelta(seconds=retry_delay_seconds)
+                if timed
+                else None
+            ),
+            created_at=created_at,
+            updated_at=created_at,
+        )
 
 
 class ConversationContinuation(KernelModel):
@@ -144,6 +251,9 @@ __all__ = [
     "ContinuationMode",
     "ContinuationRef",
     "ConversationContinuation",
+    "ModelResourceWait",
+    "ResourceWaitStatus",
+    "ResourceWaitTrigger",
     "WaitCondition",
     "WaitConditionKind",
     "WaitConditionStatus",

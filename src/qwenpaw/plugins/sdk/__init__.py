@@ -156,6 +156,11 @@ from ...kernel.models import (
     ToolDefinition,
     ToolSelection,
 )
+from ...kernel.waits import (
+    ModelResourceWait,
+    ResourceWaitStatus,
+    ResourceWaitTrigger,
+)
 from ...kernel.ports import (
     AgentModeHost,
     AgentModeProvider,
@@ -248,7 +253,10 @@ __all__ = [
     "ModelCallStatus",
     "ModelFailureClass",
     "ModelRecoveryDisposition",
+    "ModelResourceWait",
     "ModelRouteReason",
+    "ResourceWaitStatus",
+    "ResourceWaitTrigger",
     "RouteDecision",
     "CommandSession",
     "ConversationForkBoundary",

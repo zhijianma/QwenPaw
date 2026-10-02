@@ -20,12 +20,18 @@ from qwenpaw.app.chats.models import (
 )
 from qwenpaw.app.chats.repo import JsonChatRepository
 from qwenpaw.interactions import InteractionService
+from qwenpaw.recovery import ModelResourceWaitService
 from qwenpaw.kernel import (
     ApprovalDecisionValue,
     InteractionKind,
     InteractionMode,
     InteractionOption,
     InteractionRequest,
+    ModelCallAttempt,
+    ModelCallResult,
+    ModelCallStatus,
+    ModelFailureClass,
+    ModelRecoveryDisposition,
     UserInputReason,
     InteractionStatus,
     WaitConditionStatus,
@@ -148,6 +154,55 @@ async def test_response_rejects_cross_chat_interaction(tmp_path) -> None:
         )
 
     assert rejected.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_wait_conditions_merge_interaction_and_resource_sources(
+    tmp_path,
+) -> None:
+    manager, workspace, _interaction = await _context(tmp_path)
+    resource_waits = ModelResourceWaitService(
+        tmp_path / "resource-waits.sqlite3",
+        agent_id="default",
+    )
+    workspace.model_resource_wait_service = resource_waits
+    attempt = ModelCallAttempt(
+        attempt_id=uuid4(),
+        route_decision_id=uuid4(),
+        invocation_id=uuid4(),
+        correlation_id=uuid4(),
+        conversation_id="chat-spec-1",
+        registry_generation=1,
+        context_manifest_id=uuid4(),
+        model_call_index=1,
+        attempt_index=1,
+        provider_id="provider-a",
+        model_id="model-a",
+    )
+    await resource_waits.defer(
+        attempt,
+        ModelCallResult(
+            attempt_id=attempt.attempt_id,
+            invocation_id=attempt.invocation_id,
+            conversation_id=attempt.conversation_id,
+            status=ModelCallStatus.FAILED,
+            failure_class=ModelFailureClass.QUOTA_EXHAUSTED,
+            recovery_disposition=ModelRecoveryDisposition.WAIT_RESOURCE,
+        ),
+    )
+
+    conditions = await list_chat_wait_conditions(
+        "chat-spec-1",
+        False,
+        100,
+        manager,
+        workspace,
+    )
+
+    assert {condition.kind.value for condition in conditions} == {
+        "resource",
+        "user_input",
+    }
 
 
 @pytest.mark.asyncio

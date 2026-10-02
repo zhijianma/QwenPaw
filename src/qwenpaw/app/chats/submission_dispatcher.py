@@ -18,6 +18,8 @@ from ...kernel import (
     ConversationContinuation,
     ControlReceipt,
     InteractionStatus,
+    ModelResourceWait,
+    ResourceWaitStatus,
     SubmissionInputEnvelope,
     TurnSubmission,
     TurnSubmissionRequest,
@@ -28,6 +30,7 @@ CONSOLE_SUBMISSION_ENVELOPE = "chat.console.native.v1"
 CONSOLE_INTERACTION_CONTINUATION_ENVELOPE = (
     "chat.console.interaction-continuation.v1"
 )
+CONSOLE_MODEL_RECOVERY_ENVELOPE = "chat.console.model-recovery.v1"
 logger = logging.getLogger(__name__)
 
 
@@ -43,8 +46,15 @@ class WorkspaceChatSubmissionDispatcher:
         self._workspace = workspace
         self._control = control
         self._interactions = getattr(workspace, "interaction_service", None)
+        self._resource_waits = getattr(
+            workspace,
+            "model_resource_wait_service",
+            None,
+        )
         self._continuation_event = asyncio.Event()
         self._continuation_task: asyncio.Task[None] | None = None
+        self._resource_wait_event = asyncio.Event()
+        self._resource_wait_task: asyncio.Task[None] | None = None
         self._dispatcher = SubmissionDispatcher(
             agent_id=workspace.agent_id,
             control=control,
@@ -60,6 +70,15 @@ class WorkspaceChatSubmissionDispatcher:
                 name=(f"interaction-continuations:{self._workspace.agent_id}"),
             )
             self.wake_continuations()
+        if (
+            self._resource_waits is not None
+            and self._resource_wait_task is None
+        ):
+            self._resource_wait_task = asyncio.create_task(
+                self._run_resource_waits(),
+                name=(f"model-resource-waits:{self._workspace.agent_id}"),
+            )
+            self.wake_resource_waits()
 
     async def stop(self) -> None:
         """Release this workspace generation's dispatch ownership."""
@@ -68,11 +87,89 @@ class WorkspaceChatSubmissionDispatcher:
         if task is not None:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+        resource_task = self._resource_wait_task
+        self._resource_wait_task = None
+        if resource_task is not None:
+            resource_task.cancel()
+            await asyncio.gather(resource_task, return_exceptions=True)
         await self._dispatcher.stop()
 
     def wake_continuations(self) -> None:
         """Wake the durable continuation outbox worker."""
         self._continuation_event.set()
+
+    def wake_resource_waits(self) -> None:
+        """Wake model-resource continuations after an external release."""
+        self._resource_wait_event.set()
+
+    async def _run_resource_waits(self) -> None:
+        """Dispatch matured waits without depending on an HTTP request."""
+        while True:
+            self._resource_wait_event.clear()
+            try:
+                await self._dispatch_ready_resource_waits()
+            except Exception:  # pylint: disable=broad-except
+                logger.exception("Failed to dispatch model resource wait")
+                delay = 1.0
+            else:
+                next_delay = (
+                    await self._resource_waits.seconds_until_next_timer()
+                )
+                delay = 60.0 if next_delay is None else min(
+                    max(next_delay, 0.05),
+                    60.0,
+                )
+            try:
+                await asyncio.wait_for(
+                    self._resource_wait_event.wait(),
+                    timeout=delay,
+                )
+            except TimeoutError:
+                pass
+
+    async def _dispatch_ready_resource_waits(self) -> None:
+        waits = await self._resource_waits.list_ready()
+        first_error: Exception | None = None
+        for wait in waits:
+            try:
+                await self._dispatch_resource_wait(wait)
+            except Exception as exc:  # pylint: disable=broad-except
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
+
+    async def _dispatch_resource_wait(
+        self,
+        wait: ModelResourceWait,
+    ) -> None:
+        """Create one idempotent continuation for a ready resource wait."""
+        if wait.status is not ResourceWaitStatus.READY:
+            raise RuntimeError("model resource wait is not ready")
+        request = TurnSubmissionRequest(
+            agent_id=wait.agent_id,
+            conversation_id=wait.conversation_id,
+            content="[model resource continuation]",
+            request_context={
+                "channel": "console",
+                "model_resource_wait_id": str(wait.wait_id),
+            },
+            input_envelope=SubmissionInputEnvelope(
+                kind=CONSOLE_MODEL_RECOVERY_ENVELOPE,
+                payload={"wait_id": str(wait.wait_id)},
+            ),
+            idempotency_key=f"model-resource-continuation:{wait.wait_id}",
+            correlation_id=wait.correlation_id,
+        )
+        receipt = await self.enqueue(request)
+        if receipt.submission_id is None:
+            raise RuntimeError(
+                "model recovery enqueue returned no submission identity",
+            )
+        await self._resource_waits.mark_dispatched(
+            wait.wait_id,
+            receipt.submission_id,
+        )
 
     async def _run_continuations(self) -> None:
         """Retry ready outbox entries without coupling them to HTTP."""
@@ -186,6 +283,7 @@ class WorkspaceChatSubmissionDispatcher:
         if envelope.kind not in {
             CONSOLE_SUBMISSION_ENVELOPE,
             CONSOLE_INTERACTION_CONTINUATION_ENVELOPE,
+            CONSOLE_MODEL_RECOVERY_ENVELOPE,
         }:
             raise ValueError(
                 f"unsupported submission input envelope: {envelope.kind}",
@@ -201,6 +299,12 @@ class WorkspaceChatSubmissionDispatcher:
 
         if envelope.kind == CONSOLE_INTERACTION_CONTINUATION_ENVELOPE:
             payload = await self._materialize_continuation_payload(
+                envelope,
+                chat,
+                submission,
+            )
+        elif envelope.kind == CONSOLE_MODEL_RECOVERY_ENVELOPE:
+            payload = await self._materialize_model_recovery_payload(
                 envelope,
                 chat,
                 submission,
@@ -229,6 +333,59 @@ class WorkspaceChatSubmissionDispatcher:
             raise RuntimeError("conversation gained another active runtime")
         async for _ in tracker.stream_from_queue(queue, chat.id):
             pass
+
+    async def _materialize_model_recovery_payload(
+        self,
+        envelope: SubmissionInputEnvelope,
+        chat: Any,
+        submission: TurnSubmission,
+    ) -> dict[str, Any]:
+        """Resolve a resource pointer into a bounded continuation input."""
+        if self._resource_waits is None:
+            raise RuntimeError("Model resource wait service is unavailable")
+        try:
+            wait_id = UUID(str(envelope.payload["wait_id"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("invalid model recovery envelope") from exc
+        wait = await self._resource_waits.get(wait_id)
+        if wait is None:
+            raise ValueError("model resource wait is unavailable")
+        if (
+            wait.agent_id != submission.agent_id
+            or wait.conversation_id != submission.conversation_id
+            or wait.conversation_id != chat.id
+        ):
+            raise ValueError(
+                "model resource wait does not belong to its ChatSpec",
+            )
+        return {
+            "channel_id": chat.channel,
+            "sender_id": chat.user_id,
+            "content_parts": [
+                {
+                    "type": "text",
+                    "text": (
+                        "QwenPaw runtime resource recovery: continue the "
+                        "interrupted task from the durable conversation "
+                        "state. Re-check external side effects before "
+                        "repeating any action."
+                    ),
+                },
+            ],
+            "message_metadata": {
+                "qwenpaw_client_message_id": submission.idempotency_key,
+                "qwenpaw_model_resource_wait": str(wait.wait_id),
+            },
+            "message_id": submission.idempotency_key,
+            "meta": {
+                "session_id": chat.session_id,
+                "user_id": chat.user_id,
+                "request_context": {
+                    "model_resource_wait_id": str(wait.wait_id),
+                    "recovered_attempt_id": str(wait.attempt_id),
+                },
+            },
+        }
 
     async def _materialize_continuation_payload(
         self,
@@ -359,6 +516,7 @@ class WorkspaceChatSubmissionDispatcher:
 
 __all__ = [
     "CONSOLE_INTERACTION_CONTINUATION_ENVELOPE",
+    "CONSOLE_MODEL_RECOVERY_ENVELOPE",
     "CONSOLE_SUBMISSION_ENVELOPE",
     "WorkspaceChatSubmissionDispatcher",
 ]
