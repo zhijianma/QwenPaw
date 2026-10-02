@@ -423,6 +423,12 @@ Ask User，也不保存 Prompt、异常正文或隐藏 reasoning。enqueue 后�
 释放、真实 retry-after hint、部分流 continuation boundary 和副作用自动对账，因此
 不能宣称任意网络中断已经可以无损续传。
 
+模型流随后增加内容安全的 `ModelOutputBoundary`：明确区分请求尚未输出、非流式完整
+响应、部分流、看到 Provider 终态 chunk，以及没有终态 chunk 但正常 EOF。该记录只
+是枚举，不保存输出、摘要、哈希或隐藏 reasoning；Observation 可以据此避免把部分流
+误判成“从未输出后可直接重试”。当前仍只完成边界留证，尚未把部分流自动装配为新的
+Model Step continuation。
+
 ### A10. 通信能力契约，而不是统一成一种传输
 
 优先级：P0，直接约束当前 Chat Queue、Continuation 与后续 Hub。

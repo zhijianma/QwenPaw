@@ -22,6 +22,7 @@ from qwenpaw.kernel import (
     ModelCallStore,
     ModelCallStatus,
     ModelFailureClass,
+    ModelOutputBoundary,
     ModelRecoveryDisposition,
     ModelRouteReason,
 )
@@ -225,6 +226,9 @@ async def test_token_wrapper_records_actual_provider_attempt(
     assert record.result is not None
     assert record.result.status is ModelCallStatus.SUCCEEDED
     assert record.result.emitted_content is True
+    assert record.result.output_boundary is (
+        ModelOutputBoundary.COMPLETE_RESPONSE
+    )
     assert record.result.failure_class is None
     assert record.result.recovery_disposition is None
 
@@ -260,6 +264,7 @@ async def test_token_wrapper_records_transport_recovery_contract(
     assert record.result.recovery_disposition is (
         ModelRecoveryDisposition.RETRY_TRANSPORT
     )
+    assert record.result.output_boundary is ModelOutputBoundary.PRE_OUTPUT
 
 
 @pytest.mark.asyncio
@@ -415,6 +420,9 @@ async def test_stream_can_be_consumed_and_closed_in_different_contexts(
     assert record.result.recovery_disposition is (
         ModelRecoveryDisposition.STOP_INTERRUPTED
     )
+    assert record.result.output_boundary is (
+        ModelOutputBoundary.PARTIAL_STREAM
+    )
 
 
 @pytest.mark.asyncio
@@ -456,6 +464,9 @@ async def test_partial_stream_records_continue_model_step(
     assert record.result.recovery_disposition is (
         ModelRecoveryDisposition.CONTINUE_MODEL_STEP
     )
+    assert record.result.output_boundary is (
+        ModelOutputBoundary.PARTIAL_STREAM
+    )
 
 
 @pytest.mark.asyncio
@@ -494,6 +505,49 @@ async def test_closing_after_terminal_chunk_is_success(
     assert record.result is not None
     assert record.result.status is ModelCallStatus.SUCCEEDED
     assert record.result.error_kind == ""
+    assert record.result.output_boundary is (
+        ModelOutputBoundary.TERMINAL_STREAM
+    )
+
+
+@pytest.mark.asyncio
+async def test_clean_stream_end_is_distinct_from_terminal_chunk(
+    tmp_path: Path,
+) -> None:
+    scope = _scope(tmp_path)
+    store = lite_model_call_store(tmp_path)
+    session = _session(scope, _manifest(scope), store)
+    provider = AsyncMock()
+    provider.model = "model-a"
+    provider.credential = None
+    provider.parameters = None
+    provider.stream = True
+    provider.context_size = 32_768
+    provider.formatter = object()
+
+    async def provider_stream() -> AsyncGenerator[ChatResponse, None]:
+        yield ChatResponse(
+            content=[TextBlock(text="complete by eof")],
+            is_last=False,
+        )
+
+    provider.return_value = provider_stream()
+    wrapper = TokenRecordingModelWrapper("provider-a", provider)
+    stream = await call_with_model_session(
+        session,
+        lambda: wrapper(messages=[]),
+    )
+
+    assert (await anext(stream)).content[0].text == "complete by eof"
+    with pytest.raises(StopAsyncIteration):
+        await anext(stream)
+    [record] = await store.list_for_conversation("chat-1")
+
+    assert record.result is not None
+    assert record.result.status is ModelCallStatus.SUCCEEDED
+    assert record.result.output_boundary is (
+        ModelOutputBoundary.CLEAN_STREAM_END
+    )
 
 
 def test_historical_result_defaults_to_unknown_cost() -> None:
@@ -510,6 +564,7 @@ def test_historical_result_defaults_to_unknown_cost() -> None:
     assert result.cost_unknown is True
     assert result.failure_class is None
     assert result.recovery_disposition is None
+    assert result.output_boundary is None
 
 
 def test_result_requires_complete_recovery_contract() -> None:
@@ -540,6 +595,21 @@ def test_partial_output_cannot_be_marked_for_transport_replay() -> None:
             failure_class=ModelFailureClass.STREAM_INTERRUPTED,
             recovery_disposition=(
                 ModelRecoveryDisposition.RETRY_TRANSPORT
+            ),
+        )
+
+
+def test_partial_stream_boundary_requires_emitted_content() -> None:
+    with pytest.raises(ValueError, match="requires emitted content"):
+        ModelCallResult(
+            attempt_id=uuid4(),
+            invocation_id=uuid4(),
+            conversation_id="chat-1",
+            status=ModelCallStatus.FAILED,
+            output_boundary=ModelOutputBoundary.PARTIAL_STREAM,
+            failure_class=ModelFailureClass.STREAM_INTERRUPTED,
+            recovery_disposition=(
+                ModelRecoveryDisposition.CONTINUE_MODEL_STEP
             ),
         )
 

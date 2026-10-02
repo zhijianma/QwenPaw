@@ -181,6 +181,16 @@ class ModelRecoveryDisposition(str, Enum):
     STOP_INTERRUPTED = "stop_interrupted"
 
 
+class ModelOutputBoundary(str, Enum):
+    """Content-safe boundary reached by one concrete model attempt."""
+
+    PRE_OUTPUT = "pre_output"
+    COMPLETE_RESPONSE = "complete_response"
+    PARTIAL_STREAM = "partial_stream"
+    TERMINAL_STREAM = "terminal_stream"
+    CLEAN_STREAM_END = "clean_stream_end"
+
+
 class EnvironmentIsolation(str, Enum):
     """Execution isolation required by an environment contract."""
 
@@ -1677,6 +1687,7 @@ class ModelCallResult(KernelModel):
     error_kind: str = ""
     retryable: bool = False
     emitted_content: bool = False
+    output_boundary: ModelOutputBoundary | None = None
     failure_class: ModelFailureClass | None = None
     recovery_disposition: ModelRecoveryDisposition | None = None
     input_tokens: int | None = Field(default=None, ge=0)
@@ -1706,6 +1717,26 @@ class ModelCallResult(KernelModel):
             raise ValueError(
                 "model call with emitted content cannot retry transport",
             )
+        if (
+            self.output_boundary is ModelOutputBoundary.PRE_OUTPUT
+            and self.emitted_content
+        ):
+            raise ValueError("pre-output boundary cannot emit content")
+        if (
+            self.output_boundary is ModelOutputBoundary.COMPLETE_RESPONSE
+            and self.status is not ModelCallStatus.SUCCEEDED
+        ):
+            raise ValueError("complete response requires successful status")
+        if self.output_boundary in {
+            ModelOutputBoundary.TERMINAL_STREAM,
+            ModelOutputBoundary.CLEAN_STREAM_END,
+        } and self.status is not ModelCallStatus.SUCCEEDED:
+            raise ValueError("complete stream boundary requires success")
+        if (
+            self.output_boundary is ModelOutputBoundary.PARTIAL_STREAM
+            and not self.emitted_content
+        ):
+            raise ValueError("partial stream requires emitted content")
         return self
 
 

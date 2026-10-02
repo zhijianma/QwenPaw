@@ -36,6 +36,7 @@ from qwenpaw.kernel import (
     ModelCallAttempt,
     ModelCallResult,
     ModelCallStatus,
+    ModelOutputBoundary,
     ModelRouteReason,
     ObservationCategory,
     ObservationSource,
@@ -122,6 +123,7 @@ async def test_model_call_projects_policy_execution_and_evidence(
         conversation_id=conversation_id,
         status=ModelCallStatus.SUCCEEDED,
         emitted_content=True,
+        output_boundary=ModelOutputBoundary.COMPLETE_RESPONSE,
         input_tokens=11,
         output_tokens=7,
         cost_micros=None,
@@ -143,6 +145,7 @@ async def test_model_call_projects_policy_execution_and_evidence(
     ]
     assert observations[0].status is ObservationStatus.SUCCEEDED
     assert observations[0].facts["cost_unknown"] is True
+    assert observations[0].facts["output_boundary"] == "complete_response"
     assert observations[1].status is ObservationStatus.STARTED
     assert observations[2].facts["reason"] == "primary"
     assert "messages" not in "".join(

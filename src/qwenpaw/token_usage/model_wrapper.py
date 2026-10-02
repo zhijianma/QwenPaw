@@ -15,6 +15,7 @@ from ..kernel.models import (
     ModelCallAttempt,
     ModelCallStatus,
     ModelFailureClass,
+    ModelOutputBoundary,
     ModelRecoveryDisposition,
     UsageDelta,
     UsageMeter,
@@ -272,6 +273,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
         usage: ChatUsage | None = None,
         error: BaseException | None = None,
         emitted_content: bool = False,
+        output_boundary: ModelOutputBoundary | None = None,
     ) -> None:
         """Record a content-free result after one concrete attempt."""
         from ..runtime.model_calls import complete_current_model_attempt
@@ -316,6 +318,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
             error_kind=error_kind,
             retryable=retryable,
             emitted_content=emitted_content,
+            output_boundary=output_boundary,
             failure_class=failure_class,
             recovery_disposition=recovery_disposition,
             input_tokens=input_tokens,
@@ -381,6 +384,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
                 attempt,
                 status=ModelCallStatus.CANCELLED,
                 error=exc,
+                output_boundary=ModelOutputBoundary.PRE_OUTPUT,
             )
             raise
         except Exception as exc:
@@ -388,6 +392,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
                 attempt,
                 status=ModelCallStatus.FAILED,
                 error=exc,
+                output_boundary=ModelOutputBoundary.PRE_OUTPUT,
             )
             raise
         self._record_usage(safe_attr(result, "usage"))
@@ -397,6 +402,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
             status=ModelCallStatus.SUCCEEDED,
             usage=safe_attr(result, "usage"),
             emitted_content=True,
+            output_boundary=ModelOutputBoundary.COMPLETE_RESPONSE,
         )
         return result
 
@@ -434,6 +440,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
                 attempt,
                 status=ModelCallStatus.CANCELLED,
                 error=exc,
+                output_boundary=ModelOutputBoundary.PRE_OUTPUT,
             )
             raise
         except Exception as exc:
@@ -441,6 +448,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
                 attempt,
                 status=ModelCallStatus.FAILED,
                 error=exc,
+                output_boundary=ModelOutputBoundary.PRE_OUTPUT,
             )
             raise
 
@@ -453,6 +461,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
             status=ModelCallStatus.SUCCEEDED,
             usage=safe_attr(result, "usage"),
             emitted_content=True,
+            output_boundary=ModelOutputBoundary.COMPLETE_RESPONSE,
         )
         return result
 
@@ -487,6 +496,11 @@ class TokenRecordingModelWrapper(ChatModelBase):
                 usage=last_usage,
                 error=exc,
                 emitted_content=emitted_content,
+                output_boundary=(
+                    ModelOutputBoundary.PARTIAL_STREAM
+                    if emitted_content
+                    else ModelOutputBoundary.PRE_OUTPUT
+                ),
             )
             raise
         except GeneratorExit as exc:
@@ -500,6 +514,13 @@ class TokenRecordingModelWrapper(ChatModelBase):
                 usage=last_usage,
                 error=None if terminal_chunk_seen else exc,
                 emitted_content=emitted_content,
+                output_boundary=(
+                    ModelOutputBoundary.TERMINAL_STREAM
+                    if terminal_chunk_seen
+                    else ModelOutputBoundary.PARTIAL_STREAM
+                    if emitted_content
+                    else ModelOutputBoundary.PRE_OUTPUT
+                ),
             )
             raise
         except Exception as exc:
@@ -509,6 +530,11 @@ class TokenRecordingModelWrapper(ChatModelBase):
                 usage=last_usage,
                 error=exc,
                 emitted_content=emitted_content,
+                output_boundary=(
+                    ModelOutputBoundary.PARTIAL_STREAM
+                    if emitted_content
+                    else ModelOutputBoundary.PRE_OUTPUT
+                ),
             )
             raise
         else:
@@ -517,6 +543,11 @@ class TokenRecordingModelWrapper(ChatModelBase):
                 status=ModelCallStatus.SUCCEEDED,
                 usage=last_usage,
                 emitted_content=emitted_content,
+                output_boundary=(
+                    ModelOutputBoundary.TERMINAL_STREAM
+                    if terminal_chunk_seen
+                    else ModelOutputBoundary.CLEAN_STREAM_END
+                ),
             )
         finally:
             await stream.aclose()

@@ -141,6 +141,8 @@ Scheduling、Plugin Generation 和 Edition Profile 为核心的 OS 基础设施�
 - 等待成熟或释放后，durable outbox 创建新的 Submission / Invocation，沿用原
   `ChatSpec.id` 与 `correlation_id`；稳定 idempotency key 覆盖 enqueue 后崩溃窗口。
 - Chat `wait-conditions` 合并资源等待与 Interaction 等待，Task 页面没有提前开发。
+- `ModelOutputBoundary` 已区分 pre-output、完整响应、部分流、终态流与 clean EOF；
+  只留枚举证据，不保存模型输出或隐藏 reasoning。部分流自动续行仍待实现。
 - “一问一答”仅保留为短 Chat 快速路径；长程工作由 Agent Loop、typed wait、
   continuation 和 checkpoint 推进，不要求用户发送“继续”。
 - 设计与未完成边界见

@@ -233,6 +233,11 @@ def _model_observations(
             "error_kind": result.error_kind,
             "retryable": result.retryable,
             "emitted_content": result.emitted_content,
+            "output_boundary": (
+                result.output_boundary.value
+                if result.output_boundary is not None
+                else None
+            ),
             "failure_class": (
                 result.failure_class.value
                 if result.failure_class is not None
