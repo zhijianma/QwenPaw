@@ -20,6 +20,7 @@ from qwenpaw.kernel import (
     InteractionResponse,
     InteractionStatus,
     ContinuationMode,
+    UserInputReason,
 )
 
 INVOCATION_ID = UUID("00000000-0000-0000-0000-000000000401")
@@ -45,6 +46,7 @@ async def test_ask_user_persists_before_wait_and_resolves(tmp_path) -> None:
     broker, service = _broker(tmp_path)
     ask = asyncio.create_task(
         broker.ask_user(
+            reason=UserInputReason.MATERIAL_PREFERENCE,
             title="Choose output",
             prompt="Which format should be generated?",
             options=(
@@ -90,7 +92,11 @@ async def test_ask_user_is_released_by_invocation_cancellation(
 ) -> None:
     broker, service = _broker(tmp_path)
     ask = asyncio.create_task(
-        broker.ask_user(title="Need input", prompt="Continue?"),
+        broker.ask_user(
+            reason=UserInputReason.MISSING_REQUIRED_FACT,
+            title="Need input",
+            prompt="Which deployment region is required?",
+        ),
     )
     for _ in range(100):
         opened = await service.list_open(
@@ -114,8 +120,9 @@ async def test_ask_user_timeout_is_durable(tmp_path) -> None:
     broker, service = _broker(tmp_path)
 
     resolution = await broker.ask_user(
+        reason=UserInputReason.MISSING_REQUIRED_FACT,
         title="Need input",
-        prompt="Continue?",
+        prompt="Which deployment region is required?",
         timeout_seconds=0.01,
     )
     recovered = await service.get_resolution(resolution.interaction_id)
@@ -139,10 +146,12 @@ async def test_deferred_input_preserves_correlation_and_returns(
     )
 
     request = await broker.defer_user_input(
+        reason=UserInputReason.MISSING_REQUIRED_FACT,
         title="Need durable input",
         prompt="Which path?",
     )
     second = await broker.defer_user_input(
+        reason=UserInputReason.MATERIAL_PREFERENCE,
         title="Need another input",
         prompt="Which format?",
     )

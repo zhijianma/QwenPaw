@@ -12,6 +12,7 @@ from ...kernel.interactions import (
     InteractionRequest,
     InteractionResolution,
     InteractionStatus,
+    UserInputReason,
 )
 from ...kernel.memory import (
     MemoryStateConflictError,
@@ -325,6 +326,7 @@ __all__ = [
     "InteractionRequest",
     "InteractionResolution",
     "InteractionStatus",
+    "UserInputReason",
     "LifecyclePhase",
     "JsonObject",
     "StopGateAction",

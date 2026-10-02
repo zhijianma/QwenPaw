@@ -36,6 +36,11 @@ export interface ExternalQueueFallbackReceipt {
 export type InteractionKind = "approval" | "user_input" | "suggestion";
 export type InteractionMode = "blocking" | "non_blocking";
 export type InteractionStatus = "open" | "resolved" | "expired" | "cancelled";
+export type UserInputReason =
+  | "missing_required_fact"
+  | "material_preference"
+  | "scope_authorization"
+  | "high_impact_decision";
 
 export interface InteractionOption {
   option_id: string;
@@ -53,6 +58,7 @@ export interface ChatInteraction {
   invocation_id: string;
   correlation_id: string;
   source_id?: string | null;
+  user_input_reason?: UserInputReason | null;
   title: string;
   prompt: string;
   options: InteractionOption[];

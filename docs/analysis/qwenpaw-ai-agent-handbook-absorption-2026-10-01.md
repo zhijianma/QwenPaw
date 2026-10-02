@@ -448,6 +448,12 @@ Submission、Invocation、Model Step、Action、Interaction 和恢复周期。As
 message 只负责对人表达，不负责划定 Runtime 生命周期；等待和恢复也不要求用户再发
 一句话来“推动下一轮”。
 
+这一边界已落实为可执行 `UserInputReason` 契约：新 Ask User 只能声明缺失必要事实、
+关键偏好、范围授权或高影响裁决，未分类请求在写入统一 Interaction Store 前被拒绝；
+内置 Tool、插件 SDK 和兼容 Adapter 共用同一 admission gate。历史未分类记录继续
+可读，结构化原因进入内容安全 Observation，供后续评估是否存在“逐步追问代替自动
+推进”的策略滥用。
+
 这项设计也决定普通 Chat Ask User 的正确恢复方式：先原子提交回答和内容最小化
 continuation outbox，再创建同一 `ChatSpec.id` 下的新 Submission / Invocation；不
 序列化 Python 调用栈，也不依赖旧 SSE 连接仍然存在。问题与回答只从权威

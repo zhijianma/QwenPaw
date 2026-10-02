@@ -81,6 +81,7 @@ from .interactions import (
     InteractionRequest,
     InteractionResolution,
     InteractionResponse,
+    UserInputReason,
 )
 from .memory import MemoryStateScope, MemoryStateSnapshot
 from .scheduling import (
@@ -581,6 +582,7 @@ class RuntimeInteractionProducer(Protocol):
     async def ask_user(
         self,
         *,
+        reason: UserInputReason,
         title: str,
         prompt: str,
         options: tuple[InteractionOption, ...] = (),
@@ -590,11 +592,12 @@ class RuntimeInteractionProducer(Protocol):
         timeout_seconds: float | None = None,
         expires_at: datetime | None = None,
     ) -> InteractionResolution:
-        """Persist and await one structured user-input interaction."""
+        """Persist and await input only within the current Invocation."""
 
     async def defer_user_input(
         self,
         *,
+        reason: UserInputReason,
         title: str,
         prompt: str,
         options: tuple[InteractionOption, ...] = (),
@@ -603,7 +606,7 @@ class RuntimeInteractionProducer(Protocol):
         source_id: UUID | None = None,
         expires_at: datetime | None = None,
     ) -> InteractionRequest:
-        """Persist input and continue through a new conversation turn."""
+        """Persist input for durable continuation in a new Invocation."""
 
     async def suggest(
         self,

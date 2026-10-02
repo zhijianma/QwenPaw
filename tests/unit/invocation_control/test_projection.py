@@ -18,6 +18,7 @@ from qwenpaw.kernel import (
     InteractionKind,
     InteractionMode,
     InteractionRequest,
+    UserInputReason,
     ObservationCategory,
     ObservationPage,
     ObservationSource,
@@ -62,6 +63,7 @@ async def test_projection_cursor_tracks_both_durable_sources(tmp_path) -> None:
         agent_id="default",
         conversation_id="chat-1",
         invocation_id=invocation_id,
+        user_input_reason=UserInputReason.MATERIAL_PREFERENCE,
         title="Need input",
         prompt="Choose one option.",
     )

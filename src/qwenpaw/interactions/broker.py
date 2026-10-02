@@ -16,6 +16,7 @@ from ..kernel import (
     InteractionPort,
     InteractionRequest,
     InteractionResolution,
+    UserInputReason,
 )
 
 
@@ -38,6 +39,7 @@ class RuntimeInteractionBroker:
     async def ask_user(
         self,
         *,
+        reason: UserInputReason,
         title: str,
         prompt: str,
         options: tuple[InteractionOption, ...] = (),
@@ -47,7 +49,7 @@ class RuntimeInteractionBroker:
         timeout_seconds: float | None = None,
         expires_at: datetime | None = None,
     ) -> InteractionResolution:
-        """Persist and await one invocation-scoped user input request."""
+        """Persist and await input only within the current Invocation."""
         request = InteractionRequest(
             kind=InteractionKind.USER_INPUT,
             mode=InteractionMode.BLOCKING,
@@ -56,6 +58,7 @@ class RuntimeInteractionBroker:
             invocation_id=self.invocation_id,
             correlation_id=self.correlation_id or self.invocation_id,
             source_id=source_id,
+            user_input_reason=reason,
             title=title,
             prompt=prompt,
             options=options,
@@ -99,6 +102,7 @@ class RuntimeInteractionBroker:
     async def defer_user_input(
         self,
         *,
+        reason: UserInputReason,
         title: str,
         prompt: str,
         options: tuple[InteractionOption, ...] = (),
@@ -116,6 +120,7 @@ class RuntimeInteractionBroker:
             invocation_id=self.invocation_id,
             correlation_id=self.correlation_id or self.invocation_id,
             source_id=source_id,
+            user_input_reason=reason,
             continuation_mode=ContinuationMode.CONVERSATION_TURN,
             title=title,
             prompt=prompt,

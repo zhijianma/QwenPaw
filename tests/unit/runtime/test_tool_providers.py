@@ -189,6 +189,7 @@ async def test_workspace_provider_adds_real_ask_user_tool() -> None:
     ask_user = defined["ask_user"]
     answer = await ask_user.function(
         question="Which format?",
+        reason="material_preference",
         choices=["Markdown", "HTML"],
     )
 
@@ -197,6 +198,7 @@ async def test_workspace_provider_adds_real_ask_user_tool() -> None:
     broker.defer_user_input.assert_awaited_once()
     request = broker.defer_user_input.await_args.kwargs
     assert request["prompt"] == "Which format?"
+    assert request["reason"].value == "material_preference"
     assert [option.label for option in request["options"]] == [
         "Markdown",
         "HTML",

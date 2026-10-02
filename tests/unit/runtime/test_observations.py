@@ -50,6 +50,7 @@ from qwenpaw.kernel import (
     VerificationResult,
     VerificationStatus,
     TurnSubmissionRequest,
+    UserInputReason,
 )
 from qwenpaw.invocation_control import (
     InvocationControlService,
@@ -726,6 +727,7 @@ async def test_interaction_projects_hitl_without_response_content(
         agent_id="default",
         conversation_id=conversation_id,
         invocation_id=uuid4(),
+        user_input_reason=UserInputReason.MATERIAL_PREFERENCE,
         title="Sensitive title",
         prompt="Private question body",
         options=(InteractionOption(option_id="safe", label="Private label"),),
@@ -753,6 +755,9 @@ async def test_interaction_projects_hitl_without_response_content(
     assert observations[0].status is ObservationStatus.RESOLVED
     assert observations[0].facts["selected_option_ids"] == ["safe"]
     assert observations[1].status is ObservationStatus.RECORDED
+    assert observations[1].facts["user_input_reason"] == (
+        "material_preference"
+    )
     serialized = "".join(item.model_dump_json() for item in observations)
     assert "Private question body" not in serialized
     assert "Private response body" not in serialized

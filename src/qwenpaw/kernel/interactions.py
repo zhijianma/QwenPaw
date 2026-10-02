@@ -43,6 +43,19 @@ class InteractionMode(str, Enum):
     NON_BLOCKING = "non_blocking"
 
 
+class UserInputReason(str, Enum):
+    """Allowed reasons for suspending execution to request user input."""
+
+    MISSING_REQUIRED_FACT = "missing_required_fact"
+    MATERIAL_PREFERENCE = "material_preference"
+    SCOPE_AUTHORIZATION = "scope_authorization"
+    HIGH_IMPACT_DECISION = "high_impact_decision"
+
+
+class InteractionPolicyError(ValueError):
+    """Raised when a new interaction violates runtime interaction policy."""
+
+
 class InteractionOption(KernelModel):
     """One stable response option rendered by any delivery adapter."""
 
@@ -68,6 +81,7 @@ class InteractionRequest(KernelModel):
     correlation_id: UUID = Field(default_factory=uuid4)
     task_id: UUID | None = None
     source_id: UUID | None = None
+    user_input_reason: UserInputReason | None = None
     continuation_mode: ContinuationMode = ContinuationMode.LIVE_INVOCATION
     continuation_checkpoint_id: UUID | None = None
     title: NonEmptyStr
@@ -94,6 +108,18 @@ class InteractionRequest(KernelModel):
         ):
             raise ValueError("approval interactions must be blocking")
         if (
+            self.kind is InteractionKind.USER_INPUT
+            and self.mode is not InteractionMode.BLOCKING
+        ):
+            raise ValueError("user input interactions must be blocking")
+        if (
+            self.kind is not InteractionKind.USER_INPUT
+            and self.user_input_reason is not None
+        ):
+            raise ValueError(
+                "only user input interactions may declare an input reason",
+            )
+        if (
             self.continuation_checkpoint_id is not None
             and self.mode is not InteractionMode.BLOCKING
         ):
@@ -119,6 +145,20 @@ class InteractionRequest(KernelModel):
         if self.expires_at is not None and self.expires_at < self.created_at:
             raise ValueError("expires_at cannot precede created_at")
         return self
+
+
+def validate_interaction_admission(
+    request: InteractionRequest,
+) -> InteractionRequest:
+    """Reject new unclassified user-input suspensions before persistence."""
+    if (
+        request.kind is InteractionKind.USER_INPUT
+        and request.user_input_reason is None
+    ):
+        raise InteractionPolicyError(
+            "user input interaction requires an allowed input reason",
+        )
+    return request
 
 
 class InteractionResponse(KernelModel):
@@ -192,10 +232,13 @@ class InteractionRecord(KernelModel):
 __all__ = [
     "InteractionKind",
     "InteractionMode",
+    "InteractionPolicyError",
     "InteractionOption",
     "InteractionRecord",
     "InteractionRequest",
     "InteractionResolution",
     "InteractionResponse",
     "InteractionStatus",
+    "UserInputReason",
+    "validate_interaction_admission",
 ]

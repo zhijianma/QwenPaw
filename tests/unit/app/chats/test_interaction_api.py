@@ -26,6 +26,7 @@ from qwenpaw.kernel import (
     InteractionMode,
     InteractionOption,
     InteractionRequest,
+    UserInputReason,
     InteractionStatus,
     WaitConditionStatus,
 )
@@ -54,6 +55,7 @@ async def _context(tmp_path):
         agent_id="default",
         conversation_id=chat.id,
         invocation_id=uuid4(),
+        user_input_reason=UserInputReason.MATERIAL_PREFERENCE,
         title="Choose output",
         prompt="Which format?",
         options=(

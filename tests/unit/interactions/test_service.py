@@ -25,10 +25,12 @@ from qwenpaw.kernel import (
     InteractionHistoryPort,
     InteractionMode,
     InteractionOption,
+    InteractionPolicyError,
     InteractionRequest,
     InteractionResponse,
     InteractionStatus,
     InteractionPort,
+    UserInputReason,
     WaitConditionStatus,
     WaitConditionProjectionPort,
 )
@@ -46,6 +48,11 @@ def _request(
         agent_id="default",
         conversation_id="chat-spec-1",
         invocation_id=invocation_id,
+        user_input_reason=(
+            UserInputReason.MISSING_REQUIRED_FACT
+            if kind is InteractionKind.USER_INPUT
+            else None
+        ),
         title="Runtime needs a decision",
         prompt="Choose how to continue.",
         options=(
@@ -72,6 +79,28 @@ def _response(
 
 
 @pytest.mark.asyncio
+async def test_service_rejects_unclassified_user_input_before_storage(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "interactions.sqlite3"
+    service = InteractionService(database_path)
+    request = InteractionRequest(
+        kind=InteractionKind.USER_INPUT,
+        mode=InteractionMode.BLOCKING,
+        agent_id="default",
+        conversation_id="chat-spec-1",
+        invocation_id=uuid4(),
+        title="Generic confirmation",
+        prompt="Continue?",
+    )
+
+    with pytest.raises(InteractionPolicyError):
+        await service.open(request)
+
+    assert not database_path.exists()
+
+
+@pytest.mark.asyncio
 async def test_schema_v1_migrates_to_continuation_outbox(
     tmp_path: Path,
 ) -> None:
@@ -92,6 +121,52 @@ async def test_schema_v1_migrates_to_continuation_outbox(
 
     assert version == 2
     assert table == ("interaction_continuations",)
+
+
+@pytest.mark.asyncio
+async def test_legacy_unclassified_user_input_remains_readable(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "interactions.sqlite3"
+    service = InteractionService(database_path)
+    await service.start()
+    legacy = InteractionRequest(
+        kind=InteractionKind.USER_INPUT,
+        mode=InteractionMode.BLOCKING,
+        agent_id="default",
+        conversation_id="chat-spec-1",
+        invocation_id=uuid4(),
+        title="Legacy input",
+        prompt="Legacy question",
+    )
+    request_json = legacy.model_dump_json(
+        by_alias=True,
+        exclude={"user_input_reason"},
+    )
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "INSERT INTO runtime_interactions "
+            "(interaction_id, agent_id, conversation_id, invocation_id, "
+            "mode, status, revision, request_json, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(legacy.interaction_id),
+                legacy.agent_id,
+                legacy.conversation_id,
+                str(legacy.invocation_id),
+                legacy.mode.value,
+                legacy.status.value,
+                legacy.revision,
+                request_json,
+                legacy.created_at.isoformat(),
+                legacy.created_at.isoformat(),
+            ),
+        )
+
+    recovered = await service.get_request(legacy.interaction_id)
+
+    assert recovered is not None
+    assert recovered.user_input_reason is None
 
 
 @pytest.mark.asyncio

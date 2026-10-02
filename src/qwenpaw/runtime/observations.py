@@ -392,6 +392,11 @@ def _interaction_observations(
             "interaction_id": str(request.interaction_id),
             "kind": request.kind.value,
             "mode": request.mode.value,
+            "user_input_reason": (
+                request.user_input_reason.value
+                if request.user_input_reason is not None
+                else None
+            ),
             "source_id": _optional_uuid(request.source_id),
             "option_ids": [option.option_id for option in request.options],
             "has_response_schema": bool(request.response_schema),

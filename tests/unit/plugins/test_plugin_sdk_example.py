@@ -207,6 +207,9 @@ def test_public_sdk_exports_runtime_interaction_contract() -> None:
     assert sdk.ModelSelection is not None
     assert sdk.PlanStep is not None
     assert sdk.RuntimeInteractionProducer is not None
+    assert sdk.UserInputReason.MISSING_REQUIRED_FACT.value == (
+        "missing_required_fact"
+    )
     assert sdk.ContextualProposalSensor is not None
     assert sdk.SensorContext is not None
     assert sdk.TaskPlanner is not None

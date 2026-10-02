@@ -159,6 +159,8 @@ generation handoff 后才能判定 orphan，不能由任意新实例直接终止
    同一 `ask_user()` / `suggest()` API；前者先持久化再等待，后者强制非阻塞，
    Runtime 终止会按 `invocation_id` 解除等待。插件通过公开
    `ToolHost.interaction_broker()` 获取能力，不依赖私有 request-context 键。
+   `ask_user()` / `defer_user_input()` 必须声明 Kernel `UserInputReason`；统一
+   admission gate 在持久化前拒绝未分类请求，历史 JSON 仍保持可读。
 9. 已完成：内置 `ask_user` 工具通过系统 Tool Provider 与插件共用 Broker；
    Chat Interaction HTTP Adapter 按 `ChatSpec.id` 查询和响应，并在服务端校验
    agent/conversation ownership、revision 与幂等。Chat 页面只轮询权威 open

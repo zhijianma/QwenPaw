@@ -28,6 +28,7 @@ from ..kernel import (
     WaitCondition,
     WaitConditionKind,
     WaitConditionStatus,
+    validate_interaction_admission,
 )
 from ..kernel.models import utc_now
 
@@ -191,6 +192,7 @@ class InteractionService:
         """Persist one open interaction before any adapter exposes it."""
         if request.status is not InteractionStatus.OPEN:
             raise InteractionConflictError("new interaction must be open")
+        validate_interaction_admission(request)
         await self.start()
         request_json = _canonical_json(request)
         async with self._write_lock:

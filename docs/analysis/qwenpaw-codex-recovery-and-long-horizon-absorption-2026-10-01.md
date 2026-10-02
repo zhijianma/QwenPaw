@@ -163,6 +163,13 @@ Runtime 默认持续执行，只有满足以下任一条件才允许产生 block
 `Submission`；它可投影为一条用户消息，但语义上仍属于原 `correlation_id` 的同一
 执行链。这样，用户可以在需要时参与决策，却不必成为长程任务的人工调度器。
 
+该策略现已成为可执行 Kernel 契约：每个新 `USER_INPUT` 在进入
+`InteractionService` 前必须声明 `UserInputReason`，取值仅限缺失必要事实、关键偏好、
+范围授权或高影响裁决。内置 Tool 与插件通过同一 `RuntimeInteractionProducer` 传递
+原因，PawApp 兼容确认也显式分类；历史未分类记录仍可读取，但不能继续产生未分类的
+新等待。原因会进入内容安全 Observation，后续可通过评估发现“声明理由与实际提问
+不一致”的滥用，而不依赖中英文关键词封禁。
+
 ### 4.5 Activity 是投影，不是新状态机
 
 Chat Runtime snapshot 复用 `RuntimeObservation`，从 Model Call、Action、Interaction、
@@ -309,6 +316,8 @@ Codex 的“边收流边执行工具”建立在其 Provider 事件协议、工�
     明确失败、策略暂停、资源等待或用户 Interrupt。
 14. Suggestion、Steer、Approval 和 Ask User 必须保留独立语义，不能互相伪装成普通
     问答消息。
+15. 新 Ask User 未声明允许的 `UserInputReason` 时，必须在写入 Interaction Store 前
+    被拒绝；旧未分类记录必须仍可查询和审计。
 
 ## 9. 明确不做
 

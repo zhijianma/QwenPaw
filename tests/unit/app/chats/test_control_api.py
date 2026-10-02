@@ -34,6 +34,7 @@ from qwenpaw.kernel import (
     InteractionKind,
     InteractionMode,
     InteractionRequest,
+    UserInputReason,
     SteerSafePoint,
     SubmissionStatus,
     TurnSubmissionRequest,
@@ -467,6 +468,7 @@ async def test_runtime_snapshot_stream_recovers_queue_and_interactions(
         agent_id="default",
         conversation_id="chat-spec-1",
         invocation_id=uuid4(),
+        user_input_reason=UserInputReason.MATERIAL_PREFERENCE,
         title="Choose format",
         prompt="Markdown or HTML?",
     )

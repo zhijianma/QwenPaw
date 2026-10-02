@@ -389,10 +389,13 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
   可原子提交或幂等恢复；新 Submission 继承原 correlation 并创建新 Invocation，
   不恢复旧协程。Lite worker 启动即扫描未派发项，HTTP 只负责唤醒；Queue envelope
   仅保存 Interaction 引用，模型输入在执行时从权威 Store 装配。
-- [ ] 冻结 Human Interaction Policy：默认由目标、计划、事件、Action、Artifact、
-  Evidence 和 Verification 持续推进；只有缺少必要事实、关键偏好、权限或高影响
-  裁决时才 blocking Ask User。Suggestion、Steer、Interrupt 与 Approval 保持独立
-  语义，禁止用逐步追问或“是否继续”充当执行调度器。
+- [x] Human Interaction Policy 已冻结为 Kernel `UserInputReason` 与统一 admission
+  gate：所有新 blocking Ask User 必须声明 `missing_required_fact`、
+  `material_preference`、`scope_authorization` 或 `high_impact_decision` 之一，未分类
+  请求在持久化前拒绝；历史记录仍可兼容读取。内置系统 Tool、插件 SDK 与 PawApp
+  兼容桥共用这一契约，原因进入内容安全 Observation。默认仍由目标、计划、事件、
+  Action、Artifact、Evidence 和 Verification 持续推进；Suggestion、Steer、
+  Interrupt 与 Approval 保持独立语义，禁止用逐步追问或“是否继续”充当执行调度器。
 - [ ] 冻结 Model Recovery Contract：
   - [ ] 区分 `transport_unavailable`、`stream_interrupted`、Provider overload、
     rate limit、quota、budget、auth、policy、context overflow、user interrupt 与

@@ -221,7 +221,11 @@ request-context keys. Obtain the invocation-bound broker from `ToolHost` and
 close over it in the contributed tool:
 
 ```python
-from qwenpaw.plugins.sdk import InteractionOption, ToolDefinition
+from qwenpaw.plugins.sdk import (
+    InteractionOption,
+    ToolDefinition,
+    UserInputReason,
+)
 
 
 async def list_tools(self, scope, selection, host):
@@ -231,7 +235,8 @@ async def list_tools(self, scope, selection, host):
     async def choose_output_format() -> str:
         if interactions is None:
             return "Structured user interaction is unavailable."
-        resolution = await interactions.ask_user(
+        request = await interactions.defer_user_input(
+            reason=UserInputReason.MATERIAL_PREFERENCE,
             title="Choose output format",
             prompt="Which format should be generated?",
             options=(
@@ -239,9 +244,10 @@ async def list_tools(self, scope, selection, host):
                 InteractionOption(option_id="html", label="HTML"),
             ),
         )
-        if resolution.response is None:
-            return f"The request ended as {resolution.status.value}."
-        return resolution.response.selected_option_ids[0]
+        return (
+            "Input requested; end this invocation and continue from the "
+            f"durable response. Interaction: {request.interaction_id}."
+        )
 
     return (
         ToolDefinition(
@@ -252,10 +258,21 @@ async def list_tools(self, scope, selection, host):
     )
 ```
 
-`ask_user()` persists before waiting and is released by timeout or invocation
-cancellation. `suggest()` persists and returns immediately; it can never pause
-the Runtime. Both are owned by `ChatSpec.id + invocation_id`, so plugins must
-not introduce their own session identity, waiter, or frontend queue.
+`defer_user_input()` is the default for long-running work: it persists the
+request, ends the current Invocation at its safe point, and creates a durable
+continuation Submission after the response. `ask_user()` is only the live
+short-path when the caller intentionally keeps the current Invocation waiting;
+it is released by timeout or cancellation and must not be used for cross-process
+continuation. `suggest()` persists and returns immediately; it can never pause
+the Runtime. All three are owned by `ChatSpec.id + invocation_id`, so plugins
+must not introduce their own session identity, waiter, or frontend queue.
+
+Every blocking user-input request must declare one `UserInputReason`:
+`MISSING_REQUIRED_FACT`, `MATERIAL_PREFERENCE`, `SCOPE_AUTHORIZATION`, or
+`HIGH_IMPACT_DECISION`. Use Approval for policy-governed actions and use
+Suggestion for optional guidance. Do not use Ask User as a step-by-step
+"continue?" gate or as a substitute for Steer, Interrupt, resource recovery,
+budget policy, or side-effect reconciliation.
 
 For invocation-scoped memory, implement the public `MemoryProvider` shape and
 return a `MemorySession`:

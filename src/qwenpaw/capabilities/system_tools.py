@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from typing import Literal
 
 from ..kernel.invocation import (
     DEFAULT_TOOL_PROVIDER_ID,
@@ -19,6 +20,7 @@ from ..kernel.models import (
 )
 from ..kernel.interactions import (
     InteractionOption,
+    UserInputReason,
 )
 from ..kernel.ports import RuntimeInteractionProducer, ToolHost
 
@@ -32,9 +34,15 @@ def _ask_user_tool(
 
     async def ask_user(
         question: str,
+        reason: Literal[
+            "missing_required_fact",
+            "material_preference",
+            "scope_authorization",
+            "high_impact_decision",
+        ],
         choices: list[str] | None = None,
     ) -> str:
-        """Ask for input and continue through a durable future turn."""
+        """Ask only when an allowed blocking reason prevents progress."""
         prompt = question.strip()
         if not prompt:
             return "User input request was rejected: question is empty."
@@ -46,6 +54,7 @@ def _ask_user_tool(
             for index, choice in enumerate(normalized_choices, start=1)
         }
         request = await broker.defer_user_input(
+            reason=UserInputReason(reason),
             title="Input requested",
             prompt=prompt,
             options=tuple(

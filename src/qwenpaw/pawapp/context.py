@@ -25,6 +25,7 @@ from ..kernel import (
     InteractionMode,
     InteractionOption,
     InteractionRequest,
+    UserInputReason,
     InteractionStatus,
 )
 from ..kernel.models import utc_now
@@ -164,6 +165,7 @@ class UIBridge:
             agent_id=self._agent_id,
             conversation_id=self._chat_id,
             invocation_id=self._invocation_id,
+            user_input_reason=UserInputReason.HIGH_IMPACT_DECISION,
             title="Confirmation required",
             prompt=message,
             options=(
