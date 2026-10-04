@@ -205,9 +205,10 @@ Kernel 已新增 `ModelFailureClass` 与 `ModelRecoveryDisposition`，并将它�
 失败类别。旧结果没有这两个字段时仍可读取，但新结果一旦写入其中一个就必须同时写入
 另一个，且已产生内容的尝试不能声明整请求 transport replay。
 
-当前只完成了**裁决与审计契约**，尚未实现跨 Invocation 的 bounded partial-output
-存储和 Resource Wait scheduler，因此不能把 `continue_model_step` 或 `wait_resource`
-误报成已经自动恢复。
+当前已完成恢复裁决、输出边界留证和 Resource Wait scheduler：限流按 timer 到期，
+quota 默认等待外部资源事件；恢复 outbox 以稳定幂等键创建同一 `ChatSpec.id` 和
+`correlation_id` 下的新 Submission / Invocation。尚未实现跨 Invocation 的 bounded
+partial-output continuation，因此不能把 `continue_model_step` 误报成已经自动恢复。
 
 ### 5.1 故障分类
 
@@ -285,17 +286,20 @@ Codex 的“边收流边执行工具”建立在其 Provider 事件协议、工�
 
 ### R1：冻结 Model Recovery Contract
 
-- 为 Model Call Plane 增加稳定 failure class、stream outcome 和 disposition；
-- 把 transport retry 与任务/业务 retry 预算分开；
-- quota、budget、auth、policy 和 user interrupt 必须终止；
-- 输出 semantic observation，供 Chat 展示恢复状态。
+- [x] 为 Model Call Plane 增加稳定 failure class、stream outcome 和 disposition；
+- [x] 未见终态 chunk 的 EOF 不再误记成功；无内容可 transport retry，已有内容禁止
+  整请求重放；
+- [x] quota、budget、auth、policy 和 user interrupt 与网络错误分开分类；
+- [x] 输出 semantic observation，供 Chat 展示恢复状态；
+- [ ] 把 transport retry 的短等待预算与后续 durable wait policy 完全统一。
 
 ### R2：Resource Wait 与恢复调度
 
-- 短等待超限后持久化资源等待并释放槽位；
-- 恢复探针以幂等 outbox 创建 continuation；
-- Interrupt revision 对恢复提交进行 fencing；
-- Lite 使用本地 durable scheduler，Workstation/Hub 替换 Adapter。
+- [x] 模型结果为 `wait_resource` 时持久化独立资源等待；
+- [x] timer 到期或 external event 释放后，以幂等 outbox 创建 continuation；
+- [x] Lite 使用本地 SQLite source 和 worker，不引入前端 Queue 或消息中间件；
+- [ ] Interrupt revision 对恢复提交进行 fencing；
+- [ ] Workstation/Hub 用健康探针或分布式 lease 替换 Lite Adapter。
 
 ### R3：部分流与 Action 对账
 

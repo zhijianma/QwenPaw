@@ -538,17 +538,33 @@ class TokenRecordingModelWrapper(ChatModelBase):
             )
             raise
         else:
-            await self._complete_model_attempt(
-                attempt,
-                status=ModelCallStatus.SUCCEEDED,
-                usage=last_usage,
-                emitted_content=emitted_content,
-                output_boundary=(
-                    ModelOutputBoundary.TERMINAL_STREAM
-                    if terminal_chunk_seen
-                    else ModelOutputBoundary.CLEAN_STREAM_END
-                ),
-            )
+            if terminal_chunk_seen:
+                await self._complete_model_attempt(
+                    attempt,
+                    status=ModelCallStatus.SUCCEEDED,
+                    usage=last_usage,
+                    emitted_content=emitted_content,
+                    output_boundary=ModelOutputBoundary.TERMINAL_STREAM,
+                )
+            else:
+                from ..providers.model_error_policy import (
+                    IncompleteModelStreamError,
+                )
+
+                error = IncompleteModelStreamError(
+                    "model stream ended without a terminal chunk",
+                )
+                await self._complete_model_attempt(
+                    attempt,
+                    status=ModelCallStatus.FAILED,
+                    usage=last_usage,
+                    error=error,
+                    emitted_content=emitted_content,
+                    output_boundary=(
+                        ModelOutputBoundary.INCOMPLETE_STREAM_END
+                    ),
+                )
+                raise error
         finally:
             await stream.aclose()
             self._record_usage(last_usage)

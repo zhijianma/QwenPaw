@@ -408,8 +408,12 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
   - [x] Token/Model Call 审计已把连接前传输失败、部分流中断和用户取消分别投影为
     `retry_transport`、`continue_model_step` 与 `stop_interrupted`；短时 rate limit 和
     quota exhausted 已分开，恢复字段进入内容安全 Activity。
+  - [x] `ModelOutputBoundary` 已区分 pre-output、完整响应、部分流、终态流和
+    incomplete EOF；没有终态 chunk 的 EOF 不再误记成功。无内容时允许 transport
+    retry，已有内容时禁止整请求重放。
   - [ ] transport retry 使用独立退避和预算，尊重 `Retry-After`，不消耗业务 retry；
-  - [ ] 短等待超限后保存 Resource Wait 并释放槽位，禁止无限占槽重试。
+  - [x] `wait_resource` 保存独立 Resource Wait，timer/external event 成熟后由
+    durable outbox 创建同 correlation 的新 Submission / Invocation，不占用旧槽位。
 - [ ] 持久化 bounded stream outcome：产生部分输出后断流时，不盲目重放完整
   Turn，不把 partial assistant message 当完成；后续 Model Step 从 durable context
   重建。

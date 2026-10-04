@@ -511,7 +511,7 @@ async def test_closing_after_terminal_chunk_is_success(
 
 
 @pytest.mark.asyncio
-async def test_clean_stream_end_is_distinct_from_terminal_chunk(
+async def test_incomplete_stream_end_is_failure_not_success(
     tmp_path: Path,
 ) -> None:
     scope = _scope(tmp_path)
@@ -527,7 +527,7 @@ async def test_clean_stream_end_is_distinct_from_terminal_chunk(
 
     async def provider_stream() -> AsyncGenerator[ChatResponse, None]:
         yield ChatResponse(
-            content=[TextBlock(text="complete by eof")],
+            content=[TextBlock(text="partial by eof")],
             is_last=False,
         )
 
@@ -538,15 +538,22 @@ async def test_clean_stream_end_is_distinct_from_terminal_chunk(
         lambda: wrapper(messages=[]),
     )
 
-    assert (await anext(stream)).content[0].text == "complete by eof"
-    with pytest.raises(StopAsyncIteration):
+    assert (await anext(stream)).content[0].text == "partial by eof"
+    with pytest.raises(
+        ConnectionError,
+        match="without a terminal chunk",
+    ):
         await anext(stream)
     [record] = await store.list_for_conversation("chat-1")
 
     assert record.result is not None
-    assert record.result.status is ModelCallStatus.SUCCEEDED
+    assert record.result.status is ModelCallStatus.FAILED
+    assert record.result.failure_class is ModelFailureClass.STREAM_INTERRUPTED
+    assert record.result.recovery_disposition is (
+        ModelRecoveryDisposition.CONTINUE_MODEL_STEP
+    )
     assert record.result.output_boundary is (
-        ModelOutputBoundary.CLEAN_STREAM_END
+        ModelOutputBoundary.INCOMPLETE_STREAM_END
     )
 
 

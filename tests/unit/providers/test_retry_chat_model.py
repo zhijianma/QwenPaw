@@ -320,6 +320,43 @@ class _ReasoningRetryMsgStreamModel:
         return _successful_stream()
 
 
+class _IncompleteThenTerminalStreamModel:
+    """Provider used to verify pre-output EOF retry semantics."""
+
+    model = "incomplete-then-terminal"
+    stream = True
+    context_size = 32768
+    parameters = None
+    credential = None
+    formatter = SimpleNamespace(supported_input_media_types=[])
+
+    def __init__(self, *, emit_partial: bool = False) -> None:
+        self.calls = 0
+        self.emit_partial = emit_partial
+
+    async def __call__(
+        self,
+        *_args: Any,
+        **_kwargs: Any,
+    ) -> AsyncGenerator[ChatResponse, None]:
+        self.calls += 1
+
+        async def response() -> AsyncGenerator[ChatResponse, None]:
+            if self.calls == 1:
+                if self.emit_partial:
+                    yield ChatResponse(
+                        content=[TextBlock(text="partial")],
+                        is_last=False,
+                    )
+                return
+            yield ChatResponse(
+                content=[TextBlock(text="complete")],
+                is_last=True,
+            )
+
+        return response()
+
+
 # ---------------------------------------------------------------------------
 # Wrapper contract
 # ---------------------------------------------------------------------------
@@ -331,6 +368,53 @@ def test_retry_wrapper_exposes_inner_formatter() -> None:
     model = RetryChatModel(inner)  # type: ignore[arg-type]
 
     assert model.formatter is inner.formatter
+
+
+@pytest.mark.asyncio
+async def test_pre_output_incomplete_stream_retries_safely() -> None:
+    provider = _IncompleteThenTerminalStreamModel()
+    recording = TokenRecordingModelWrapper("unit", provider)
+    model = RetryChatModel(
+        recording,
+        retry_config=RetryConfig(
+            enabled=True,
+            max_retries=1,
+            backoff_base=0.001,
+            backoff_cap=0.001,
+        ),
+    )
+
+    stream = await model(messages=[])
+    chunks = [chunk async for chunk in stream]
+
+    assert provider.calls == 2
+    assert len(chunks) == 1
+    assert chunks[0].is_last is True
+
+
+@pytest.mark.asyncio
+async def test_partial_incomplete_stream_is_not_replayed() -> None:
+    provider = _IncompleteThenTerminalStreamModel(emit_partial=True)
+    recording = TokenRecordingModelWrapper("unit", provider)
+    model = RetryChatModel(
+        recording,
+        retry_config=RetryConfig(
+            enabled=True,
+            max_retries=1,
+            backoff_base=0.001,
+            backoff_cap=0.001,
+        ),
+    )
+
+    stream = await model(messages=[])
+    received = []
+    with pytest.raises(ConnectionError, match="without a terminal chunk"):
+        async for chunk in stream:
+            received.append(chunk)
+
+    assert provider.calls == 1
+    assert len(received) == 1
+    assert received[0].content[0].text == "partial"
 
 
 # ---------------------------------------------------------------------------

@@ -74,6 +74,10 @@ class ModelRecoveryDecision:
     disposition: ModelRecoveryDisposition
 
 
+class IncompleteModelStreamError(ConnectionError):
+    """Raised when a provider stream ends without a terminal chunk."""
+
+
 def classify_model_error(exc: Exception) -> ModelErrorDecision:
     """Classify whether a model error may retry or cross-model fallback."""
     status = extract_status_code(exc)

@@ -188,7 +188,7 @@ class ModelOutputBoundary(str, Enum):
     COMPLETE_RESPONSE = "complete_response"
     PARTIAL_STREAM = "partial_stream"
     TERMINAL_STREAM = "terminal_stream"
-    CLEAN_STREAM_END = "clean_stream_end"
+    INCOMPLETE_STREAM_END = "incomplete_stream_end"
 
 
 class EnvironmentIsolation(str, Enum):
@@ -1729,9 +1729,14 @@ class ModelCallResult(KernelModel):
             raise ValueError("complete response requires successful status")
         if self.output_boundary in {
             ModelOutputBoundary.TERMINAL_STREAM,
-            ModelOutputBoundary.CLEAN_STREAM_END,
         } and self.status is not ModelCallStatus.SUCCEEDED:
             raise ValueError("complete stream boundary requires success")
+        if (
+            self.output_boundary
+            is ModelOutputBoundary.INCOMPLETE_STREAM_END
+            and self.status is ModelCallStatus.SUCCEEDED
+        ):
+            raise ValueError("incomplete stream boundary cannot succeed")
         if (
             self.output_boundary is ModelOutputBoundary.PARTIAL_STREAM
             and not self.emitted_content

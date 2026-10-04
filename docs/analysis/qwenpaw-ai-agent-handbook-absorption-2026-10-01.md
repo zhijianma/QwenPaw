@@ -424,10 +424,19 @@ Ask User，也不保存 Prompt、异常正文或隐藏 reasoning。enqueue 后�
 不能宣称任意网络中断已经可以无损续传。
 
 模型流随后增加内容安全的 `ModelOutputBoundary`：明确区分请求尚未输出、非流式完整
-响应、部分流、看到 Provider 终态 chunk，以及没有终态 chunk 但正常 EOF。该记录只
+响应、部分流、看到 Provider 终态 chunk，以及没有终态 chunk 的 incomplete EOF。该记录只
 是枚举，不保存输出、摘要、哈希或隐藏 reasoning；Observation 可以据此避免把部分流
 误判成“从未输出后可直接重试”。当前仍只完成边界留证，尚未把部分流自动装配为新的
 Model Step continuation。
+
+源码核验进一步确认，当前 AgentScope 在收到终态 chunk 后才把 Assistant / ToolCall
+写入 Context，Acting 也发生在完整 Reasoning 之后；它尚不具备 Codex 的“边收工具、
+边持久化、断流后排空”前提。因此 QwenPaw 不从残缺 tool delta 猜测并执行 Action。
+此前 provider generator 正常 EOF 但没有终态 chunk 时，Token wrapper 会先错误留下一
+条成功结果，随后才由 AgentScope 抛出“empty streaming response”；现已在 Provider
+边界直接改为 `stream_interrupted`。无内容的 incomplete EOF 可由现有 transport retry
+安全重试；已有内容则禁止重放，并保留 `continue_model_step` 供后续 durable
+continuation 使用。
 
 ### A10. 通信能力契约，而不是统一成一种传输
 
