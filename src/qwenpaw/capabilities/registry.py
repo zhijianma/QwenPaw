@@ -445,6 +445,8 @@ class GenerationRegistry:
         self,
         bundle: CapabilityBundle,
         factory: ContributionFactory,
+        *,
+        operator_authorized: bool = False,
     ) -> RegistrySnapshot:
         """Stage and atomically publish a system or plugin bundle."""
         operation_id = uuid4()
@@ -470,6 +472,7 @@ class GenerationRegistry:
                 candidate=candidate,
                 bundle=bundle,
                 staged=staged,
+                operator_authorized=operator_authorized,
             )
             return await self._commit_promotion(transaction)
 
@@ -554,6 +557,7 @@ class GenerationRegistry:
         candidate: CapabilityPromotionCandidate,
         bundle: CapabilityBundle,
         staged: Mapping[str, ActivatedContribution],
+        operator_authorized: bool,
     ) -> _PromotionTransaction:
         previous_snapshot = self._current
         previous_release = self._stable_releases.get(bundle.provider_id)
@@ -603,13 +607,27 @@ class GenerationRegistry:
                     for capability_id, contribution in staged.items()
                 },
             )
+        authorization_evidence = CapabilityPromotionEvidence.create(
+            candidate=candidate,
+            check_id="promotion.operator-authorized",
+            producer_id="qwenpaw.promotion-authorization",
+            outcome=(
+                CapabilityCheckOutcome.PASSED
+                if operator_authorized
+                else CapabilityCheckOutcome.NOT_APPLICABLE
+            ),
+            capability_ids=release.capability_ids,
+        )
         assessment = await self._evaluate_release(
             operation_id=operation_id,
             candidate=candidate,
             release=release,
             previous_snapshot=previous_snapshot,
             previous_release=previous_release,
-            scenario_evidence=scenario_evidence,
+            scenario_evidence=(
+                *scenario_evidence,
+                authorization_evidence,
+            ),
         )
         return _PromotionTransaction(
             operation_id=operation_id,

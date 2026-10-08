@@ -1099,13 +1099,19 @@ Cron 不形成独立审批或产物事实源。
     重试；Loader 在同一 lifecycle lock 内校验，过期确认在 hook、注册和文件变更前
     失败关闭。显式卸载 Evidence 记录 `operator-authorized=passed`，内部热替换为
     `not_applicable`，不把更新误记为人工卸载。
+  - [x] capability-bearing Plugin 的显式安装/更新已增加 exact-candidate 授权栅栏：
+    首次请求返回 428，Console/CLI 只用响应中的 candidate hash 重试。Candidate 同时
+    绑定 manifest、Contribution 契约与 64 MiB 有界的源码树摘要；Loader 在同一
+    lifecycle lock 内、复制/依赖安装/代码执行之前校验，并在复制后再次核验。
+    过期、跨插件或来源变化的确认失败关闭；启动恢复记为 `not_applicable`，显式
+    安装 Evidence 记为 `promotion.operator-authorized=passed`。
   - [x] Promotion Evidence Bundle 已作为标准 Evidence Artifact 暴露：Host 从唯一
     权威 Bundle 确定性派生 `ArtifactRef` 与 canonical JSON，不复制第二份文件；
     `content_hash`、size 和下载字节一致，时间戳不影响 Artifact identity。只读 API
     返回 candidate/bundle/evaluator lineage，不暴露实现、配置、日志、主机路径或
     Secret，system/plugin 共用同一路径。
-  - [ ] 补齐通用人工授权策略。关键词发现索引与 Workstation/Hub Release Registry
-    仍待实现。
+  - [ ] 补齐非插件来源与风险分级的通用人工授权策略。关键词发现索引与
+    Workstation/Hub Release Registry 仍待实现。
 
 - [x] 每个公开扩展模块均有 system/plugin contract tests；system-only 模块具有
   核心激活、固定 generation、失败关闭和代际排空合同。

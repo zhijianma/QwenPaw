@@ -153,7 +153,36 @@ async def test_successful_activation_records_prepared_and_committed() -> None:
         "contract.schema",
         "contract.implementation",
         "contract.health",
+        "promotion.operator-authorized",
     }
+    authorization = next(
+        item
+        for item in bundle.evidence
+        if item.check_id == "promotion.operator-authorized"
+    )
+    assert authorization.outcome is CapabilityCheckOutcome.NOT_APPLICABLE
+
+
+@pytest.mark.asyncio
+async def test_operator_authorized_promotion_records_passed_evidence() -> None:
+    journal = _RecordingJournal()
+    registry = GenerationRegistry(promotion_journal=journal)
+
+    await registry.activate_bundle(
+        _bundle(),
+        _factory,
+        operator_authorized=True,
+    )
+
+    [bundle] = await registry.promotion_evidence(
+        journal.events[-1].candidate.candidate_id,
+    )
+    authorization = next(
+        item
+        for item in bundle.evidence
+        if item.check_id == "promotion.operator-authorized"
+    )
+    assert authorization.outcome is CapabilityCheckOutcome.PASSED
 
 
 @pytest.mark.asyncio

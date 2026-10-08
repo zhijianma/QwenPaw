@@ -603,11 +603,13 @@ Approval、幂等和副作用证据。验证在安装事务内自动完成，因
 或 Policy，但只能进入 shadow generation，不能由运行中的 Agent 自行修改当前
 generation。
 
-截至 2026-10-08，Candidate、Check、Evaluation、Promotion Event 与 Journal Port 已冻结；
-system/plugin activate 和 provider rollback 进入同一 WAL，真实管理 API 可读取跨重启
-历史。尚未完成的不是“是否有 Gate”，而是按风险等级补齐真实 Scenario Runner、
-Evidence Bundle 和人工授权策略；在这些完成前不能把 contract-only allow 称为完整发布
-认证。
+截至 2026-10-08，Candidate、Check、Evaluation、Promotion Event、Journal Port 与
+Evidence Bundle 已冻结；system/plugin activate、provider rollback 和 deactivate 进入
+同一 WAL，真实管理 API 可读取跨重启历史。显式 capability plugin 安装/更新还采用
+两阶段 exact-candidate 授权：Candidate 绑定声明与源码树，过期确认在文件、依赖和代码
+副作用前失败关闭，成功授权进入同一 Evidence Bundle。仍未完成的是全部 Slot 的风险
+Scenario、非插件来源的通用授权策略和 Workstation/Hub Registry；在这些完成前不能把
+当前 Lite 门禁称为所有 Edition 的完整发布认证。
 
 ## 5. 不建议直接吸收的内容
 

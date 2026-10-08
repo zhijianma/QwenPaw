@@ -174,6 +174,35 @@ class TestApiInstallPlugin:
             "force": True,
         }
 
+    def test_retries_exact_candidate_challenge(self, monkeypatch):
+        _patch_base(monkeypatch)
+        requests = []
+
+        def respond(request):
+            requests.append(request)
+            if len(requests) == 1:
+                return httpx.Response(
+                    428,
+                    json={
+                        "detail": {
+                            "code": (
+                                "capability_promotion_"
+                                "authorization_required"
+                            ),
+                            "candidate_hash": "sha256:candidate-1",
+                        },
+                    },
+                )
+            return _response({"name": "demo"})
+
+        _patch_transport(monkeypatch, respond)
+
+        assert pc._api_install_plugin("source") is True
+        assert len(requests) == 2
+        assert requests[1].headers[
+            "X-QwenPaw-Authorize-Candidate"
+        ] == "sha256:candidate-1"
+
     def test_http_error_with_json_detail(self, monkeypatch, capsys):
         _patch_base(monkeypatch)
         _patch_transport(
@@ -230,6 +259,42 @@ class TestApiUploadPlugin:
         assert captured["body"].startswith(b"------QwenPawPluginUpload")
         assert captured["body"].endswith(b"--QwenPawPluginUpload--\r\n")
         assert "multipart/form-data" in captured["ctype"]
+
+    def test_retries_exact_candidate_challenge(
+        self,
+        monkeypatch,
+        tmp_path,
+    ):
+        _patch_base(monkeypatch)
+        archive = tmp_path / "p.zip"
+        archive.write_bytes(b"ZIPBYTES")
+        requests = []
+
+        def respond(request):
+            requests.append(request)
+            if len(requests) == 1:
+                return httpx.Response(
+                    428,
+                    json={
+                        "detail": {
+                            "code": (
+                                "capability_promotion_"
+                                "authorization_required"
+                            ),
+                            "candidate_hash": "sha256:candidate-2",
+                        },
+                    },
+                )
+            return _response({"name": "demo"})
+
+        _patch_transport(monkeypatch, respond)
+
+        assert pc._api_upload_plugin(archive) is True
+        assert len(requests) == 2
+        assert b"ZIPBYTES" in requests[1].content
+        assert requests[1].headers[
+            "X-QwenPaw-Authorize-Candidate"
+        ] == "sha256:candidate-2"
 
     def test_http_error(self, monkeypatch, tmp_path, capsys):
         _patch_base(monkeypatch)

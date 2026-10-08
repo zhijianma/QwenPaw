@@ -9,11 +9,15 @@ from pathlib import Path
 import pytest
 
 from qwenpaw.plugins.architecture import PluginManifest
-from qwenpaw.plugins.generations import ActivationError
+from qwenpaw.plugins.generations import (
+    ActivationError,
+    plugin_implementation_hash,
+)
 from qwenpaw.plugins.contributions import ContributionValidationError
 from qwenpaw.plugins.loader import (
     PluginDeactivationAuthorizationRequired,
     PluginLoader,
+    PluginPromotionAuthorizationRequired,
 )
 from qwenpaw.capabilities import GenerationRegistry
 from qwenpaw.capabilities.promotions import (
@@ -65,6 +69,19 @@ def _write_engine_plugin(
         "def create():\n"
         "    return Engine()\n",
         encoding="utf-8",
+    )
+
+
+async def _authorized_install(
+    loader: PluginLoader,
+    source: Path,
+    **kwargs,
+):
+    candidate_hash = await loader.promotion_candidate_hash_for_path(source)
+    return await loader.load_plugin_from_path(
+        source,
+        confirmed_candidate_hash=candidate_hash,
+        **kwargs,
     )
 
 
@@ -283,9 +300,10 @@ async def test_force_replace_publishes_one_atomic_generation(
     _write_engine_plugin(new_source, version="2.0.0", marker="new")
     loader = PluginLoader([install_dir])
 
-    await loader.load_plugin_from_path(old_source, install_dir=install_dir)
+    await _authorized_install(loader, old_source, install_dir=install_dir)
     old_lease = await loader.capability_registry.pin()
-    updated = await loader.load_plugin_from_path(
+    updated = await _authorized_install(
+        loader,
         new_source,
         install_dir=install_dir,
         force=True,
@@ -309,7 +327,8 @@ async def test_permanent_unload_requires_exact_release_authorization(
     source = tmp_path / "source"
     _write_engine_plugin(source, version="1.0.0", marker="loaded")
     loader = PluginLoader([install_dir])
-    record = await loader.load_plugin_from_path(
+    record = await _authorized_install(
+        loader,
         source,
         install_dir=install_dir,
     )
@@ -364,10 +383,11 @@ async def test_failed_force_replace_restores_runtime_and_files(
         healthy=False,
     )
     loader = PluginLoader([install_dir])
-    await loader.load_plugin_from_path(old_source, install_dir=install_dir)
+    await _authorized_install(loader, old_source, install_dir=install_dir)
 
     with pytest.raises(ActivationError, match="health check failed"):
-        await loader.load_plugin_from_path(
+        await _authorized_install(
+            loader,
             bad_source,
             install_dir=install_dir,
             force=True,
@@ -416,9 +436,10 @@ async def test_force_replace_can_atomically_remove_all_contributions(
         encoding="utf-8",
     )
     loader = PluginLoader([install_dir])
-    await loader.load_plugin_from_path(old_source, install_dir=install_dir)
+    await _authorized_install(loader, old_source, install_dir=install_dir)
 
-    await loader.load_plugin_from_path(
+    await _authorized_install(
+        loader,
         empty_source,
         install_dir=install_dir,
         force=True,
@@ -446,13 +467,15 @@ async def test_invalid_manifest_never_unloads_current_plugin(
     }
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     loader = PluginLoader([install_dir])
-    old_record = await loader.load_plugin_from_path(
+    old_record = await _authorized_install(
+        loader,
         old_source,
         install_dir=install_dir,
     )
 
     with pytest.raises(ContributionValidationError):
-        await loader.load_plugin_from_path(
+        await _authorized_install(
+            loader,
             bad_source,
             install_dir=install_dir,
             force=True,
@@ -469,3 +492,112 @@ async def test_invalid_manifest_never_unloads_current_plugin(
     assert installed_manifest["version"] == "1.0.0"
     assert current.implementation("atomic-engine.engine").marker == "old"
     await current.close()
+
+
+@pytest.mark.asyncio
+async def test_explicit_install_requires_exact_candidate_before_side_effects(
+    tmp_path: Path,
+) -> None:
+    install_dir = tmp_path / "installed"
+    source = tmp_path / "source"
+    _write_engine_plugin(source, version="1.0.0", marker="candidate")
+    registry = GenerationRegistry(
+        promotion_journal=FilesystemCapabilityPromotionJournal(tmp_path),
+    )
+    loader = PluginLoader(
+        [install_dir],
+        capability_registry=registry,
+    )
+
+    with pytest.raises(PluginPromotionAuthorizationRequired) as challenge:
+        await loader.load_plugin_from_path(
+            source,
+            install_dir=install_dir,
+        )
+
+    assert not install_dir.exists()
+    assert loader.get_loaded_plugin("atomic-engine") is None
+    assert loader.capability_registry.generation == 1
+
+    with pytest.raises(PluginPromotionAuthorizationRequired):
+        await loader.load_plugin_from_path(
+            source,
+            install_dir=install_dir,
+            confirmed_candidate_hash="sha256:stale",
+        )
+
+    record = await loader.load_plugin_from_path(
+        source,
+        install_dir=install_dir,
+        confirmed_candidate_hash=challenge.value.candidate_hash,
+    )
+    events = await loader.capability_registry.promotion_events(
+        provider_id="atomic-engine",
+    )
+    evidence = await loader.capability_registry.promotion_evidence(
+        events[-1].candidate.candidate_id,
+    )
+
+    assert record.enabled
+    assert any(
+        item.check_id == "promotion.operator-authorized"
+        and item.outcome.value == "passed"
+        for bundle in evidence
+        for item in bundle.evidence
+    )
+
+
+@pytest.mark.asyncio
+async def test_candidate_hash_changes_when_plugin_code_changes(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    _write_engine_plugin(source, version="1.0.0", marker="first")
+    loader = PluginLoader([tmp_path / "installed"])
+    first = await loader.promotion_candidate_hash_for_path(source)
+
+    (source / "provider.py").write_text(
+        "def create():\n    return object()\n",
+        encoding="utf-8",
+    )
+    second = await loader.promotion_candidate_hash_for_path(source)
+
+    assert first != second
+
+
+@pytest.mark.asyncio
+async def test_copy_drift_rejects_candidate_and_removes_staged_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source"
+    install_dir = tmp_path / "installed"
+    _write_engine_plugin(source, version="1.0.0", marker="first")
+    loader = PluginLoader([install_dir])
+    confirmed = await loader.promotion_candidate_hash_for_path(source)
+    actual_hash = await loader.promotion_candidate_hash_for_path(source)
+    calls = 0
+
+    def drifting_hash(_source_path: Path) -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return plugin_implementation_hash(source)
+        return f"sha256:{'0' * 64}"
+
+    monkeypatch.setattr(
+        "qwenpaw.plugins.loader.plugin_implementation_hash",
+        drifting_hash,
+    )
+
+    with pytest.raises(PluginPromotionAuthorizationRequired):
+        await loader.load_plugin_from_path(
+            source,
+            install_dir=install_dir,
+            confirmed_candidate_hash=confirmed,
+        )
+
+    assert actual_hash == confirmed
+    assert calls == 2
+    assert not (install_dir / "atomic-engine").exists()
+    assert loader.get_loaded_plugin("atomic-engine") is None

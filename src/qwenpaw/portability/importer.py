@@ -355,6 +355,19 @@ class ProviderImportService(ImportPlanningMixin):
                         install_source = str(staged_plugin)
                     source_path = Path(install_source).resolve()
                     plugin_id = _plugin_id(source_path)
+                    plugin_loader = plugin_app.state.plugin_loader
+                    preview_candidate = getattr(
+                        plugin_loader,
+                        "promotion_candidate_hash_for_path",
+                        None,
+                    )
+                    confirmed_candidate_hash = (
+                        await preview_candidate(
+                            source_path,
+                        )
+                        if preview_candidate is not None
+                        else None
+                    )
 
                     def record_plugin(_value: Any) -> None:
                         asset_states["plugin"][plugin.source_id] = "succeeded"
@@ -371,6 +384,9 @@ class ProviderImportService(ImportPlanningMixin):
                                 "source_id": plugin.source_id,
                             },
                             recover_incomplete=True,
+                            confirmed_candidate_hash=(
+                                confirmed_candidate_hash
+                            ),
                         ),
                         record_plugin,
                     )

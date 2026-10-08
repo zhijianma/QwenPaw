@@ -57,6 +57,7 @@ from qwenpaw.plugins.contributions import (
 )
 from qwenpaw.plugins.loader import (
     PluginDeactivationAuthorizationRequired,
+    PluginPromotionAuthorizationRequired,
 )
 
 
@@ -354,10 +355,76 @@ async def test_install_returns_structured_contribution_diagnostics():
             await install_plugin(
                 InstallPluginRequest(source="/tmp/example"),
                 request,
+                None,
             )
 
     assert exc_info.value.status_code == 400
     assert exc_info.value.detail == error.response_detail()
+
+
+@pytest.mark.asyncio
+async def test_install_returns_exact_candidate_challenge():
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(plugin_loader=object()),
+        ),
+    )
+    challenge = PluginPromotionAuthorizationRequired(
+        "capability-plugin",
+        "00000000-0000-0000-0000-000000000001",
+        "sha256:candidate-1",
+        ("capability-plugin.runner",),
+    )
+
+    with patch(
+        "qwenpaw.app.routers.plugins.install_plugin_source",
+        new=AsyncMock(side_effect=challenge),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await install_plugin(
+                InstallPluginRequest(source="/tmp/example"),
+                request,
+                None,
+            )
+
+    assert exc_info.value.status_code == 428
+    assert exc_info.value.detail == challenge.response_detail()
+
+
+@pytest.mark.asyncio
+async def test_install_forwards_confirmed_candidate_hash():
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(plugin_loader=object()),
+        ),
+    )
+
+    with patch(
+        "qwenpaw.app.routers.plugins.install_plugin_source",
+        new=AsyncMock(
+            return_value=SimpleNamespace(
+                manifest=PluginManifest.from_dict(
+                    {
+                        "id": "capability-plugin",
+                        "name": "Capability Plugin",
+                        "version": "1.0.0",
+                    },
+                ),
+            ),
+        ),
+    ) as install_source:
+        await install_plugin(
+            InstallPluginRequest(source="/tmp/example"),
+            request,
+            "sha256:candidate-1",
+        )
+
+    install_source.assert_awaited_once_with(
+        "/tmp/example",
+        app=request.app,
+        force=False,
+        confirmed_candidate_hash="sha256:candidate-1",
+    )
 
 
 @pytest.mark.asyncio
@@ -678,6 +745,7 @@ async def test_list_capability_promotions_reads_durable_wal(tmp_path):
         "contract.schema",
         "contract.implementation",
         "contract.health",
+        "promotion.operator-authorized",
     }
     assert artifact["kind"] == "capability.promotion-evidence"
     assert artifact["metadata"]["candidate_id"] == candidate_id

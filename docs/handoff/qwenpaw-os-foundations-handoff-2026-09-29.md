@@ -720,6 +720,20 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   Candidate 已返回 Artifact ref；下载 7146 bytes 后复算 SHA-256 与 Ref/ETag 完全一致，
   canonical JSON 不含 `created_at`。未运行全仓测试，通用人工授权策略仍是后续模块。
 
+### 2026-10-08 Exact-candidate Plugin Promotion Authorization
+
+- capability-bearing Plugin 的显式安装和更新改为两阶段条件请求；首次请求返回 HTTP
+  428、candidate ID/hash 和 capability IDs，Console 与 CLI 以
+  `X-QwenPaw-Authorize-Candidate` 精确重试。非 capability 插件保持单次安装。
+- Candidate 不只覆盖 manifest：源码树使用相对路径和文件字节做 64 MiB/5000 文件
+  有界摘要，并拒绝符号链接。Loader 在 per-plugin lifecycle lock 内、副作用前校验，
+  复制后、依赖安装和代码执行前再次验证，来源变化或旧确认失败关闭。
+- 显式晋升 Evidence 增加 `promotion.operator-authorized=passed`；系统启动和内部恢复
+  记录 `not_applicable`，避免要求无人值守启动时必须在线确认。
+- 一问一答不再是 Runtime 边界：短 Chat 仍可投影成单轮消息，长程意图则由同一
+  `correlation_id` 下的 Submission、Invocation、Action、typed wait、continuation、
+  Artifact/Evidence/Verification 与 Outcome 持续推进。Task 页面继续后置。
+
 ### 本阶段此前已执行的定点验证
 
 - 后端核心路径定点测试：70 项通过。

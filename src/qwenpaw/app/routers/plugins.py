@@ -34,7 +34,10 @@ from ...capabilities.promotions import (
     capability_promotion_evidence_artifact,
 )
 from ...plugins.contributions import ContributionValidationError
-from ...plugins.loader import PluginDeactivationAuthorizationRequired
+from ...plugins.loader import (
+    PluginDeactivationAuthorizationRequired,
+    PluginPromotionAuthorizationRequired,
+)
 from ...plugins.migration import build_plugin_migration_plan
 from ..utils import schedule_agent_reload
 
@@ -529,6 +532,7 @@ async def _load_plugin_with_optional_force_reinstall(
     reload_agents: bool = True,
     pawport_owner: dict | None = None,
     recover_incomplete: bool = False,
+    confirmed_candidate_hash: str | None = None,
 ):
     """Load a plugin, optionally unloading first under one lifecycle lock.
 
@@ -605,6 +609,7 @@ async def _load_plugin_with_optional_force_reinstall(
         after_rollback=_after_rollback if force else None,
         pawport_owner=pawport_owner,
         recover_incomplete=recover_incomplete,
+        confirmed_candidate_hash=confirmed_candidate_hash,
     )
 
 
@@ -877,6 +882,7 @@ async def install_plugin_source(
     reload_agents: bool = True,
     pawport_owner: dict | None = None,
     recover_incomplete: bool = False,
+    confirmed_candidate_hash: str | None = None,
 ):
     """Install through the native plugin lifecycle used by the HTTP route."""
     request = SimpleNamespace(app=app)
@@ -909,6 +915,7 @@ async def install_plugin_source(
             reload_agents=reload_agents,
             pawport_owner=pawport_owner,
             recover_incomplete=recover_incomplete,
+            confirmed_candidate_hash=confirmed_candidate_hash,
         )
     finally:
         if temp_dir is not None:
@@ -968,6 +975,10 @@ async def uninstall_plugin_source(
 async def install_plugin(
     body: InstallPluginRequest,
     request: Request,
+    confirmed_candidate_hash: str | None = Header(
+        default=None,
+        alias="X-QwenPaw-Authorize-Candidate",
+    ),
 ):
     """Install and hot-load a plugin from a local path or HTTP(S) URL.
 
@@ -986,12 +997,18 @@ async def install_plugin(
             body.source,
             app=request.app,
             force=body.force,
+            confirmed_candidate_hash=confirmed_candidate_hash,
         )
     except HTTPException:
         raise
     except ContributionValidationError as exc:
         raise HTTPException(
             status_code=400,
+            detail=exc.response_detail(),
+        ) from exc
+    except PluginPromotionAuthorizationRequired as exc:
+        raise HTTPException(
+            status_code=428,
             detail=exc.response_detail(),
         ) from exc
     except ValueError as exc:
@@ -1031,6 +1048,10 @@ async def upload_plugin(
     request: Request,
     file: UploadFile = File(..., description="Plugin ZIP archive"),
     force: bool = False,
+    confirmed_candidate_hash: str | None = Header(
+        default=None,
+        alias="X-QwenPaw-Authorize-Candidate",
+    ),
 ):
     """Install and hot-load a plugin from an uploaded ZIP file."""
     loader = getattr(request.app.state, "plugin_loader", None)
@@ -1061,12 +1082,18 @@ async def upload_plugin(
             request,
             source_path,
             force=force,
+            confirmed_candidate_hash=confirmed_candidate_hash,
         )
     except HTTPException:
         raise
     except ContributionValidationError as exc:
         raise HTTPException(
             status_code=400,
+            detail=exc.response_detail(),
+        ) from exc
+    except PluginPromotionAuthorizationRequired as exc:
+        raise HTTPException(
+            status_code=428,
             detail=exc.response_detail(),
         ) from exc
     except ValueError as exc:

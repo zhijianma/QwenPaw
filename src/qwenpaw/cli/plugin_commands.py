@@ -50,6 +50,24 @@ def _get_api_base() -> Optional[str]:
     return f"http://{host}:{port}/api"
 
 
+def _promotion_authorization_headers(
+    response: httpx.Response,
+) -> dict[str, str] | None:
+    """Return an exact-candidate retry header for a valid challenge."""
+    if response.status_code != 428:
+        return None
+    detail = response.json().get("detail", {})
+    if (
+        detail.get("code")
+        != "capability_promotion_authorization_required"
+        or not detail.get("candidate_hash")
+    ):
+        return None
+    return {
+        "X-QwenPaw-Authorize-Candidate": detail["candidate_hash"],
+    }
+
+
 def _api_install_plugin(source: str, force: bool = False) -> bool:
     """Send a hot-install request to the running QwenPaw API.
 
@@ -73,6 +91,14 @@ def _api_install_plugin(source: str, force: bool = False) -> bool:
                 json={"source": source, "force": force},
                 follow_redirects=True,
             )
+            authorization = _promotion_authorization_headers(response)
+            if authorization is not None:
+                response = client.post(
+                    "plugins/install",
+                    json={"source": source, "force": force},
+                    follow_redirects=True,
+                    headers=authorization,
+                )
             response.raise_for_status()
             body = response.json()
         name = body.get("name", source)
@@ -135,6 +161,20 @@ def _api_upload_plugin(zip_path: Path, force: bool = False) -> bool:
                     ),
                 },
             )
+            authorization = _promotion_authorization_headers(response)
+            if authorization is not None:
+                response = client.post(
+                    "plugins/upload",
+                    params={"force": force_param},
+                    content=body,
+                    follow_redirects=True,
+                    headers={
+                        "Content-Type": (
+                            "multipart/form-data; " f"boundary={boundary}"
+                        ),
+                        **authorization,
+                    },
+                )
             response.raise_for_status()
             result = response.json()
         name = result.get("name", zip_path.name)

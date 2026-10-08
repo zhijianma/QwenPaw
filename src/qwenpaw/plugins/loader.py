@@ -32,7 +32,12 @@ from .architecture import (
 )
 from .api import PluginApi
 from .contributions import validate_contributions
-from .generations import activate_plugin_bundle
+from .generations import (
+    activate_plugin_bundle,
+    plugin_capability_bundle,
+    plugin_implementation_hash,
+    plugin_promotion_candidate,
+)
 from .module_isolation import (
     build_plugin_builtins,
     get_namespace_finder,
@@ -79,6 +84,35 @@ class PluginDeactivationAuthorizationRequired(RuntimeError):
             "code": "capability_deactivation_authorization_required",
             "provider_id": self.provider_id,
             "release_hash": self.release_hash,
+            "capability_ids": list(self.capability_ids),
+        }
+
+
+class PluginPromotionAuthorizationRequired(RuntimeError):
+    """Require confirmation of the exact candidate being promoted."""
+
+    def __init__(
+        self,
+        provider_id: str,
+        candidate_id: str,
+        candidate_hash: str,
+        capability_ids: tuple[str, ...],
+    ) -> None:
+        self.provider_id = provider_id
+        self.candidate_id = candidate_id
+        self.candidate_hash = candidate_hash
+        self.capability_ids = capability_ids
+        super().__init__(
+            f"promotion authorization required for '{provider_id}'",
+        )
+
+    def response_detail(self) -> dict[str, object]:
+        """Return a content-safe exact-candidate HTTP challenge."""
+        return {
+            "code": "capability_promotion_authorization_required",
+            "provider_id": self.provider_id,
+            "candidate_id": self.candidate_id,
+            "candidate_hash": self.candidate_hash,
             "capability_ids": list(self.capability_ids),
         }
 
@@ -773,6 +807,9 @@ class PluginLoader:
         self,
         manifest: PluginManifest,
         source_path: Path,
+        *,
+        implementation_hash: str,
+        operator_authorized: bool = False,
     ) -> None:
         """Validate, stage, and atomically publish a v2 manifest."""
         validate_contributions(manifest)
@@ -788,6 +825,8 @@ class PluginLoader:
             self.capability_registry,
             manifest,
             factory,
+            implementation_hash=implementation_hash,
+            operator_authorized=operator_authorized,
         )
 
     @staticmethod
@@ -803,6 +842,9 @@ class PluginLoader:
         manifest: PluginManifest,
         source_path: Path,
         config: Optional[Dict] = None,
+        *,
+        implementation_hash: str | None = None,
+        operator_authorized: bool = False,
     ) -> PluginRecord:
         """Load a single plugin.
 
@@ -824,6 +866,8 @@ class PluginLoader:
                 manifest,
                 source_path,
                 config,
+                implementation_hash=implementation_hash,
+                operator_authorized=operator_authorized,
             )
 
     async def _load_plugin_unlocked(
@@ -831,9 +875,17 @@ class PluginLoader:
         manifest: PluginManifest,
         source_path: Path,
         config: Optional[Dict] = None,
+        *,
+        implementation_hash: str | None = None,
+        operator_authorized: bool = False,
     ) -> PluginRecord:
         """Load a plugin; caller must hold :meth:`plugin_lifecycle`."""
         plugin_id = manifest.id
+        if manifest.contributions and implementation_hash is None:
+            implementation_hash = await asyncio.to_thread(
+                plugin_implementation_hash,
+                source_path,
+            )
 
         if plugin_id in self._loaded_plugins:
             logger.warning(f"Plugin '{plugin_id}' already loaded")
@@ -905,8 +957,14 @@ class PluginLoader:
                 raise
 
         if manifest.contributions:
+            assert implementation_hash is not None
             try:
-                await self._activate_contributions(manifest, source_path)
+                await self._activate_contributions(
+                    manifest,
+                    source_path,
+                    implementation_hash=implementation_hash,
+                    operator_authorized=operator_authorized,
+                )
             except Exception:
                 if plugin_def is not None:
                     self.registry.unregister_plugin(plugin_id)
@@ -1218,6 +1276,137 @@ class PluginLoader:
         manifest_path = resolved_plugin_manifest_path(source_path)
         return manifest_path, self._load_manifest(manifest_path)
 
+    async def promotion_candidate_hash_for_path(
+        self,
+        source_path: Path,
+    ) -> str | None:
+        """Preview an exact capability candidate without executing code."""
+        resolved = await asyncio.to_thread(Path(source_path).resolve)
+        _manifest_path, manifest = await asyncio.to_thread(
+            self._read_source_manifest,
+            resolved,
+        )
+        del _manifest_path
+        current = self._loaded_plugins.get(manifest.id)
+        if (
+            not manifest.contributions
+            and (
+                current is None
+                or not current.manifest.contributions
+            )
+        ):
+            return None
+        implementation_hash = await asyncio.to_thread(
+            plugin_implementation_hash,
+            resolved,
+        )
+        return plugin_promotion_candidate(
+            manifest,
+            implementation_hash,
+        ).candidate_hash
+
+    def _authorize_plugin_promotion(
+        self,
+        manifest: PluginManifest,
+        implementation_hash: str,
+        *,
+        force: bool,
+        confirmed_candidate_hash: str | None,
+    ) -> bool:
+        """Fence an explicit install to its exact capability candidate."""
+        current = self._loaded_plugins.get(manifest.id)
+        removes_current_capabilities = bool(
+            force
+            and current is not None
+            and current.manifest.contributions
+            and not manifest.contributions,
+        )
+        if not manifest.contributions and not removes_current_capabilities:
+            return False
+        bundle = plugin_capability_bundle(manifest, implementation_hash)
+        candidate = plugin_promotion_candidate(
+            manifest,
+            implementation_hash,
+        )
+        if confirmed_candidate_hash != candidate.candidate_hash:
+            declarations = bundle.contributions
+            if removes_current_capabilities and current is not None:
+                declarations = current.manifest.contributions
+            capability_ids = tuple(
+                f"{bundle.provider_id}.{item.contribution_id}"
+                for item in declarations
+            )
+            raise PluginPromotionAuthorizationRequired(
+                bundle.provider_id,
+                str(candidate.candidate_id),
+                candidate.candidate_hash,
+                capability_ids,
+            )
+        return True
+
+    @staticmethod
+    def _verify_installed_candidate(
+        manifest: PluginManifest,
+        implementation_hash: str,
+        confirmed_candidate_hash: str | None,
+    ) -> None:
+        """Reject a copied tree that differs from its authorization."""
+        candidate = plugin_promotion_candidate(
+            manifest,
+            implementation_hash,
+        )
+        if candidate.candidate_hash == confirmed_candidate_hash:
+            return
+        bundle = plugin_capability_bundle(
+            manifest,
+            implementation_hash,
+        )
+        raise PluginPromotionAuthorizationRequired(
+            manifest.id,
+            str(candidate.candidate_id),
+            candidate.candidate_hash,
+            tuple(
+                f"{bundle.provider_id}.{item.contribution_id}"
+                for item in bundle.contributions
+            ),
+        )
+
+    async def _verified_installed_source(
+        self,
+        source_path: Path,
+        target_dir: Path,
+        *,
+        operator_authorized: bool,
+        confirmed_candidate_hash: str | None,
+    ) -> tuple[PluginManifest, str]:
+        """Read the copied source and enforce its authorization fence."""
+        _manifest_path, manifest = await asyncio.to_thread(
+            self._read_source_manifest,
+            target_dir,
+        )
+        del _manifest_path
+        implementation_hash = await asyncio.to_thread(
+            plugin_implementation_hash,
+            target_dir,
+        )
+        if not operator_authorized:
+            return manifest, implementation_hash
+        try:
+            self._verify_installed_candidate(
+                manifest,
+                implementation_hash,
+                confirmed_candidate_hash,
+            )
+        except PluginPromotionAuthorizationRequired:
+            if source_path != target_dir:
+                await asyncio.to_thread(
+                    shutil.rmtree,
+                    target_dir,
+                    True,
+                )
+            raise
+        return manifest, implementation_hash
+
     async def load_plugin_from_path(  # pylint: disable=too-many-branches
         self,
         source_path: Path,
@@ -1231,6 +1420,7 @@ class PluginLoader:
         after_rollback: Optional[Any] = None,
         pawport_owner: Optional[dict[str, Any]] = None,
         recover_incomplete: bool = False,
+        confirmed_candidate_hash: str | None = None,
     ) -> PluginRecord:
         """Copy plugin files, install deps, and load plugin at runtime.
 
@@ -1278,6 +1468,16 @@ class PluginLoader:
             validate_contributions(manifest)
         plugin_id = manifest.id
         async with self.plugin_lifecycle(plugin_id):
+            implementation_hash = await asyncio.to_thread(
+                plugin_implementation_hash,
+                source_path,
+            )
+            operator_authorized = self._authorize_plugin_promotion(
+                manifest,
+                implementation_hash,
+                force=force,
+                confirmed_candidate_hash=confirmed_candidate_hash,
+            )
             replaced_record = None
             backup_root = None
             record = None
@@ -1311,6 +1511,8 @@ class PluginLoader:
                     replace_files=force,
                     pawport_owner=pawport_owner,
                     recover_incomplete=recover_incomplete,
+                    confirmed_candidate_hash=confirmed_candidate_hash,
+                    operator_authorized=operator_authorized,
                 )
                 if after_load is not None:
                     maybe_loaded = after_load(record)
@@ -1323,6 +1525,7 @@ class PluginLoader:
                 ):
                     await self.capability_registry.deactivate_provider(
                         plugin_id,
+                        operator_authorized=operator_authorized,
                     )
                 if pawport_owner is not None:
                     await asyncio.to_thread(
@@ -1415,6 +1618,8 @@ class PluginLoader:
         replace_files: bool = False,
         pawport_owner: Optional[dict[str, Any]] = None,
         recover_incomplete: bool = False,
+        confirmed_candidate_hash: str | None = None,
+        operator_authorized: bool = False,
     ) -> PluginRecord:
         """Install+load from path; caller must hold lifecycle for id."""
         plugin_id = manifest.id
@@ -1505,7 +1710,18 @@ class PluginLoader:
                 f"Copied plugin '{plugin_id}' to {target_dir}",
             )
 
-        # Install Python dependencies (off the event loop)
+        # Re-read manifest from the installed location so that
+        # source_path in the record points to the correct directory
+        installed_manifest, installed_hash = (
+            await self._verified_installed_source(
+                source_path,
+                target_dir,
+                operator_authorized=operator_authorized,
+                confirmed_candidate_hash=confirmed_candidate_hash,
+            )
+        )
+
+        # Install Python dependencies only after candidate verification.
         requirements_file = target_dir / "requirements.txt"
         if await asyncio.to_thread(requirements_file.exists):
             await asyncio.to_thread(
@@ -1513,15 +1729,13 @@ class PluginLoader:
                 requirements_file,
                 plugin_id,
             )
-
-        # Re-read manifest from the installed location so that
-        # source_path in the record points to the correct directory
-        _installed_path, installed_manifest = await asyncio.to_thread(
-            self._read_source_manifest,
+        return await self.load_plugin(
+            installed_manifest,
             target_dir,
+            config,
+            implementation_hash=installed_hash,
+            operator_authorized=operator_authorized,
         )
-        del _installed_path
-        return await self.load_plugin(installed_manifest, target_dir, config)
 
     def _remove_incomplete_pawport_plugin(
         self,

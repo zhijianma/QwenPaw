@@ -61,7 +61,27 @@ interface DeactivationChallenge {
   release_hash?: string;
 }
 
+interface PromotionChallenge {
+  code?: string;
+  candidate_hash?: string;
+}
+
 const DEACTIVATION_CHALLENGE = "capability_deactivation_authorization_required";
+const PROMOTION_CHALLENGE = "capability_promotion_authorization_required";
+
+async function promotionCandidateHash(
+  response: Response,
+): Promise<string | undefined> {
+  if (response.status !== 428) return undefined;
+  const body = (await response.json().catch(() => ({}))) as {
+    detail?: PromotionChallenge;
+  };
+  const challenge = body.detail;
+  if (challenge?.code === PROMOTION_CHALLENGE && challenge.candidate_hash) {
+    return challenge.candidate_hash;
+  }
+  return undefined;
+}
 
 /** Entry from ``GET /api/plugins/catalog`` (official CDN manifest). */
 export interface OfficialPluginCatalogEntry {
@@ -132,14 +152,32 @@ export async function installPlugin(
   source: string,
   options?: { force?: boolean },
 ): Promise<InstallPluginResult> {
-  const response = await fetch(getApiUrl("/plugins/install"), {
+  const url = getApiUrl("/plugins/install");
+  const requestBody = JSON.stringify({
+    source,
+    force: options?.force ?? false,
+  });
+  let response = await fetch(url, {
     method: "POST",
     headers: {
       ...buildAuthHeaders(),
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ source, force: options?.force ?? false }),
+    body: requestBody,
   });
+
+  const candidateHash = await promotionCandidateHash(response);
+  if (candidateHash) {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        ...buildAuthHeaders(),
+        "Content-Type": "application/json",
+        "X-QwenPaw-Authorize-Candidate": candidateHash,
+      },
+      body: requestBody,
+    });
+  }
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
@@ -153,14 +191,24 @@ export async function installPlugin(
  * Install a plugin from a local ZIP file via hot-reload.
  */
 export async function uploadPlugin(file: File): Promise<InstallPluginResult> {
-  const form = new FormData();
-  form.append("file", file);
-
-  const response = await fetch(getApiUrl("/plugins/upload"), {
-    method: "POST",
-    headers: buildAuthHeaders(),
-    body: form,
-  });
+  const url = getApiUrl("/plugins/upload");
+  const send = (candidateHash?: string) => {
+    const form = new FormData();
+    form.append("file", file);
+    return fetch(url, {
+      method: "POST",
+      headers: candidateHash
+        ? {
+            ...buildAuthHeaders(),
+            "X-QwenPaw-Authorize-Candidate": candidateHash,
+          }
+        : buildAuthHeaders(),
+      body: form,
+    });
+  };
+  let response = await send();
+  const candidateHash = await promotionCandidateHash(response);
+  if (candidateHash) response = await send(candidateHash);
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));

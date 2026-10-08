@@ -153,6 +153,39 @@ describe("plugin module", () => {
     });
   });
 
+  it("installPlugin retries the exact challenged candidate", async () => {
+    const result = { id: "p1", name: "n", message: "installed" };
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        mockResponse({
+          ok: false,
+          status: 428,
+          json: {
+            detail: {
+              code: "capability_promotion_authorization_required",
+              candidate_hash: "sha256:candidate-1",
+            },
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        mockResponse({ ok: true, status: 200, json: result }),
+      );
+
+    await expect(installPlugin("/local/plugin")).resolves.toEqual(result);
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    const [, retry] = (fetch as ReturnType<typeof vi.fn>).mock.calls[1] as [
+      string,
+      RequestInit,
+    ];
+    expect(retry.headers).toEqual({
+      "Content-Type": "application/json",
+      "X-QwenPaw-Authorize-Candidate": "sha256:candidate-1",
+    });
+  });
+
   it("uploadPlugin posts FormData and returns json on success", async () => {
     const res = { id: "p1", name: "n" };
     global.fetch = vi
@@ -172,6 +205,46 @@ describe("plugin module", () => {
     expect(init.method).toBe("POST");
     expect(init.body).toBeInstanceOf(FormData);
     expect((init.body as FormData).get("file")).toBe(file);
+  });
+
+  it("uploadPlugin rebuilds FormData for an authorized retry", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        mockResponse({
+          ok: false,
+          status: 428,
+          json: {
+            detail: {
+              code: "capability_promotion_authorization_required",
+              candidate_hash: "sha256:candidate-2",
+            },
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        mockResponse({ ok: true, status: 200, json: { id: "p2" } }),
+      );
+    const file = new File(["zip"], "p.zip", {
+      type: "application/zip",
+    });
+
+    await expect(uploadPlugin(file)).resolves.toEqual({ id: "p2" });
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    const [, first] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    const [, retry] = (fetch as ReturnType<typeof vi.fn>).mock.calls[1] as [
+      string,
+      RequestInit,
+    ];
+    expect(first.body).not.toBe(retry.body);
+    expect((retry.body as FormData).get("file")).toBe(file);
+    expect(retry.headers).toEqual({
+      "X-QwenPaw-Authorize-Candidate": "sha256:candidate-2",
+    });
   });
 
   it("uninstallPlugin resolves void on success and DELETEs by id", async () => {

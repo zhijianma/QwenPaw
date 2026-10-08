@@ -1235,6 +1235,18 @@ published together as a new registry generation. Existing runs retain their
 old generation; new runs see the update. A failed health check leaves the
 current generation unchanged.
 
+Capability-bearing installs use an exact-candidate conditional request. The
+first API request returns HTTP `428` with a content-safe candidate hash. The
+Console and CLI repeat the same explicit install with
+`X-QwenPaw-Authorize-Candidate: <candidate-hash>`. The hash binds the manifest,
+Contribution contract, and bounded plugin source tree. QwenPaw validates it
+under the per-plugin lifecycle lock before copying files, installing
+dependencies, or executing plugin code, then verifies the copied tree again.
+A changed URL, ZIP, directory, or stale confirmation fails closed. Startup
+restoration does not require an operator to be online and is recorded as
+`not_applicable`; an explicit install records
+`promotion.operator-authorized=passed` in the Evidence Bundle.
+
 Publication also creates an immutable Promotion Evidence Bundle before the
 new generation becomes visible. The built-in Gate records separate schema,
 implementation, and health checks bound to the candidate hash and exact
