@@ -62,6 +62,7 @@ CONSOLE_HARNESS_STEP_CONTINUATION_ENVELOPE = (
 CONSOLE_BACKGROUND_ACTION_CONTINUATION_ENVELOPE = (
     "chat.console.background-action-continuation.v1"
 )
+CONSOLE_ACTION_RETRY_ENVELOPE = "chat.console.action-retry.v1"
 logger = logging.getLogger(__name__)
 
 
@@ -156,7 +157,8 @@ class WorkspaceChatSubmissionDispatcher:
             await self._dispatch_ready_harness_steps()
         if self._background_actions is not None:
             await self._dispatch_ready_background_actions()
-        await self._dispatcher.start()
+        recovered = await self._dispatcher.start()
+        await self._recover_interrupted_action_retries(recovered)
         if self._interactions is not None and self._continuation_task is None:
             self._continuation_task = asyncio.create_task(
                 self._run_continuations(),
@@ -210,6 +212,117 @@ class WorkspaceChatSubmissionDispatcher:
                 await self._action_retries.cancel(
                     continuation.continuation_id,
                 )
+
+    async def _recover_interrupted_action_retries(
+        self,
+        recovered: Sequence[TurnSubmission],
+    ) -> None:
+        """Requeue only interrupted dispatches without terminal evidence."""
+        if self._action_retries is None or self._actions is None:
+            return
+        interrupted = {
+            item.submission_id: item
+            for item in recovered
+            if item.status is SubmissionStatus.INTERRUPTED
+        }
+        dispatched = await self._action_retries.list_dispatched(
+            agent_id=self._workspace.agent_id,
+        )
+        for continuation in dispatched:
+            dispatch_id = continuation.dispatch_id
+            submission = interrupted.get(dispatch_id)
+            if dispatch_id is None or submission is None:
+                continue
+            self._validate_action_retry_submission(
+                continuation,
+                submission,
+            )
+            records = await self._actions.scan_for_conversation(
+                submission.conversation_id,
+            )
+            attempts = [
+                record
+                for record in records
+                if record.request.invocation_id
+                == submission.invocation_id
+                and record.request.retry_of_action_id
+                == continuation.checkpoint.action_id
+            ]
+            if len(attempts) > 1:
+                raise RuntimeError(
+                    "interrupted Action retry has conflicting attempts",
+                )
+            if attempts:
+                self._validate_recovered_action_attempt(
+                    continuation,
+                    attempts[0],
+                )
+            if attempts and attempts[0].result is not None:
+                continue
+            await self._action_retries.requeue_dispatched(
+                continuation.continuation_id,
+                dispatch_id=dispatch_id,
+            )
+
+    @staticmethod
+    def _validate_action_retry_submission(
+        continuation: ActionRetryContinuation,
+        submission: TurnSubmission,
+    ) -> None:
+        checkpoint = continuation.checkpoint
+        envelope = submission.input_envelope
+        expected_payload = {
+            "continuation_id": str(continuation.continuation_id),
+        }
+        if (
+            submission.agent_id != checkpoint.agent_id
+            or submission.conversation_id != checkpoint.conversation_id
+            or envelope is None
+            or envelope.kind != CONSOLE_ACTION_RETRY_ENVELOPE
+            or envelope.payload != expected_payload
+        ):
+            raise RuntimeError(
+                "interrupted Action retry Submission identity mismatch",
+            )
+
+    @staticmethod
+    def _validate_recovered_action_attempt(
+        continuation: ActionRetryContinuation,
+        attempt: ActionRecord,
+    ) -> None:
+        """Verify an interrupted attempt against its private checkpoint."""
+        checkpoint = continuation.checkpoint
+        request = attempt.request
+        expected = (
+            checkpoint.agent_id,
+            checkpoint.conversation_id,
+            checkpoint.correlation_id,
+            checkpoint.registry_generation,
+            checkpoint.capability_id,
+            checkpoint.tool_selection,
+            checkpoint.kind,
+            checkpoint.action_name,
+            checkpoint.arguments_hash,
+            checkpoint.next_attempt,
+            checkpoint.retry_root_action_id,
+        )
+        actual = (
+            request.agent_id,
+            request.conversation_id,
+            request.correlation_id,
+            request.registry_generation,
+            request.capability_id,
+            request.tool_selection,
+            request.kind,
+            request.action_name,
+            request.arguments_hash,
+            request.attempt,
+            request.retry_root_action_id,
+        )
+        if actual != expected:
+            raise RuntimeError(
+                "interrupted Action retry attempt identity mismatch",
+            )
 
     async def _action_retry_is_superseded(
         self,

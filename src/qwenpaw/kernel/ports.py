@@ -1679,6 +1679,12 @@ class ActionStore(Protocol):
     ) -> Sequence[ActionRecord]:
         """Return newest action records for one ChatSpec identity."""
 
+    async def scan_for_conversation(
+        self,
+        conversation_id: str,
+    ) -> Sequence[ActionRecord]:
+        """Scan all records for recovery reconciliation."""
+
 
 @runtime_checkable
 class ActionRetryInputStore(Protocol):

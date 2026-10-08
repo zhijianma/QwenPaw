@@ -44,10 +44,10 @@ class SubmissionDispatcher:
         self._supervisor: asyncio.Task[None] | None = None
         self._workers: dict[str, asyncio.Task[None]] = {}
 
-    async def start(self) -> None:
+    async def start(self) -> tuple[TurnSubmission, ...]:
         """Start recovery scanning once for this workspace generation."""
         if self._supervisor is not None and not self._supervisor.done():
-            return
+            return ()
         recovered = await self._control.recover_orphaned_submissions(
             agent_id=self._agent_id,
         )
@@ -63,6 +63,7 @@ class SubmissionDispatcher:
             name=f"submission-dispatch-{self._agent_id}",
         )
         self.wake()
+        return tuple(recovered)
 
     async def stop(self) -> None:
         """Stop dispatch ownership without fabricating terminal results."""

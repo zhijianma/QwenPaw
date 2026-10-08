@@ -14,6 +14,7 @@ from qwenpaw.app.chats.manager import ChatManager
 from qwenpaw.app.chats.models import ChatSpec
 from qwenpaw.app.chats.repo import JsonChatRepository
 from qwenpaw.app.chats.submission_dispatcher import (
+    CONSOLE_ACTION_RETRY_ENVELOPE,
     CONSOLE_BACKGROUND_ACTION_CONTINUATION_ENVELOPE,
     CONSOLE_HARNESS_STEP_CONTINUATION_ENVELOPE,
     CONSOLE_INTERACTION_CONTINUATION_ENVELOPE,
@@ -35,11 +36,13 @@ from qwenpaw.kernel import (
     COMMITTED_ACTION_ITEM_METADATA_KEY,
     BackgroundActionContinuationStatus,
     ActionKind,
+    ActionRecord,
     ActionRequest,
     ActionResult,
     ActionRetryDecision,
     ActionRetryDisposition,
     ActionRetryReason,
+    ActionRetryContinuationStatus,
     ActionStatus,
     ActorRef,
     ActorType,
@@ -66,6 +69,7 @@ from qwenpaw.kernel import (
     SideEffectStatus,
     SubmissionInputEnvelope,
     SubmissionStatus,
+    TurnSubmission,
     TurnSubmissionRequest,
     ToolEffect,
 )
@@ -217,6 +221,156 @@ async def test_workspace_dispatcher_repairs_action_retry_outbox(
     assert cancelled is not None
     assert cancelled.status.value == "cancelled"
     await dispatcher.stop()
+    await control.close()
+
+
+@pytest.mark.asyncio
+async def test_interrupted_action_retry_without_result_is_requeued(
+    tmp_path: Path,
+) -> None:
+    request = ActionRequest(
+        invocation_id=uuid4(),
+        correlation_id=uuid4(),
+        agent_id="default",
+        conversation_id="chat-retry-interrupted",
+        registry_generation=3,
+        capability_id="example.retry-tool",
+        kind=ActionKind.TOOL,
+        action_name="retry_tool",
+        arguments={"value": "private"},
+        redacted_arguments={"value": "[REDACTED]"},
+        arguments_hash=f"sha256:{'a' * 64}",
+        effect=ToolEffect.NONE,
+        idempotency_key="retry-interrupted-key",
+    )
+    decision = ActionRetryDecision(
+        disposition=ActionRetryDisposition.RETRY_FROM_NEW_ACTION,
+        reason=ActionRetryReason.TRANSIENT_FAILURE,
+        provider_retryable=True,
+        max_attempts=2,
+        next_attempt=2,
+        retry_after_seconds=0,
+    )
+    inputs = lite_action_retry_input_store(tmp_path)
+    checkpoint = await inputs.save(request, decision)
+    result = ActionResult(
+        action_id=request.action_id,
+        invocation_id=request.invocation_id,
+        conversation_id=request.conversation_id,
+        status=ActionStatus.FAILED,
+        observation_digest=f"sha256:{'b' * 64}",
+        retryable=True,
+        retry_decision=decision.model_copy(
+            update={"input_checkpoint_id": checkpoint.checkpoint_id},
+        ),
+    )
+    actions = lite_action_store(tmp_path)
+    await actions.begin(request)
+    await actions.complete(result)
+    outbox = lite_action_retry_continuation_store(tmp_path)
+    ready = await outbox.defer(checkpoint, result)
+    submission_id = uuid4()
+
+    async def bind_dispatch(_continuation):
+        return submission_id
+
+    await outbox.dispatch(ready.continuation_id, bind_dispatch)
+    invocation_id = uuid4()
+    interrupted = TurnSubmission(
+        submission_id=submission_id,
+        sequence=1,
+        invocation_id=invocation_id,
+        status=SubmissionStatus.INTERRUPTED,
+        agent_id="default",
+        conversation_id=request.conversation_id,
+        content="[Action retry]",
+        input_envelope=SubmissionInputEnvelope(
+            kind=CONSOLE_ACTION_RETRY_ENVELOPE,
+            payload={"continuation_id": str(ready.continuation_id)},
+        ),
+        idempotency_key=f"action-retry:{ready.continuation_id}",
+        correlation_id=request.correlation_id,
+    )
+    control = InvocationControlService(
+        store=SQLiteInvocationControl(tmp_path / "control.sqlite3"),
+    )
+    dispatcher = WorkspaceChatSubmissionDispatcher(
+        workspace=SimpleNamespace(
+            agent_id="default",
+            workspace_dir=tmp_path,
+        ),
+        control=control,
+    )
+
+    # pylint: disable=protected-access
+    await dispatcher._recover_interrupted_action_retries((interrupted,))
+    # pylint: enable=protected-access
+
+    recovered = await outbox.get(ready.continuation_id)
+    assert recovered is not None
+    assert recovered.status is ActionRetryContinuationStatus.READY
+    assert recovered.recovered_dispatch_id == submission_id
+
+    completed_submission_id = uuid4()
+
+    async def bind_completed_dispatch(_continuation):
+        return completed_submission_id
+
+    await outbox.dispatch(
+        ready.continuation_id,
+        bind_completed_dispatch,
+    )
+    completed_invocation_id = uuid4()
+    completed_request = request.model_copy(
+        update={
+            "action_id": uuid4(),
+            "invocation_id": completed_invocation_id,
+            "retry_root_action_id": request.action_id,
+            "retry_of_action_id": request.action_id,
+            "attempt": 2,
+        },
+    )
+    dispatched = await outbox.get(ready.continuation_id)
+    assert dispatched is not None
+    # pylint: disable=protected-access
+    with pytest.raises(RuntimeError, match="attempt identity mismatch"):
+        dispatcher._validate_recovered_action_attempt(
+            dispatched,
+            ActionRecord(
+                request=completed_request.model_copy(
+                    update={"capability_id": "example.drifted-tool"},
+                ),
+            ),
+        )
+    # pylint: enable=protected-access
+    await actions.begin(completed_request)
+    await actions.complete(
+        ActionResult(
+            action_id=completed_request.action_id,
+            invocation_id=completed_invocation_id,
+            conversation_id=request.conversation_id,
+            status=ActionStatus.SUCCEEDED,
+            observation_digest=f"sha256:{'c' * 64}",
+        ),
+    )
+    completed_interrupted = interrupted.model_copy(
+        update={
+            "submission_id": completed_submission_id,
+            "invocation_id": completed_invocation_id,
+            "revision": interrupted.revision + 1,
+        },
+    )
+
+    # pylint: disable=protected-access
+    await dispatcher._recover_interrupted_action_retries(
+        (completed_interrupted,),
+    )
+    # pylint: enable=protected-access
+
+    terminal = await outbox.get(ready.continuation_id)
+    assert terminal is not None
+    assert terminal.status is ActionRetryContinuationStatus.DISPATCHED
+    assert terminal.dispatch_id == completed_submission_id
     await control.close()
 
 
