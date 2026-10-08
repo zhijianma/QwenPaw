@@ -587,6 +587,9 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
     revision 阻止 active replacement 和契约漂移，pending Outcome 可跨 Invocation
     幂等收敛。Chat admission 在 active Goal 中继承同一 correlation；`/clear`、预算和
     迭代上限只产生明确技术终态，不制造业务完成。
+  - [x] Goal pending Outcome 已接入 Workspace 启动恢复：内部 Submission 复用统一
+    Invocation Control 与 generation lease，直接执行 Host 声明和 CAS finalize，不调用
+    模型、不产生对话消息，也不等待用户发送下一轮输入。
 - [ ] 冻结 Model Recovery Contract：区分连接前失败、部分流中断、Provider 限流、
   quota/budget/auth/policy、用户 Interrupt 与 unknown；transport retry 不消耗业务
   retry，超过短等待预算后持久化 Resource Wait 并释放运行槽。

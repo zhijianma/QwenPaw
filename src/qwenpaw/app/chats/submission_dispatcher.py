@@ -10,12 +10,13 @@ import logging
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
-from uuid import UUID, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from ...invocation_control import (
     InvocationControlService,
     SubmissionDispatcher,
 )
+from ...capabilities import GenerationLease
 from ...kernel import (
     TERMINAL_SUBMISSION_STATUSES,
     ActionRecord,
@@ -25,6 +26,9 @@ from ...kernel import (
     BackgroundActionContinuation,
     BackgroundActionContinuationStatus,
     ContinuationMode,
+    CapabilityProviderKind,
+    ConversationOutcomeRequest,
+    ConversationOutcomeStatus,
     ConversationContinuation,
     ControlCommandKind,
     ControlReceipt,
@@ -33,6 +37,9 @@ from ...kernel import (
     InteractionOption,
     InteractionRequest,
     InteractionStatus,
+    InvocationScope,
+    GoalExecutionStatus,
+    GoalExecution,
     HarnessStepContinuation,
     HarnessStepContinuationStatus,
     ModelResourceWait,
@@ -65,6 +72,9 @@ CONSOLE_BACKGROUND_ACTION_CONTINUATION_ENVELOPE = (
     "chat.console.background-action-continuation.v1"
 )
 CONSOLE_ACTION_RETRY_ENVELOPE = "chat.console.action-retry.v1"
+CONSOLE_GOAL_OUTCOME_RECOVERY_ENVELOPE = (
+    "chat.console.goal-outcome-recovery.v1"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -129,6 +139,13 @@ class WorkspaceChatSubmissionDispatcher:
             if workspace_dir is not None
             else None
         )
+        from ...runtime.goals import lite_goal_execution_store
+
+        self._goals = (
+            lite_goal_execution_store(Path(workspace_dir))
+            if workspace_dir is not None
+            else None
+        )
         self._recovery_event = asyncio.Event()
         self._continuation_event = asyncio.Event()
         self._continuation_task: asyncio.Task[None] | None = None
@@ -162,6 +179,7 @@ class WorkspaceChatSubmissionDispatcher:
             await self._dispatch_ready_background_actions()
         recovered = await self._dispatcher.start()
         await self._recover_interrupted_action_retries(recovered)
+        await self._dispatch_pending_goal_outcomes()
         if self._interactions is not None and self._continuation_task is None:
             self._continuation_task = asyncio.create_task(
                 self._run_continuations(),
@@ -247,8 +265,7 @@ class WorkspaceChatSubmissionDispatcher:
             attempts = [
                 record
                 for record in records
-                if record.request.invocation_id
-                == submission.invocation_id
+                if record.request.invocation_id == submission.invocation_id
                 and record.request.retry_of_action_id
                 == continuation.checkpoint.action_id
             ]
@@ -354,8 +371,7 @@ class WorkspaceChatSubmissionDispatcher:
         )
         controlled = any(
             (
-                record.command.kind
-                is ControlCommandKind.INTERRUPT_CURRENT
+                record.command.kind is ControlCommandKind.INTERRUPT_CURRENT
                 and record.command.target_invocation_id
                 == checkpoint.invocation_id
             )
@@ -395,10 +411,7 @@ class WorkspaceChatSubmissionDispatcher:
         )
         first_error: Exception | None = None
         for continuation in pending:
-            if (
-                continuation.status
-                is not ActionRetryContinuationStatus.READY
-            ):
+            if continuation.status is not ActionRetryContinuationStatus.READY:
                 continue
             try:
                 if await self._action_retry_is_superseded(continuation):
@@ -483,9 +496,13 @@ class WorkspaceChatSubmissionDispatcher:
                     next_delay = (
                         await self._resource_waits.seconds_until_next_timer()
                     )
-                delay = 60.0 if next_delay is None else min(
-                    max(next_delay, 0.05),
-                    60.0,
+                delay = (
+                    60.0
+                    if next_delay is None
+                    else min(
+                        max(next_delay, 0.05),
+                        60.0,
+                    )
                 )
             if self._resource_waits is not None:
                 await self._resource_waits.wait_for_change(delay)
@@ -892,8 +909,7 @@ class WorkspaceChatSubmissionDispatcher:
             None,
         )
         idempotency_key = (
-            "harness-step-continuation:"
-            f"{continuation.continuation_id}"
+            "harness-step-continuation:" f"{continuation.continuation_id}"
         )
         if source is None or any(
             item.sequence > source.sequence
@@ -1079,8 +1095,7 @@ class WorkspaceChatSubmissionDispatcher:
             None,
         )
         idempotency_key = (
-            "background-action-continuation:"
-            f"{continuation.continuation_id}"
+            "background-action-continuation:" f"{continuation.continuation_id}"
         )
         return source is None or any(
             item.sequence > source.sequence
@@ -1127,8 +1142,7 @@ class WorkspaceChatSubmissionDispatcher:
             conversation_id=conversation_id,
         )
         idempotency_key = (
-            "background-action-continuation:"
-            f"{continuation.continuation_id}"
+            "background-action-continuation:" f"{continuation.continuation_id}"
         )
         request = TurnSubmissionRequest(
             agent_id=checkpoint.agent_id,
@@ -1186,15 +1200,13 @@ class WorkspaceChatSubmissionDispatcher:
             )
             or (
                 record.command.kind is ControlCommandKind.STOP_AND_CLEAR
-                and record.command.requested_at
-                >= continuation.created_at
+                and record.command.requested_at >= continuation.created_at
             )
             for record in records
         ):
             return None
         idempotency_key = (
-            "model-step-continuation:"
-            f"{continuation.continuation_id}"
+            "model-step-continuation:" f"{continuation.continuation_id}"
         )
         if continuation.retry_authorization is not None:
             submissions = (
@@ -1268,8 +1280,7 @@ class WorkspaceChatSubmissionDispatcher:
                     ControlCommandKind.INTERRUPT_CURRENT,
                     ControlCommandKind.STOP_AND_CLEAR,
                 }
-                and record.command.target_invocation_id
-                == wait.invocation_id
+                and record.command.target_invocation_id == wait.invocation_id
             )
             or (
                 record.command.kind is ControlCommandKind.STOP_AND_CLEAR
@@ -1416,6 +1427,56 @@ class WorkspaceChatSubmissionDispatcher:
         self._dispatcher.wake()
         return receipt
 
+    async def _dispatch_pending_goal_outcomes(self) -> None:
+        """Materialize pending Goal outcomes as internal Invocations."""
+        if self._goals is None:
+            return
+        pending = await self._goals.list_pending(
+            agent_id=self._workspace.agent_id,
+        )
+        for execution in pending:
+            submissions = (
+                await self._control.scan_submissions_for_conversation(
+                    agent_id=execution.agent_id,
+                    conversation_id=execution.conversation_id,
+                )
+            )
+            if any(
+                item.status
+                in {SubmissionStatus.QUEUED, SubmissionStatus.RUNNING}
+                and item.input_envelope is not None
+                and item.input_envelope.kind
+                == CONSOLE_GOAL_OUTCOME_RECOVERY_ENVELOPE
+                and item.input_envelope.payload.get("goal_id")
+                == str(execution.goal_id)
+                for item in submissions
+            ):
+                continue
+            await self._control.enqueue_turn(
+                TurnSubmissionRequest(
+                    agent_id=execution.agent_id,
+                    conversation_id=execution.conversation_id,
+                    priority=0,
+                    content="[Goal outcome recovery]",
+                    request_context={"channel": "console"},
+                    input_envelope=SubmissionInputEnvelope(
+                        kind=CONSOLE_GOAL_OUTCOME_RECOVERY_ENVELOPE,
+                        payload={
+                            "goal_id": str(execution.goal_id),
+                            "outcome_id": str(execution.outcome_id),
+                        },
+                    ),
+                    idempotency_key=(
+                        f"goal-outcome-recovery:{execution.goal_id}:"
+                        f"{uuid4()}"
+                    ),
+                    correlation_id=execution.correlation_id,
+                ),
+            )
+        if pending:
+            self._dispatcher.wake()
+
+    # pylint: disable-next=too-many-branches
     async def _execute(
         self,
         submission: TurnSubmission,
@@ -1429,12 +1490,16 @@ class WorkspaceChatSubmissionDispatcher:
             CONSOLE_HARNESS_STEP_CONTINUATION_ENVELOPE,
             CONSOLE_MODEL_RECOVERY_ENVELOPE,
             CONSOLE_MODEL_STEP_CONTINUATION_ENVELOPE,
+            CONSOLE_GOAL_OUTCOME_RECOVERY_ENVELOPE,
         }:
             raise ValueError(
                 f"unsupported submission input envelope: {envelope.kind}",
             )
         if envelope.kind == CONSOLE_ACTION_RETRY_ENVELOPE:
             await self._execute_action_retry(submission, envelope)
+            return
+        if envelope.kind == CONSOLE_GOAL_OUTCOME_RECOVERY_ENVELOPE:
+            await self._execute_goal_outcome_recovery(submission, envelope)
             return
         chat = await self._workspace.chat_manager.get_chat(
             submission.conversation_id,
@@ -1499,6 +1564,117 @@ class WorkspaceChatSubmissionDispatcher:
             raise RuntimeError("conversation gained another active runtime")
         async for _ in tracker.stream_from_queue(queue, chat.id):
             pass
+
+    async def _execute_goal_outcome_recovery(
+        self,
+        submission: TurnSubmission,
+        envelope: SubmissionInputEnvelope,
+    ) -> None:
+        """Reconcile one prepared Goal outcome without model inference."""
+        if self._goals is None:
+            raise RuntimeError("Goal recovery store is unavailable")
+        try:
+            goal_id = UUID(str(envelope.payload["goal_id"]))
+            outcome_id = UUID(str(envelope.payload["outcome_id"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("invalid Goal recovery envelope") from exc
+        execution = await self._goals.read(
+            agent_id=submission.agent_id,
+            conversation_id=submission.conversation_id,
+        )
+        if (
+            execution is None
+            or execution.goal_id != goal_id
+            or execution.outcome_id != outcome_id
+            or execution.correlation_id != submission.correlation_id
+        ):
+            raise ValueError("Goal recovery ownership mismatch")
+        invocation_id = uuid5(
+            NAMESPACE_URL,
+            f"qwenpaw:goal-recovery:{submission.submission_id}",
+        )
+        lease = await self._control.begin_submitted_turn(
+            submission.submission_id,
+            invocation_id=invocation_id,
+            agent_id=submission.agent_id,
+            conversation_id=submission.conversation_id,
+        )
+        terminal = SubmissionStatus.FAILED
+        generation_lease = None
+        try:
+            generation_lease = await self._workspace.capability_registry.pin()
+            if execution.status is GoalExecutionStatus.OUTCOME_PENDING:
+                await self._declare_pending_goal_outcome(
+                    execution,
+                    invocation_id=invocation_id,
+                    generation_lease=generation_lease,
+                )
+            terminal = SubmissionStatus.SUCCEEDED
+        finally:
+            if generation_lease is not None:
+                await generation_lease.close()
+            await self._control.finish_turn(lease, terminal)
+
+    async def _declare_pending_goal_outcome(
+        self,
+        execution: GoalExecution,
+        *,
+        invocation_id: UUID,
+        generation_lease: GenerationLease,
+    ) -> None:
+        """Declare and CAS-finalize one exact pending Goal snapshot."""
+        from ...runtime.goals import goal_outcome_summary
+        from ...runtime.outcome_hosts import provider_outcome_host
+
+        scope = InvocationScope(
+            invocation_id=invocation_id,
+            correlation_id=execution.correlation_id,
+            agent_id=execution.agent_id,
+            conversation_id=execution.conversation_id,
+            session_id=execution.conversation_id,
+            root_agent_id=execution.agent_id,
+            root_session_id=execution.conversation_id,
+            workspace_dir=str(self._workspace.workspace_dir),
+            registry_epoch_id=generation_lease.registry_epoch_id,
+            registry_generation=generation_lease.generation,
+        )
+        host = provider_outcome_host(
+            self._workspace,
+            scope,
+            producer_id="qwenpaw.system.goal-mode",
+            provider_kind=CapabilityProviderKind.SYSTEM,
+        )
+        if host is None or execution.outcome_status is None:
+            raise RuntimeError("Goal Outcome Host is unavailable")
+        await host.declare(
+            ConversationOutcomeRequest(
+                outcome_id=execution.outcome_id,
+                status=execution.outcome_status,
+                summary=goal_outcome_summary(execution.outcome_status),
+            ),
+        )
+        target = (
+            GoalExecutionStatus.COMPLETED
+            if execution.outcome_status is ConversationOutcomeStatus.ACHIEVED
+            else GoalExecutionStatus.BLOCKED
+        )
+        try:
+            await self._goals.write(
+                execution.model_copy(update={"status": target}),
+                expected_revision=execution.revision,
+            )
+        except Exception:
+            current = await self._goals.read(
+                agent_id=execution.agent_id,
+                conversation_id=execution.conversation_id,
+            )
+            if (
+                current is None
+                or current.goal_id != execution.goal_id
+                or current.outcome_id != execution.outcome_id
+                or current.status is not target
+            ):
+                raise
 
     async def _execute_action_retry(
         self,
@@ -1605,8 +1781,7 @@ class WorkspaceChatSubmissionDispatcher:
                 "Harness continuation does not belong to its ChatSpec",
             )
         if (
-            continuation.status
-            is not HarnessStepContinuationStatus.DISPATCHED
+            continuation.status is not HarnessStepContinuationStatus.DISPATCHED
             or continuation.submission_id != submission.submission_id
         ):
             raise ValueError(
@@ -1696,10 +1871,11 @@ class WorkspaceChatSubmissionDispatcher:
             raise ValueError(
                 "background Action is not bound to this Submission",
             )
-        stored_checkpoint, agent_state = (
-            await self._background_action_contexts.load(
-                checkpoint.checkpoint_id,
-            )
+        (
+            stored_checkpoint,
+            agent_state,
+        ) = await self._background_action_contexts.load(
+            checkpoint.checkpoint_id,
         )
         if stored_checkpoint != checkpoint:
             raise ValueError("background Action checkpoint does not match")
@@ -1836,16 +2012,14 @@ class WorkspaceChatSubmissionDispatcher:
             raise ValueError("model-step continuation is unavailable")
         if (
             continuation.agent_id != submission.agent_id
-            or continuation.conversation_id
-            != submission.conversation_id
+            or continuation.conversation_id != submission.conversation_id
             or continuation.conversation_id != chat.id
         ):
             raise ValueError(
                 "model-step continuation does not belong to its ChatSpec",
             )
         if (
-            continuation.status
-            is not ModelStepContinuationStatus.DISPATCHED
+            continuation.status is not ModelStepContinuationStatus.DISPATCHED
             or continuation.submission_id != submission.submission_id
         ):
             raise ValueError(
@@ -2089,6 +2263,7 @@ class WorkspaceChatSubmissionDispatcher:
 
 __all__ = [
     "CONSOLE_BACKGROUND_ACTION_CONTINUATION_ENVELOPE",
+    "CONSOLE_GOAL_OUTCOME_RECOVERY_ENVELOPE",
     "CONSOLE_INTERACTION_CONTINUATION_ENVELOPE",
     "CONSOLE_HARNESS_STEP_CONTINUATION_ENVELOPE",
     "CONSOLE_MODEL_RECOVERY_ENVELOPE",

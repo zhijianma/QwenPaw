@@ -16,6 +16,7 @@ from qwenpaw.app.chats.repo import JsonChatRepository
 from qwenpaw.app.chats.submission_dispatcher import (
     CONSOLE_ACTION_RETRY_ENVELOPE,
     CONSOLE_BACKGROUND_ACTION_CONTINUATION_ENVELOPE,
+    CONSOLE_GOAL_OUTCOME_RECOVERY_ENVELOPE,
     CONSOLE_HARNESS_STEP_CONTINUATION_ENVELOPE,
     CONSOLE_INTERACTION_CONTINUATION_ENVELOPE,
     CONSOLE_MODEL_RECOVERY_ENVELOPE,
@@ -32,6 +33,7 @@ from qwenpaw.invocation_control import (
 )
 from qwenpaw.interactions import InteractionService
 from qwenpaw.recovery import ModelResourceWaitService
+from qwenpaw.capabilities import GenerationRegistry
 from qwenpaw.kernel import (
     COMMITTED_ACTION_ITEM_METADATA_KEY,
     TERMINAL_SUBMISSION_STATUSES,
@@ -50,6 +52,9 @@ from qwenpaw.kernel import (
     CommittedActionItem,
     ContinuationDispatchStatus,
     ContinuationMode,
+    ConversationOutcomeStatus,
+    GoalExecution,
+    GoalExecutionStatus,
     InteractionKind,
     InteractionMode,
     InteractionOption,
@@ -100,6 +105,108 @@ from qwenpaw.runtime.model_step_contexts import (
 )
 from qwenpaw.runtime.action_execution import RuntimeActionRetryRunner
 from qwenpaw.runtime.builder import AgentBuilder
+from qwenpaw.runtime.goals import lite_goal_execution_store
+from qwenpaw.runtime.outcomes import lite_conversation_outcome_store
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_recovers_pending_goal_without_model_turn(
+    tmp_path: Path,
+) -> None:
+    goal_store = lite_goal_execution_store(tmp_path)
+    active = await goal_store.write(
+        GoalExecution(
+            agent_id="default",
+            conversation_id="chat-goal",
+            correlation_id=uuid4(),
+            objective="Finish the durable migration",
+            max_iterations=20,
+            token_budget=1000,
+        ),
+        expected_revision=0,
+    )
+    outcome_id = uuid4()
+    pending = await goal_store.write(
+        active.model_copy(
+            update={
+                "status": GoalExecutionStatus.OUTCOME_PENDING,
+                "outcome_id": outcome_id,
+                "outcome_status": ConversationOutcomeStatus.ACHIEVED,
+            },
+        ),
+        expected_revision=active.revision,
+    )
+    control = InvocationControlService(
+        store=SQLiteInvocationControl(tmp_path / "control.sqlite3"),
+    )
+    await control.start()
+    workspace = SimpleNamespace(
+        agent_id="default",
+        workspace_dir=tmp_path,
+        capability_registry=GenerationRegistry(),
+    )
+    dispatcher = WorkspaceChatSubmissionDispatcher(
+        workspace=workspace,
+        control=control,
+    )
+
+    # pylint: disable=protected-access
+    await dispatcher._dispatch_pending_goal_outcomes()
+    await dispatcher._dispatch_pending_goal_outcomes()
+    # pylint: enable=protected-access
+    projection = await control.read_queue(
+        agent_id="default",
+        conversation_id="chat-goal",
+    )
+    [submission] = projection.submissions
+    assert submission.input_envelope is not None
+    assert (
+        submission.input_envelope.kind
+        == CONSOLE_GOAL_OUTCOME_RECOVERY_ENVELOPE
+    )
+    assert submission.correlation_id == pending.correlation_id
+
+    await control.begin_submitted_turn(
+        submission.submission_id,
+        invocation_id=uuid4(),
+        agent_id="default",
+        conversation_id="chat-goal",
+    )
+    await dispatcher.start()
+
+    async def _completed_goal():
+        while True:
+            current = await goal_store.read(
+                agent_id="default",
+                conversation_id="chat-goal",
+            )
+            if current is not None and (
+                current.status is GoalExecutionStatus.COMPLETED
+            ):
+                return current
+            await asyncio.sleep(0.01)
+
+    completed = await asyncio.wait_for(_completed_goal(), timeout=2.0)
+    assert completed is not None
+    assert completed.status is GoalExecutionStatus.COMPLETED
+    assert await lite_conversation_outcome_store(tmp_path).get(outcome_id)
+    history = await control.scan_submissions_for_conversation(
+        agent_id="default",
+        conversation_id="chat-goal",
+    )
+    by_id = {item.submission_id: item for item in history}
+    assert by_id[submission.submission_id].status is (
+        SubmissionStatus.INTERRUPTED
+    )
+    [recovered] = [
+        item
+        for item in history
+        if item.submission_id != submission.submission_id
+    ]
+    assert recovered.status is SubmissionStatus.SUCCEEDED
+    assert recovered.correlation_id == pending.correlation_id
+    await dispatcher.stop()
+    await control.close()
 
 
 @pytest.mark.asyncio
@@ -1078,9 +1185,7 @@ async def test_partial_model_step_recovers_one_correlated_submission(
     # pylint: enable=protected-access
     text = payload["content_parts"][0]["text"]
     assert "partial output" in text
-    assert "model_step_continuation_id" in (
-        payload["meta"]["request_context"]
-    )
+    assert "model_step_continuation_id" in (payload["meta"]["request_context"])
     queue = await control.read_queue(
         agent_id="default",
         conversation_id=chat.id,

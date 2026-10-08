@@ -73,6 +73,12 @@ ACTIVE Goal 替换。数据库及 WAL/SHM 在 POSIX 上限制为 owner-only。
 Outcome；Invocation、generation 和声明时间可以不同。任何 owner、correlation、状态、
 producer、summary 或结果引用变化都以 `outcome_replay_conflict` 失败关闭。
 
+Workspace 启动后由 Submission Dispatcher 扫描 `OUTCOME_PENDING`，创建内容安全的内部
+恢复 Submission。该 Submission 继承原 correlation、固定当前 capability generation，
+但不调用模型，也不产生 Assistant Message；它只通过系统 Outcome Host 完成 declare /
+finalize。重复启动若已有 queued/running 恢复项则不重复入队；运行中的恢复项成为 orphan
+后会标记 interrupted，并允许新的恢复尝试。由此恢复不再依赖用户补发“继续”。
+
 ## 5. Chat Submission Admission
 
 `ConversationCorrelationResolver` 是只读 Port。Chat durable submission 在创建
@@ -101,6 +107,8 @@ State Host 提供，不能直接打开 Lite SQLite 或修改内置 Goal。
 - `/clear` 只把当前 Chat Goal 标记为 abandoned；
 - 活动 Goal 的新 Chat Submission 继承原 correlation；
 - Outcome 已写、Goal 未 finalize 的崩溃窗口可在新 Invocation 收敛；
+- Outcome 尚未声明的 pending Goal 可在 Workspace 启动后主动收敛；
+- 重复启动不重复排队，orphan 恢复 Invocation 可由新尝试接管；
 - Outcome 重放业务字段变化时拒绝；
 - 无 Chat 的兼容 Channel 保持内存 session fallback；
 - 不恢复旧协程，不从 Assistant Message、SSE 或 HTTP 终态推断业务完成。

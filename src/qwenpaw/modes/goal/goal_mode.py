@@ -638,12 +638,9 @@ class GoalMode(AgentMode):
 
     @staticmethod
     def _outcome_summary(status: ConversationOutcomeStatus) -> str:
-        if status is ConversationOutcomeStatus.ACHIEVED:
-            return "The active long-running goal was explicitly completed."
-        return (
-            "The active long-running goal stopped at a confirmed "
-            "blocking boundary."
-        )
+        from ...runtime.goals import goal_outcome_summary
+
+        return goal_outcome_summary(status)
 
     @staticmethod
     def _session_from_execution(execution: GoalExecution) -> GoalSession:

@@ -1129,6 +1129,10 @@ Cron 不形成独立审批或产物事实源。
       幂等确认；业务字段变化失败关闭。Chat Submission admission 通过
       `ConversationCorrelationResolver` 在 Goal active/pending 时继承原 correlation，
       terminal 后才创建新意图。
+    - [x] Workspace 启动扫描 pending Goal，并通过内部 Submission 创建新的恢复
+      Invocation；恢复固定当前 capability generation、继承原 correlation、经过相同
+      Host Outcome Broker，但不调用模型或写入伪 Assistant Message。queued/running
+      恢复项去重，orphan 被标记 interrupted 后允许新尝试，用户无需补发“继续”。
     - [x] 接入 correlation-scoped 可回放 Trajectory：复用现有 Model、Action、
       Submission、Steer/Interrupt、Interaction、Artifact、Evidence、Verification、
       Wait/Recovery 与 Compaction Observation，并把完整 Outcome supersession 链投影为

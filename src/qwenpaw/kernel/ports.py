@@ -1672,6 +1672,13 @@ class GoalExecutionStore(Protocol):
     ) -> GoalExecution:
         """Create or replace one exact observed Goal revision."""
 
+    async def list_pending(
+        self,
+        *,
+        agent_id: str,
+    ) -> Sequence[GoalExecution]:
+        """List Goal outcomes requiring Host reconciliation."""
+
 
 @runtime_checkable
 class ConversationCorrelationResolver(Protocol):

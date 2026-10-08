@@ -16,9 +16,20 @@ from ..kernel.goals import (
     GoalExecutionStatus,
 )
 from ..kernel.models import utc_now
+from ..kernel.outcomes import ConversationOutcomeStatus
 
 _PREPARE_LOCKS_GUARD = threading.Lock()
 _PREPARE_LOCKS: dict[Path, threading.Lock] = {}
+
+
+def goal_outcome_summary(status: ConversationOutcomeStatus) -> str:
+    """Return the stable business summary used by every Goal replay."""
+    if status is ConversationOutcomeStatus.ACHIEVED:
+        return "The active long-running goal was explicitly completed."
+    return (
+        "The active long-running goal stopped at a confirmed "
+        "blocking boundary."
+    )
 
 
 def _database_prepare_lock(database_path: Path) -> threading.Lock:
@@ -141,6 +152,30 @@ class SQLiteGoalExecutionStore:
         }:
             return None
         return execution.correlation_id
+
+    def _list_pending_sync(self, agent_id: str) -> tuple[GoalExecution, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT model_json FROM conversation_goals "
+                "WHERE agent_id = ? ORDER BY conversation_id",
+                (agent_id,),
+            ).fetchall()
+        self._protect_files()
+        pending = []
+        for row in rows:
+            execution = self._parse(row)
+            if execution.status is GoalExecutionStatus.OUTCOME_PENDING:
+                pending.append(execution)
+        return tuple(pending)
+
+    async def list_pending(
+        self,
+        *,
+        agent_id: str,
+    ) -> tuple[GoalExecution, ...]:
+        """Return pending Goal outcomes in stable Chat order."""
+        await self._prepare()
+        return await asyncio.to_thread(self._list_pending_sync, agent_id)
 
     def _write_sync(
         self,
@@ -284,4 +319,8 @@ def lite_goal_execution_store(
     )
 
 
-__all__ = ["SQLiteGoalExecutionStore", "lite_goal_execution_store"]
+__all__ = [
+    "SQLiteGoalExecutionStore",
+    "goal_outcome_summary",
+    "lite_goal_execution_store",
+]

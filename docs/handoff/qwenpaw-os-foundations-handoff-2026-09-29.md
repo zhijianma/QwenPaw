@@ -842,6 +842,10 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - Goal 完成采用 `OUTCOME_PENDING -> Host declare -> COMPLETED/BLOCKED`。确定性
   outcome ID 与 exact lookup 关闭“Outcome 已提交、Goal 尚未 finalize”的崩溃窗口；
   新 Invocation 只能确认业务字段完全相同的结果，变化时失败关闭。
+- Workspace 启动会主动扫描 pending Goal，以内部 Submission 创建恢复 Invocation；
+  不调用模型、不生成对话消息，也不依赖用户再次输入。重复扫描与 orphan 重试保持幂等。
+- 本切片 Goal、Submission Dispatcher、Outcome、Chat API 与 Mode lifecycle 共 64 项
+  定点测试通过；相关 Python 文件 AST、mypy、Black、Flake8、Pylint 门禁通过。
 - Chat durable submission 在 active/pending Goal 中继承原 correlation，Goal terminal
   后恢复新意图分配；transport session 或 HTTP request 不再切断长程因果链。
 - Goal、Outcome、Chat API、Stop Gate、Runtime lifecycle 与 Plugin SDK 共 88 项定点

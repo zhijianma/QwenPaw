@@ -86,6 +86,32 @@ async def test_goal_store_uses_compare_and_swap(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_goal_store_lists_only_pending_outcomes_by_agent(
+    tmp_path,
+) -> None:
+    store = SQLiteGoalExecutionStore(tmp_path / "goals.db")
+    active = await store.write(_execution(), expected_revision=0)
+    pending = active.model_copy(
+        update={
+            "status": GoalExecutionStatus.OUTCOME_PENDING,
+            "outcome_id": uuid4(),
+            "outcome_status": ConversationOutcomeStatus.ACHIEVED,
+        },
+    )
+    pending = await store.write(pending, expected_revision=active.revision)
+    other = _execution().model_copy(
+        update={
+            "agent_id": "other",
+            "conversation_id": "chat-other",
+        },
+    )
+    await store.write(other, expected_revision=0)
+
+    assert await store.list_pending(agent_id="default") == (pending,)
+    assert await store.list_pending(agent_id="other") == ()
+
+
+@pytest.mark.asyncio
 async def test_goal_store_rejects_active_replacement_and_contract_drift(
     tmp_path,
 ) -> None:
