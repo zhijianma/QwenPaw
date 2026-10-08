@@ -43,6 +43,7 @@ ToolResultProcessor = Callable[
     [ToolResponse, ToolCallContext],
     Awaitable[ToolResponse],
 ]
+ToolAdmissionCheck = Callable[[ToolCallContext], Awaitable[None]]
 
 
 @dataclass
@@ -116,6 +117,7 @@ class ToolCoordinator:
         background_result_processor: BackgroundResultProcessor | None = None,
         background_completion_handler: CompletionHandler | None = None,
         allow_offload: bool = True,
+        admission_check: ToolAdmissionCheck | None = None,
     ) -> AsyncGenerator[Any, None]:
         entry = self._create_entry(
             tool_call,
@@ -132,6 +134,16 @@ class ToolCoordinator:
 
         async with self._entries_lock:
             self._entries[ctx.tool_call_id] = entry
+
+        if admission_check is not None:
+            token = set_call_context(ctx)
+            try:
+                await admission_check(ctx)
+            except BaseException:
+                self._entries.pop(ctx.tool_call_id, None)
+                raise
+            finally:
+                reset_call_context(token)
 
         chunk_queue: asyncio.Queue[Any] = asyncio.Queue()
         entry.stream.add_subscriber(chunk_queue)

@@ -555,6 +555,10 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     校验的 capability config 与 credential alias 映射，但不持久化配置正文、alias 或
     secret；重试前由当前 Host 重新计算并校验，配置漂移时 fail closed。历史 Action
     缺少 digest 时不得进入后续自动 dispatcher。
+  - [x] ToolCoordinator 增加受监督的 execution admission gate：permission check 在
+    ToolCallContext 建立、call id 可见之后且工具执行之前运行；拒绝时移除 in-flight
+    entry，不调用工具、不运行 Action result processor。Action retry 的审批、拒绝和
+    pending 关联因此复用现有治理与 Interaction 身份，不再发生无 call id 的游离审批。
   - [ ] 在上述单一身份上接入自动 retry dispatcher：必须同时具备 attempt budget、
     Stop/Interrupt fencing、无流式输出边界，以及 Runtime Orchestrator 内的执行入口；
     不能仅凭 `retryable=true` 或绕过 Orchestrator 直接重新调用工具。

@@ -106,6 +106,45 @@ async def _wait_for_hint(
 
 
 @pytest.mark.asyncio
+async def test_admission_check_owns_context_before_execution() -> None:
+    coordinator = ToolCoordinator()
+    tool_call = _ToolCall(id="call-admission", name="governed_tool")
+    observed: list[str] = []
+    handler_called = False
+
+    async def reject(context: ToolCallContext) -> None:
+        from qwenpaw.tool_calls._ctxvars import get_call_context
+
+        assert get_call_context() is context
+        assert coordinator.get(tool_call.id) is not None
+        observed.append(context.tool_call_id)
+        raise PermissionError("denied before execution")
+
+    async def next_handler(
+        tool_call: _ToolCall,
+    ) -> AsyncGenerator[Any, None]:
+        nonlocal handler_called
+        handler_called = True
+        yield _text_response(tool_call.id, "must not execute")
+
+    with pytest.raises(PermissionError, match="denied before execution"):
+        await _collect(
+            coordinator.execute(
+                tool_call=tool_call,
+                next_handler=next_handler,
+                session_id="chat-admission",
+                agent_id="default",
+                root_session_id="chat-admission",
+                admission_check=reject,
+            ),
+        )
+
+    assert observed == [tool_call.id]
+    assert handler_called is False
+    assert coordinator.get(tool_call.id) is None
+
+
+@pytest.mark.asyncio
 async def test_parent_cancel_cooperatively_stops_background_tool():
     coordinator = ToolCoordinator(cancel_grace_period_secs=0.2)
     tool_call = _ToolCall(id="call-parent-stop", name="chat_with_agent")

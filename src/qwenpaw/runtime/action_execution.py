@@ -53,16 +53,21 @@ class GovernedActionExecutor:
             raise TypeError(
                 "governed Action tool has no permission boundary",
             )
-        decision = await check_permissions(dict(arguments), None)
-        if decision.behavior is not PermissionBehavior.ALLOW:
-            raise GovernedActionDeniedError(
-                str(decision.message or "Action denied by current policy"),
-            )
         tool_call = SimpleNamespace(
             id=tool_call_id,
             name=tool_name,
             input=dict(arguments),
         )
+
+        async def admit(_context: Any) -> None:
+            decision = await check_permissions(dict(arguments), None)
+            if decision.behavior is not PermissionBehavior.ALLOW:
+                raise GovernedActionDeniedError(
+                    str(
+                        decision.message
+                        or "Action denied by current policy"
+                    ),
+                )
 
         async def invoke(
             *,
@@ -86,6 +91,7 @@ class GovernedActionExecutor:
             root_agent_id=scope.root_agent_id,
             result_processor=recorder.complete,
             allow_offload=False,
+            admission_check=admit,
         ):
             pass
         entry = self._coordinator.get(tool_call_id)

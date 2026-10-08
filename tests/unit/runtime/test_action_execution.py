@@ -101,6 +101,9 @@ async def test_governed_executor_creates_new_retry_attempt(
         _qp_request_context = {"_action_recorder": retry_recorder}
 
         async def check_permissions(self, arguments, _context):
+            context = get_call_context()
+            assert context is not None
+            assert context.tool_call_id == "call-retry-attempt"
             permission_checks.append(dict(arguments))
             return PermissionDecision(
                 behavior=PermissionBehavior.ALLOW,
@@ -157,6 +160,9 @@ async def test_governed_executor_denial_creates_no_action(
 
         @staticmethod
         async def check_permissions(_arguments, _context):
+            context = get_call_context()
+            assert context is not None
+            assert context.tool_call_id == "call-denied-retry"
             return PermissionDecision(
                 behavior=PermissionBehavior.DENY,
                 message="denied by current policy",
