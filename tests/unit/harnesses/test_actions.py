@@ -14,7 +14,12 @@ from qwenpaw.harnesses.actions import (
     begin_harness_approval_action,
 )
 from qwenpaw.harnesses.events import HarnessEvent, HarnessEventKind
-from qwenpaw.kernel import ActionStatus, InvocationScope
+from qwenpaw.kernel import (
+    ActionRetryDisposition,
+    ActionStatus,
+    InvocationScope,
+    SideEffectStatus,
+)
 from qwenpaw.runtime.actions import RuntimeActionRecorder, lite_action_store
 from qwenpaw.runtime.environments import FilesystemEnvironmentStore
 from qwenpaw.runtime.harness_environments import (
@@ -99,3 +104,95 @@ async def test_approval_creates_action_before_provider_completion(
     assert committed.observation_digest == (
         completed.result.observation_digest
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        "tool_name",
+        "provider_type",
+        "expected_retryable",
+        "expected_disposition",
+        "expected_side_effect",
+    ),
+    [
+        (
+            "read_file",
+            "fileRead",
+            True,
+            ActionRetryDisposition.RETRY_FROM_NEW_ACTION,
+            None,
+        ),
+        (
+            "shell",
+            "commandExecution",
+            False,
+            ActionRetryDisposition.RECONCILE_REQUIRED,
+            SideEffectStatus.UNCERTAIN,
+        ),
+    ],
+)
+async def test_provider_retry_hint_is_constrained_by_host_policy(
+    tmp_path: Path,
+    tool_name: str,
+    provider_type: str,
+    expected_retryable: bool,
+    expected_disposition: ActionRetryDisposition,
+    expected_side_effect: SideEffectStatus | None,
+) -> None:
+    invocation_id = uuid4()
+    conversation_id = f"chat-retry-{tool_name}"
+    scope = InvocationScope(
+        invocation_id=invocation_id,
+        agent_id="default",
+        conversation_id=conversation_id,
+        session_id="chat-1",
+        root_agent_id="default",
+        root_session_id="chat-1",
+        workspace_dir=str(tmp_path),
+        registry_generation=7,
+    )
+    store = lite_action_store(tmp_path)
+    tracker = HarnessActionTracker(
+        backend="codex",
+        scope=scope,
+        recorder=RuntimeActionRecorder(scope, store),
+    )
+    resolution = await RuntimeHarnessEnvironmentManager(
+        FilesystemEnvironmentStore(tmp_path),
+    ).resolve(
+        "codex",
+        tmp_path,
+        {"sandbox": "workspace-write"},
+        invocation_id=invocation_id,
+        conversation_id=conversation_id,
+    )
+    tracker.bind_environment(resolution)
+
+    await tracker.begin_event(
+        HarnessEvent(
+            kind=HarnessEventKind.TOOL_STARTED,
+            item_id=f"item-{tool_name}",
+            tool_name=tool_name,
+            data={"provider_type": provider_type},
+        ),
+    )
+    await tracker.complete_event(
+        HarnessEvent(
+            kind=HarnessEventKind.TOOL_COMPLETED,
+            item_id=f"item-{tool_name}",
+            tool_name=tool_name,
+            data={
+                "provider_type": provider_type,
+                "status": "failed",
+                "retryable": True,
+            },
+        ),
+    )
+
+    [record] = await store.list_for_conversation(conversation_id)
+    assert record.result is not None
+    assert record.result.retryable is expected_retryable
+    assert record.result.side_effect_status is expected_side_effect
+    assert record.result.retry_decision is not None
+    assert record.result.retry_decision.disposition is expected_disposition

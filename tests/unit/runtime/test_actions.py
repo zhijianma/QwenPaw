@@ -29,11 +29,15 @@ from qwenpaw.drivers.capabilities import (
     DriverInvocationResult,
 )
 from qwenpaw.kernel import (
+    ACTION_RETRY_DECISION_METADATA_KEY,
+    ACTION_RETRY_HINT_METADATA_KEY,
     COMMITTED_ACTION_ITEM_METADATA_KEY,
     ActionKind,
     ActionRecord,
     ActionRequest,
     ActionResult,
+    ActionRetryDisposition,
+    ActionRetryReason,
     ActionStatus,
     ArtifactRef,
     CapabilitySelection,
@@ -571,6 +575,7 @@ async def test_failed_action_keeps_diagnostic_artifact_evidence(
         id=context.tool_call_id,
         state=ToolResultState.ERROR,
         metadata={
+            ACTION_RETRY_HINT_METADATA_KEY: True,
             TOOL_ARTIFACT_LINKS_KEY: [
                 {
                     "artifact_ref": artifact.model_dump(mode="json"),
@@ -586,8 +591,55 @@ async def test_failed_action_keeps_diagnostic_artifact_evidence(
     assert record.request.kind is ActionKind.BROWSER
     assert record.result is not None
     assert record.result.status is ActionStatus.FAILED
+    assert record.result.retryable is False
+    assert record.result.side_effect_status is SideEffectStatus.UNCERTAIN
+    assert record.result.retry_decision is not None
+    assert record.result.retry_decision.disposition is (
+        ActionRetryDisposition.RECONCILE_REQUIRED
+    )
+    assert record.result.retry_decision.reason is (
+        ActionRetryReason.SIDE_EFFECT_UNCERTAIN
+    )
     assert record.result.artifact_refs == (artifact,)
     assert record.result.evidence_refs == (evidence,)
+
+
+@pytest.mark.asyncio
+async def test_read_failure_requires_provider_hint_for_new_action_retry(
+    tmp_path: Path,
+) -> None:
+    scope = _scope(tmp_path, conversation_id="chat-retry-read")
+    store = FilesystemActionStore(tmp_path)
+    recorder = RuntimeActionRecorder(scope, store)
+    context = _context("read_file", "call-read")
+    await recorder.begin(
+        context,
+        effect=ToolEffect.NONE,
+        policy_decision="allow",
+    )
+    response = ToolResponse(
+        content=[TextBlock(type="text", text="temporarily unavailable")],
+        id=context.tool_call_id,
+        state=ToolResultState.ERROR,
+        metadata={ACTION_RETRY_HINT_METADATA_KEY: True},
+    )
+
+    await recorder.complete(response, context)
+
+    [record] = await store.list_for_conversation("chat-retry-read")
+    assert record.result is not None
+    assert record.result.retryable is True
+    assert record.result.side_effect_status is None
+    assert record.result.retry_decision is not None
+    assert record.result.retry_decision.disposition is (
+        ActionRetryDisposition.RETRY_FROM_NEW_ACTION
+    )
+    assert record.result.retry_decision.reason is (
+        ActionRetryReason.TRANSIENT_FAILURE
+    )
+    assert response.metadata[ACTION_RETRY_DECISION_METADATA_KEY] == (
+        record.result.retry_decision.model_dump(mode="json")
+    )
 
 
 @pytest.mark.asyncio

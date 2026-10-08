@@ -224,6 +224,14 @@ Runtime 已显式分开两种 partial 终止：用户 Stop/取消继续保存已
 执行层，错误保存不再把 Envelope partial 注入 session。因此下一 Invocation 只读取
 最后一个完整提交边界，不会把半截 Assistant 消息当作事实或再次参与模型输入。
 
+Action failure 也不再由各执行器自行解释布尔值。Host 使用
+`qwenpaw.action-retry.v1` 生成结构化 retry decision：Provider、Driver 与插件只提供
+瞬时失败 hint；只有无副作用、明确失败的 Action 可由后续新 Action 重试。对于本地
+写入、外部写入和进程执行，普通 ERROR 无法证明副作用没有发生，因此默认记录为
+`uncertain / reconcile_required`，即使 Provider 声称 retryable 也不重放。当前尚未
+声明自动 dispatcher，因为还缺少 executor 级幂等能力证明和跨 Action attempt lineage；
+这避免把“允许安全重试”混同成“系统已经自动重试”。
+
 ### 5.1 故障分类
 
 建议在现有 `ModelCallResult` 和 Runtime policy 上冻结以下稳定语义，而不是依赖

@@ -13,11 +13,16 @@ from agentscope.message import ToolResultState
 from agentscope.tool import ToolResponse
 
 from ..kernel import (
+    ACTION_RETRY_DECISION_METADATA_KEY,
+    ACTION_RETRY_HINT_METADATA_KEY,
     ActionApprovalLink,
     ActionKind,
     ActionRecord,
     ActionRequest,
     ActionResult,
+    ActionRetryDecision,
+    ActionRetryDisposition,
+    ActionRetryReason,
     ActionStore,
     ActionStatus,
     ApprovalSource,
@@ -322,9 +327,47 @@ def _side_effect_status(
         return None
     if status in {ActionStatus.SUCCEEDED, ActionStatus.PARTIAL}:
         return SideEffectStatus.SUCCEEDED
-    if status in {ActionStatus.FAILED, ActionStatus.DENIED}:
+    if status is ActionStatus.DENIED:
         return SideEffectStatus.FAILED
     return SideEffectStatus.UNCERTAIN
+
+
+def _action_retry_decision(
+    request: ActionRequest,
+    *,
+    status: ActionStatus,
+    side_effect_status: SideEffectStatus | None,
+    provider_retryable: bool,
+) -> ActionRetryDecision:
+    """Apply the host retry policy without replaying an Action."""
+    if status is not ActionStatus.FAILED:
+        return ActionRetryDecision(
+            disposition=ActionRetryDisposition.NOT_APPLICABLE,
+            reason=ActionRetryReason.STATUS_NOT_FAILED,
+            provider_retryable=provider_retryable,
+        )
+    if side_effect_status is SideEffectStatus.UNCERTAIN:
+        return ActionRetryDecision(
+            disposition=ActionRetryDisposition.RECONCILE_REQUIRED,
+            reason=ActionRetryReason.SIDE_EFFECT_UNCERTAIN,
+            provider_retryable=provider_retryable,
+        )
+    if not provider_retryable:
+        return ActionRetryDecision(
+            disposition=ActionRetryDisposition.FORBIDDEN,
+            reason=ActionRetryReason.PROVIDER_NOT_RETRYABLE,
+        )
+    if request.effect is not ToolEffect.NONE:
+        return ActionRetryDecision(
+            disposition=ActionRetryDisposition.FORBIDDEN,
+            reason=ActionRetryReason.EFFECTFUL_RETRY_UNSUPPORTED,
+            provider_retryable=True,
+        )
+    return ActionRetryDecision(
+        disposition=ActionRetryDisposition.RETRY_FROM_NEW_ACTION,
+        reason=ActionRetryReason.TRANSIENT_FAILURE,
+        provider_retryable=True,
+    )
 
 
 class FilesystemActionStore:
@@ -860,8 +903,24 @@ class RuntimeActionRecorder:
         )
         status = self._status(response)
         artifacts, evidence = self._artifact_refs(response)
+        side_effect_status = _side_effect_status(request.effect, status)
+        retry_decision = _action_retry_decision(
+            request,
+            status=status,
+            side_effect_status=side_effect_status,
+            provider_retryable=(
+                (response.metadata or {}).get(
+                    ACTION_RETRY_HINT_METADATA_KEY,
+                )
+                is True
+            ),
+        )
+        response.metadata[ACTION_RETRY_DECISION_METADATA_KEY] = (
+            retry_decision.model_dump(mode="json")
+        )
         safe_observation = {
             "state": response.state.value,
+            "retry_decision": retry_decision.model_dump(mode="json"),
             "artifact_refs": [
                 {
                     "artifact_id": str(artifact.artifact_id),
@@ -906,8 +965,12 @@ class RuntimeActionRecorder:
                     else response.state.value
                 )
             ),
-            retryable=False,
-            side_effect_status=_side_effect_status(request.effect, status),
+            retryable=(
+                retry_decision.disposition
+                is ActionRetryDisposition.RETRY_FROM_NEW_ACTION
+            ),
+            retry_decision=retry_decision,
+            side_effect_status=side_effect_status,
         )
         committed_item = CommittedActionItem(
             action_id=request.action_id,
@@ -957,6 +1020,13 @@ class RuntimeActionRecorder:
                 [],
             )
         )
+        side_effect_status = _side_effect_status(request.effect, status)
+        retry_decision = _action_retry_decision(
+            request,
+            status=status,
+            side_effect_status=side_effect_status,
+            provider_retryable=retryable,
+        )
         result = ActionResult(
             action_id=request.action_id,
             invocation_id=request.invocation_id,
@@ -967,12 +1037,19 @@ class RuntimeActionRecorder:
                     "status": status.value,
                     "error_code": error_code,
                     "approval_ids": [str(value) for value in approval_ids],
+                    "retry_decision": retry_decision.model_dump(
+                        mode="json",
+                    ),
                 },
             ),
             approval_ids=approval_ids,
             error_code=error_code,
-            retryable=retryable,
-            side_effect_status=_side_effect_status(request.effect, status),
+            retryable=(
+                retry_decision.disposition
+                is ActionRetryDisposition.RETRY_FROM_NEW_ACTION
+            ),
+            retry_decision=retry_decision,
+            side_effect_status=side_effect_status,
         )
         try:
             await self._store.complete(result)
@@ -1015,6 +1092,8 @@ async def link_active_action_approval(
 __all__ = [
     "ACTION_REQUEST_CONTEXT_KEY",
     "ACTION_REQUEST_STATE_KEY",
+    "ACTION_RETRY_DECISION_METADATA_KEY",
+    "ACTION_RETRY_HINT_METADATA_KEY",
     "ACTION_RESULT_CONTEXT_KEY",
     "COMMITTED_ACTION_ITEM_METADATA_KEY",
     "ActionConflictError",

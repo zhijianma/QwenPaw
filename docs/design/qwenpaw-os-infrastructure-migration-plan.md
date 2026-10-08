@@ -486,6 +486,13 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     来源 Invocation 之后出现新 Submission 或证据变化均失败关闭。拒绝或停止会取消
     continuation，不改写原 ActionResult，不恢复旧协程，也不复用 Task 私有 retry
     API。
+  - [x] Action retry 裁决已冻结为 Host-owned `qwenpaw.action-retry.v1`：Provider、
+    Driver 或插件只能提交 `provider_retryable` hint，不能决定重放。只有无副作用、明确
+    `failed` 且带瞬时失败 hint 的 Action 才允许以新 Action 重试；写入、进程和外部
+    调用的 ERROR 默认进入 `uncertain -> reconcile_required`，不会因错误返回而推断
+    “肯定未执行”。裁决随 `ActionResult` 持久化并进入统一 Observation；原 Action
+    保持不可变。自动 dispatcher 仍须等待 executor 级幂等能力声明和 attempt lineage，
+    因此本阶段不把 `retryable` 误报成“已自动重试”。
 - [ ] 把 WebSocket 增量续传、sticky route 和 HTTP fallback 保持为 Provider
   Adapter capability；严格验证 response identity/prefix，失败时回退持久上下文重建，
   Kernel 不感知具体传输。

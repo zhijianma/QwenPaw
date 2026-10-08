@@ -79,11 +79,16 @@ from ...kernel.outcomes import (
     ConversationOutcomeStatus,
 )
 from ...kernel.models import (
+    ACTION_RETRY_DECISION_METADATA_KEY,
+    ACTION_RETRY_HINT_METADATA_KEY,
     ActionApprovalLink,
     ActionKind,
     ActionRecord,
     ActionRequest,
     ActionResult,
+    ActionRetryDecision,
+    ActionRetryDisposition,
+    ActionRetryReason,
     ActionStatus,
     ArtifactEmitter,
     ArtifactPreviewDescriptor,
@@ -230,12 +235,17 @@ from ...tasks.runner import LocalAgentRunner
 SDK_VERSION = "1.0"
 
 __all__ = [
+    "ACTION_RETRY_DECISION_METADATA_KEY",
+    "ACTION_RETRY_HINT_METADATA_KEY",
     "SDK_VERSION",
     "ActionApprovalLink",
     "ActionKind",
     "ActionRecord",
     "ActionRequest",
     "ActionResult",
+    "ActionRetryDecision",
+    "ActionRetryDisposition",
+    "ActionRetryReason",
     "ActionStatus",
     "ArtifactEmitter",
     "ArtifactPreviewDescriptor",

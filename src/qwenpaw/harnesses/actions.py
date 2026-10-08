@@ -195,6 +195,7 @@ class HarnessActionTracker:
             context,
             status=status,
             error_code=error_code,
+            retryable=event.data.get("retryable") is True,
         )
         self._committed_items[event.item_id] = committed_item
         self._contexts.pop(event.item_id, None)

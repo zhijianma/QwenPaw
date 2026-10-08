@@ -504,6 +504,21 @@ def _action_observations(
             ],
             "error_code": result.error_code,
             "retryable": result.retryable,
+            "retry_disposition": (
+                result.retry_decision.disposition.value
+                if result.retry_decision is not None
+                else None
+            ),
+            "retry_reason": (
+                result.retry_decision.reason.value
+                if result.retry_decision is not None
+                else None
+            ),
+            "retry_policy_id": (
+                result.retry_decision.policy_id
+                if result.retry_decision is not None
+                else None
+            ),
             "side_effect_status": (
                 result.side_effect_status.value
                 if result.side_effect_status is not None

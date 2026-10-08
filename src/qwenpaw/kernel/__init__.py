@@ -13,11 +13,16 @@ from .driver import (
     validate_driver_session,
 )
 from .models import (
+    ACTION_RETRY_DECISION_METADATA_KEY,
+    ACTION_RETRY_HINT_METADATA_KEY,
     ActionApprovalLink,
     ActionKind,
     ActionRecord,
     ActionRequest,
     ActionResult,
+    ActionRetryDecision,
+    ActionRetryDisposition,
+    ActionRetryReason,
     ActionStatus,
     ActorRef,
     ActorType,
@@ -394,6 +399,8 @@ from .ports import (
 )
 
 __all__ = [
+    "ACTION_RETRY_DECISION_METADATA_KEY",
+    "ACTION_RETRY_HINT_METADATA_KEY",
     "BudgetAllocation",
     "BudgetLease",
     "BudgetLeaseSnapshot",
@@ -432,6 +439,9 @@ __all__ = [
     "ActionRecord",
     "ActionRequest",
     "ActionResult",
+    "ActionRetryDecision",
+    "ActionRetryDisposition",
+    "ActionRetryReason",
     "ActionStatus",
     "ActionStore",
     "ActorRef",

@@ -11,6 +11,9 @@ from qwenpaw.kernel import (
     ActionKind,
     ActionRequest,
     ActionResult,
+    ActionRetryDecision,
+    ActionRetryDisposition,
+    ActionRetryReason,
     ActionStatus,
     ActorRef,
     ActorType,
@@ -840,6 +843,10 @@ async def test_action_uses_the_same_observation_contract(tmp_path) -> None:
         conversation_id=conversation_id,
         status=ActionStatus.SUCCEEDED,
         observation_digest=f"sha256:{'b' * 64}",
+        retry_decision=ActionRetryDecision(
+            disposition=ActionRetryDisposition.NOT_APPLICABLE,
+            reason=ActionRetryReason.STATUS_NOT_FAILED,
+        ),
         completed_at=requested_at + timedelta(seconds=1),
     )
     store = lite_action_store(tmp_path)
@@ -857,6 +864,11 @@ async def test_action_uses_the_same_observation_contract(tmp_path) -> None:
     }
     assert observations[0].status is ObservationStatus.SUCCEEDED
     assert observations[0].source.source_type == "qwenpaw.action.result"
+    assert observations[0].facts["retry_disposition"] == "not_applicable"
+    assert observations[0].facts["retry_reason"] == "status_not_failed"
+    assert observations[0].facts["retry_policy_id"] == (
+        "qwenpaw.action-retry.v1"
+    )
     intent = next(
         item
         for item in observations

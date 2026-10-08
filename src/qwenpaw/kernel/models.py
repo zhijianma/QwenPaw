@@ -36,6 +36,8 @@ NamespacedId = Annotated[
 JsonObject = dict[str, JsonValue]
 TOOL_ARTIFACT_OUTPUTS_METADATA_KEY = "qwenpaw_artifact_outputs"
 COMMITTED_ACTION_ITEM_METADATA_KEY = "qwenpaw_committed_action_item"
+ACTION_RETRY_HINT_METADATA_KEY = "qwenpaw_action_retry_hint"
+ACTION_RETRY_DECISION_METADATA_KEY = "qwenpaw_action_retry_decision"
 
 
 def utc_now() -> datetime:
@@ -134,6 +136,25 @@ class ActionStatus(str, Enum):
     UNKNOWN = "unknown"
     CANCELLED = "cancelled"
     DENIED = "denied"
+
+
+class ActionRetryDisposition(str, Enum):
+    """Host decision for a terminal Action failure."""
+
+    NOT_APPLICABLE = "not_applicable"
+    FORBIDDEN = "forbidden"
+    RETRY_FROM_NEW_ACTION = "retry_from_new_action"
+    RECONCILE_REQUIRED = "reconcile_required"
+
+
+class ActionRetryReason(str, Enum):
+    """Stable reason behind one Action retry decision."""
+
+    STATUS_NOT_FAILED = "status_not_failed"
+    PROVIDER_NOT_RETRYABLE = "provider_not_retryable"
+    SIDE_EFFECT_UNCERTAIN = "side_effect_uncertain"
+    EFFECTFUL_RETRY_UNSUPPORTED = "effectful_retry_unsupported"
+    TRANSIENT_FAILURE = "transient_failure"
 
 
 class ModelRouteReason(str, Enum):
@@ -497,6 +518,17 @@ class ActionRequest(KernelModel):
     requested_at: AwareDatetime = Field(default_factory=utc_now)
 
 
+class ActionRetryDecision(KernelModel):
+    """Provider-neutral retry policy result for one immutable Action."""
+
+    policy_id: Literal["qwenpaw.action-retry.v1"] = (
+        "qwenpaw.action-retry.v1"
+    )
+    disposition: ActionRetryDisposition
+    reason: ActionRetryReason
+    provider_retryable: bool = False
+
+
 class ActionResult(KernelModel):
     """Content-minimal terminal evidence for one action request."""
 
@@ -524,8 +556,30 @@ class ActionResult(KernelModel):
     approval_ids: tuple[UUID, ...] = ()
     error_code: str = ""
     retryable: bool = False
+    retry_decision: ActionRetryDecision | None = None
     side_effect_status: SideEffectStatus | None = None
     completed_at: AwareDatetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def validate_retry_decision(self) -> Self:
+        """Keep the compatibility flag aligned with the policy decision."""
+        if self.retry_decision is None:
+            return self
+        allowed = (
+            self.retry_decision.disposition
+            is ActionRetryDisposition.RETRY_FROM_NEW_ACTION
+        )
+        if self.retryable != allowed:
+            raise ValueError("retryable must match retry_decision")
+        if self.retryable and self.status is not ActionStatus.FAILED:
+            raise ValueError("only failed actions may be retryable")
+        if self.retryable and self.side_effect_status in {
+            SideEffectStatus.PREPARED,
+            SideEffectStatus.SUCCEEDED,
+            SideEffectStatus.UNCERTAIN,
+        }:
+            raise ValueError("unsafe side effects cannot be retryable")
+        return self
 
 
 class CommittedActionItem(KernelModel):
