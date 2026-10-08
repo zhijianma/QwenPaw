@@ -18,11 +18,20 @@ from types import SimpleNamespace
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Query
+from fastapi import (
+    APIRouter,
+    File,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from ...plugins.contributions import ContributionValidationError
+from ...plugins.loader import PluginDeactivationAuthorizationRequired
 from ...plugins.migration import build_plugin_migration_plan
 from ..utils import schedule_agent_reload
 
@@ -862,6 +871,7 @@ async def uninstall_plugin_source(
     *,
     app,
     reload_agents: bool = True,
+    confirmed_release_hash: str | None = None,
 ) -> None:
     """Uninstall through the native plugin lifecycle."""
     request = SimpleNamespace(app=app)
@@ -877,7 +887,11 @@ async def uninstall_plugin_source(
             loader.registry,
             plugin_id,
         )
-        await loader.unload_plugin(plugin_id, delete_files=True)
+        await loader.unload_plugin(
+            plugin_id,
+            delete_files=True,
+            confirmed_release_hash=confirmed_release_hash,
+        )
         _post_unload_cleanup(
             request,
             plugin_id,
@@ -1042,7 +1056,14 @@ async def upload_plugin(
         "immediately."
     ),
 )
-async def uninstall_plugin(plugin_id: str, request: Request):
+async def uninstall_plugin(
+    plugin_id: str,
+    request: Request,
+    confirmed_release_hash: str | None = Header(
+        default=None,
+        alias="X-QwenPaw-Confirm-Release",
+    ),
+):
     """Unload and delete a plugin by ID."""
     loader = getattr(request.app.state, "plugin_loader", None)
     if loader is None:
@@ -1055,7 +1076,13 @@ async def uninstall_plugin(plugin_id: str, request: Request):
         await uninstall_plugin_source(
             plugin_id,
             app=request.app,
+            confirmed_release_hash=confirmed_release_hash,
         )
+    except PluginDeactivationAuthorizationRequired as exc:
+        raise HTTPException(
+            status_code=428,
+            detail=exc.response_detail(),
+        ) from exc
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:

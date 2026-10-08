@@ -1263,6 +1263,15 @@ provider deactivation before dismantling plugin-owned host state; a journal or
 evidence failure leaves the loaded plugin intact instead of producing a torn
 half-unload.
 
+Capability-bearing plugins also use an exact-release authorization fence.
+The first permanent delete returns HTTP `428` with a content-safe release hash
+and capability IDs. An authorized Console or CLI client repeats the request
+with `X-QwenPaw-Confirm-Release: <release-hash>`. QwenPaw validates that hash
+under the same per-plugin lifecycle lock before running uninstall hooks,
+removing registrations, or deleting files. If an update won the race, the
+stale confirmation is rejected and the new release remains loaded. Internal
+hot replacement does not use this permanent-delete path.
+
 ## 6. Clean-room acceptance walkthrough
 
 Use this sequence from a fresh checkout before publishing a plugin:

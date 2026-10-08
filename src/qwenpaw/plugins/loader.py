@@ -57,6 +57,32 @@ _IMPORT_NAME_OVERRIDES = {
 _PAWPORT_MARKER = ".qwenpaw-pawport.json"
 
 
+class PluginDeactivationAuthorizationRequired(RuntimeError):
+    """Require confirmation of the exact release being permanently removed."""
+
+    def __init__(
+        self,
+        provider_id: str,
+        release_hash: str,
+        capability_ids: tuple[str, ...],
+    ) -> None:
+        self.provider_id = provider_id
+        self.release_hash = release_hash
+        self.capability_ids = capability_ids
+        super().__init__(
+            f"deactivation authorization required for '{provider_id}'",
+        )
+
+    def response_detail(self) -> dict[str, object]:
+        """Return a content-safe HTTP challenge without plugin internals."""
+        return {
+            "code": "capability_deactivation_authorization_required",
+            "provider_id": self.provider_id,
+            "release_hash": self.release_hash,
+            "capability_ids": list(self.capability_ids),
+        }
+
+
 def _is_frozen() -> bool:
     return bool(getattr(sys, "frozen", False))
 
@@ -1521,6 +1547,8 @@ class PluginLoader:
         self,
         plugin_id: str,
         delete_files: bool = False,
+        *,
+        confirmed_release_hash: str | None = None,
     ) -> None:
         """Unload a plugin from memory and optionally remove its files.
 
@@ -1537,7 +1565,11 @@ class PluginLoader:
             KeyError: If the plugin is not currently loaded
         """
         async with self.plugin_lifecycle(plugin_id):
-            await self._unload_plugin_unlocked(plugin_id, delete_files)
+            await self._unload_plugin_unlocked(
+                plugin_id,
+                delete_files,
+                confirmed_release_hash=confirmed_release_hash,
+            )
 
     async def _unload_plugin_unlocked(
         self,
@@ -1546,6 +1578,7 @@ class PluginLoader:
         *,
         deactivate_capabilities: bool = True,
         run_uninstall_hooks: bool = True,
+        confirmed_release_hash: str | None = None,
     ) -> None:
         """Unload a plugin and release a failed unload reservation."""
         from qwenpaw.memory import memory_registry
@@ -1556,6 +1589,7 @@ class PluginLoader:
                 delete_files,
                 deactivate_capabilities=deactivate_capabilities,
                 run_uninstall_hooks=run_uninstall_hooks,
+                confirmed_release_hash=confirmed_release_hash,
             )
         except BaseException:
             memory_registry.cancel_owner_unload(plugin_id)
@@ -1568,6 +1602,7 @@ class PluginLoader:
         *,
         deactivate_capabilities: bool = True,
         run_uninstall_hooks: bool = True,
+        confirmed_release_hash: str | None = None,
     ) -> None:
         """Unload a plugin; caller must hold :meth:`plugin_lifecycle`."""
         record = self._loaded_plugins.get(plugin_id)
@@ -1578,10 +1613,22 @@ class PluginLoader:
 
         self.registry.assert_memory_backends_not_in_use(plugin_id)
 
+        operator_authorized = (
+            self._authorize_permanent_deactivation(
+                plugin_id,
+                delete_files=delete_files,
+                deactivate_capabilities=deactivate_capabilities,
+                confirmed_release_hash=confirmed_release_hash,
+            )
+        )
+
         # Publish the provider removal before mutating plugin-owned host
         # state. A failed WAL prepare must leave the loaded plugin intact.
         if deactivate_capabilities:
-            await self.capability_registry.deactivate_provider(plugin_id)
+            await self.capability_registry.deactivate_provider(
+                plugin_id,
+                operator_authorized=operator_authorized,
+            )
 
         # Execute shutdown hooks registered by this plugin
         shutdown_hooks = [
@@ -1683,6 +1730,28 @@ class PluginLoader:
                 )
 
         logger.info(f"Unloaded plugin '{plugin_id}'")
+
+    def _authorize_permanent_deactivation(
+        self,
+        plugin_id: str,
+        *,
+        delete_files: bool,
+        deactivate_capabilities: bool,
+        confirmed_release_hash: str | None,
+    ) -> bool:
+        """Fence destructive capability removal to one stable release."""
+        if not delete_files or not deactivate_capabilities:
+            return False
+        release = self.capability_registry.stable_release(plugin_id)
+        if release is None:
+            return False
+        if confirmed_release_hash != release.release_hash:
+            raise PluginDeactivationAuthorizationRequired(
+                plugin_id,
+                release.release_hash,
+                release.capability_ids,
+            )
+        return True
 
     @staticmethod
     def _cleanup_contribution_tool_governance(

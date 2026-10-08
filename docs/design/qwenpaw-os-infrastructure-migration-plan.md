@@ -1094,7 +1094,12 @@ Cron 不形成独立审批或产物事实源。
     `execute()` / `execute_context()` 或解析 Workspace。旧 Runner 记录
     `not_applicable`；畸形或不一致结果失败关闭。该门禁是 SDK capability isolation，
     不是本地 Python 的 OS sandbox，真实执行仍由 Environment/Policy/Approval 管理。
-  - [ ] 补齐 Evidence Artifact、人工授权策略与卸载授权门禁。关键词发现索引与
+  - [x] capability-bearing Plugin/PawApp 永久卸载已增加 exact-release 授权栅栏：
+    首次请求返回 428 challenge，Console/CLI 在既有用户确认后携带 release hash
+    重试；Loader 在同一 lifecycle lock 内校验，过期确认在 hook、注册和文件变更前
+    失败关闭。显式卸载 Evidence 记录 `operator-authorized=passed`，内部热替换为
+    `not_applicable`，不把更新误记为人工卸载。
+  - [ ] 补齐 Evidence Artifact 与通用人工授权策略。关键词发现索引与
     Workstation/Hub Release Registry 仍待实现。
 
 - [x] 每个公开扩展模块均有 system/plugin contract tests；system-only 模块具有

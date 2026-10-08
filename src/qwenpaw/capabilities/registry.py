@@ -1059,10 +1059,15 @@ class GenerationRegistry:
     async def deactivate_provider(
         self,
         provider_id: str,
+        *,
+        operator_authorized: bool = False,
     ) -> RegistrySnapshot:
         """Atomically remove one provider from all future leases."""
         async with self._lock:
-            transaction = self._prepare_deactivation(provider_id)
+            transaction = self._prepare_deactivation(
+                provider_id,
+                operator_authorized=operator_authorized,
+            )
             if transaction is None:
                 return self._current
             return await self._commit_deactivation(transaction)
@@ -1070,6 +1075,8 @@ class GenerationRegistry:
     def _prepare_deactivation(
         self,
         provider_id: str,
+        *,
+        operator_authorized: bool,
     ) -> _DeactivationTransaction | None:
         contributions = {
             capability_id: contribution
@@ -1117,6 +1124,14 @@ class GenerationRegistry:
                 (
                     "deactivate.provider-present",
                     CapabilityCheckOutcome.PASSED,
+                ),
+                (
+                    "deactivate.operator-authorized",
+                    (
+                        CapabilityCheckOutcome.PASSED
+                        if operator_authorized
+                        else CapabilityCheckOutcome.NOT_APPLICABLE
+                    ),
                 ),
             ),
         )

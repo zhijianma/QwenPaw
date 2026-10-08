@@ -56,6 +56,13 @@ export interface PluginStatus {
   version?: string;
 }
 
+interface DeactivationChallenge {
+  code?: string;
+  release_hash?: string;
+}
+
+const DEACTIVATION_CHALLENGE = "capability_deactivation_authorization_required";
+
 /** Entry from ``GET /api/plugins/catalog`` (official CDN manifest). */
 export interface OfficialPluginCatalogEntry {
   id: string;
@@ -167,10 +174,29 @@ export async function uploadPlugin(file: File): Promise<InstallPluginResult> {
  * Uninstall (hot-unload + delete) a plugin by ID.
  */
 export async function uninstallPlugin(pluginId: string): Promise<void> {
-  const response = await fetch(getApiUrl(`/plugins/${pluginId}`), {
+  const url = getApiUrl(`/plugins/${pluginId}`);
+  let response = await fetch(url, {
     method: "DELETE",
     headers: buildAuthHeaders(),
   });
+
+  if (response.status === 428) {
+    const body = (await response.json().catch(() => ({}))) as {
+      detail?: DeactivationChallenge;
+    };
+    const challenge = body.detail;
+    if (challenge?.code === DEACTIVATION_CHALLENGE && challenge.release_hash) {
+      response = await fetch(url, {
+        method: "DELETE",
+        headers: {
+          ...buildAuthHeaders(),
+          "X-QwenPaw-Confirm-Release": challenge.release_hash,
+        },
+      });
+    } else {
+      throw new Error(`Uninstall failed (${response.status})`);
+    }
+  }
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));

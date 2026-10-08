@@ -368,6 +368,48 @@ async def test_successful_deactivation_records_one_wal_operation() -> None:
         event.previous_release_hash == release.release_hash
         for event in journal.events
     )
+    evidence_bundles = await registry.promotion_evidence(
+        journal.events[-1].candidate.candidate_id,
+    )
+    authorization_evidence = [
+        evidence
+        for bundle in evidence_bundles
+        for evidence in bundle.evidence
+        if evidence.check_id == "deactivate.operator-authorized"
+    ]
+    assert len(authorization_evidence) == 1
+    assert (
+        authorization_evidence[0].outcome
+        is CapabilityCheckOutcome.NOT_APPLICABLE
+    )
+
+
+@pytest.mark.asyncio
+async def test_operator_authorized_deactivation_records_evidence() -> None:
+    journal = _RecordingJournal()
+    registry = GenerationRegistry(promotion_journal=journal)
+    await registry.activate_bundle(_bundle(), _factory)
+    journal.events.clear()
+
+    await registry.deactivate_provider(
+        "qwenpaw.system.test",
+        operator_authorized=True,
+    )
+
+    evidence_bundles = await registry.promotion_evidence(
+        journal.events[-1].candidate.candidate_id,
+    )
+    authorization_evidence = [
+        evidence
+        for bundle in evidence_bundles
+        for evidence in bundle.evidence
+        if evidence.check_id == "deactivate.operator-authorized"
+    ]
+    assert len(authorization_evidence) == 1
+    assert (
+        authorization_evidence[0].outcome
+        is CapabilityCheckOutcome.PASSED
+    )
 
 
 @pytest.mark.asyncio

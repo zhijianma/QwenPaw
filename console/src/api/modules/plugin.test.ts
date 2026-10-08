@@ -186,6 +186,34 @@ describe("plugin module", () => {
     });
   });
 
+  it("uninstallPlugin confirms the exact challenged release", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        mockResponse({
+          ok: false,
+          status: 428,
+          json: {
+            detail: {
+              code: "capability_deactivation_authorization_required",
+              release_hash: "sha256:release-1",
+            },
+          },
+        }),
+      )
+      .mockResolvedValueOnce(mockResponse({ ok: true, status: 200, json: {} }));
+
+    await expect(uninstallPlugin("p1")).resolves.toBeUndefined();
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenNthCalledWith(2, "http://test/plugins/p1", {
+      method: "DELETE",
+      headers: {
+        "X-QwenPaw-Confirm-Release": "sha256:release-1",
+      },
+    });
+  });
+
   it("uninstallPlugin throws fallback message on failure", async () => {
     global.fetch = vi
       .fn()

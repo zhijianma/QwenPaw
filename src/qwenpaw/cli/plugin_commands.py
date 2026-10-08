@@ -170,6 +170,24 @@ def _api_uninstall_plugin(plugin_id: str) -> bool:
     try:
         with api_client(base) as client:
             response = client.delete(f"plugins/{plugin_id}")
+            if response.status_code == 428:
+                detail = response.json().get("detail", {})
+                if (
+                    detail.get("code")
+                    == (
+                        "capability_deactivation_"
+                        "authorization_required"
+                    )
+                    and detail.get("release_hash")
+                ):
+                    response = client.delete(
+                        f"plugins/{plugin_id}",
+                        headers={
+                            "X-QwenPaw-Confirm-Release": (
+                                detail["release_hash"]
+                            ),
+                        },
+                    )
             response.raise_for_status()
             body = response.json()
         click.echo(

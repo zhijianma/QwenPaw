@@ -10,7 +10,10 @@ import pytest
 from qwenpaw.plugins.architecture import PluginManifest
 from qwenpaw.plugins.generations import ActivationError
 from qwenpaw.plugins.contributions import ContributionValidationError
-from qwenpaw.plugins.loader import PluginLoader
+from qwenpaw.plugins.loader import (
+    PluginDeactivationAuthorizationRequired,
+    PluginLoader,
+)
 from qwenpaw.capabilities import GenerationRegistry
 from qwenpaw.capabilities.promotions import (
     FilesystemCapabilityPromotionJournal,
@@ -283,6 +286,54 @@ async def test_force_replace_publishes_one_atomic_generation(
     assert current.implementation("atomic-engine.engine").marker == "new"
     await old_lease.close()
     await current.close()
+
+
+@pytest.mark.asyncio
+async def test_permanent_unload_requires_exact_release_authorization(
+    tmp_path: Path,
+) -> None:
+    install_dir = tmp_path / "installed"
+    source = tmp_path / "source"
+    _write_engine_plugin(source, version="1.0.0", marker="loaded")
+    loader = PluginLoader([install_dir])
+    record = await loader.load_plugin_from_path(
+        source,
+        install_dir=install_dir,
+    )
+    release = loader.capability_registry.stable_release("atomic-engine")
+    assert release is not None
+
+    with pytest.raises(
+        PluginDeactivationAuthorizationRequired,
+    ) as challenge:
+        await loader.unload_plugin(
+            "atomic-engine",
+            delete_files=True,
+        )
+
+    assert challenge.value.release_hash == release.release_hash
+    assert challenge.value.capability_ids == ("atomic-engine.engine",)
+    assert loader.get_loaded_plugin("atomic-engine") is record
+    assert record.source_path.exists()
+
+    with pytest.raises(PluginDeactivationAuthorizationRequired):
+        await loader.unload_plugin(
+            "atomic-engine",
+            delete_files=True,
+            confirmed_release_hash="sha256:stale",
+        )
+
+    assert loader.get_loaded_plugin("atomic-engine") is record
+    assert record.source_path.exists()
+
+    await loader.unload_plugin(
+        "atomic-engine",
+        delete_files=True,
+        confirmed_release_hash=release.release_hash,
+    )
+
+    assert loader.get_loaded_plugin("atomic-engine") is None
+    assert not record.source_path.exists()
 
 
 @pytest.mark.asyncio

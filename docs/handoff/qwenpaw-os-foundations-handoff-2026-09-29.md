@@ -690,6 +690,21 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   8004 最新 committed Candidate 的 Console、Codex、Qoder 三个 Runner preflight
   均为 passed；未执行全仓测试。
 
+### 2026-10-08 Exact-release Plugin Deactivation Authorization
+
+- capability-bearing Plugin/PawApp 的永久卸载改为两阶段条件请求。首次 DELETE 返回
+  HTTP 428、当前 stable release hash 和 capability IDs；Console、PawApp client 与
+  已完成 click.confirm 的 CLI 使用 `X-QwenPaw-Confirm-Release` 精确重试。
+- release fence 在同一 per-plugin lifecycle lock 内校验。缺少或过期确认不会执行
+  deactivation、uninstall hook、注销或删文件，因此并发升级后的新版本不会被旧确认
+  误删。非 capability 插件和内部 force replacement 保持原兼容路径。
+- Registry deactivation Evidence 新增 `deactivate.operator-authorized`；显式永久卸载
+  记录 passed，内部兼容撤销记录 not_applicable，不伪造人工授权。
+- 长程交互方向不变且已进入可执行契约：一问一答只保留为短 Chat 快速路径和 UI
+  投影；持续 Agent Loop 由 correlation、Submission、Invocation、Action、Artifact、
+  Evidence、Checkpoint、typed wait 和 continuation 驱动。Ask User 仅用于缺失必要
+  事实、实质偏好、范围授权或高影响裁决，不能成为逐步骤推进器。
+
 ### 本阶段此前已执行的定点验证
 
 - 后端核心路径定点测试：70 项通过。

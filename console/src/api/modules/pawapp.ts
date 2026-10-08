@@ -33,6 +33,13 @@ export interface PawAppIframeResponse {
   error?: string;
 }
 
+interface DeactivationChallenge {
+  code?: string;
+  release_hash?: string;
+}
+
+const DEACTIVATION_CHALLENGE = "capability_deactivation_authorization_required";
+
 export const pawappApi = {
   /**
    * List all installed PawApps.
@@ -75,10 +82,31 @@ export const pawappApi = {
    * Uninstall a PawApp by ID (deletes its directory under ~/.copaw/apps).
    */
   async uninstall(appId: string): Promise<void> {
-    const res = await fetch(getApiUrl(`/pawapps/${appId}`), {
+    const url = getApiUrl(`/pawapps/${appId}`);
+    let res = await fetch(url, {
       method: "DELETE",
       headers: buildAuthHeaders(),
     });
+    if (res.status === 428) {
+      const body = (await res.json().catch(() => ({}))) as {
+        detail?: DeactivationChallenge;
+      };
+      const challenge = body.detail;
+      if (
+        challenge?.code === DEACTIVATION_CHALLENGE &&
+        challenge.release_hash
+      ) {
+        res = await fetch(url, {
+          method: "DELETE",
+          headers: {
+            ...buildAuthHeaders(),
+            "X-QwenPaw-Confirm-Release": challenge.release_hash,
+          },
+        });
+      } else {
+        throw new Error(`Uninstall failed (${res.status})`);
+      }
+    }
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       throw new Error(

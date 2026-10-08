@@ -14,8 +14,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import asyncio
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import FileResponse
+
+from ...plugins.loader import PluginDeactivationAuthorizationRequired
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +169,14 @@ async def get_pawapp(app_id: str, request: Request) -> Dict[str, Any]:
 
 
 @router.delete("/{app_id}")
-async def uninstall_pawapp(app_id: str, request: Request) -> Dict[str, Any]:
+async def uninstall_pawapp(
+    app_id: str,
+    request: Request,
+    confirmed_release_hash: str | None = Header(
+        default=None,
+        alias="X-QwenPaw-Confirm-Release",
+    ),
+) -> Dict[str, Any]:
     """Uninstall a PawApp by deleting its directory under ~/.copaw/apps.
 
     Falls back to unloading a plugin-based PawApp via the plugin loader
@@ -195,7 +204,16 @@ async def uninstall_pawapp(app_id: str, request: Request) -> Dict[str, Any]:
     loader = getattr(request.app.state, "plugin_loader", None)
     if loader is not None and loader.get_loaded_plugin(app_id) is not None:
         try:
-            await loader.unload_plugin(app_id, delete_files=True)
+            await loader.unload_plugin(
+                app_id,
+                delete_files=True,
+                confirmed_release_hash=confirmed_release_hash,
+            )
+        except PluginDeactivationAuthorizationRequired as exc:
+            raise HTTPException(
+                status_code=428,
+                detail=exc.response_detail(),
+            ) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
                 status_code=500,

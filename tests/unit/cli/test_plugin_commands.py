@@ -288,6 +288,36 @@ class TestApiUninstallPlugin:
         assert pc._api_uninstall_plugin("pid") is True
         assert captured["method"] == "DELETE"
 
+    def test_confirms_exact_challenged_release(self, monkeypatch):
+        _patch_base(monkeypatch)
+        requests = []
+
+        def respond(req, timeout=None):
+            requests.append(req)
+            if len(requests) == 1:
+                return httpx.Response(
+                    428,
+                    json={
+                        "detail": {
+                            "code": (
+                                "capability_deactivation_"
+                                "authorization_required"
+                            ),
+                            "release_hash": "sha256:release-1",
+                        },
+                    },
+                )
+            return _response({"message": "bye"})
+
+        _patch_transport(monkeypatch, respond)
+
+        assert pc._api_uninstall_plugin("pid") is True
+        assert len(requests) == 2
+        assert (
+            requests[1].headers["X-QwenPaw-Confirm-Release"]
+            == "sha256:release-1"
+        )
+
     def test_http_error(self, monkeypatch, capsys):
         _patch_base(monkeypatch)
         _patch_transport(

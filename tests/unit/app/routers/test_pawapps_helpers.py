@@ -11,9 +11,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
+import pytest
+from fastapi import HTTPException
 
 from qwenpaw.app.routers import pawapps as pa
+from qwenpaw.plugins.loader import (
+    PluginDeactivationAuthorizationRequired,
+)
 
 
 def _manifest(**meta_pawapp):
@@ -188,3 +194,61 @@ class TestGetPawappsFromRegistry:
     def test_non_dict_manifest_filtered(self):
         request = self._request_with_registry({"bad": "not-a-dict"})
         assert pa._get_pawapps_from_registry(request) == []
+
+
+@pytest.mark.asyncio
+async def test_uninstall_pawapp_returns_exact_release_challenge(
+    tmp_path,
+    monkeypatch,
+):
+    challenge = PluginDeactivationAuthorizationRequired(
+        "app-1",
+        "sha256:pawapp-1",
+        ("app-1.runner",),
+    )
+    loader = SimpleNamespace(
+        get_loaded_plugin=lambda _app_id: object(),
+        unload_plugin=AsyncMock(side_effect=challenge),
+    )
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(plugin_loader=loader),
+        ),
+    )
+    monkeypatch.setattr(pa, "_get_apps_dir", lambda: tmp_path)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await pa.uninstall_pawapp("app-1", request, None)
+
+    assert exc_info.value.status_code == 428
+    assert exc_info.value.detail == challenge.response_detail()
+
+
+@pytest.mark.asyncio
+async def test_uninstall_pawapp_forwards_confirmed_release_hash(
+    tmp_path,
+    monkeypatch,
+):
+    loader = SimpleNamespace(
+        get_loaded_plugin=lambda _app_id: object(),
+        unload_plugin=AsyncMock(),
+    )
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(plugin_loader=loader),
+        ),
+    )
+    monkeypatch.setattr(pa, "_get_apps_dir", lambda: tmp_path)
+
+    result = await pa.uninstall_pawapp(
+        "app-1",
+        request,
+        "sha256:pawapp-1",
+    )
+
+    assert result["id"] == "app-1"
+    loader.unload_plugin.assert_awaited_once_with(
+        "app-1",
+        delete_files=True,
+        confirmed_release_hash="sha256:pawapp-1",
+    )

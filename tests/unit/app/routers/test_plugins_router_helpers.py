@@ -32,6 +32,7 @@ from qwenpaw.app.routers.plugins import (
     list_capability_releases,
     list_plugins,
     router as plugins_router,
+    uninstall_plugin,
 )
 from qwenpaw.app.routers.frontend_plugin import list_frontend_plugins
 from qwenpaw.capabilities import GenerationRegistry
@@ -52,6 +53,9 @@ from qwenpaw.plugins.architecture import (
 from qwenpaw.plugins.contributions import (
     ContributionDiagnostic,
     ContributionValidationError,
+)
+from qwenpaw.plugins.loader import (
+    PluginDeactivationAuthorizationRequired,
 )
 
 
@@ -353,6 +357,59 @@ async def test_install_returns_structured_contribution_diagnostics():
 
     assert exc_info.value.status_code == 400
     assert exc_info.value.detail == error.response_detail()
+
+
+@pytest.mark.asyncio
+async def test_uninstall_returns_exact_release_challenge():
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(plugin_loader=object()),
+        ),
+    )
+    challenge = PluginDeactivationAuthorizationRequired(
+        "capability-plugin",
+        "sha256:release-1",
+        ("capability-plugin.runner",),
+    )
+
+    with patch(
+        "qwenpaw.app.routers.plugins.uninstall_plugin_source",
+        new=AsyncMock(side_effect=challenge),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await uninstall_plugin(
+                "capability-plugin",
+                request,
+                None,
+            )
+
+    assert exc_info.value.status_code == 428
+    assert exc_info.value.detail == challenge.response_detail()
+
+
+@pytest.mark.asyncio
+async def test_uninstall_forwards_confirmed_release_hash():
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(plugin_loader=object()),
+        ),
+    )
+
+    with patch(
+        "qwenpaw.app.routers.plugins.uninstall_plugin_source",
+        new=AsyncMock(),
+    ) as uninstall_source:
+        await uninstall_plugin(
+            "capability-plugin",
+            request,
+            "sha256:release-1",
+        )
+
+    uninstall_source.assert_awaited_once_with(
+        "capability-plugin",
+        app=request.app,
+        confirmed_release_hash="sha256:release-1",
+    )
 
 
 @pytest.mark.asyncio
