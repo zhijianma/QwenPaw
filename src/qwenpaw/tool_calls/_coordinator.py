@@ -115,6 +115,7 @@ class ToolCoordinator:
         result_processor: ToolResultProcessor | None = None,
         background_result_processor: BackgroundResultProcessor | None = None,
         background_completion_handler: CompletionHandler | None = None,
+        allow_offload: bool = True,
     ) -> AsyncGenerator[Any, None]:
         entry = self._create_entry(
             tool_call,
@@ -157,7 +158,7 @@ class ToolCoordinator:
                 elif event.type == "stream_closed":
                     break
                 elif event.type == "deadline_reached":
-                    if (
+                    if allow_offload and (
                         self._offload_on_deadline
                         or ctx.offload_reason == OffloadReason.USER
                     ):

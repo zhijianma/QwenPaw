@@ -532,6 +532,11 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     自动 Interaction、Model Recovery、Harness 与 Background continuation 使用独立
     envelope，不被误判为新意图。若在入队与取消之间崩溃，启动 fence 通过来源
     Invocation 的 Submission sequence 识别更晚用户输入并取消旧 continuation。
+  - [x] 提取模型无关的 `GovernedActionExecutor`：显式经过当前 permission decision、
+    ToolCoordinator supervision 和 retry-aware ActionRecorder；允许时创建新的 lineage
+    attempt，拒绝时不创建 Action。执行器返回前反查 terminal Action evidence，不能因
+    result processor 只记录 warning 而误报成功。Provider/generation 解析仍由后续
+    Runtime Orchestrator admission 接入，恢复 worker 不持有工具函数。
   - [ ] 在上述单一身份上接入自动 retry dispatcher：必须同时具备 attempt budget、
     Stop/Interrupt fencing、无流式输出边界，以及 Runtime Orchestrator 内的执行入口；
     不能仅凭 `retryable=true` 或绕过 Orchestrator 直接重新调用工具。

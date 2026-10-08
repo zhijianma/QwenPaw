@@ -717,6 +717,7 @@ class RuntimeActionRecorder:
         retry_continuation_store: (
             ActionRetryContinuationStore | None
         ) = None,
+        retry_of: ActionRecord | None = None,
         clock: Callable[[], datetime] = utc_now,
     ) -> None:
         self._scope = scope
@@ -725,6 +726,7 @@ class RuntimeActionRecorder:
         self._retry_policy = retry_policy or ActionRetryPolicy()
         self._retry_input_store = retry_input_store
         self._retry_continuation_store = retry_continuation_store
+        self._retry_of = retry_of
         self._clock = clock
 
     def bind_tool_owners(self, tool_owners: dict[str, str] | None) -> None:
@@ -738,6 +740,23 @@ class RuntimeActionRecorder:
         """Return the Action already bound to one supervised call."""
         request = context.extra.get(ACTION_REQUEST_CONTEXT_KEY)
         return request if isinstance(request, ActionRequest) else None
+
+    async def committed_record(
+        self,
+        context: ToolCallContext,
+    ) -> ActionRecord | None:
+        """Return exact terminal evidence for one supervised call."""
+        request = self.active_request(context)
+        if request is None:
+            return None
+        record = await self._store.get(
+            request.action_id,
+            invocation_id=request.invocation_id,
+            conversation_id=request.conversation_id,
+        )
+        if record is None or record.result is None:
+            return None
+        return record
 
     def _request(
         self,
@@ -866,6 +885,8 @@ class RuntimeActionRecorder:
         existing = context.extra.get(ACTION_REQUEST_CONTEXT_KEY)
         if isinstance(existing, ActionRequest):
             return existing
+        if self._retry_of is not None:
+            return await self.begin_retry(context, self._retry_of)
         request = self._request(
             context,
             capability_id=self._tool_owners.get(
@@ -966,6 +987,14 @@ class RuntimeActionRecorder:
         context.governance_metadata["action_id"] = str(request.action_id)
         return request
 
+    @staticmethod
+    def _validate_retry_executor(
+        context: ToolCallContext,
+        previous_request: ActionRequest,
+    ) -> None:
+        if context.tool_name != previous_request.action_name:
+            raise ActionConflictError("retry action tool name mismatch")
+
     async def begin_retry(
         self,
         context: ToolCallContext,
@@ -974,6 +1003,7 @@ class RuntimeActionRecorder:
         """Persist a new Action attempt after exact Host admission."""
         previous_result = previous.result
         previous_request = previous.request
+        self._validate_retry_executor(context, previous_request)
         retry_decision = (
             previous_result.retry_decision
             if previous_result is not None
