@@ -520,7 +520,9 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
   - [x] retryable ActionResult 成功提交后发布独立、内容安全的 durable outbox；状态
     明确区分 `waiting_delay / ready / dispatched / cancelled`，延迟成熟、取消和
     dispatch binding 均幂等。outbox 只保存 checkpoint 与 observation digest，不复制
-    原始参数；发布失败不篡改已提交 Result，并为后续启动修复保留精确绑定。
+    原始参数；发布失败不篡改已提交 Result。Chat dispatcher 启动时按 Agent 枚举私有
+    checkpoint，并用 Action、Invocation、ChatSpec、correlation、generation、capability
+    与参数摘要精确反查已提交 Result，只补建缺失 outbox，不执行工具；重复启动幂等。
   - [ ] 在上述单一身份上接入自动 retry dispatcher：必须同时具备 attempt budget、
     Stop/Interrupt fencing、无流式输出边界，以及 Runtime Orchestrator 内的执行入口；
     不能仅凭 `retryable=true` 或绕过 Orchestrator 直接重新调用工具。

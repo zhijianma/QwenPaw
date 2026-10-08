@@ -593,6 +593,48 @@ class FilesystemActionStore:
             timestamp_field="linked_at",
         )
 
+    async def get(
+        self,
+        action_id: UUID,
+        *,
+        invocation_id: UUID,
+        conversation_id: str | None,
+    ) -> ActionRecord | None:
+        """Read one exact Action record for recovery admission."""
+        directory = self._action_dir(
+            conversation_id=conversation_id,
+            invocation_id=invocation_id,
+            action_id=action_id,
+        )
+        try:
+            request = ActionRequest.model_validate(
+                await read_json_async(directory / "request.json"),
+            )
+        except FileNotFoundError:
+            return None
+        if (
+            request.action_id != action_id
+            or request.invocation_id != invocation_id
+            or request.conversation_id != conversation_id
+        ):
+            raise ActionConflictError(
+                "Action record path does not match its identity",
+            )
+        try:
+            result = ActionResult.model_validate(
+                await read_json_async(directory / "result.json"),
+            )
+        except FileNotFoundError:
+            result = None
+        return ActionRecord(
+            request=request,
+            approval_links=await run_sync_io(
+                self._load_approval_links,
+                directory,
+            ),
+            result=result,
+        )
+
     @staticmethod
     def _load_approval_links(
         directory: Path,

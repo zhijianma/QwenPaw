@@ -37,6 +37,9 @@ from qwenpaw.kernel import (
     ActionKind,
     ActionRequest,
     ActionResult,
+    ActionRetryDecision,
+    ActionRetryDisposition,
+    ActionRetryReason,
     ActionStatus,
     ActorRef,
     ActorType,
@@ -64,6 +67,11 @@ from qwenpaw.kernel import (
     SubmissionInputEnvelope,
     SubmissionStatus,
     TurnSubmissionRequest,
+    ToolEffect,
+)
+from qwenpaw.runtime.action_retries import (
+    lite_action_retry_continuation_store,
+    lite_action_retry_input_store,
 )
 from qwenpaw.runtime.actions import (
     lite_action_store,
@@ -84,6 +92,71 @@ from qwenpaw.runtime.harness_recovery import (
 from qwenpaw.runtime.model_step_contexts import (
     lite_model_step_context_store,
 )
+
+
+@pytest.mark.asyncio
+async def test_workspace_dispatcher_repairs_action_retry_outbox(
+    tmp_path: Path,
+) -> None:
+    request = ActionRequest(
+        invocation_id=uuid4(),
+        correlation_id=uuid4(),
+        agent_id="default",
+        conversation_id="chat-retry-repair",
+        registry_generation=3,
+        capability_id="example.retry-tool",
+        kind=ActionKind.TOOL,
+        action_name="retry_tool",
+        arguments={"value": "private"},
+        redacted_arguments={"value": "[REDACTED]"},
+        arguments_hash=f"sha256:{'a' * 64}",
+        effect=ToolEffect.NONE,
+        idempotency_key="retry-repair-key",
+    )
+    decision = ActionRetryDecision(
+        disposition=ActionRetryDisposition.RETRY_FROM_NEW_ACTION,
+        reason=ActionRetryReason.TRANSIENT_FAILURE,
+        provider_retryable=True,
+        max_attempts=2,
+        next_attempt=2,
+        retry_after_seconds=0,
+    )
+    inputs = lite_action_retry_input_store(tmp_path)
+    checkpoint = await inputs.save(request, decision)
+    result = ActionResult(
+        action_id=request.action_id,
+        invocation_id=request.invocation_id,
+        conversation_id=request.conversation_id,
+        status=ActionStatus.FAILED,
+        observation_digest=f"sha256:{'b' * 64}",
+        retryable=True,
+        retry_decision=decision.model_copy(
+            update={"input_checkpoint_id": checkpoint.checkpoint_id},
+        ),
+    )
+    actions = lite_action_store(tmp_path)
+    await actions.begin(request)
+    await actions.complete(result)
+    outbox = lite_action_retry_continuation_store(tmp_path)
+    assert await outbox.list_pending(agent_id="default") == ()
+
+    control = InvocationControlService(
+        store=SQLiteInvocationControl(tmp_path / "control.sqlite3"),
+    )
+    workspace = SimpleNamespace(
+        agent_id="default",
+        workspace_dir=tmp_path,
+    )
+    dispatcher = WorkspaceChatSubmissionDispatcher(
+        workspace=workspace,
+        control=control,
+    )
+
+    await dispatcher.start()
+    [continuation] = await outbox.list_pending(agent_id="default")
+    assert continuation.checkpoint == checkpoint
+    await dispatcher.stop()
+    await control.close()
 
 
 @pytest.mark.asyncio

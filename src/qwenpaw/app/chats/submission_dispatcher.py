@@ -88,6 +88,11 @@ class WorkspaceChatSubmissionDispatcher:
             lite_background_action_context_store,
             lite_background_action_continuation_store,
         )
+        from ...runtime.action_retries import (
+            lite_action_retry_continuation_store,
+            lite_action_retry_input_store,
+        )
+        from ...runtime.actions import lite_action_store
 
         workspace_dir = getattr(workspace, "workspace_dir", None)
         self._harness_steps = (
@@ -105,6 +110,21 @@ class WorkspaceChatSubmissionDispatcher:
             if workspace_dir is not None
             else None
         )
+        self._action_retry_inputs = (
+            lite_action_retry_input_store(Path(workspace_dir))
+            if workspace_dir is not None
+            else None
+        )
+        self._action_retries = (
+            lite_action_retry_continuation_store(Path(workspace_dir))
+            if workspace_dir is not None
+            else None
+        )
+        self._actions = (
+            lite_action_store(Path(workspace_dir))
+            if workspace_dir is not None
+            else None
+        )
         self._recovery_event = asyncio.Event()
         self._continuation_event = asyncio.Event()
         self._continuation_task: asyncio.Task[None] | None = None
@@ -117,6 +137,16 @@ class WorkspaceChatSubmissionDispatcher:
 
     async def start(self) -> None:
         """Recover queued Console turns after workspace services start."""
+        if (
+            self._action_retries is not None
+            and self._action_retry_inputs is not None
+            and self._actions is not None
+        ):
+            await self._action_retries.repair(
+                agent_id=self._workspace.agent_id,
+                input_store=self._action_retry_inputs,
+                action_store=self._actions,
+            )
         if self._resource_waits is not None:
             await self._dispatch_ready_resource_waits()
             await self._dispatch_ready_model_steps()

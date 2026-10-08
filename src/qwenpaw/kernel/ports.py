@@ -1662,6 +1662,15 @@ class ActionStore(Protocol):
     async def link_approval(self, link: ActionApprovalLink) -> None:
         """Persist an approval relation discovered during execution."""
 
+    async def get(
+        self,
+        action_id: UUID,
+        *,
+        invocation_id: UUID,
+        conversation_id: str | None,
+    ) -> ActionRecord | None:
+        """Read one exact Action identity without scanning projections."""
+
     async def list_for_conversation(
         self,
         conversation_id: str,
@@ -1687,6 +1696,13 @@ class ActionRetryInputStore(Protocol):
         checkpoint_id: UUID,
     ) -> tuple[ActionRetryInputCheckpoint, JsonObject]:
         """Load exact input for one verified retry dispatcher."""
+
+    async def list_checkpoints(
+        self,
+        *,
+        agent_id: str,
+    ) -> Sequence[ActionRetryInputCheckpoint]:
+        """List private retry references owned by one Agent."""
 
 
 @runtime_checkable

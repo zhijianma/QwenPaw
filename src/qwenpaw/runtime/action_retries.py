@@ -9,6 +9,7 @@ from pathlib import Path
 from uuid import UUID, uuid5
 
 from ..kernel import (
+    ActionStore,
     ActionRequest,
     ActionResult,
     ActionRetryContinuation,
@@ -16,6 +17,7 @@ from ..kernel import (
     ActionRetryDecision,
     ActionRetryDisposition,
     ActionRetryInputCheckpoint,
+    ActionRetryInputStore,
 )
 from ..kernel.models import JsonObject
 from ..kernel.models import utc_now
@@ -159,6 +161,25 @@ class FilesystemActionRetryInputStore:
             )
         return checkpoint, arguments
 
+    async def list_checkpoints(
+        self,
+        *,
+        agent_id: str,
+    ) -> tuple[ActionRetryInputCheckpoint, ...]:
+        """List private retry references for startup outbox repair."""
+        paths = await run_sync_io(
+            lambda: tuple(sorted(self._root.glob("*.json"))),
+        )
+        checkpoints = []
+        for path in paths:
+            checkpoint, _ = self._parse(await read_json_async(path))
+            if checkpoint.agent_id == agent_id:
+                checkpoints.append(checkpoint)
+        checkpoints.sort(
+            key=lambda item: (item.created_at, item.checkpoint_id),
+        )
+        return tuple(checkpoints)
+
 
 class FilesystemActionRetryContinuationStore:
     """Content-safe durable outbox for Host-admitted Action retries."""
@@ -233,6 +254,37 @@ class FilesystemActionRetryContinuationStore:
                 "Action retry result does not admit this checkpoint",
             )
         return decision
+
+    @staticmethod
+    def _validate_request_binding(
+        checkpoint: ActionRetryInputCheckpoint,
+        request: ActionRequest,
+    ) -> None:
+        expected_root = request.retry_root_action_id or request.action_id
+        checkpoint_identity = (
+            checkpoint.retry_root_action_id,
+            checkpoint.agent_id,
+            checkpoint.correlation_id,
+            checkpoint.registry_generation,
+            checkpoint.capability_id,
+            checkpoint.kind,
+            checkpoint.action_name,
+            checkpoint.arguments_hash,
+        )
+        request_identity = (
+            expected_root,
+            request.agent_id,
+            request.correlation_id,
+            request.registry_generation,
+            request.capability_id,
+            request.kind,
+            request.action_name,
+            request.arguments_hash,
+        )
+        if checkpoint_identity != request_identity:
+            raise ActionRetryContinuationConflictError(
+                "Action retry checkpoint does not match its request",
+            )
 
     async def defer(
         self,
@@ -406,6 +458,40 @@ class FilesystemActionRetryContinuationStore:
             )
             await self._write(updated)
         return updated
+
+    async def repair(
+        self,
+        *,
+        agent_id: str,
+        input_store: ActionRetryInputStore,
+        action_store: ActionStore,
+    ) -> tuple[ActionRetryContinuation, ...]:
+        """Rebuild outbox entries missing after a post-result crash."""
+        repaired = []
+        checkpoints = await input_store.list_checkpoints(
+            agent_id=agent_id,
+        )
+        for checkpoint in checkpoints:
+            record = await action_store.get(
+                checkpoint.action_id,
+                invocation_id=checkpoint.invocation_id,
+                conversation_id=checkpoint.conversation_id,
+            )
+            if record is None or record.result is None:
+                continue
+            self._validate_request_binding(checkpoint, record.request)
+            decision = record.result.retry_decision
+            if (
+                not record.result.retryable
+                or decision is None
+                or decision.input_checkpoint_id
+                != checkpoint.checkpoint_id
+            ):
+                continue
+            repaired.append(
+                await self.defer(checkpoint, record.result),
+            )
+        return tuple(repaired)
 
 
 def lite_action_retry_input_store(

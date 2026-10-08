@@ -409,3 +409,90 @@ async def test_result_remains_committed_when_outbox_publish_fails(
     )
     assert record.result is not None
     assert record.result.retryable is True
+
+
+@pytest.mark.asyncio
+async def test_retry_outbox_repairs_post_result_crash_once(
+    tmp_path: Path,
+) -> None:
+    request = _request()
+    input_store = lite_action_retry_input_store(tmp_path)
+    checkpoint = await input_store.save(request, _decision())
+    decision = _decision().model_copy(
+        update={"input_checkpoint_id": checkpoint.checkpoint_id},
+    )
+    result = ActionResult(
+        action_id=request.action_id,
+        invocation_id=request.invocation_id,
+        conversation_id=request.conversation_id,
+        status=ActionStatus.FAILED,
+        observation_digest=f"sha256:{'c' * 64}",
+        error_code="temporary_failure",
+        retryable=True,
+        retry_decision=decision,
+    )
+    action_store = FilesystemActionStore(tmp_path)
+    await action_store.begin(request)
+    await action_store.complete(result)
+    outbox = lite_action_retry_continuation_store(tmp_path)
+
+    assert await outbox.list_pending(agent_id=checkpoint.agent_id) == ()
+    [first] = await outbox.repair(
+        agent_id=checkpoint.agent_id,
+        input_store=input_store,
+        action_store=action_store,
+    )
+    [second] = await outbox.repair(
+        agent_id=checkpoint.agent_id,
+        input_store=input_store,
+        action_store=action_store,
+    )
+
+    assert first == second
+    assert first.checkpoint == checkpoint
+    assert first.source_observation_digest == result.observation_digest
+    [pending] = await outbox.list_pending(agent_id=checkpoint.agent_id)
+    assert pending == first
+
+
+@pytest.mark.asyncio
+async def test_retry_outbox_repair_rejects_checkpoint_request_drift(
+    tmp_path: Path,
+) -> None:
+    request = _request()
+    input_store = lite_action_retry_input_store(tmp_path)
+    checkpoint = await input_store.save(request, _decision())
+    decision = _decision().model_copy(
+        update={"input_checkpoint_id": checkpoint.checkpoint_id},
+    )
+    result = ActionResult(
+        action_id=request.action_id,
+        invocation_id=request.invocation_id,
+        conversation_id=request.conversation_id,
+        status=ActionStatus.FAILED,
+        observation_digest=f"sha256:{'d' * 64}",
+        retryable=True,
+        retry_decision=decision,
+    )
+    action_store = FilesystemActionStore(tmp_path)
+    await action_store.begin(request)
+    await action_store.complete(result)
+
+    class DriftedInputStore:
+        async def list_checkpoints(self, *, agent_id):
+            assert agent_id == checkpoint.agent_id
+            return (
+                checkpoint.model_copy(
+                    update={"arguments_hash": f"sha256:{'e' * 64}"},
+                ),
+            )
+
+    with pytest.raises(
+        ActionRetryContinuationConflictError,
+        match="does not match",
+    ):
+        await lite_action_retry_continuation_store(tmp_path).repair(
+            agent_id=checkpoint.agent_id,
+            input_store=DriftedInputStore(),
+            action_store=action_store,
+        )
