@@ -288,6 +288,12 @@ class ContextManifestCompiler:
             ),
             "conversation_id": self._scope.conversation_id,
             "registry_generation": self._scope.registry_generation,
+            "capability_lock_id": (
+                str(self._scope.capability_lock_id)
+                if self._scope.capability_lock_id is not None
+                else None
+            ),
+            "capability_lock_hash": self._scope.capability_lock_hash,
             "model_call_index": model_call_index,
             "attempt_kind": attempt_kind,
             "policy_id": self._policy.policy_id,
@@ -311,6 +317,8 @@ class ContextManifestCompiler:
             ),
             conversation_id=self._scope.conversation_id,
             registry_generation=self._scope.registry_generation,
+            capability_lock_id=self._scope.capability_lock_id,
+            capability_lock_hash=self._scope.capability_lock_hash,
             model_call_index=model_call_index,
             attempt_kind=attempt_kind,
             policy_id=self._policy.policy_id,

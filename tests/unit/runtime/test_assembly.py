@@ -9,6 +9,7 @@ from uuid import UUID
 import pytest
 
 from qwenpaw.capabilities import GenerationRegistry
+from qwenpaw.kernel import CapabilityLockManifest
 from qwenpaw.kernel.invocation import (
     CapabilitySelection,
     CapabilitySelectionOverrides,
@@ -37,6 +38,9 @@ from qwenpaw.runtime.assembly import (
     CapabilityUnavailableError,
     RuntimeAssemblyFactory,
     capability_registry_for,
+)
+from qwenpaw.runtime.capability_locks import (
+    FilesystemCapabilityLockStore,
 )
 from qwenpaw.runtime.builder import AgentBuilder
 from qwenpaw.runtime.environments import (
@@ -131,6 +135,8 @@ async def test_open_resolves_system_agent_factory_without_task_ids(
     assert hook_provider.provider_id == DEFAULT_HOOK_PROVIDER_ID
     assert stop_gate_provider.provider_id == DEFAULT_STOP_GATE_PROVIDER_ID
     assert assembly.scope.registry_generation == 10
+    assert assembly.scope.capability_lock_id is not None
+    assert assembly.scope.capability_lock_hash is not None
     assert assembly.scope.environment_contract is not None
     assert assembly.scope.environment_resolution is not None
     assert (
@@ -138,6 +144,20 @@ async def test_open_resolves_system_agent_factory_without_task_ids(
         is EnvironmentResolutionStatus.SATISFIED
     )
     assert not hasattr(assembly.scope, "task_id")
+    [lock_path] = list(
+        (tmp_path / ".qwenpaw" / "lite" / "capability-locks").glob(
+            "*/*/lock.json",
+        ),
+    )
+    lock = CapabilityLockManifest.model_validate_json(
+        lock_path.read_text(encoding="utf-8"),
+    )
+    assert lock.lock_id == assembly.scope.capability_lock_id
+    assert lock.manifest_hash == assembly.scope.capability_lock_hash
+    assert tuple(item.capability_id for item in lock.releases) == (
+        assembly.scope.capability_ids
+    )
+    assert lock_path.stat().st_mode & 0o777 == 0o600
     await assembly.close()
 
 
@@ -300,6 +320,7 @@ async def test_plugin_tool_provider_replacement_keeps_old_invocation(
     )
     old = await RuntimeAssemblyFactory(registry).open(
         agent_id="default",
+        conversation_id="chat-lock",
         session_id="old",
         root_agent_id="default",
         root_session_id="old",
@@ -313,6 +334,7 @@ async def test_plugin_tool_provider_replacement_keeps_old_invocation(
     )
     new = await RuntimeAssemblyFactory(registry).open(
         agent_id="default",
+        conversation_id="chat-lock",
         session_id="new",
         root_agent_id="default",
         root_session_id="new",
@@ -321,6 +343,7 @@ async def test_plugin_tool_provider_replacement_keeps_old_invocation(
     )
     resumed = await RuntimeAssemblyFactory(registry).open(
         agent_id="default",
+        conversation_id="chat-lock",
         session_id="resumed",
         root_agent_id="default",
         root_session_id="resumed",
@@ -342,6 +365,28 @@ async def test_plugin_tool_provider_replacement_keeps_old_invocation(
         ).version
         == "1.0.0"
     )
+    locks = await FilesystemCapabilityLockStore(
+        tmp_path,
+    ).list_for_conversation("chat-lock")
+    by_invocation = {item.invocation_id: item for item in locks}
+    old_lock = by_invocation[old.scope.invocation_id]
+    new_lock = by_invocation[new.scope.invocation_id]
+    resumed_lock = by_invocation[resumed.scope.invocation_id]
+
+    def plugin_release(lock):
+        return next(
+            item
+            for item in lock.releases
+            if item.capability_id == "example.tools.provider"
+        )
+
+    assert plugin_release(old_lock).version == "1.0.0"
+    assert plugin_release(new_lock).version == "2.0.0"
+    assert plugin_release(resumed_lock).version == "1.0.0"
+    assert plugin_release(old_lock).descriptor_hash != (
+        plugin_release(new_lock).descriptor_hash
+    )
+    assert old.scope.capability_lock_hash == old_lock.manifest_hash
     old_generation = old.scope.registry_generation
     await old.close()
     await resumed.close()
@@ -371,6 +416,7 @@ async def test_new_invocation_auto_selects_installed_tool_provider(
 
     assembly = await RuntimeAssemblyFactory(registry).open(
         agent_id="default",
+        conversation_id="chat-auto-plugin",
         session_id="chat",
         root_agent_id="default",
         root_session_id="chat",
@@ -381,6 +427,16 @@ async def test_new_invocation_auto_selects_installed_tool_provider(
         "example.tools.provider",
         DEFAULT_TOOL_PROVIDER_ID,
     )
+    [lock] = await FilesystemCapabilityLockStore(
+        tmp_path,
+    ).list_for_conversation("chat-auto-plugin")
+    provider_kinds = {
+        item.provider_kind for item in lock.releases
+    }
+    assert provider_kinds == {
+        CapabilityProviderKind.SYSTEM,
+        CapabilityProviderKind.PLUGIN,
+    }
     await assembly.close()
 
 

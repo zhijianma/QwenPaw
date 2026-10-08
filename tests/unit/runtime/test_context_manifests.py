@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from types import SimpleNamespace
+from uuid import UUID
 
 import pytest
 from agentscope.agent import Agent
@@ -32,6 +33,8 @@ def _scope() -> InvocationScope:
         root_session_id="transport-session",
         workspace_dir="/tmp/qwenpaw-workspace",
         registry_generation=12,
+        capability_lock_id=UUID(int=1),
+        capability_lock_hash=f"sha256:{'1' * 64}",
     )
 
 
@@ -99,6 +102,8 @@ def test_manifest_covers_actual_messages_and_capability_disclosure() -> None:
 
     assert manifest.conversation_id == "chat-1"
     assert manifest.registry_generation == 12
+    assert manifest.capability_lock_id == UUID(int=1)
+    assert manifest.capability_lock_hash == f"sha256:{'1' * 64}"
     assert manifest.model_call_index == 1
     assert manifest.disclosed_tool_count == 1
     assert manifest.total_size_bytes > 0

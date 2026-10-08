@@ -13,6 +13,8 @@ from qwenpaw.app.chats.api import (
     get_chat,
     get_chat_status,
     list_chat_actions,
+    list_chat_capability_locks,
+    list_chat_context_manifests,
     list_chat_model_calls,
     list_chat_observations,
     page_chat_observations,
@@ -27,8 +29,12 @@ from qwenpaw.invocation_control import (
 from qwenpaw.kernel import (
     ActionKind,
     ActionRequest,
+    CapabilityLockManifest,
+    CapabilityRelease,
+    CapabilityProviderKind,
     ConversationOutcome,
     ConversationOutcomeStatus,
+    ContextManifest,
     ArtifactRef,
     EvidenceRef,
     PlanStep,
@@ -39,7 +45,10 @@ from qwenpaw.kernel import (
     TurnSubmissionRequest,
     VerificationResult,
     VerificationStatus,
+    RestartPolicy,
 )
+from qwenpaw.runtime.capability_locks import lite_capability_lock_store
+from qwenpaw.runtime.context_manifests import lite_context_manifest_store
 from qwenpaw.runtime.actions import lite_action_store
 from qwenpaw.runtime.model_calls import lite_model_call_store
 from qwenpaw.runtime.outcomes import lite_conversation_outcome_store
@@ -285,6 +294,125 @@ async def test_list_chat_model_calls_rejects_unknown_chat(tmp_path):
     with pytest.raises(HTTPException) as raised:
         await list_chat_model_calls(
             chat_id=str(uuid4()),
+            limit=20,
+            mgr=manager,
+            workspace=SimpleNamespace(workspace_dir=tmp_path),
+        )
+
+    assert raised.value.status_code == 404
+    assert not (tmp_path / ".qwenpaw").exists()
+
+
+@pytest.mark.asyncio
+async def test_list_chat_capability_locks_returns_owned_releases(
+    tmp_path,
+) -> None:
+    chat_id = "chat-capability-locks"
+    manager = SimpleNamespace(
+        get_chat=AsyncMock(return_value=_chat(chat_id)),
+    )
+    invocation_id = uuid4()
+    releases = (
+        CapabilityRelease(
+            capability_id="example.tools.provider",
+            slot="tool.provider",
+            provider_id="example.tools",
+            provider_kind=CapabilityProviderKind.PLUGIN,
+            version="1.2.0",
+            restart_policy=RestartPolicy.HOT,
+            descriptor_hash=f"sha256:{'a' * 64}",
+        ),
+    )
+    manifest = CapabilityLockManifest.create(
+        invocation_id=invocation_id,
+        correlation_id=invocation_id,
+        agent_id="default",
+        conversation_id=chat_id,
+        registry_generation=7,
+        releases=releases,
+    )
+    await lite_capability_lock_store(tmp_path).append(manifest)
+
+    records = await list_chat_capability_locks(
+        chat_id=chat_id,
+        limit=20,
+        mgr=manager,
+        workspace=SimpleNamespace(workspace_dir=tmp_path),
+    )
+
+    assert records == [manifest]
+    assert records[0].releases[0].provider_kind is (
+        CapabilityProviderKind.PLUGIN
+    )
+    manager.get_chat.assert_awaited_once_with(chat_id)
+
+
+@pytest.mark.asyncio
+async def test_list_chat_capability_locks_rejects_unknown_chat(
+    tmp_path,
+) -> None:
+    manager = SimpleNamespace(get_chat=AsyncMock(return_value=None))
+
+    with pytest.raises(HTTPException) as raised:
+        await list_chat_capability_locks(
+            chat_id="missing-lock-chat",
+            limit=20,
+            mgr=manager,
+            workspace=SimpleNamespace(workspace_dir=tmp_path),
+        )
+
+    assert raised.value.status_code == 404
+    assert not (tmp_path / ".qwenpaw").exists()
+
+
+@pytest.mark.asyncio
+async def test_list_chat_context_manifests_returns_lock_reference(
+    tmp_path,
+) -> None:
+    chat_id = "chat-context-manifests"
+    manager = SimpleNamespace(
+        get_chat=AsyncMock(return_value=_chat(chat_id)),
+    )
+    invocation_id = uuid4()
+    lock_id = uuid4()
+    manifest = ContextManifest(
+        invocation_id=invocation_id,
+        correlation_id=invocation_id,
+        conversation_id=chat_id,
+        registry_generation=7,
+        capability_lock_id=lock_id,
+        capability_lock_hash=f"sha256:{'c' * 64}",
+        model_call_index=1,
+        policy_id="qwenpaw.system.context.default",
+        policy_version="1.0.0",
+        total_size_bytes=0,
+        total_estimated_tokens=0,
+        disclosed_tool_count=0,
+        manifest_hash=f"sha256:{'d' * 64}",
+    )
+    await lite_context_manifest_store(tmp_path).append(manifest)
+
+    records = await list_chat_context_manifests(
+        chat_id=chat_id,
+        limit=20,
+        mgr=manager,
+        workspace=SimpleNamespace(workspace_dir=tmp_path),
+    )
+
+    assert records == [manifest]
+    assert records[0].capability_lock_id == lock_id
+    assert "content" not in records[0].model_dump_json()
+
+
+@pytest.mark.asyncio
+async def test_list_chat_context_manifests_rejects_unknown_chat(
+    tmp_path,
+) -> None:
+    manager = SimpleNamespace(get_chat=AsyncMock(return_value=None))
+
+    with pytest.raises(HTTPException) as raised:
+        await list_chat_context_manifests(
+            chat_id="missing-context-chat",
             limit=20,
             mgr=manager,
             workspace=SimpleNamespace(workspace_dir=tmp_path),

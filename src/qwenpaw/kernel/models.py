@@ -1605,6 +1605,11 @@ class ContextManifest(KernelModel):
     correlation_id: UUID
     conversation_id: NonEmptyStr | None = None
     registry_generation: int = Field(ge=1)
+    capability_lock_id: UUID | None = None
+    capability_lock_hash: Annotated[
+        str,
+        StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$"),
+    ] | None = None
     model_call_index: int = Field(ge=1)
     attempt_kind: Literal["primary", "overflow_retry"] = "primary"
     policy_id: NamespacedId
@@ -1625,6 +1630,12 @@ class ContextManifest(KernelModel):
     @model_validator(mode="after")
     def validate_totals(self) -> Self:
         """Keep aggregate accounting derived from captured fragments."""
+        if (self.capability_lock_id is None) != (
+            self.capability_lock_hash is None
+        ):
+            raise ValueError(
+                "capability lock identity and hash must be paired",
+            )
         fragment_ids = [fragment.fragment_id for fragment in self.fragments]
         if len(fragment_ids) != len(set(fragment_ids)):
             raise ValueError("context fragment IDs must be unique")

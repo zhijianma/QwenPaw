@@ -61,6 +61,8 @@ from ...invocation_control import (
 )
 from ...kernel import (
     ActionRecord,
+    CapabilityLockManifest,
+    ContextManifest,
     ActorRef,
     ActorType,
     ApprovalDecisionValue,
@@ -88,6 +90,8 @@ from ...conversations import LiteConversationForkAdapter
 from ...config.config import load_agent_config_async
 from ...kernel.models import ArtifactRenderDisposition
 from ...runtime.assembly import capability_registry_for
+from ...runtime.capability_locks import lite_capability_lock_store
+from ...runtime.context_manifests import lite_context_manifest_store
 from ...runtime.actions import lite_action_store, public_action_record
 from ...runtime.model_calls import lite_model_call_store
 from ...runtime.observation_index import ObservationCursorError
@@ -1569,6 +1573,58 @@ async def list_chat_model_calls(
         limit=limit,
     )
     return list(records)
+
+
+@router.get(
+    "/{chat_id}/capability-locks",
+    response_model=list[CapabilityLockManifest],
+)
+async def list_chat_capability_locks(
+    chat_id: str,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+) -> list[CapabilityLockManifest]:
+    """Return selected immutable releases for one owned ChatSpec."""
+    chat_spec = await mgr.get_chat(chat_id)
+    if not chat_spec:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Chat not found: {chat_id}",
+        )
+    manifests = await lite_capability_lock_store(
+        Path(workspace.workspace_dir),
+    ).list_for_conversation(
+        chat_id,
+        limit=limit,
+    )
+    return list(manifests)
+
+
+@router.get(
+    "/{chat_id}/context-manifests",
+    response_model=list[ContextManifest],
+)
+async def list_chat_context_manifests(
+    chat_id: str,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+) -> list[ContextManifest]:
+    """Return content-free model-input evidence for one owned ChatSpec."""
+    chat_spec = await mgr.get_chat(chat_id)
+    if not chat_spec:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Chat not found: {chat_id}",
+        )
+    manifests = await lite_context_manifest_store(
+        Path(workspace.workspace_dir),
+    ).list_for_conversation(
+        chat_id,
+        limit=limit,
+    )
+    return list(manifests)
 
 
 @router.get(

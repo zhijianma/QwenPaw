@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 from pydantic import AwareDatetime, Field, model_validator
 
+from .capability_locks import Sha256Digest
 from .models import (
     ApprovalLevel,
     EnvironmentContract,
@@ -105,6 +106,8 @@ class InvocationScope(KernelModel):
     root_session_id: NonEmptyStr
     workspace_dir: NonEmptyStr
     registry_generation: int = Field(ge=1)
+    capability_lock_id: UUID | None = None
+    capability_lock_hash: Sha256Digest | None = None
     approval_level: ApprovalLevel = ApprovalLevel.AGENT_PROFILE
     environment_contract: EnvironmentContract | None = None
     environment_resolution: EnvironmentResolution | None = None
@@ -116,6 +119,12 @@ class InvocationScope(KernelModel):
     @model_validator(mode="after")
     def validate_environment_identity(self) -> Self:
         """Bind environment evidence to this immutable invocation."""
+        if (self.capability_lock_id is None) != (
+            self.capability_lock_hash is None
+        ):
+            raise ValueError(
+                "capability lock identity and hash must be paired",
+            )
         contract = self.environment_contract
         resolution = self.environment_resolution
         if contract is None and resolution is None:

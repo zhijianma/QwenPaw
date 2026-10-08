@@ -236,6 +236,8 @@ generation handoff 后才能判定 orphan，不能由任意新实例直接终止
 | 方法 | 路径 | 语义 |
 |---|---|---|
 | GET | `/chats/{chat_id}/queue` | 读取服务端权威 QueueProjection |
+| GET | `/chats/{chat_id}/capability-locks` | 查询 Invocation 实际锁定的内容安全 release 证据 |
+| GET | `/chats/{chat_id}/context-manifests` | 查询模型输入证据及其 capability lock 引用 |
 | POST | `/chats/{chat_id}/submissions` | 原子持久化完整输入并唤醒服务端 Dispatcher |
 | POST | `/chats/{chat_id}/control/steer` | 向当前 Invocation 提交安全点指令 |
 | POST | `/chats/{chat_id}/control/interrupt` | 只打断当前 Invocation |

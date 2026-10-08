@@ -104,6 +104,7 @@ from .artifacts import (
     ConversationArtifactRecord,
     ConversationTaskResultRecords,
 )
+from .capability_locks import CapabilityLockManifest
 
 
 @runtime_checkable
@@ -1350,6 +1351,22 @@ class ContextManifestStore(Protocol):
         limit: int = 100,
     ) -> Sequence[ContextManifest]:
         """Return newest manifests for one ChatSpec identity."""
+
+
+@runtime_checkable
+class CapabilityLockStore(Protocol):
+    """Durable boundary for selected immutable capability releases."""
+
+    async def append(self, manifest: CapabilityLockManifest) -> None:
+        """Persist one immutable Invocation lock before execution."""
+
+    async def list_for_conversation(
+        self,
+        conversation_id: str,
+        *,
+        limit: int = 100,
+    ) -> Sequence[CapabilityLockManifest]:
+        """Return newest locks for one ChatSpec identity."""
 
 
 @runtime_checkable

@@ -325,9 +325,15 @@ from .communications import (
     CommunicationOrderingScope,
     CommunicationRetention,
 )
+from .capability_locks import (
+    CapabilityLockManifest,
+    CapabilityRelease,
+)
 from .ports import (
     ActionStore,
     AgentFactory,
+    CapabilityLease,
+    CapabilityLockStore,
     CostAwareTaskRunner,
     ConversationForkPort,
     ConversationArtifactHistoryPort,
@@ -375,6 +381,10 @@ __all__ = [
     "CommunicationIdempotency",
     "CommunicationOrderingScope",
     "CommunicationRetention",
+    "CapabilityLease",
+    "CapabilityLockManifest",
+    "CapabilityLockStore",
+    "CapabilityRelease",
     "ActionApprovalLink",
     "ActionKind",
     "ActionRecord",

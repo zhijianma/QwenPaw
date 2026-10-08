@@ -57,7 +57,15 @@ from ..kernel.models import (
     EnvironmentRecord,
     EnvironmentResolutionStatus,
 )
-from ..kernel.ports import EnvironmentResolver, EnvironmentStore
+from ..kernel.ports import (
+    CapabilityLockStore,
+    EnvironmentResolver,
+    EnvironmentStore,
+)
+from .capability_locks import (
+    CapabilityLockCompiler,
+    FilesystemCapabilityLockStore,
+)
 from .environments import (
     EnvironmentContractUnsatisfiedError,
     FilesystemEnvironmentStore,
@@ -215,6 +223,7 @@ class RuntimeAssemblyFactory:
         environment_contract: EnvironmentContract | None = None,
         environment_resolver: EnvironmentResolver | None = None,
         environment_store: EnvironmentStore | None = None,
+        capability_lock_store: CapabilityLockStore | None = None,
     ) -> InvocationAssembly:
         """Pin the catalog and return one task-independent scope."""
         if selection is not None and selection_overrides is not None:
@@ -334,6 +343,21 @@ class RuntimeAssemblyFactory:
             )
             assembly = InvocationAssembly(scope=scope, _lease=lease)
             assembly.validate_selection()
+            lock = CapabilityLockCompiler.compile(scope, lease)
+            lock_store = (
+                capability_lock_store
+                or FilesystemCapabilityLockStore(
+                    Path(resolved_workspace_dir),
+                )
+            )
+            await lock_store.append(lock)
+            scope = scope.model_copy(
+                update={
+                    "capability_lock_id": lock.lock_id,
+                    "capability_lock_hash": lock.manifest_hash,
+                },
+            )
+            assembly = InvocationAssembly(scope=scope, _lease=lease)
         except Exception:
             await lease.close()
             raise

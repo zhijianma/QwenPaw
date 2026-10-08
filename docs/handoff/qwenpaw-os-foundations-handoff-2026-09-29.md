@@ -430,6 +430,21 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - 本切片定点验证覆盖领域约束、Projection、HTTP/SSE 契约和关闭 SSE 后 Invocation
   仍保持 running；未执行全仓测试或真实浏览器断线演练。
 
+### 2026-10-08 Capability Lock Manifest
+
+- Kernel 冻结 `CapabilityRelease`、`CapabilityLockManifest` 与 Store Port；Lock 只含
+  selected descriptor 的身份、版本和 hash，不含实现、配置值或 Secret。
+- Runtime Assembly 在 pinned generation 上校验 Selection 后、执行前保存 Lock；
+  `InvocationScope` 和后续 `ContextManifest` 固定引用同一 ID/hash。system/plugin
+  走同一编译路径，热替换不会改写旧 Invocation 证据。
+- Lite Store 使用 deterministic lock identity、`0600` append-once 文件和冲突关闭；
+  Chat 新增 ownership-checked `/capability-locks` 与 `/context-manifests` 只读查询。
+- 固定 Chat `/clear` 后真实返回 `CAPABILITY_LOCK_E2E_OK`。API 证据显示 generation
+  11 的 9 个 system release；Lock 与 Context 在 ID/hash、Invocation、generation
+  四项全部一致，Context 含 72 个内容安全 fragment。
+- 本切片相邻定点验证 70 项通过；尚未实现关键词发现索引、稳定 tag/promotion 和
+  Workstation/Hub 远端 Release Registry。
+
 ### 本阶段此前已执行的定点验证
 
 - 后端核心路径定点测试：70 项通过。

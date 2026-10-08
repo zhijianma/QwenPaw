@@ -1025,6 +1025,12 @@ Cron 不形成独立审批或产物事实源。
     SSE 仅为 latest-state snapshot reconnect，Submission 才是断线后继续运行的 durable
     handle；Lite 不虚构 replay/ack/durable-channel 能力。GET 与 SSE 首帧返回同一
     Contract，关闭流不取消 active Invocation 的行为已有 API 测试。
+  - [x] Kernel `CapabilityRelease` / `CapabilityLockManifest` 已把 generation 整数
+    展开为实际选中的 system/plugin release 证据。Assembly 在执行前以 pinned
+    descriptor 编译并 `0600` append-once 持久化；InvocationScope 与 ContextManifest
+    引用同一 lock ID/hash，冲突失败关闭。Chat 只读 API 可审计 Lock 与 Context 的
+    对齐关系；不持久化实现、配置值或 Secret。Lite 的关键词发现索引、稳定 tag 和
+    Workstation/Hub Release Registry 仍待实现。
 
 - [x] 每个公开扩展模块均有 system/plugin contract tests；system-only 模块具有
   核心激活、固定 generation、失败关闭和代际排空合同。

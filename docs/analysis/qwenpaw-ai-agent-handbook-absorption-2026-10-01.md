@@ -319,6 +319,17 @@ Capability Registry 已经解决运行时 generation，但还应区分：
 
 Lite 先做本地 Registry 与关键词发现，不引入 Nacos、向量数据库或互联网 Federation。
 
+截至 2026-10-08，Lite 已完成 selected-release Lock Manifest：Runtime Assembly 在
+generation lease 固定且 Selection 校验通过后，解析实际选中的 system/plugin
+descriptor，保存 capability、slot、provider kind、version、restart policy 与完整
+descriptor hash；不保存实现对象、配置值或 Secret。Lock 以 Invocation 为单位使用
+确定性 identity、`0600` append-once 持久化，冲突失败关闭；`InvocationScope` 和每次
+`ContextManifest` 引用同一 lock ID/hash。热替换后的新 Invocation 获得新 release，
+旧 Invocation 和按旧 generation 恢复的 Invocation 继续引用旧版本证据。
+
+当前只锁定已选择能力，不把整个可发现目录塞入运行证据。Lite 关键词发现索引、稳定
+tag/release promotion 以及 Workstation/Hub 的远端 Release Registry 仍待实现。
+
 ### A7. Outcome、Trajectory 与 Evaluation
 
 优先级：P2，但数据契约现在就要预留。
