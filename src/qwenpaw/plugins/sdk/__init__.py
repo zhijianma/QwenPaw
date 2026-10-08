@@ -160,6 +160,7 @@ from ...kernel.models import (
 from ...kernel.waits import (
     ModelStepContinuation,
     ModelStepContinuationStatus,
+    ModelStepContextCheckpoint,
     ModelStepReconciliation,
     ModelStepReconciliationReason,
     ModelResourceWait,
@@ -264,6 +265,7 @@ __all__ = [
     "ModelResourceWait",
     "ModelStepContinuation",
     "ModelStepContinuationStatus",
+    "ModelStepContextCheckpoint",
     "ModelStepReconciliation",
     "ModelStepReconciliationReason",
     "ModelRouteReason",

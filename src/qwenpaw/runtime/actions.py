@@ -47,6 +47,7 @@ from .tool_artifacts import (
 
 ACTION_REQUEST_CONTEXT_KEY = "qwenpaw_action_request"
 ACTION_REQUEST_STATE_KEY = "qwenpaw_action_request_state"
+ACTION_RESULT_CONTEXT_KEY = "qwenpaw_action_id"
 _BULK_ARGUMENT_NAMES = frozenset(
     {
         "audio",
@@ -117,6 +118,85 @@ def assess_model_step_reconciliation(
         uncertain_side_effect_count=uncertain_side_effect_count,
         terminal_result_count=len(terminal_results),
     )
+
+
+def model_step_action_evidence_digest(
+    records: Sequence[ActionRecord],
+    invocation_id: UUID,
+) -> str | None:
+    """Hash content-safe terminal Action evidence for one Invocation."""
+    assessment = assess_model_step_reconciliation(records, invocation_id)
+    if (
+        assessment is None
+        or assessment.reason
+        is not ModelStepReconciliationReason.DURABLE_CONTEXT_REQUIRED
+    ):
+        return None
+    evidence = []
+    for record in records:
+        if record.request.invocation_id != invocation_id:
+            continue
+        result = record.result
+        if result is None:
+            return None
+        evidence.append(
+            {
+                "action_id": str(record.request.action_id),
+                "observation_digest": result.observation_digest,
+                "side_effect_status": (
+                    result.side_effect_status.value
+                    if result.side_effect_status is not None
+                    else None
+                ),
+                "status": result.status.value,
+            },
+        )
+    evidence.sort(key=lambda item: item["action_id"])
+    return _sha256(evidence)
+
+
+def model_step_action_call_ids(
+    records: Sequence[ActionRecord],
+    invocation_id: UUID,
+) -> tuple[str, ...] | None:
+    """Return executor call IDs only for terminal, certain Actions."""
+    if model_step_action_evidence_digest(records, invocation_id) is None:
+        return None
+    call_ids = []
+    for record in records:
+        request = record.request
+        if request.invocation_id != invocation_id:
+            continue
+        prefix = f"{request.kind.value}:{invocation_id}:"
+        if not request.idempotency_key.startswith(prefix):
+            return None
+        call_id = request.idempotency_key[len(prefix) :]
+        if not call_id:
+            return None
+        call_ids.append(call_id)
+    if len(call_ids) != len(set(call_ids)):
+        return None
+    return tuple(sorted(call_ids))
+
+
+def model_step_action_context_bindings(
+    records: Sequence[ActionRecord],
+    invocation_id: UUID,
+) -> tuple[tuple[str, str], ...] | None:
+    """Bind executor call IDs to the exact durable Action identities."""
+    call_ids = model_step_action_call_ids(records, invocation_id)
+    if call_ids is None:
+        return None
+    bindings = []
+    for record in records:
+        request = record.request
+        if request.invocation_id != invocation_id:
+            continue
+        prefix = f"{request.kind.value}:{invocation_id}:"
+        call_id = request.idempotency_key[len(prefix) :]
+        bindings.append((call_id, str(request.action_id)))
+    bindings.sort()
+    return tuple(bindings)
 
 
 def _json_value(value: Any) -> Any:
@@ -724,6 +804,9 @@ class RuntimeActionRecorder:
         ):
             return response
         request = await self._ensure_request(context, response)
+        response.metadata[ACTION_RESULT_CONTEXT_KEY] = str(
+            request.action_id,
+        )
         status = self._status(response)
         artifacts, evidence = self._artifact_refs(response)
         safe_observation = {
@@ -855,6 +938,7 @@ async def link_active_action_approval(
 __all__ = [
     "ACTION_REQUEST_CONTEXT_KEY",
     "ACTION_REQUEST_STATE_KEY",
+    "ACTION_RESULT_CONTEXT_KEY",
     "ActionConflictError",
     "ActionRequestPersistenceError",
     "ActionResultPersistenceError",
@@ -863,5 +947,8 @@ __all__ = [
     "assess_model_step_reconciliation",
     "link_active_action_approval",
     "lite_action_store",
+    "model_step_action_call_ids",
+    "model_step_action_context_bindings",
+    "model_step_action_evidence_digest",
     "public_action_record",
 ]

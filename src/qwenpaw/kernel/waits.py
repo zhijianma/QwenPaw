@@ -5,10 +5,10 @@ from __future__ import annotations
 
 from datetime import timedelta
 from enum import Enum
-from typing import Self
+from typing import Annotated, Self
 from uuid import UUID
 
-from pydantic import AwareDatetime, Field, model_validator
+from pydantic import AwareDatetime, Field, StringConstraints, model_validator
 
 from .models import (
     KernelModel,
@@ -152,6 +152,25 @@ class ModelStepReconciliation(KernelModel):
         return self
 
 
+class ModelStepContextCheckpoint(KernelModel):
+    """Content-safe reference to an immutable private context snapshot."""
+
+    checkpoint_id: UUID
+    continuation_id: UUID
+    invocation_id: UUID
+    conversation_id: NonEmptyStr
+    source_submission_id: UUID
+    action_evidence_digest: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True,
+            pattern=r"^sha256:[0-9a-f]{64}$",
+        ),
+    ]
+    action_count: int = Field(ge=1)
+    created_at: AwareDatetime = Field(default_factory=utc_now)
+
+
 class ModelStepContinuation(KernelModel):
     """Content-free continuation after a partial model stream fails."""
 
@@ -166,6 +185,7 @@ class ModelStepContinuation(KernelModel):
         ModelStepContinuationStatus.READY
     )
     reconciliation: ModelStepReconciliation | None = None
+    context_checkpoint: ModelStepContextCheckpoint | None = None
     submission_id: UUID | None = None
     revision: int = Field(default=1, ge=1)
     created_at: AwareDatetime = Field(default_factory=utc_now)
@@ -195,6 +215,15 @@ class ModelStepContinuation(KernelModel):
         ):
             raise ValueError(
                 "model-step reconciliation requires blocked status",
+            )
+        checkpoint = self.context_checkpoint
+        if checkpoint is not None and (
+            checkpoint.continuation_id != self.continuation_id
+            or checkpoint.invocation_id != self.invocation_id
+            or checkpoint.conversation_id != self.conversation_id
+        ):
+            raise ValueError(
+                "model-step checkpoint identity does not match continuation",
             )
         if self.updated_at < self.created_at:
             raise ValueError("updated_at cannot precede created_at")
@@ -380,6 +409,7 @@ __all__ = [
     "ContinuationMode",
     "ContinuationRef",
     "ConversationContinuation",
+    "ModelStepContextCheckpoint",
     "ModelStepContinuation",
     "ModelStepContinuationStatus",
     "ModelStepReconciliation",

@@ -4,7 +4,7 @@
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 import pytest
 
@@ -29,6 +29,8 @@ from qwenpaw.recovery import ModelResourceWaitService
 from qwenpaw.kernel import (
     ActionKind,
     ActionRequest,
+    ActionResult,
+    ActionStatus,
     ActorRef,
     ActorType,
     ContinuationDispatchStatus,
@@ -46,13 +48,20 @@ from qwenpaw.kernel import (
     ModelOutputBoundary,
     ModelRecoveryDisposition,
     ModelStepReconciliationReason,
+    ModelStepContextCheckpoint,
     ModelStepContinuationStatus,
     ResourceWaitStatus,
     SubmissionInputEnvelope,
     SubmissionStatus,
     TurnSubmissionRequest,
 )
-from qwenpaw.runtime.actions import lite_action_store
+from qwenpaw.runtime.actions import (
+    lite_action_store,
+    model_step_action_evidence_digest,
+)
+from qwenpaw.runtime.model_step_contexts import (
+    lite_model_step_context_store,
+)
 
 
 @pytest.mark.asyncio
@@ -727,4 +736,199 @@ async def test_partial_model_step_stops_for_action_reconciliation(
         conversation_id=chat.id,
     )
     assert queue.submissions == ()
+    await control.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("superseded", [False, True])
+async def test_terminal_action_continues_from_immutable_context(
+    tmp_path: Path,
+    superseded: bool,
+) -> None:
+    manager = ChatManager(
+        repo=JsonChatRepository(tmp_path / "chats.json"),
+    )
+    chat = await manager.create_chat(
+        ChatSpec(
+            id="chat-1",
+            session_id="console:chat-1",
+            user_id="local-user",
+            channel="console",
+        ),
+    )
+    control = InvocationControlService(
+        store=SQLiteInvocationControl(tmp_path / "control.sqlite3"),
+    )
+    recovery = ModelResourceWaitService(
+        tmp_path / "resource-waits.sqlite3",
+        agent_id="default",
+    )
+    invocation_id = uuid4()
+    correlation_id = uuid4()
+    lease = await control.begin_turn(
+        TurnSubmissionRequest(
+            agent_id="default",
+            conversation_id=chat.id,
+            content="do work",
+            input_envelope=SubmissionInputEnvelope(
+                kind=CONSOLE_SUBMISSION_ENVELOPE,
+                payload={},
+            ),
+            idempotency_key="source-submission",
+            correlation_id=correlation_id,
+        ),
+        invocation_id=invocation_id,
+    )
+    source_submission_id = lease.submission.submission_id
+    await control.finish_turn(lease, SubmissionStatus.FAILED)
+    attempt = ModelCallAttempt(
+        attempt_id=uuid4(),
+        route_decision_id=uuid4(),
+        invocation_id=invocation_id,
+        correlation_id=correlation_id,
+        conversation_id=chat.id,
+        registry_generation=1,
+        context_manifest_id=uuid4(),
+        model_call_index=2,
+        attempt_index=1,
+        provider_id="provider-a",
+        model_id="model-a",
+    )
+    continuation = await recovery.defer_model_step(
+        attempt,
+        ModelCallResult(
+            attempt_id=attempt.attempt_id,
+            invocation_id=invocation_id,
+            conversation_id=chat.id,
+            status=ModelCallStatus.FAILED,
+            emitted_content=True,
+            output_boundary=ModelOutputBoundary.PARTIAL_STREAM,
+            failure_class=ModelFailureClass.STREAM_INTERRUPTED,
+            recovery_disposition=(
+                ModelRecoveryDisposition.CONTINUE_MODEL_STEP
+            ),
+        ),
+    )
+    assert continuation is not None
+    action = ActionRequest(
+        invocation_id=invocation_id,
+        correlation_id=correlation_id,
+        conversation_id=chat.id,
+        registry_generation=1,
+        capability_id="qwenpaw.system.test-tool",
+        kind=ActionKind.TOOL,
+        action_name="write_file",
+        redacted_arguments={},
+        arguments_hash=f"sha256:{'a' * 64}",
+        idempotency_key=f"tool:{invocation_id}:call-1",
+    )
+    action_store = lite_action_store(tmp_path)
+    await action_store.begin(action)
+    await action_store.complete(
+        ActionResult(
+            action_id=action.action_id,
+            invocation_id=invocation_id,
+            conversation_id=chat.id,
+            status=ActionStatus.SUCCEEDED,
+            observation_digest=f"sha256:{'b' * 64}",
+        ),
+    )
+    actions = await action_store.scan_for_conversation(chat.id)
+    evidence_digest = model_step_action_evidence_digest(
+        actions,
+        invocation_id,
+    )
+    assert evidence_digest is not None
+    checkpoint = ModelStepContextCheckpoint(
+        checkpoint_id=uuid5(
+            continuation.continuation_id,
+            "private-agent-context",
+        ),
+        continuation_id=continuation.continuation_id,
+        invocation_id=invocation_id,
+        conversation_id=chat.id,
+        source_submission_id=source_submission_id,
+        action_evidence_digest=evidence_digest,
+        action_count=1,
+    )
+    await lite_model_step_context_store(tmp_path).save(
+        checkpoint,
+        {
+            "state": {
+                "context": [
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "id": "call-1",
+                                "name": "write_file",
+                                "state": "success",
+                                "output": "written",
+                                "metadata": {
+                                    "qwenpaw_action_id": str(
+                                        action.action_id,
+                                    ),
+                                },
+                            },
+                        ],
+                    },
+                ],
+            },
+        },
+    )
+    if superseded:
+        await control.enqueue_turn(
+            TurnSubmissionRequest(
+                agent_id="default",
+                conversation_id=chat.id,
+                content="newer user input",
+                input_envelope=SubmissionInputEnvelope(
+                    kind=CONSOLE_SUBMISSION_ENVELOPE,
+                    payload={},
+                ),
+                idempotency_key="newer-submission",
+            ),
+        )
+    workspace = SimpleNamespace(
+        agent_id="default",
+        workspace_dir=tmp_path,
+        chat_manager=manager,
+        model_resource_wait_service=recovery,
+    )
+    dispatcher = WorkspaceChatSubmissionDispatcher(
+        workspace=workspace,
+        control=control,
+    )
+
+    # pylint: disable=protected-access
+    await dispatcher._dispatch_ready_model_steps()
+    # pylint: enable=protected-access
+
+    dispatched = await recovery.get_model_step(
+        continuation.continuation_id,
+    )
+    assert dispatched is not None
+    if superseded:
+        assert dispatched.status is ModelStepContinuationStatus.CANCELLED
+        assert dispatched.submission_id is None
+        await control.close()
+        return
+    assert dispatched.status is ModelStepContinuationStatus.DISPATCHED
+    assert dispatched.context_checkpoint == checkpoint
+    assert dispatched.submission_id is not None
+    assert "written" not in dispatched.model_dump_json()
+    submission = await control.get_submission(dispatched.submission_id)
+    assert submission is not None
+    assert submission.input_envelope is not None
+    # pylint: disable=protected-access
+    payload = await dispatcher._materialize_model_step_payload(
+        submission.input_envelope,
+        chat,
+        submission,
+    )
+    # pylint: enable=protected-access
+    assert payload["meta"]["request_context"][
+        "model_step_context_checkpoint_id"
+    ] == str(checkpoint.checkpoint_id)
     await control.close()

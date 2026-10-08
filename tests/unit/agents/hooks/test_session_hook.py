@@ -6,12 +6,17 @@ from __future__ import annotations
 import asyncio
 import threading
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
 from qwenpaw.agents.acp.meta import ACP_EPHEMERAL_META_KEY
 from qwenpaw.hooks.session.session_hook import SessionLoadHook, SessionSaveHook
 from qwenpaw.hooks.session.signals import SESSION_SAVE_SUCCEEDED_KEY
+from qwenpaw.kernel import ModelStepContextCheckpoint
+from qwenpaw.runtime.model_step_contexts import (
+    lite_model_step_context_store,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.p1]
 
@@ -79,6 +84,48 @@ async def test_normal_request_loads_and_saves_session_state():
     assert ctx.extras[SESSION_SAVE_SUCCEEDED_KEY] is True
     assert ctx.mode_state == {"mission": {"active": True}}
     assert session.saved_payload["mode_state"] == ctx.mode_state
+
+
+async def test_model_step_recovery_loads_bound_immutable_context(
+    tmp_path,
+):
+    session = _FakeSession()
+    session.load_payload = {"state": {"context": ["live-state"]}}
+    continuation_id = uuid4()
+    checkpoint = ModelStepContextCheckpoint(
+        checkpoint_id=uuid4(),
+        continuation_id=continuation_id,
+        invocation_id=uuid4(),
+        conversation_id="chat-1",
+        source_submission_id=uuid4(),
+        action_evidence_digest=f"sha256:{'a' * 64}",
+        action_count=1,
+    )
+    checkpoint_state = {
+        "state": {"context": []},
+        "mode_state": {"mission": {"active": True}},
+    }
+    await lite_model_step_context_store(tmp_path).save(
+        checkpoint,
+        checkpoint_state,
+    )
+    ctx = _ctx(session, ephemeral=False)
+    ctx.workspace_dir = tmp_path
+    ctx.request.request_context.update(
+        {
+            "model_step_context_checkpoint_id": str(
+                checkpoint.checkpoint_id,
+            ),
+            "model_step_continuation_id": str(continuation_id),
+            "os_conversation_id": "chat-1",
+        },
+    )
+
+    await SessionLoadHook().run(ctx)
+
+    assert session.loaded is False
+    assert ctx.session_state == checkpoint_state
+    assert ctx.mode_state == {"mission": {"active": True}}
 
 
 async def test_failed_session_save_does_not_mark_turn_as_persisted():

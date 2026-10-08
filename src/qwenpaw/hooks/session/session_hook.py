@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from uuid import UUID
 
 from ..base import LifecycleHook
 from ..cron.cron_hook import restore_cron_context
@@ -54,33 +55,37 @@ class SessionLoadHook(LifecycleHook):
         session = getattr(ctx.workspace, "session", None)
         if session is None:
             return HookResult()
-        try:
-            request = ctx.request
-            user_id = getattr(request, "user_id", "") or ctx.session_id
-            channel = getattr(request, "channel", "") or ""
+        checkpoint_state = await self._load_model_step_checkpoint(ctx)
+        if checkpoint_state is not None:
+            ctx.session_state = checkpoint_state
+        else:
+            try:
+                request = ctx.request
+                user_id = getattr(request, "user_id", "") or ctx.session_id
+                channel = getattr(request, "channel", "") or ""
 
-            proxy = StateProxy()
-            await session.load_session_state(
-                session_id=ctx.session_id,
-                user_id=user_id,
-                channel=channel,
-                agent=proxy,
-            )
-            if proxy.data:
-                ctx.session_state = proxy.data
-                mode_state = proxy.data.get("mode_state")
-                if isinstance(mode_state, dict):
-                    loaded_mode_state = dict(mode_state)
-                    loaded_mode_state.update(ctx.mode_state)
-                    ctx.mode_state = loaded_mode_state
-        except KeyError as e:
-            logger.debug(
-                "session_load: skipped (schema mismatch): %s",
-                e,
-            )
-        except Exception:
-            logger.debug("session_load: failed", exc_info=True)
+                proxy = StateProxy()
+                await session.load_session_state(
+                    session_id=ctx.session_id,
+                    user_id=user_id,
+                    channel=channel,
+                    agent=proxy,
+                )
+                if proxy.data:
+                    ctx.session_state = proxy.data
+            except KeyError as e:
+                logger.debug(
+                    "session_load: skipped (schema mismatch): %s",
+                    e,
+                )
+            except Exception:
+                logger.debug("session_load: failed", exc_info=True)
         if ctx.session_state:
+            mode_state = ctx.session_state.get("mode_state")
+            if isinstance(mode_state, dict):
+                loaded_mode_state = dict(mode_state)
+                loaded_mode_state.update(ctx.mode_state)
+                ctx.mode_state = loaded_mode_state
             prepare_console_regeneration(ctx.session_state, ctx.request)
             if getattr(ctx.request, "channel", None) == "console":
                 await asyncio.to_thread(
@@ -88,6 +93,45 @@ class SessionLoadHook(LifecycleHook):
                     ctx.session_state,
                 )
         return HookResult()
+
+    @staticmethod
+    async def _load_model_step_checkpoint(
+        ctx: HookContext,
+    ) -> dict | None:
+        """Load an explicitly bound immutable recovery snapshot."""
+        request_context = (
+            getattr(ctx.request, "request_context", None) or {}
+        )
+        raw_checkpoint_id = request_context.get(
+            "model_step_context_checkpoint_id",
+        )
+        if raw_checkpoint_id is None:
+            return None
+        try:
+            checkpoint_id = UUID(str(raw_checkpoint_id))
+            continuation_id = UUID(
+                str(request_context["model_step_continuation_id"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                "invalid model-step context checkpoint binding",
+            ) from exc
+        from ...runtime.model_step_contexts import (
+            lite_model_step_context_store,
+        )
+
+        checkpoint, state = await lite_model_step_context_store(
+            ctx.workspace_dir,
+        ).load(checkpoint_id)
+        if (
+            checkpoint.continuation_id != continuation_id
+            or checkpoint.conversation_id
+            != request_context.get("os_conversation_id")
+        ):
+            raise ValueError(
+                "model-step context checkpoint ownership mismatch",
+            )
+        return state
 
 
 class SessionSaveHook(LifecycleHook):

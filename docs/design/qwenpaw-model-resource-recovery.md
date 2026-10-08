@@ -33,6 +33,13 @@ Invocation、correlation、`ChatSpec.id`、输出边界、revision、状态和�
 `submission_id`。半截输出只用于当次流式展示，不提交为最终 Assistant Message，
 也不作为后续模型上下文；后续步骤从已持久化的完整上下文重建。
 
+当来源 Invocation 已产生 Action 时，内容安全元数据与私有上下文分离：Kernel
+`ModelStepContextCheckpoint` 只保存 checkpoint、continuation、Invocation、
+`ChatSpec.id`、来源 Submission、Action 证据摘要和计数；真实 Agent context 存在权限
+为 `0600` 的不可变 Lite snapshot，不进入 Activity、Kernel JSON 或插件 SDK payload。
+Action 摘要只覆盖 Action ID、终态、内容安全 observation digest 与 side-effect status，
+绝不对原始 Tool output、Prompt、凭据或被省略内容做指纹。
+
 ## 3. 状态机
 
 ```text
@@ -95,6 +102,16 @@ ModelCallResult(continue_model_step, partial boundary)
   Action 已终态但下一步缺少可重建的 durable tool context。三种情况都进入
   `action_reconciliation_required`，不自动重做；assessment 与 continuation 一同
   持久化并投影到 Activity，旧记录没有 assessment 时仍可读取。
+- 所有 Action 已终态且副作用确定时，Runtime 还必须证明 Agent snapshot 中存在每个
+  executor call 对应的终态 ToolResult。它先原子保存不可变私有 snapshot，再发布
+  `ModelStepContextCheckpoint`；如果进程恰好在两步之间退出，dispatcher 可从稳定
+  checkpoint ID 重新发现 snapshot 并补齐元数据。
+- Action Recorder 将 `action_id` 写入 AgentScope 原生 `ToolResultBlock.metadata`；
+  checkpoint 验证同时匹配 executor call ID 与 Action ID，不能用历史中恰好重复的
+  call ID 冒充当前 Invocation 的结果。旧 ToolResult 没有该绑定时保持阻塞。
+- checkpoint continuation 从不可变 snapshot 装配，而不是读取可能已漂移的最新
+  Chat session。若来源 Submission 之后已经接受了新输入，旧 continuation 直接进入
+  cancelled，绝不越过或覆盖新输入；enqueue 仍使用 Queue revision 关闭检查后的竞态。
 - Model Step 状态通过现有 Chat Runtime Observation 投影为 pending、accepted、
   cancelled、blocked 或 failed；它不是 Queue 假状态，也不包含半截正文。
 - Resource Wait 与 Model Step 共用只读 `ModelRecoveryHistoryPort`；Resource Wait
@@ -160,6 +177,9 @@ Adapter 声明；Kernel 不假设任意模型流可以原地续传。
   `action_reconciliation_required`，不自动重放副作用。
 - [x] 根据真实 `ActionRecord` 将阻塞原因分类为 pending result、uncertain side
   effect 或 durable context required，并跨重启持久化内容安全计数。
-- [ ] 用可恢复 Tool Result / Checkpoint 自动完成对账并安全创建后续 Model Step。
+- [x] 对 terminal/certain Action 验证 Agent context 中的终态 ToolResult，保存不可变
+  私有 snapshot，并用内容安全 `ModelStepContextCheckpoint` 自动续行；pending / uncertain
+  Action 继续失败关闭，新 Submission 会取消旧 snapshot continuation。
+- [ ] 为后台 Action 和 Provider committed-item protocol 扩展同一 checkpoint 契约。
 - [ ] Provider resource health 事件自动释放 quota wait。
 - [ ] 真实限流故障和进程重启的浏览器端到端演练。

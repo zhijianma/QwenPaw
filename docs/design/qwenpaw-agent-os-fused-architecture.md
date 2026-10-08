@@ -554,8 +554,9 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
   - [x] Resource Wait 与 bounded Model Step continuation 已跨进程恢复；partial output
     不进入下一次上下文，Stop / Interrupt、崩溃窗口与恢复预算均有持久化边界。
   - [ ] 成功 Action 不重做，uncertain Action 必须先对账或取得显式授权；当前已经
-    持久化 pending / uncertain / durable-context 三类 assessment，仍缺完整 Tool
-    Result / Checkpoint 重建。
+    持久化 pending / uncertain / durable-context 三类 assessment；同步 terminal Action
+    已以不可变私有 context snapshot 和内容安全 Checkpoint 自动续行，后台 Action 与
+    Provider committed item 尚未接入。
 - [ ] Workstation / Hub 再实现按能力、健康、成本和数据边界的动态路由；Lite 当前
   继续使用确定性主模型与显式 fallback 顺序，不冒充智能路由器。
 - 区分 Run Completion、Verification 与业务 Outcome，并预留 Trajectory 投影。

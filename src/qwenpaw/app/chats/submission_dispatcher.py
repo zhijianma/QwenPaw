@@ -9,7 +9,7 @@ import json
 import logging
 from pathlib import Path
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid5
 
 from ...invocation_control import (
     InvocationControlService,
@@ -161,7 +161,9 @@ class WorkspaceChatSubmissionDispatcher:
 
     async def _dispatch_ready_model_steps(self) -> None:
         """Dispatch partial-stream continuations without polling Chat."""
-        continuations = await self._resource_waits.list_ready_model_steps()
+        continuations = (
+            await self._resource_waits.list_recoverable_model_steps()
+        )
         first_error: Exception | None = None
         for continuation in continuations:
             try:
@@ -176,7 +178,7 @@ class WorkspaceChatSubmissionDispatcher:
         self,
         continuation: ModelStepContinuation,
     ) -> None:
-        """Continue only when the failed Invocation committed no Action."""
+        """Continue only from a complete, causally current context."""
         workspace_dir = getattr(self._workspace, "workspace_dir", None)
         if workspace_dir is None:
             raise RuntimeError(
@@ -185,6 +187,14 @@ class WorkspaceChatSubmissionDispatcher:
         from ...runtime.actions import (
             assess_model_step_reconciliation,
             lite_action_store,
+            model_step_action_context_bindings,
+            model_step_action_evidence_digest,
+        )
+        from ...runtime.model_step_contexts import (
+            ModelStepContextConflictError,
+            ModelStepContextNotFoundError,
+            context_has_terminal_tool_results,
+            lite_model_step_context_store,
         )
 
         action_store = lite_action_store(Path(workspace_dir))
@@ -196,11 +206,89 @@ class WorkspaceChatSubmissionDispatcher:
             continuation.invocation_id,
         )
         if reconciliation is not None:
-            await self._resource_waits.require_action_reconciliation(
-                continuation.continuation_id,
-                reconciliation,
+            action_bindings = model_step_action_context_bindings(
+                actions,
+                continuation.invocation_id,
             )
-            return
+            evidence_digest = model_step_action_evidence_digest(
+                actions,
+                continuation.invocation_id,
+            )
+            checkpoint = continuation.context_checkpoint
+            checkpoint_id = (
+                checkpoint.checkpoint_id
+                if checkpoint is not None
+                else uuid5(
+                    continuation.continuation_id,
+                    "private-agent-context",
+                )
+            )
+            try:
+                stored_checkpoint, agent_state = (
+                    await lite_model_step_context_store(
+                        Path(workspace_dir),
+                    ).load(checkpoint_id)
+                )
+            except (
+                ModelStepContextConflictError,
+                ModelStepContextNotFoundError,
+            ):
+                stored_checkpoint = None
+                agent_state = None
+            context_ready = (
+                action_bindings is not None
+                and evidence_digest is not None
+                and stored_checkpoint is not None
+                and agent_state is not None
+                and stored_checkpoint.continuation_id
+                == continuation.continuation_id
+                and stored_checkpoint.invocation_id
+                == continuation.invocation_id
+                and stored_checkpoint.conversation_id
+                == continuation.conversation_id
+                and stored_checkpoint.action_count
+                == reconciliation.action_count
+                and stored_checkpoint.action_evidence_digest
+                == evidence_digest
+                and context_has_terminal_tool_results(
+                    agent_state,
+                    action_bindings,
+                )
+            )
+            if not context_ready:
+                await self._resource_waits.require_action_reconciliation(
+                    continuation.continuation_id,
+                    reconciliation,
+                )
+                return
+            continuation = (
+                await self._resource_waits.attach_model_step_context(
+                    continuation.continuation_id,
+                    stored_checkpoint,
+                )
+            )
+            submissions = (
+                await self._control.scan_submissions_for_conversation(
+                    agent_id=continuation.agent_id,
+                    conversation_id=continuation.conversation_id,
+                )
+            )
+            source = next(
+                (
+                    item
+                    for item in submissions
+                    if item.submission_id
+                    == stored_checkpoint.source_submission_id
+                ),
+                None,
+            )
+            if source is None or any(
+                item.sequence > source.sequence for item in submissions
+            ):
+                await self._resource_waits.cancel_model_step(
+                    continuation.continuation_id,
+                )
+                return
         dispatched = await self._resource_waits.dispatch_model_step(
             continuation.continuation_id,
             self._enqueue_model_step,
@@ -595,6 +683,19 @@ class WorkspaceChatSubmissionDispatcher:
             raise ValueError(
                 "model-step continuation is not bound to this Submission",
             )
+        checkpoint = continuation.context_checkpoint
+        if checkpoint is not None:
+            from ...runtime.model_step_contexts import (
+                lite_model_step_context_store,
+            )
+
+            stored_checkpoint, _ = await lite_model_step_context_store(
+                Path(self._workspace.workspace_dir),
+            ).load(checkpoint.checkpoint_id)
+            if stored_checkpoint != checkpoint:
+                raise ValueError(
+                    "model-step context checkpoint does not match recovery",
+                )
         return {
             "channel_id": chat.channel,
             "sender_id": chat.user_id,
@@ -622,6 +723,15 @@ class WorkspaceChatSubmissionDispatcher:
                     "model_step_continuation_id": str(continuation_id),
                     "recovered_attempt_id": str(
                         continuation.attempt_id,
+                    ),
+                    **(
+                        {
+                            "model_step_context_checkpoint_id": str(
+                                checkpoint.checkpoint_id,
+                            ),
+                        }
+                        if checkpoint is not None
+                        else {}
                     ),
                 },
             },

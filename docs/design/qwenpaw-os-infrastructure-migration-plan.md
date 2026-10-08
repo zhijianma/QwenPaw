@@ -443,8 +443,11 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
   - [x] dispatcher 已按真实 `ActionRecord` 生成并持久化内容安全的 reconciliation
     assessment：区分 pending result、uncertain side effect 和 durable context
     required；Activity 只公开原因与计数，旧 SQLite 数据库原位迁移。
-  - [ ] 为 terminal Action 提供可恢复 Tool Result / Checkpoint 后，才能从
-    `durable_context_required` 自动创建后续 Model Step。
+  - [x] terminal/certain Action 已通过不可变私有 Agent context snapshot 与内容安全
+    `ModelStepContextCheckpoint` 自动续行；dispatcher 逐一校验 executor call 的终态
+    ToolResult，并修复 snapshot-first 的崩溃窗口。新 Submission 已被接受时取消旧
+    continuation，不覆盖新上下文。
+  - [ ] 后台 Action 与 Provider committed item 接入同一 checkpoint protocol。
 - [ ] 把 WebSocket 增量续传、sticky route 和 HTTP fallback 保持为 Provider
   Adapter capability；严格验证 response identity/prefix，失败时回退持久上下文重建，
   Kernel 不感知具体传输。

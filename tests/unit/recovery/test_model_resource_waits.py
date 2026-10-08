@@ -15,6 +15,7 @@ from qwenpaw.kernel import (
     ModelFailureClass,
     ModelOutputBoundary,
     ModelRecoveryDisposition,
+    ModelStepContextCheckpoint,
     ModelStepReconciliation,
     ModelStepReconciliationReason,
     ModelStepContinuationStatus,
@@ -24,6 +25,9 @@ from qwenpaw.kernel import (
     WaitConditionStatus,
 )
 from qwenpaw.recovery import ModelResourceWaitService
+from qwenpaw.recovery.model_resource_waits import (
+    ModelResourceWaitConflictError,
+)
 
 
 def _attempt() -> ModelCallAttempt:
@@ -523,3 +527,118 @@ async def test_model_step_reconciliation_migrates_existing_database(
             ).fetchall()
         }
     assert "reconciliation_json" in columns
+    assert "context_checkpoint_json" in columns
+
+
+@pytest.mark.asyncio
+async def test_model_step_context_unblocks_certain_actions_and_persists(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "resource-waits.sqlite3"
+    service = ModelResourceWaitService(database, agent_id="default")
+    attempt = _attempt()
+    continuation = await service.defer_model_step(
+        attempt,
+        ModelCallResult(
+            attempt_id=attempt.attempt_id,
+            invocation_id=attempt.invocation_id,
+            conversation_id=attempt.conversation_id,
+            status=ModelCallStatus.FAILED,
+            emitted_content=True,
+            output_boundary=ModelOutputBoundary.PARTIAL_STREAM,
+            failure_class=ModelFailureClass.STREAM_INTERRUPTED,
+            recovery_disposition=(
+                ModelRecoveryDisposition.CONTINUE_MODEL_STEP
+            ),
+        ),
+    )
+    assert continuation is not None
+    assessment = ModelStepReconciliation(
+        reason=ModelStepReconciliationReason.DURABLE_CONTEXT_REQUIRED,
+        action_count=1,
+        pending_result_count=0,
+        uncertain_side_effect_count=0,
+        terminal_result_count=1,
+    )
+    await service.require_action_reconciliation(
+        continuation.continuation_id,
+        assessment,
+    )
+    checkpoint = ModelStepContextCheckpoint(
+        checkpoint_id=uuid4(),
+        continuation_id=continuation.continuation_id,
+        invocation_id=continuation.invocation_id,
+        conversation_id=continuation.conversation_id,
+        source_submission_id=uuid4(),
+        action_evidence_digest=f"sha256:{'d' * 64}",
+        action_count=1,
+    )
+
+    ready = await service.attach_model_step_context(
+        continuation.continuation_id,
+        checkpoint,
+    )
+    restarted = ModelResourceWaitService(database, agent_id="default")
+    restored = await restarted.get_model_step(
+        continuation.continuation_id,
+    )
+
+    assert ready.status is ModelStepContinuationStatus.READY
+    assert ready.reconciliation is None
+    assert ready.context_checkpoint == checkpoint
+    assert restored == ready
+
+
+@pytest.mark.asyncio
+async def test_model_step_context_cannot_resolve_uncertain_action(
+    tmp_path: Path,
+) -> None:
+    service = ModelResourceWaitService(
+        tmp_path / "resource-waits.sqlite3",
+        agent_id="default",
+    )
+    attempt = _attempt()
+    continuation = await service.defer_model_step(
+        attempt,
+        ModelCallResult(
+            attempt_id=attempt.attempt_id,
+            invocation_id=attempt.invocation_id,
+            conversation_id=attempt.conversation_id,
+            status=ModelCallStatus.FAILED,
+            emitted_content=True,
+            output_boundary=ModelOutputBoundary.PARTIAL_STREAM,
+            failure_class=ModelFailureClass.STREAM_INTERRUPTED,
+            recovery_disposition=(
+                ModelRecoveryDisposition.CONTINUE_MODEL_STEP
+            ),
+        ),
+    )
+    assert continuation is not None
+    await service.require_action_reconciliation(
+        continuation.continuation_id,
+        ModelStepReconciliation(
+            reason=ModelStepReconciliationReason.UNCERTAIN_SIDE_EFFECT,
+            action_count=1,
+            pending_result_count=0,
+            uncertain_side_effect_count=1,
+            terminal_result_count=1,
+        ),
+    )
+    checkpoint = ModelStepContextCheckpoint(
+        checkpoint_id=uuid4(),
+        continuation_id=continuation.continuation_id,
+        invocation_id=continuation.invocation_id,
+        conversation_id=continuation.conversation_id,
+        source_submission_id=uuid4(),
+        action_evidence_digest=f"sha256:{'e' * 64}",
+        action_count=1,
+    )
+
+    with pytest.raises(
+        ModelResourceWaitConflictError,
+        match="cannot resolve Action uncertainty",
+    ):
+        await service.attach_model_step_context(
+            continuation.continuation_id,
+            checkpoint,
+        )

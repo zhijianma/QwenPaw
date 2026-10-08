@@ -329,6 +329,16 @@ def _model_step_observation(
                 if continuation.reconciliation is not None
                 else 0
             ),
+            "context_checkpoint_id": (
+                str(continuation.context_checkpoint.checkpoint_id)
+                if continuation.context_checkpoint is not None
+                else None
+            ),
+            "context_checkpoint_action_count": (
+                continuation.context_checkpoint.action_count
+                if continuation.context_checkpoint is not None
+                else 0
+            ),
             "submission_id": _optional_uuid(continuation.submission_id),
             "revision": continuation.revision,
         },

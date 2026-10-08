@@ -21,9 +21,11 @@ from ..kernel import (
     ModelOutputBoundary,
     ModelRecoveryDisposition,
     ModelResourceWait,
+    ModelStepContextCheckpoint,
     ModelStepContinuation,
     ModelStepContinuationStatus,
     ModelStepReconciliation,
+    ModelStepReconciliationReason,
     ResourceWaitStatus,
     ResourceWaitTrigger,
     WaitCondition,
@@ -67,7 +69,17 @@ def _same_reconciliation(
     )
 
 
-class ModelResourceWaitService:
+def _same_context_checkpoint(
+    left: ModelStepContextCheckpoint,
+    right: ModelStepContextCheckpoint,
+) -> bool:
+    """Compare checkpoint identity without its first-write timestamp."""
+    return left.model_dump(exclude={"created_at"}) == right.model_dump(
+        exclude={"created_at"},
+    )
+
+
+class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
     """Persist resource blockers separately from the user turn queue."""
 
     def __init__(
@@ -162,6 +174,7 @@ class ModelResourceWaitService:
                     output_boundary TEXT NOT NULL,
                     status TEXT NOT NULL,
                     reconciliation_json TEXT,
+                    context_checkpoint_json TEXT,
                     submission_id TEXT,
                     revision INTEGER NOT NULL,
                     created_at TEXT NOT NULL,
@@ -191,6 +204,11 @@ class ModelResourceWaitService:
                 connection.execute(
                     "ALTER TABLE model_step_continuations "
                     "ADD COLUMN reconciliation_json TEXT",
+                )
+            if "context_checkpoint_json" not in step_columns:
+                connection.execute(
+                    "ALTER TABLE model_step_continuations "
+                    "ADD COLUMN context_checkpoint_json TEXT",
                 )
 
     async def start(self) -> None:
@@ -375,8 +393,9 @@ class ModelResourceWaitService:
                 "(continuation_id, attempt_id, invocation_id, "
                 "correlation_id, agent_id, conversation_id, "
                 "output_boundary, status, reconciliation_json, "
-                "submission_id, revision, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "context_checkpoint_json, submission_id, revision, "
+                "created_at, updated_at) VALUES "
+                "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 self._step_to_values(continuation),
             )
         return continuation
@@ -587,6 +606,32 @@ class ModelResourceWaitService:
         await self.start()
         return await asyncio.to_thread(self._list_ready_model_steps_sync)
 
+    async def list_recoverable_model_steps(
+        self,
+    ) -> tuple[ModelStepContinuation, ...]:
+        """Return ready and Action-blocked steps for reconciliation."""
+        await self.start()
+        return await asyncio.to_thread(
+            self._list_recoverable_model_steps_sync,
+        )
+
+    def _list_recoverable_model_steps_sync(
+        self,
+    ) -> tuple[ModelStepContinuation, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM model_step_continuations "
+                "WHERE agent_id = ? AND status IN (?, ?) "
+                "ORDER BY created_at, continuation_id",
+                (
+                    self.agent_id,
+                    ModelStepContinuationStatus.READY.value,
+                    ModelStepContinuationStatus
+                    .ACTION_RECONCILIATION_REQUIRED.value,
+                ),
+            ).fetchall()
+        return tuple(self._step_from_row(row) for row in rows)
+
     def _list_ready_model_steps_sync(
         self,
     ) -> tuple[ModelStepContinuation, ...]:
@@ -649,6 +694,152 @@ class ModelResourceWaitService:
                 None,
                 reconciliation,
             )
+
+    async def attach_model_step_context(
+        self,
+        continuation_id: UUID,
+        checkpoint: ModelStepContextCheckpoint,
+    ) -> ModelStepContinuation:
+        """Attach an immutable context checkpoint and make the step ready."""
+        await self.start()
+        async with self._write_lock:
+            updated = await asyncio.to_thread(
+                self._attach_model_step_context_sync,
+                continuation_id,
+                checkpoint,
+            )
+        self.notify_change()
+        return updated
+
+    async def cancel_model_step(
+        self,
+        continuation_id: UUID,
+    ) -> ModelStepContinuation:
+        """Cancel a ready or blocked step superseded by newer input."""
+        await self.start()
+        async with self._write_lock:
+            updated = await asyncio.to_thread(
+                self._cancel_model_step_sync,
+                continuation_id,
+            )
+        self.notify_change()
+        return updated
+
+    def _cancel_model_step_sync(
+        self,
+        continuation_id: UUID,
+    ) -> ModelStepContinuation:
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM model_step_continuations "
+                "WHERE continuation_id = ?",
+                (str(continuation_id),),
+            ).fetchone()
+            if row is None:
+                raise ModelResourceWaitNotFoundError(str(continuation_id))
+            current = self._step_from_row(row)
+            if current.status is ModelStepContinuationStatus.CANCELLED:
+                connection.rollback()
+                return current
+            if current.status not in {
+                ModelStepContinuationStatus.READY,
+                ModelStepContinuationStatus.ACTION_RECONCILIATION_REQUIRED,
+            }:
+                raise ModelResourceWaitConflictError(
+                    "only a pending model-step continuation can cancel",
+                )
+            updated = current.model_copy(
+                update={
+                    "status": ModelStepContinuationStatus.CANCELLED,
+                    "reconciliation": None,
+                    "revision": current.revision + 1,
+                    "updated_at": utc_now(),
+                },
+            )
+            self._update_model_step(connection, updated)
+            connection.commit()
+            return updated
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def _attach_model_step_context_sync(
+        self,
+        continuation_id: UUID,
+        checkpoint: ModelStepContextCheckpoint,
+    ) -> ModelStepContinuation:
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM model_step_continuations "
+                "WHERE continuation_id = ?",
+                (str(continuation_id),),
+            ).fetchone()
+            if row is None:
+                raise ModelResourceWaitNotFoundError(str(continuation_id))
+            current = self._step_from_row(row)
+            if (
+                checkpoint.continuation_id != current.continuation_id
+                or checkpoint.invocation_id != current.invocation_id
+                or checkpoint.conversation_id != current.conversation_id
+            ):
+                raise ModelResourceWaitConflictError(
+                    "model-step context checkpoint identity mismatch",
+                )
+            if current.context_checkpoint is not None:
+                if not _same_context_checkpoint(
+                    current.context_checkpoint,
+                    checkpoint,
+                ):
+                    raise ModelResourceWaitConflictError(
+                        "model-step context checkpoint conflict",
+                    )
+                connection.rollback()
+                return current
+            if current.status not in {
+                ModelStepContinuationStatus.READY,
+                ModelStepContinuationStatus.ACTION_RECONCILIATION_REQUIRED,
+            }:
+                raise ModelResourceWaitConflictError(
+                    "model-step context cannot attach after dispatch",
+                )
+            if (
+                current.status
+                is ModelStepContinuationStatus.ACTION_RECONCILIATION_REQUIRED
+                and (
+                    current.reconciliation is None
+                    or current.reconciliation.reason
+                    is not ModelStepReconciliationReason
+                    .DURABLE_CONTEXT_REQUIRED
+                    or current.reconciliation.action_count
+                    != checkpoint.action_count
+                )
+            ):
+                raise ModelResourceWaitConflictError(
+                    "model-step context cannot resolve Action uncertainty",
+                )
+            updated = current.model_copy(
+                update={
+                    "status": ModelStepContinuationStatus.READY,
+                    "reconciliation": None,
+                    "context_checkpoint": checkpoint,
+                    "revision": current.revision + 1,
+                    "updated_at": utc_now(),
+                },
+            )
+            self._update_model_step(connection, updated)
+            connection.commit()
+            return updated
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     async def get_model_step(
         self,
@@ -1027,6 +1218,12 @@ class ModelResourceWaitService:
             if raw_reconciliation is not None
             else None
         )
+        raw_checkpoint = values.pop("context_checkpoint_json", None)
+        values["context_checkpoint"] = (
+            json.loads(raw_checkpoint)
+            if raw_checkpoint is not None
+            else None
+        )
         return ModelStepContinuation.model_validate(values)
 
     @staticmethod
@@ -1048,6 +1245,11 @@ class ModelResourceWaitService:
                 else None
             ),
             (
+                continuation.context_checkpoint.model_dump_json()
+                if continuation.context_checkpoint is not None
+                else None
+            ),
+            (
                 str(continuation.submission_id)
                 if continuation.submission_id
                 else None
@@ -1065,14 +1267,19 @@ class ModelResourceWaitService:
     ) -> None:
         connection.execute(
             "UPDATE model_step_continuations SET status = ?, "
-            "reconciliation_json = ?, submission_id = ?, revision = ?, "
-            "updated_at = ? "
+            "reconciliation_json = ?, context_checkpoint_json = ?, "
+            "submission_id = ?, revision = ?, updated_at = ? "
             "WHERE continuation_id = ?",
             (
                 continuation.status.value,
                 (
                     continuation.reconciliation.model_dump_json()
                     if continuation.reconciliation is not None
+                    else None
+                ),
+                (
+                    continuation.context_checkpoint.model_dump_json()
+                    if continuation.context_checkpoint is not None
                     else None
                 ),
                 (
@@ -1145,6 +1352,15 @@ class ModelRecoveryHistory:
             values["reconciliation"] = (
                 json.loads(raw_reconciliation)
                 if raw_reconciliation is not None
+                else None
+            )
+            raw_checkpoint = values.pop(
+                "context_checkpoint_json",
+                None,
+            )
+            values["context_checkpoint"] = (
+                json.loads(raw_checkpoint)
+                if raw_checkpoint is not None
                 else None
             )
             continuations.append(

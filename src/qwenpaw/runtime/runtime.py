@@ -36,6 +36,7 @@ from ..kernel.models import (
     LifecyclePhase,
 )
 from ..kernel import (
+    ModelStepContextCheckpoint,
     ModelStepContinuationStatus,
     SubmissionStatus,
     TurnSubmissionRequest,
@@ -308,7 +309,15 @@ class Runtime:
             raise
         except ModelStepRecoveryError as e:
             ctx.error = e
-            await self._try_save_on_cancel(ctx, include_partial=False)
+            saved_state = await self._try_save_on_cancel(
+                ctx,
+                include_partial=False,
+            )
+            await self._checkpoint_model_step_context(
+                ctx,
+                e,
+                saved_state,
+            )
             logger.warning(
                 "runtime: partial model step reached recovery boundary "
                 "session=%s continuation=%s status=%s",
@@ -325,8 +334,8 @@ class Runtime:
                 (
                     "Automatic model-step recovery is exhausted."
                     if exhausted
-                    else "The interrupted model step will continue "
-                    "automatically."
+                    else "The interrupted model step reached a durable "
+                    "recovery boundary."
                 ),
                 (
                     "MODEL_STEP_RECOVERY_EXHAUSTED"
@@ -924,7 +933,7 @@ class Runtime:
         ctx: HookContext,
         *,
         include_partial: bool = True,
-    ) -> None:
+    ) -> dict[str, Any] | None:
         """Best-effort session save after cancellation or failure.
 
         Before snapshotting, any partial streaming content accumulated in
@@ -965,15 +974,15 @@ class Runtime:
                 isinstance(ephemeral, str)
                 and ephemeral.lower() in {"1", "true", "yes"}
             ):
-                return
+                return None
 
         agent = getattr(ctx, "agent", None)
         if agent is None:
-            return
+            return None
         workspace = getattr(ctx, "workspace", None)
         session = getattr(workspace, "session", None) if workspace else None
         if session is None:
-            return
+            return None
         try:
             envelope = getattr(ctx, "_envelope", None)
             if envelope is not None and include_partial:
@@ -992,7 +1001,7 @@ class Runtime:
             if (getattr(request, "request_context", None) or {}).get(
                 REGENERATE_FROM,
             ):
-                return
+                return None
             stamp_console_turn(
                 proxy.data,
                 request,
@@ -1020,6 +1029,7 @@ class Runtime:
                 "cancel-save: persisted interrupted turn (session=%s)",
                 ctx.session_id,
             )
+            return proxy.data
         except asyncio.CancelledError:
             logger.info(
                 "cancel-save: outer await re-cancelled, inner save "
@@ -1031,6 +1041,98 @@ class Runtime:
                 "cancel-save: failed (session=%s)",
                 ctx.session_id,
                 exc_info=True,
+            )
+        return None
+
+    async def _checkpoint_model_step_context(
+        self,
+        ctx: HookContext,
+        error: ModelStepRecoveryError,
+        agent_state: dict[str, Any] | None,
+    ) -> None:
+        """Publish a private context snapshot only after its durable save."""
+        if (
+            agent_state is None
+            or error.status is not ModelStepContinuationStatus.READY
+        ):
+            return
+        service = getattr(
+            ctx.workspace,
+            "model_resource_wait_service",
+            None,
+        )
+        workspace_dir = getattr(ctx.workspace, "workspace_dir", None)
+        if service is None or workspace_dir is None:
+            return
+        try:
+            continuation = await service.get_model_step(
+                error.continuation_id,
+            )
+            if continuation is None:
+                return
+            request_context = (
+                getattr(ctx.request, "request_context", None) or {}
+            )
+            source_submission_id = uuid.UUID(
+                str(request_context["os_submission_id"]),
+            )
+            from .actions import (
+                lite_action_store,
+                model_step_action_context_bindings,
+                model_step_action_evidence_digest,
+            )
+            from .model_step_contexts import (
+                context_has_terminal_tool_results,
+                lite_model_step_context_store,
+            )
+
+            actions = await lite_action_store(
+                workspace_dir,
+            ).scan_for_conversation(continuation.conversation_id)
+            action_bindings = model_step_action_context_bindings(
+                actions,
+                continuation.invocation_id,
+            )
+            evidence_digest = model_step_action_evidence_digest(
+                actions,
+                continuation.invocation_id,
+            )
+            if (
+                action_bindings is None
+                or evidence_digest is None
+                or not context_has_terminal_tool_results(
+                    agent_state,
+                    action_bindings,
+                )
+            ):
+                return
+            checkpoint = ModelStepContextCheckpoint(
+                checkpoint_id=uuid.uuid5(
+                    continuation.continuation_id,
+                    "private-agent-context",
+                ),
+                continuation_id=continuation.continuation_id,
+                invocation_id=continuation.invocation_id,
+                conversation_id=continuation.conversation_id,
+                source_submission_id=source_submission_id,
+                action_evidence_digest=evidence_digest,
+                action_count=len(action_bindings),
+            )
+            stored = await lite_model_step_context_store(
+                workspace_dir,
+            ).save(checkpoint, agent_state)
+            await service.attach_model_step_context(
+                continuation.continuation_id,
+                stored,
+            )
+            ctx.extras["model_step_context_checkpoint_id"] = str(
+                stored.checkpoint_id,
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.exception(
+                "runtime: failed to checkpoint model-step context "
+                "continuation=%s",
+                error.continuation_id,
             )
 
     # pylint: disable=too-many-branches
