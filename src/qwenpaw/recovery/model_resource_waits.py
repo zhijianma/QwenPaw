@@ -80,6 +80,32 @@ def _same_context_checkpoint(
     )
 
 
+def _model_step_from_row(
+    row: sqlite3.Row,
+) -> ModelStepContinuation:
+    """Decode one continuation row for service and history adapters."""
+    values = dict(row)
+    raw_reconciliation = values.pop("reconciliation_json", None)
+    values["reconciliation"] = (
+        json.loads(raw_reconciliation)
+        if raw_reconciliation is not None
+        else None
+    )
+    raw_checkpoint = values.pop("context_checkpoint_json", None)
+    values["context_checkpoint"] = (
+        json.loads(raw_checkpoint)
+        if raw_checkpoint is not None
+        else None
+    )
+    raw_authorization = values.pop("retry_authorization_json", None)
+    values["retry_authorization"] = (
+        json.loads(raw_authorization)
+        if raw_authorization is not None
+        else None
+    )
+    return ModelStepContinuation.model_validate(values)
+
+
 class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
     """Persist resource blockers separately from the user turn queue."""
 
@@ -361,7 +387,7 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
                 (str(continuation.continuation_id),),
             ).fetchone()
             if row is not None:
-                existing = self._step_from_row(row)
+                existing = _model_step_from_row(row)
                 immutable = (
                     "continuation_id",
                     "attempt_id",
@@ -637,7 +663,7 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
                     .ACTION_RECONCILIATION_REQUIRED.value,
                 ),
             ).fetchall()
-        return tuple(self._step_from_row(row) for row in rows)
+        return tuple(_model_step_from_row(row) for row in rows)
 
     def _list_ready_model_steps_sync(
         self,
@@ -652,7 +678,7 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
                     ModelStepContinuationStatus.READY.value,
                 ),
             ).fetchall()
-        return tuple(self._step_from_row(row) for row in rows)
+        return tuple(_model_step_from_row(row) for row in rows)
 
     async def dispatch_model_step(
         self,
@@ -762,7 +788,7 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
             ).fetchone()
             if row is None:
                 raise ModelResourceWaitNotFoundError(str(continuation_id))
-            current = self._step_from_row(row)
+            current = _model_step_from_row(row)
             if current.status is ModelStepContinuationStatus.CANCELLED:
                 connection.rollback()
                 return current
@@ -805,7 +831,7 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
             ).fetchone()
             if row is None:
                 raise ModelResourceWaitNotFoundError(str(continuation_id))
-            current = self._step_from_row(row)
+            current = _model_step_from_row(row)
             if (
                 checkpoint.continuation_id != current.continuation_id
                 or checkpoint.invocation_id != current.invocation_id
@@ -879,7 +905,7 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
             ).fetchone()
             if row is None:
                 raise ModelResourceWaitNotFoundError(str(continuation_id))
-            current = self._step_from_row(row)
+            current = _model_step_from_row(row)
             if current.retry_authorization is not None:
                 if current.retry_authorization != authorization:
                     raise ModelResourceWaitConflictError(
@@ -947,7 +973,7 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
                 "WHERE continuation_id = ?",
                 (str(continuation_id),),
             ).fetchone()
-        return self._step_from_row(row) if row is not None else None
+        return _model_step_from_row(row) if row is not None else None
 
     def _transition_model_step_sync(
         self,
@@ -966,7 +992,7 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
             ).fetchone()
             if row is None:
                 raise ModelResourceWaitNotFoundError(str(continuation_id))
-            current = self._step_from_row(row)
+            current = _model_step_from_row(row)
             if current.status is status:
                 if (
                     current.submission_id != submission_id
@@ -1053,7 +1079,7 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
                 ),
             ).fetchall()
             for row in step_rows:
-                current = self._step_from_row(row)
+                current = _model_step_from_row(row)
                 updated = current.model_copy(
                     update={
                         "status": ModelStepContinuationStatus.CANCELLED,
@@ -1295,32 +1321,6 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
         )
 
     @staticmethod
-    def _step_from_row(row: sqlite3.Row) -> ModelStepContinuation:
-        values = dict(row)
-        raw_reconciliation = values.pop("reconciliation_json", None)
-        values["reconciliation"] = (
-            json.loads(raw_reconciliation)
-            if raw_reconciliation is not None
-            else None
-        )
-        raw_checkpoint = values.pop("context_checkpoint_json", None)
-        values["context_checkpoint"] = (
-            json.loads(raw_checkpoint)
-            if raw_checkpoint is not None
-            else None
-        )
-        raw_authorization = values.pop(
-            "retry_authorization_json",
-            None,
-        )
-        values["retry_authorization"] = (
-            json.loads(raw_authorization)
-            if raw_authorization is not None
-            else None
-        )
-        return ModelStepContinuation.model_validate(values)
-
-    @staticmethod
     def _step_to_values(
         continuation: ModelStepContinuation,
     ) -> tuple[object, ...]:
@@ -1449,27 +1449,8 @@ class ModelRecoveryHistory:
             ).fetchall()
         continuations = []
         for row in rows:
-            values = dict(row)
-            raw_reconciliation = values.pop(
-                "reconciliation_json",
-                None,
-            )
-            values["reconciliation"] = (
-                json.loads(raw_reconciliation)
-                if raw_reconciliation is not None
-                else None
-            )
-            raw_checkpoint = values.pop(
-                "context_checkpoint_json",
-                None,
-            )
-            values["context_checkpoint"] = (
-                json.loads(raw_checkpoint)
-                if raw_checkpoint is not None
-                else None
-            )
             continuations.append(
-                ModelStepContinuation.model_validate(values),
+                _model_step_from_row(row),
             )
         return tuple(continuations)
 

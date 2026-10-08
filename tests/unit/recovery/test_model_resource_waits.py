@@ -27,6 +27,7 @@ from qwenpaw.kernel import (
 )
 from qwenpaw.recovery import ModelResourceWaitService
 from qwenpaw.recovery.model_resource_waits import (
+    ModelRecoveryHistory,
     ModelResourceWaitConflictError,
 )
 
@@ -701,9 +702,15 @@ async def test_uncertain_action_retry_authorization_survives_restart(
     restored = await restarted.get_model_step(
         continuation.continuation_id,
     )
+    [history_record] = await ModelRecoveryHistory(
+        restarted,
+    ).scan_model_steps_for_conversation(
+        continuation.conversation_id,
+    )
 
     assert ready.status is ModelStepContinuationStatus.READY
     assert ready.reconciliation is None
     assert ready.retry_authorization == authorization
     assert replayed == ready
     assert restored == ready
+    assert history_record == ready
