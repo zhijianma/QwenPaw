@@ -1578,6 +1578,11 @@ class PluginLoader:
 
         self.registry.assert_memory_backends_not_in_use(plugin_id)
 
+        # Publish the provider removal before mutating plugin-owned host
+        # state. A failed WAL prepare must leave the loaded plugin intact.
+        if deactivate_capabilities:
+            await self.capability_registry.deactivate_provider(plugin_id)
+
         # Execute shutdown hooks registered by this plugin
         shutdown_hooks = [
             h
@@ -1658,8 +1663,6 @@ class PluginLoader:
 
         # Clear all in-memory registry entries for this plugin
         self.registry.unregister_plugin(plugin_id)
-        if deactivate_capabilities:
-            await self.capability_registry.deactivate_provider(plugin_id)
         self.capability_registry.defer_provider_cleanup(
             plugin_id,
             lambda: self._cleanup_contribution_tool_governance(

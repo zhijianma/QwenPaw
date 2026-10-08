@@ -75,6 +75,10 @@ class ReleaseRollbackError(RuntimeError):
     """Raised when a stable provider release cannot be rolled back."""
 
 
+class ProviderDeactivationError(RuntimeError):
+    """Raised when a provider cannot be transactionally deactivated."""
+
+
 @dataclass(frozen=True)
 class _ProviderRollbackPoint:
     """Last promoted provider state retained for a fenced rollback."""
@@ -110,6 +114,19 @@ class _RollbackTransaction:
     rollback_point: _ProviderRollbackPoint
     snapshot: RegistrySnapshot
     target_release: CapabilityReleaseTag | None
+
+
+@dataclass(frozen=True)
+class _DeactivationTransaction:
+    """Prepared in-memory state for one provider deactivation."""
+
+    operation_id: UUID
+    candidate: CapabilityPromotionCandidate
+    evaluation: CapabilityPromotionEvaluation
+    previous_snapshot: RegistrySnapshot
+    previous_release: CapabilityReleaseTag | None
+    previous_rollback: _ProviderRollbackPoint | None
+    snapshot: RegistrySnapshot
 
 
 class GenerationLease(CapabilityLease):
@@ -923,28 +940,179 @@ class GenerationRegistry:
     ) -> RegistrySnapshot:
         """Atomically remove one provider from all future leases."""
         async with self._lock:
-            capabilities = {
-                capability_id: contribution
-                for capability_id, contribution in (
-                    self._current.capabilities.items()
-                )
-                if contribution.descriptor.provider_id != provider_id
-            }
-            if len(capabilities) == len(self._current.capabilities):
+            transaction = self._prepare_deactivation(provider_id)
+            if transaction is None:
                 return self._current
-            generation = self._current.generation + 1
-            snapshot = RegistrySnapshot(
-                registry_epoch_id=self._registry_epoch_id,
-                generation=generation,
-                capabilities=MappingProxyType(capabilities),
+            return await self._commit_deactivation(transaction)
+
+    def _prepare_deactivation(
+        self,
+        provider_id: str,
+    ) -> _DeactivationTransaction | None:
+        contributions = {
+            capability_id: contribution
+            for capability_id, contribution in (
+                self._current.capabilities.items()
             )
-            self._current = snapshot
-            self._stable_releases.pop(provider_id, None)
-            self._rollback_points.pop(provider_id, None)
-            self._snapshots[generation] = snapshot
-            self._leases[generation] = 0
-            self._reclaim_unleased()
-            return snapshot
+            if contribution.descriptor.provider_id == provider_id
+        }
+        if not contributions:
+            return None
+        capabilities = {
+            capability_id: contribution
+            for capability_id, contribution in (
+                self._current.capabilities.items()
+            )
+            if contribution.descriptor.provider_id != provider_id
+        }
+        previous_release = self._stable_releases.get(provider_id)
+        descriptor = next(iter(contributions.values())).descriptor
+        candidate = CapabilityPromotionCandidate.create(
+            provider_id=provider_id,
+            provider_kind=descriptor.provider_kind,
+            version=(
+                previous_release.version
+                if previous_release is not None
+                else descriptor.version
+            ),
+            bundle_payload={
+                "action": CapabilityPromotionAction.DEACTIVATE.value,
+                "provider_id": provider_id,
+                "previous_release_hash": (
+                    previous_release.release_hash
+                    if previous_release is not None
+                    else None
+                ),
+                "capability_ids": sorted(contributions),
+            },
+        )
+        evaluation = CapabilityPromotionEvaluation(
+            candidate_id=candidate.candidate_id,
+            candidate_hash=candidate.candidate_hash,
+            evaluator_id="qwenpaw.deactivation-contract",
+            decision=CapabilityEvaluationDecision.ALLOW,
+            checks=(
+                CapabilityPromotionCheck(
+                    check_id="deactivate.provider-present",
+                    outcome=CapabilityCheckOutcome.PASSED,
+                ),
+            ),
+        )
+        generation = self._current.generation + 1
+        snapshot = RegistrySnapshot(
+            registry_epoch_id=self._registry_epoch_id,
+            generation=generation,
+            capabilities=MappingProxyType(capabilities),
+        )
+        return _DeactivationTransaction(
+            operation_id=uuid4(),
+            candidate=candidate,
+            evaluation=evaluation,
+            previous_snapshot=self._current,
+            previous_release=previous_release,
+            previous_rollback=self._rollback_points.get(provider_id),
+            snapshot=snapshot,
+        )
+
+    def _deactivation_event(
+        self,
+        transaction: _DeactivationTransaction,
+        phase: CapabilityPromotionPhase,
+        *,
+        reason_code: str | None = None,
+    ) -> CapabilityPromotionEvent:
+        previous_release = transaction.previous_release
+        return CapabilityPromotionEvent.create(
+            operation_id=transaction.operation_id,
+            registry_epoch_id=self._registry_epoch_id,
+            action=CapabilityPromotionAction.DEACTIVATE,
+            phase=phase,
+            candidate=transaction.candidate,
+            evaluation=transaction.evaluation,
+            from_generation=transaction.previous_snapshot.generation,
+            target_generation=transaction.snapshot.generation,
+            previous_release_hash=(
+                previous_release.release_hash
+                if previous_release is not None
+                else None
+            ),
+            target_release=None,
+            reason_code=reason_code,
+        )
+
+    async def _commit_deactivation(
+        self,
+        transaction: _DeactivationTransaction,
+    ) -> RegistrySnapshot:
+        provider_id = transaction.candidate.provider_id
+        try:
+            await self._append_promotion_event(
+                self._deactivation_event(
+                    transaction,
+                    CapabilityPromotionPhase.PREPARED,
+                ),
+            )
+        except Exception as exc:
+            raise ProviderDeactivationError(
+                f"deactivation journal prepare failed for '{provider_id}'",
+            ) from exc
+        self._current = transaction.snapshot
+        self._stable_releases.pop(provider_id, None)
+        self._rollback_points.pop(provider_id, None)
+        self._snapshots[transaction.snapshot.generation] = (
+            transaction.snapshot
+        )
+        self._leases[transaction.snapshot.generation] = 0
+        try:
+            await self._append_promotion_event(
+                self._deactivation_event(
+                    transaction,
+                    CapabilityPromotionPhase.COMMITTED,
+                ),
+            )
+        except Exception as exc:
+            self._restore_deactivation(transaction)
+            await self._journal_aborted_deactivation(transaction)
+            raise ProviderDeactivationError(
+                f"deactivation journal commit failed for '{provider_id}'",
+            ) from exc
+        self._reclaim_unleased()
+        return transaction.snapshot
+
+    def _restore_deactivation(
+        self,
+        transaction: _DeactivationTransaction,
+    ) -> None:
+        provider_id = transaction.candidate.provider_id
+        self._current = transaction.previous_snapshot
+        self._snapshots.pop(transaction.snapshot.generation, None)
+        self._leases.pop(transaction.snapshot.generation, None)
+        if transaction.previous_release is not None:
+            self._stable_releases[provider_id] = (
+                transaction.previous_release
+            )
+        if transaction.previous_rollback is not None:
+            self._rollback_points[provider_id] = (
+                transaction.previous_rollback
+            )
+
+    async def _journal_aborted_deactivation(
+        self,
+        transaction: _DeactivationTransaction,
+    ) -> None:
+        try:
+            await self._append_promotion_event(
+                self._deactivation_event(
+                    transaction,
+                    CapabilityPromotionPhase.ABORTED,
+                    reason_code="journal.commit_failed",
+                ),
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.exception(
+                "failed to journal aborted provider deactivation: %s",
+                transaction.candidate.provider_id,
+            )
 
     def defer_provider_cleanup(
         self,
@@ -1004,6 +1172,7 @@ __all__ = [
     "ContributionFactory",
     "GenerationLease",
     "GenerationRegistry",
+    "ProviderDeactivationError",
     "ReleaseRollbackError",
     "RegistrySnapshot",
 ]

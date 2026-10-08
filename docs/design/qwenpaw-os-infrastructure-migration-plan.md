@@ -1046,8 +1046,11 @@ Cron 不形成独立审批或产物事实源。
     Context Manifest、Route Decision 与 Model Call Attempt；新证据 hash 纳入 epoch，
     历史无 epoch 记录保持兼容。真实 Chat 已验证同一 Invocation 的 epoch、generation、
     Lock hash 与 Context ID 引用闭合。
+  - [x] provider deactivate 已纳入同一 Promotion WAL：prepared 成功后才发布不含该
+    provider 的新 generation，commit 失败恢复 snapshot、stable tag 与 rollback fence
+    并记录 aborted；不存在的 provider 保持幂等且不生成虚假 Journal Event。
   - [ ] 按 Slot 风险补齐真实 Scenario Runner、Evidence Bundle、人工授权策略与
-    deactivate WAL；当前自动 Gate 仅结构化既有 schema/implementation/health 门禁。
+    卸载授权门禁；当前自动 Gate 仅结构化既有 schema/implementation/health 门禁。
     关键词发现索引与 Workstation/Hub Release Registry 仍待实现。
 
 - [x] 每个公开扩展模块均有 system/plugin contract tests；system-only 模块具有

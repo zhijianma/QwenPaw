@@ -6,6 +6,7 @@ from .registry import (
     ActivationError,
     GenerationLease,
     GenerationRegistry,
+    ProviderDeactivationError,
     ReleaseRollbackError,
     RegistrySnapshot,
 )
@@ -47,6 +48,7 @@ __all__ = [
     "ActivationError",
     "GenerationLease",
     "GenerationRegistry",
+    "ProviderDeactivationError",
     "ReleaseRollbackError",
     "RegistrySnapshot",
     "SYSTEM_MEMORY_CAPABILITY_BUNDLE",

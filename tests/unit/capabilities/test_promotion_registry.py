@@ -10,6 +10,7 @@ import pytest
 from qwenpaw.capabilities import (
     ActivationError,
     GenerationRegistry,
+    ProviderDeactivationError,
     ReleaseRollbackError,
 )
 from qwenpaw.kernel import (
@@ -270,3 +271,100 @@ async def test_rollback_commit_failure_restores_fence_for_retry() -> None:
         expected_release_hash=promoted.release_hash,
     )
     assert retried.generation == 4
+
+
+@pytest.mark.asyncio
+async def test_successful_deactivation_records_one_wal_operation() -> None:
+    journal = _RecordingJournal()
+    registry = GenerationRegistry(promotion_journal=journal)
+    await registry.activate_bundle(_bundle(), _factory)
+    release = registry.stable_release("qwenpaw.system.test")
+    assert release is not None
+    journal.events.clear()
+
+    snapshot = await registry.deactivate_provider(
+        "qwenpaw.system.test",
+    )
+
+    assert snapshot.generation == 3
+    assert registry.current_descriptor(
+        "qwenpaw.system.test.factory",
+    ) is None
+    assert registry.stable_release("qwenpaw.system.test") is None
+    assert [event.action for event in journal.events] == [
+        CapabilityPromotionAction.DEACTIVATE,
+        CapabilityPromotionAction.DEACTIVATE,
+    ]
+    assert [event.phase for event in journal.events] == [
+        CapabilityPromotionPhase.PREPARED,
+        CapabilityPromotionPhase.COMMITTED,
+    ]
+    assert all(event.target_release is None for event in journal.events)
+    assert all(
+        event.previous_release_hash == release.release_hash
+        for event in journal.events
+    )
+
+
+@pytest.mark.asyncio
+async def test_deactivation_prepare_failure_keeps_provider_active() -> None:
+    journal = _RecordingJournal()
+    registry = GenerationRegistry(promotion_journal=journal)
+    await registry.activate_bundle(_bundle(), _factory)
+    release = registry.stable_release("qwenpaw.system.test")
+    journal.events.clear()
+    journal.fail_phase = CapabilityPromotionPhase.PREPARED
+
+    with pytest.raises(ProviderDeactivationError, match="prepare failed"):
+        await registry.deactivate_provider("qwenpaw.system.test")
+
+    assert registry.generation == 2
+    assert registry.stable_release("qwenpaw.system.test") == release
+    assert registry.current_descriptor(
+        "qwenpaw.system.test.factory",
+    ) is not None
+    assert not journal.events
+
+
+@pytest.mark.asyncio
+async def test_deactivation_commit_failure_restores_rollback_fence() -> None:
+    journal = _RecordingJournal()
+    registry = GenerationRegistry(promotion_journal=journal)
+    await registry.activate_bundle(_bundle(), _factory)
+    await registry.activate_bundle(_bundle("2.0.0"), _factory)
+    release = registry.stable_release("qwenpaw.system.test")
+    assert release is not None
+    journal.events.clear()
+    journal.fail_phase = CapabilityPromotionPhase.COMMITTED
+
+    with pytest.raises(ProviderDeactivationError, match="commit failed"):
+        await registry.deactivate_provider("qwenpaw.system.test")
+
+    assert registry.generation == 3
+    assert registry.stable_release("qwenpaw.system.test") == release
+    descriptor = registry.current_descriptor(
+        "qwenpaw.system.test.factory",
+    )
+    assert descriptor is not None
+    assert descriptor.version == "2.0.0"
+    assert [event.phase for event in journal.events] == [
+        CapabilityPromotionPhase.PREPARED,
+        CapabilityPromotionPhase.ABORTED,
+    ]
+    journal.fail_phase = None
+    rolled_back = await registry.rollback_provider(
+        "qwenpaw.system.test",
+        expected_release_hash=release.release_hash,
+    )
+    assert rolled_back.generation == 4
+
+
+@pytest.mark.asyncio
+async def test_missing_provider_deactivation_is_idempotent() -> None:
+    journal = _RecordingJournal()
+    registry = GenerationRegistry(promotion_journal=journal)
+
+    snapshot = await registry.deactivate_provider("qwenpaw.system.missing")
+
+    assert snapshot.generation == 1
+    assert not journal.events

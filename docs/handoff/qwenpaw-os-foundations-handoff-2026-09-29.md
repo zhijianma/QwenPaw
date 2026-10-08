@@ -497,6 +497,24 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   明确 reasoning、可见 assistant message 与 durable evidence 的边界，不能把内部
   过程文本作为“一问一答”消息直接暴露。
 
+### 2026-10-08 Provider Deactivation WAL
+
+- `deactivate_provider` 已使用 Kernel 预留的 `DEACTIVATE` Action 接入同一 Promotion
+  Journal，不再绕过稳定发布证据。system/plugin 仍调用同一 Registry 方法。
+- prepared 写成功后才发布移除 provider 的新 generation；committed 写失败会恢复旧
+  snapshot、stable release 与 rollback fence，并尽力追加 aborted。prepare 失败时
+  generation 和 provider 可用性均不变化。
+- Deactivation Candidate 只包含 provider identity、previous release hash 与 capability
+  IDs；Journal 不保存实现对象、配置内容或 Secret。不存在的 provider 保持幂等且不
+  产生虚假事件。
+- PluginLoader 在执行 hook、清理模块、工具和 Registry 状态之前先提交 capability
+  deactivation；若 WAL prepare 失败，插件记录和 uninstall hook 均保持未触碰，避免
+  “Capability 仍可解析但宿主实现已拆除”的撕裂状态。
+- 当前 deactivation evaluation 只证明 provider 存在；按 Slot 风险执行 Scenario、
+  Evidence 与人工授权仍是下一阶段门禁，不能把 contract check 冒充安全批准。
+- 本切片 98 项 Registry、Promotion、Plugin lifecycle 与管理 API 相邻定点测试通过；
+  AST、mypy、flake8、pylint 等文件级门禁通过，未执行全仓测试。
+
 ### 本阶段此前已执行的定点验证
 
 - 后端核心路径定点测试：70 项通过。

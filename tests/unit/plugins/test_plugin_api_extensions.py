@@ -14,7 +14,7 @@ import tempfile
 import types
 from pathlib import Path
 from typing import Any, Dict
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -180,6 +180,55 @@ class TestUninstallHook:
 
         assert hook_called_with["plugin_id"] == "test-plugin"
         assert hook_called_with["delete_files"] is True
+
+    @pytest.mark.asyncio
+    async def test_deactivation_failure_keeps_plugin_host_state(
+        self,
+        fresh_registry,
+    ):
+        """A failed Registry prepare must not partially unload a plugin."""
+        from qwenpaw.capabilities import ProviderDeactivationError
+        from qwenpaw.plugins.architecture import (
+            PluginEntryPoints,
+            PluginManifest,
+            PluginRecord,
+        )
+        from qwenpaw.plugins.loader import PluginLoader
+
+        loader = PluginLoader(plugin_dirs=[])
+        loader.registry = fresh_registry
+        manifest = PluginManifest(
+            id="test-plugin",
+            name="Test",
+            version="1.0.0",
+            entry=PluginEntryPoints(backend="plugin.py"),
+        )
+        record = PluginRecord(
+            manifest=manifest,
+            source_path=Path("/fake"),
+            enabled=True,
+            instance=None,
+        )
+        loader._loaded_plugins["test-plugin"] = record
+        uninstall_hook = MagicMock()
+        fresh_registry.register_uninstall_hook(
+            plugin_id="test-plugin",
+            hook_name="must-not-run",
+            callback=uninstall_hook,
+        )
+        loader.capability_registry.deactivate_provider = AsyncMock(
+            side_effect=ProviderDeactivationError("journal unavailable"),
+        )
+
+        with pytest.raises(
+            ProviderDeactivationError,
+            match="journal unavailable",
+        ):
+            await loader.unload_plugin("test-plugin")
+
+        assert loader._loaded_plugins["test-plugin"] is record
+        assert fresh_registry.get_uninstall_hooks()
+        uninstall_hook.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_uninstall_hook_async_callback(self, fresh_registry):

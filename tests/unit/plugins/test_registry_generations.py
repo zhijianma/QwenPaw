@@ -5,6 +5,9 @@ from collections.abc import AsyncIterator
 
 import pytest
 
+from qwenpaw.capabilities.promotions import (
+    FilesystemCapabilityPromotionJournal,
+)
 from qwenpaw.kernel.models import (
     CapabilityBundle,
     CapabilityContribution,
@@ -12,6 +15,10 @@ from qwenpaw.kernel.models import (
     Run,
     RunnerSignal,
     TaskOrder,
+)
+from qwenpaw.kernel.releases import (
+    CapabilityPromotionAction,
+    CapabilityPromotionPhase,
 )
 from qwenpaw.plugins.architecture import PluginManifest
 from qwenpaw.plugins.generations import ActivationError, GenerationRegistry
@@ -86,6 +93,33 @@ async def test_one_plugin_activates_two_slots_in_one_generation() -> None:
     assert release.provider_kind is CapabilityProviderKind.PLUGIN
     assert release.version == "1.0.0"
     await lease.close()
+
+
+@pytest.mark.asyncio
+async def test_plugin_deactivation_uses_the_shared_promotion_wal(
+    tmp_path,
+) -> None:
+    journal = FilesystemCapabilityPromotionJournal(tmp_path)
+    registry = GenerationRegistry(promotion_journal=journal)
+    await registry.activate(_manifest(), _factory)
+
+    snapshot = await registry.deactivate("task-insights")
+    events = await registry.promotion_events(provider_id="task-insights")
+    deactivation = [
+        event
+        for event in reversed(events)
+        if event.action is CapabilityPromotionAction.DEACTIVATE
+    ]
+
+    assert snapshot.generation == 3
+    assert [event.phase for event in deactivation] == [
+        CapabilityPromotionPhase.PREPARED,
+        CapabilityPromotionPhase.COMMITTED,
+    ]
+    assert all(
+        event.candidate.provider_kind is CapabilityProviderKind.PLUGIN
+        for event in deactivation
+    )
 
 
 @pytest.mark.asyncio
