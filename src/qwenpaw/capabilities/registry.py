@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import NoReturn
@@ -22,6 +22,7 @@ from ..kernel.ports import (
     CapabilityPromotionEvidenceStore,
     CapabilityPromotionGate,
     CapabilityPromotionJournal,
+    CapabilityPromotionScenarioRunner,
 )
 from ..kernel.releases import (
     CapabilityCheckOutcome,
@@ -29,6 +30,7 @@ from ..kernel.releases import (
     CapabilityPromotionAction,
     CapabilityPromotionAssessment,
     CapabilityPromotionCandidate,
+    CapabilityPromotionEvidence,
     CapabilityPromotionEvaluation,
     CapabilityPromotionEvent,
     CapabilityPromotionEvidenceBundle,
@@ -207,6 +209,9 @@ class GenerationRegistry:
             CapabilityPromotionEvidenceStore | None
         ) = None,
         promotion_gate: CapabilityPromotionGate | None = None,
+        promotion_scenario_runner: (
+            CapabilityPromotionScenarioRunner | None
+        ) = None,
         registry_epoch_id: UUID | None = None,
     ) -> None:
         self._registry_epoch_id = registry_epoch_id or uuid4()
@@ -231,6 +236,7 @@ class GenerationRegistry:
         self._promotion_gate = (
             promotion_gate or ContractCapabilityPromotionGate()
         )
+        self._promotion_scenario_runner = promotion_scenario_runner
 
     @property
     def generation(self) -> int:
@@ -552,12 +558,23 @@ class GenerationRegistry:
                 for contribution in staged.values()
             ),
         )
+        scenario_evidence: Sequence[CapabilityPromotionEvidence] = ()
+        if self._promotion_scenario_runner is not None:
+            scenario_evidence = await self._promotion_scenario_runner.run(
+                candidate,
+                release,
+                {
+                    capability_id: contribution.implementation
+                    for capability_id, contribution in staged.items()
+                },
+            )
         assessment = await self._evaluate_release(
             operation_id=operation_id,
             candidate=candidate,
             release=release,
             previous_snapshot=previous_snapshot,
             previous_release=previous_release,
+            scenario_evidence=scenario_evidence,
         )
         return _PromotionTransaction(
             operation_id=operation_id,
@@ -580,11 +597,13 @@ class GenerationRegistry:
         release: CapabilityReleaseTag,
         previous_snapshot: RegistrySnapshot,
         previous_release: CapabilityReleaseTag | None,
+        scenario_evidence: Sequence[CapabilityPromotionEvidence],
     ) -> CapabilityPromotionAssessment:
         try:
             assessment = await self._promotion_gate.evaluate(
                 candidate,
                 release,
+                scenario_evidence,
             )
             if not isinstance(
                 assessment,
@@ -593,10 +612,22 @@ class GenerationRegistry:
                 raise TypeError(
                     "promotion gate must return an assessment",
                 )
+            included_evidence = {
+                item.evidence_id
+                for item in assessment.evidence_bundle.evidence
+            }
+            required_evidence = {
+                item.evidence_id for item in scenario_evidence
+            }
+            if not required_evidence <= included_evidence:
+                raise TypeError(
+                    "promotion gate omitted scenario evidence",
+                )
         except Exception as exc:
             assessment = rejected_contract_assessment(
                 candidate,
                 check_id="evaluation.error",
+                additional_evidence=tuple(scenario_evidence),
             )
             try:
                 await self._persist_promotion_evidence(

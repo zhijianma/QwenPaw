@@ -531,11 +531,37 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - 模型演进兼容了无 `evidence_bundle_id` 的历史 WAL，以及短暂版本曾把 null 纳入 hash
   的 6 条过渡 WAL；本地 86 条真实历史记录全部验证通过，Promotion API 从 500 恢复
   为 200。
-- 当前 Bundle 仍只证明 contract/schema/health。按 Slot 风险执行真实 Scenario、
-  Evidence Artifact 与人工授权仍未完成，不能宣称完整安全发布门禁。
+- 本节记录生成时 Bundle 仍只证明 contract/schema/health；后续
+  “Artifact Renderer Promotion Scenario”切片已补上首个真实行为场景。其他高风险
+  Slot、Evidence Artifact 与人工授权仍未完成，不能宣称完整安全发布门禁。
 - 本切片 106 项 Capability、Promotion、Plugin lifecycle、Workspace Registry 与管理
   API 相邻定点测试通过；AST、mypy、flake8、pylint 等文件级门禁通过，未执行全仓
   测试。
+
+### 2026-10-08 Artifact Renderer Promotion Scenario
+
+- `SlotContract` 新增机器可读 `promotion_risk` 与 `promotion_scenarios`；高风险
+  engine、runner、tool/driver、memory、sensor、scheduler 和 delivery 已明确标注，
+  但没有真实 Scenario 的 Slot 不生成虚假通过证据。
+- Lite Scenario Runner 首先覆盖 `artifact.renderer`：对 staged system/plugin
+  implementation 运行 `task.summary` Markdown inline/attachment fixture，验证 renderer
+  identity、source hash、disposition、filename、64 KiB 输出预算、安全 inline media
+  type 和 attachment byte preservation，单次 render 上限 5 秒。
+- Scenario 失败会让 Contract Gate deny 并阻止 generation 发布；不支持 fixture 时
+  记录 `not_applicable` 而不是 pass。若自定义 Gate 异常或遗漏 Scenario Evidence，
+  Registry 同样失败关闭，并在拒绝 Bundle 中保留已完成的 Scenario 结果。
+- 真实 `task-insights` 示例插件已经通过同一 PluginLoader + Registry 路径验证；运行中
+  8004 服务的 system tasks renderer 也返回 PASSED Scenario Evidence。该门禁执行
+  本地插件代码，当前不是安全沙箱；同步 `supports()` 的恶意阻塞、其他高风险 Slot、
+  Evidence Artifact 与人工授权仍是后续范围。
+- 长程交互方向保持不变：一问一答仅是短 Chat 快速路径和 UI 投影。Agent Loop 由
+  durable Submission、Invocation、Interaction、Action、Artifact、Evidence、
+  Verification 与 typed wait 持续驱动；只有缺失必要事实、实质偏好、范围授权或高影响
+  决策才阻塞询问，禁止用“是否继续”模拟任务调度。
+- 本切片 85 项 Promotion、Slot、Renderer、system contribution、真实 plugin hot
+  activation、Workspace Registry 与管理 API 定点测试通过；文件级 AST、mypy、
+  flake8、pylint 门禁通过。真实 8004 API 返回 generation 2，当前 system tasks
+  Bundle 的 contract 三项与 renderer round-trip 均为 passed；未执行全仓测试。
 
 ### 本阶段此前已执行的定点验证
 

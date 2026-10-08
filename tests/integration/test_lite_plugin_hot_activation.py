@@ -11,6 +11,11 @@ from qwenpaw.plugins.architecture import PluginManifest
 from qwenpaw.plugins.generations import ActivationError
 from qwenpaw.plugins.contributions import ContributionValidationError
 from qwenpaw.plugins.loader import PluginLoader
+from qwenpaw.capabilities import GenerationRegistry
+from qwenpaw.capabilities.promotions import (
+    FilesystemCapabilityPromotionJournal,
+    LiteCapabilityPromotionScenarioRunner,
+)
 from qwenpaw.kernel.ports import (
     ArtifactRenderer,
     DeliveryAdapter,
@@ -60,10 +65,19 @@ def _write_engine_plugin(
 
 
 @pytest.mark.asyncio
-async def test_contextual_slots_load_and_unload_without_restart() -> None:
+async def test_contextual_slots_load_and_unload_without_restart(
+    tmp_path: Path,
+) -> None:
     root = Path(__file__).parents[2]
     source = root / "examples" / "plugins" / "task-insights"
-    loader = PluginLoader([source.parent])
+    registry = GenerationRegistry(
+        promotion_journal=FilesystemCapabilityPromotionJournal(tmp_path),
+        promotion_scenario_runner=LiteCapabilityPromotionScenarioRunner(),
+    )
+    loader = PluginLoader(
+        [source.parent],
+        capability_registry=registry,
+    )
     manifest = PluginManifest.from_dict(
         json.loads((source / "plugin.json").read_text(encoding="utf-8")),
     )
@@ -107,6 +121,25 @@ async def test_contextual_slots_load_and_unload_without_restart() -> None:
     assert (
         lease.resolve("task-insights.artifact-preview").slot
         == "ui.artifact.preview"
+    )
+    release = registry.stable_release("task-insights")
+    assert release is not None
+    promotion_events = await registry.promotion_events(
+        provider_id="task-insights",
+    )
+    assert promotion_events
+    evidence_bundles = await registry.promotion_evidence(
+        promotion_events[-1].candidate.candidate_id,
+    )
+    assert any(
+        evidence.check_id
+        == (
+            "scenario.artifact-renderer.roundtrip."
+            "task-insights.summary-renderer"
+        )
+        and evidence.outcome.value == "passed"
+        for evidence_bundle in evidence_bundles
+        for evidence in evidence_bundle.evidence
     )
 
     await loader.unload_plugin("task-insights")

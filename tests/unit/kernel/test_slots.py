@@ -27,6 +27,7 @@ def test_every_supported_slot_has_one_complete_contract() -> None:
             "fallback_next",
             "isolated",
         }
+        assert contract.promotion_risk in {"low", "medium", "high"}
 
 
 def test_execution_slots_fail_closed_except_renderer_fallback() -> None:
@@ -69,6 +70,15 @@ def test_agent_factory_is_an_explicit_system_boundary() -> None:
     assert contract.stability == "system"
     assert contract.lifecycle == "invocation"
     assert contract.failure_mode == "fail_closed"
+
+
+def test_promotion_risk_and_scenarios_are_machine_readable() -> None:
+    assert slot_contract("tool.provider").promotion_risk == "high"
+    assert slot_contract("runner").promotion_risk == "high"
+    assert slot_contract("ui.settings").promotion_risk == "low"
+    assert slot_contract("artifact.renderer").promotion_scenarios == (
+        "artifact-renderer.roundtrip",
+    )
 
 
 def test_unknown_slot_contract_fails_closed() -> None:

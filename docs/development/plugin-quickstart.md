@@ -942,6 +942,16 @@ Declare the implementation in an `artifact.renderer` Contribution. Inline
 results currently must be `text/plain`, `text/markdown`, or
 `application/json`; HTML and SVG are rejected even when a plugin returns them.
 Attachment rendering must preserve the verified source bytes and media type.
+Before a renderer is published into a new capability generation, Lite runs a
+bounded host scenario against staged implementations. The current fixture is a
+`task.summary` Markdown Artifact in inline and attachment dispositions. A
+supported fixture must preserve renderer identity, source hash, disposition,
+filename, output budget, safe inline media type, and attachment bytes. A
+contract violation or timeout blocks publication; an unsupported fixture is
+recorded as `not_applicable`, never as a pass. Scenario evidence is persisted
+in the same Promotion Evidence Bundle for system and plugin providers. This is
+an install-time compatibility gate, not a plugin sandbox; renderer code must
+still be treated as trusted local extension code.
 The Task projection exposes `preview.available`, `renderer_id`, and
 `registry_generation`, so UI code must not guess support from file extensions.
 `ui.artifact.preview` remains an optional presentation Slot and cannot bypass

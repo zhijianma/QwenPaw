@@ -404,6 +404,8 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
   兼容桥共用这一契约，原因进入内容安全 Observation。默认仍由目标、计划、事件、
   Action、Artifact、Evidence 和 Verification 持续推进；Suggestion、Steer、
   Interrupt 与 Approval 保持独立语义，禁止用逐步追问或“是否继续”充当执行调度器。
+  UI 中的一问一答只是上述权威事件的 Conversation 投影；Kernel 不以 assistant
+  message 结束作为运行终态，也不要求用户逐轮发送消息才能推进长程意图。
 - [ ] 冻结 Model Recovery Contract：
   - [x] Kernel `ModelFailureClass` 已区分 `transport_unavailable`、
     `stream_interrupted`、Provider overload、
@@ -1053,9 +1055,15 @@ Cron 不形成独立审批或产物事实源。
     Candidate 的内容寻址证据；Lite Store 使用 `0600` append-only 文件。Registry 在
     prepared WAL 前持久化并回读 Bundle，证据缺失、跨 Candidate、check/outcome 不匹配
     或 Store 故障都失败关闭；只读 API 可按 candidate 回查，不暴露实现、配置或 Secret。
-  - [ ] 按 Slot 风险补齐真实 Scenario Runner、人工授权策略与卸载授权门禁；当前
-    Evidence Bundle 证明 schema/implementation/health，但不冒充高风险行为场景通过。
-    关键词发现索引与 Workstation/Hub Release Registry 仍待实现。
+  - [x] Slot Contract 已声明机器可读的 promotion risk 与 scenario ID；Lite 首个真实
+    Scenario Runner 在发布前对 staged `artifact.renderer` 执行有界 round-trip，验证
+    identity、source hash、disposition、filename、output budget、安全 inline media
+    type 与 attachment byte preservation。system/plugin 共用同一门禁；失败阻断
+    generation，unsupported 明确记录 `not_applicable`，不冒充通过。Gate 自身异常时
+    已完成的 Scenario 证据仍保留在拒绝 Bundle 中。
+  - [ ] 为 runner、tool/driver、memory、scheduler、delivery 等高风险 Slot 分别实现
+    无副作用或可隔离的真实 Scenario，并补齐 Evidence Artifact、人工授权策略与卸载
+    授权门禁。关键词发现索引与 Workstation/Hub Release Registry 仍待实现。
 
 - [x] 每个公开扩展模块均有 system/plugin contract tests；system-only 模块具有
   核心激活、固定 generation、失败关闭和代际排空合同。

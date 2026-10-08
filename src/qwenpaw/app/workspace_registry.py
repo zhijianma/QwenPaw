@@ -44,6 +44,9 @@ class WorkspaceRegistry(MultiAgentManager):
     ) -> None:
         super().__init__()
         from ..capabilities import GenerationRegistry
+        from ..capabilities.promotions import (
+            LiteCapabilityPromotionScenarioRunner,
+        )
 
         self.app_services = app_services
         self._bootstrap_kwargs = bootstrap_plugins_kwargs or {}
@@ -51,6 +54,9 @@ class WorkspaceRegistry(MultiAgentManager):
             promotion_journal=capability_promotion_journal,
             promotion_evidence_store=(
                 capability_promotion_evidence_store
+            ),
+            promotion_scenario_runner=(
+                LiteCapabilityPromotionScenarioRunner()
             ),
         )
 

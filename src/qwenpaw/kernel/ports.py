@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
@@ -18,6 +18,7 @@ from .events import (
 from .releases import (
     CapabilityPromotionCandidate,
     CapabilityPromotionAssessment,
+    CapabilityPromotionEvidence,
     CapabilityPromotionEvidenceBundle,
     CapabilityPromotionEvent,
     CapabilityReleaseTag,
@@ -1429,8 +1430,22 @@ class CapabilityPromotionGate(Protocol):
         self,
         candidate: CapabilityPromotionCandidate,
         release: CapabilityReleaseTag,
+        scenario_evidence: Sequence[CapabilityPromotionEvidence] = (),
     ) -> CapabilityPromotionAssessment:
         """Return a decision paired with complete supporting evidence."""
+
+
+@runtime_checkable
+class CapabilityPromotionScenarioRunner(Protocol):
+    """Host-owned behavioral checks over staged implementations."""
+
+    async def run(
+        self,
+        candidate: CapabilityPromotionCandidate,
+        release: CapabilityReleaseTag,
+        implementations: Mapping[str, object],
+    ) -> Sequence[CapabilityPromotionEvidence]:
+        """Return content-safe scenario evidence without leaking objects."""
 
 
 @runtime_checkable

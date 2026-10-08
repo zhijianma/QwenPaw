@@ -4,12 +4,17 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from pathlib import Path
-from typing import Sequence
+from collections.abc import Mapping, Sequence
 from uuid import UUID
 
 from ..kernel import (
+    ArtifactRef,
+    ArtifactRenderDisposition,
+    ArtifactRenderRequest,
+    ArtifactRenderResult,
     CapabilityCheckOutcome,
     CapabilityEvaluationDecision,
     CapabilityPromotionAssessment,
@@ -21,6 +26,8 @@ from ..kernel import (
     CapabilityPromotionEvent,
     CapabilityReleaseTag,
 )
+from ..kernel.ports import ArtifactRenderer
+from ..kernel.slots import slot_contract
 from ..utils.io_utils import (
     get_path_lock,
     read_json_async,
@@ -44,9 +51,10 @@ def build_capability_promotion_assessment(
     evaluator_id: str,
     decision: CapabilityEvaluationDecision,
     checks: tuple[tuple[str, CapabilityCheckOutcome], ...],
+    additional_evidence: tuple[CapabilityPromotionEvidence, ...] = (),
 ) -> CapabilityPromotionAssessment:
     capability_ids = release.capability_ids if release is not None else ()
-    evidence = tuple(
+    contract_evidence = tuple(
         CapabilityPromotionEvidence.create(
             candidate=candidate,
             check_id=check_id,
@@ -56,6 +64,7 @@ def build_capability_promotion_assessment(
         )
         for check_id, outcome in checks
     )
+    evidence = (*contract_evidence, *additional_evidence)
     bundle = CapabilityPromotionEvidenceBundle.create(
         candidate=candidate,
         evaluator_id=evaluator_id,
@@ -89,18 +98,28 @@ class ContractCapabilityPromotionGate:
         self,
         candidate: CapabilityPromotionCandidate,
         release: CapabilityReleaseTag,
+        scenario_evidence: Sequence[CapabilityPromotionEvidence] = (),
     ) -> CapabilityPromotionAssessment:
         """Record the shared schema, implementation, and health gate."""
+        decision = (
+            CapabilityEvaluationDecision.DENY
+            if any(
+                item.outcome is CapabilityCheckOutcome.FAILED
+                for item in scenario_evidence
+            )
+            else CapabilityEvaluationDecision.ALLOW
+        )
         return build_capability_promotion_assessment(
             candidate,
             release,
             evaluator_id="qwenpaw.contract-gate",
-            decision=CapabilityEvaluationDecision.ALLOW,
+            decision=decision,
             checks=(
                 ("contract.schema", CapabilityCheckOutcome.PASSED),
                 ("contract.implementation", CapabilityCheckOutcome.PASSED),
                 ("contract.health", CapabilityCheckOutcome.PASSED),
             ),
+            additional_evidence=tuple(scenario_evidence),
         )
 
 
@@ -108,6 +127,7 @@ def rejected_contract_assessment(
     candidate: CapabilityPromotionCandidate,
     *,
     check_id: str,
+    additional_evidence: tuple[CapabilityPromotionEvidence, ...] = (),
 ) -> CapabilityPromotionAssessment:
     """Create content-safe denial evidence for a staging failure."""
     return build_capability_promotion_assessment(
@@ -116,6 +136,7 @@ def rejected_contract_assessment(
         evaluator_id="qwenpaw.contract-gate",
         decision=CapabilityEvaluationDecision.DENY,
         checks=((check_id, CapabilityCheckOutcome.FAILED),),
+        additional_evidence=additional_evidence,
     )
 
 
@@ -176,6 +197,136 @@ class InMemoryCapabilityPromotionEvidenceStore:
             ]
         bundles.sort(key=lambda item: item.created_at, reverse=True)
         return tuple(bundles[:limit])
+
+
+class LiteCapabilityPromotionScenarioRunner:
+    """Run bounded, side-effect-free host scenarios for supported Slots."""
+
+    _MAX_OUTPUT_BYTES = 64 * 1024
+    _TIMEOUT_SECONDS = 5.0
+    _SAFE_INLINE_MEDIA_TYPES = frozenset(
+        {"application/json", "text/markdown", "text/plain"},
+    )
+
+    @staticmethod
+    def _fixtures() -> tuple[ArtifactRenderRequest, ...]:
+        content = b"# QwenPaw promotion scenario\n"
+        digest = hashlib.sha256(content).hexdigest()
+        artifact = ArtifactRef(
+            kind="task.summary",
+            uri="promotion://artifact-renderer/fixture",
+            media_type="text/markdown",
+            content_hash=f"sha256:{digest}",
+            size_bytes=len(content),
+        )
+        return tuple(
+            ArtifactRenderRequest(
+                artifact=artifact,
+                content=content,
+                disposition=disposition,
+                filename="promotion-scenario.md",
+                max_output_bytes=(
+                    LiteCapabilityPromotionScenarioRunner._MAX_OUTPUT_BYTES
+                ),
+            )
+            for disposition in (
+                ArtifactRenderDisposition.INLINE,
+                ArtifactRenderDisposition.ATTACHMENT,
+            )
+        )
+
+    @classmethod
+    def _validate_renderer_result(
+        cls,
+        renderer: ArtifactRenderer,
+        request: ArtifactRenderRequest,
+        result: ArtifactRenderResult,
+    ) -> None:
+        if result.renderer_id != renderer.renderer_id:
+            raise ValueError("renderer result identity mismatch")
+        if result.source_content_hash != request.artifact.content_hash:
+            raise ValueError("renderer source digest mismatch")
+        if result.disposition is not request.disposition:
+            raise ValueError("renderer changed disposition")
+        if result.filename != request.filename:
+            raise ValueError("renderer changed filename")
+        if len(result.content) > request.max_output_bytes:
+            raise ValueError("renderer output exceeds scenario budget")
+        if (
+            request.disposition is ArtifactRenderDisposition.INLINE
+            and result.media_type not in cls._SAFE_INLINE_MEDIA_TYPES
+        ):
+            raise ValueError("renderer returned unsafe inline media type")
+        if request.disposition is ArtifactRenderDisposition.ATTACHMENT and (
+            result.content != request.content
+            or result.media_type != request.artifact.media_type
+        ):
+            raise ValueError("renderer changed attachment bytes or type")
+
+    async def _run_renderer(
+        self,
+        implementation: object,
+    ) -> CapabilityCheckOutcome:
+        if not isinstance(implementation, ArtifactRenderer):
+            return CapabilityCheckOutcome.FAILED
+        supported = False
+        try:
+            for request in self._fixtures():
+                if not implementation.supports(
+                    request.artifact,
+                    request.disposition,
+                ):
+                    continue
+                supported = True
+                result = await asyncio.wait_for(
+                    implementation.render(request),
+                    timeout=self._TIMEOUT_SECONDS,
+                )
+                if not isinstance(result, ArtifactRenderResult):
+                    return CapabilityCheckOutcome.FAILED
+                self._validate_renderer_result(
+                    implementation,
+                    request,
+                    result,
+                )
+        except Exception:  # pylint: disable=broad-except
+            return CapabilityCheckOutcome.FAILED
+        return (
+            CapabilityCheckOutcome.PASSED
+            if supported
+            else CapabilityCheckOutcome.NOT_APPLICABLE
+        )
+
+    async def run(
+        self,
+        candidate: CapabilityPromotionCandidate,
+        release: CapabilityReleaseTag,
+        implementations: Mapping[str, object],
+    ) -> Sequence[CapabilityPromotionEvidence]:
+        """Return content-safe evidence for every supported Slot scenario."""
+        evidence = []
+        for item in release.releases:
+            contract = slot_contract(item.slot)
+            if "artifact-renderer.roundtrip" not in (
+                contract.promotion_scenarios
+            ):
+                continue
+            outcome = await self._run_renderer(
+                implementations.get(item.capability_id),
+            )
+            evidence.append(
+                CapabilityPromotionEvidence.create(
+                    candidate=candidate,
+                    check_id=(
+                        "scenario.artifact-renderer.roundtrip."
+                        f"{item.capability_id}"
+                    ),
+                    producer_id="qwenpaw.lite-scenario-runner",
+                    outcome=outcome,
+                    capability_ids=(item.capability_id,),
+                ),
+            )
+        return tuple(evidence)
 
 
 class FilesystemCapabilityPromotionEvidenceStore:
@@ -336,6 +487,7 @@ __all__ = [
     "FilesystemCapabilityPromotionEvidenceStore",
     "FilesystemCapabilityPromotionJournal",
     "InMemoryCapabilityPromotionEvidenceStore",
+    "LiteCapabilityPromotionScenarioRunner",
     "build_capability_promotion_assessment",
     "rejected_contract_assessment",
 ]

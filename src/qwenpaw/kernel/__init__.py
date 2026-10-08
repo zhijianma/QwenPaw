@@ -157,6 +157,7 @@ from .slots import (
     CONTRIBUTION_SLOTS,
     SLOT_CONTRACTS,
     SlotContract,
+    SlotPromotionRisk,
     slot_contract,
 )
 from .invocation import (
@@ -351,6 +352,7 @@ from .ports import (
     CapabilityPromotionEvidenceStore,
     CapabilityPromotionJournal,
     CapabilityPromotionGate,
+    CapabilityPromotionScenarioRunner,
     CostAwareTaskRunner,
     ConversationForkPort,
     ConversationArtifactHistoryPort,
@@ -404,6 +406,7 @@ __all__ = [
     "CapabilityPromotionEvidenceStore",
     "CapabilityPromotionJournal",
     "CapabilityPromotionGate",
+    "CapabilityPromotionScenarioRunner",
     "CapabilityRelease",
     "CapabilityReleaseTag",
     "CapabilityCheckOutcome",
@@ -481,6 +484,7 @@ __all__ = [
     "CONTRIBUTION_SLOTS",
     "SLOT_CONTRACTS",
     "SlotContract",
+    "SlotPromotionRisk",
     "slot_contract",
     "DEFAULT_AGENT_FACTORY_ID",
     "DEFAULT_AGENT_MODE_PROVIDER_ID",

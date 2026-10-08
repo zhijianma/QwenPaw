@@ -15,6 +15,7 @@ SlotStability = Literal[
     "compatibility",
     "experience",
 ]
+SlotPromotionRisk = Literal["low", "medium", "high"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +28,8 @@ class SlotContract:
     lifecycle: SlotLifecycle
     failure_mode: SlotFailureMode
     stability: SlotStability = "public"
+    promotion_risk: SlotPromotionRisk = "medium"
+    promotion_scenarios: tuple[str, ...] = ()
 
 
 def _contract(
@@ -36,6 +39,8 @@ def _contract(
     lifecycle: SlotLifecycle,
     failure_mode: SlotFailureMode = "fail_closed",
     stability: SlotStability = "public",
+    promotion_risk: SlotPromotionRisk = "medium",
+    promotion_scenarios: tuple[str, ...] = (),
 ) -> SlotContract:
     return SlotContract(
         slot=slot,
@@ -44,6 +49,8 @@ def _contract(
         lifecycle=lifecycle,
         failure_mode=failure_mode,
         stability=stability,
+        promotion_risk=promotion_risk,
+        promotion_scenarios=promotion_scenarios,
     )
 
 
@@ -54,6 +61,7 @@ _SLOT_CONTRACTS = {
         ("legacy.engine.instance",),
         "process",
         stability="compatibility",
+        promotion_risk="high",
     ),
     "agent.factory": _contract(
         "agent.factory",
@@ -61,6 +69,7 @@ _SLOT_CONTRACTS = {
         ("internal.AgentScopeAgent",),
         "invocation",
         stability="system",
+        promotion_risk="high",
     ),
     "agent.mode.provider": _contract(
         "agent.mode.provider",
@@ -73,12 +82,14 @@ _SLOT_CONTRACTS = {
         ("InvocationScope", "CommandHost"),
         ("CommandSession",),
         "invocation",
+        promotion_risk="high",
     ),
     "hook.provider": _contract(
         "hook.provider",
         ("InvocationScope", "HookHost"),
         ("HookSession",),
         "invocation",
+        promotion_risk="high",
     ),
     "loop.gate.provider": _contract(
         "loop.gate.provider",
@@ -104,30 +115,35 @@ _SLOT_CONTRACTS = {
         ("legacy.tool.output",),
         "invocation",
         stability="compatibility",
+        promotion_risk="high",
     ),
     "tool.provider": _contract(
         "tool.provider",
         ("InvocationScope", "ToolSelection", "ToolHost"),
         ("Sequence[ToolDefinition]",),
         "invocation",
+        promotion_risk="high",
     ),
     "runner": _contract(
         "runner",
         ("TaskOrder", "Run", "RuntimeContext"),
         ("AsyncIterator[RunnerSignal]",),
         "task",
+        promotion_risk="high",
     ),
     "harness.runner": _contract(
         "harness.runner",
         ("TaskOrder", "Run", "RuntimeContext"),
         ("AsyncIterator[RunnerSignal]",),
         "task",
+        promotion_risk="high",
     ),
     "driver.provider": _contract(
         "driver.provider",
         ("InvocationScope", "DriverHost"),
         ("DriverSession",),
         "invocation",
+        promotion_risk="high",
     ),
     "memory": _contract(
         "memory",
@@ -135,12 +151,14 @@ _SLOT_CONTRACTS = {
         ("legacy.memory.backend",),
         "process",
         stability="compatibility",
+        promotion_risk="high",
     ),
     "memory.provider": _contract(
         "memory.provider",
         ("InvocationScope", "MemoryHost"),
         ("MemorySession",),
         "invocation",
+        promotion_risk="high",
     ),
     "prompt.provider": _contract(
         "prompt.provider",
@@ -153,12 +171,14 @@ _SLOT_CONTRACTS = {
         ("SensorContext",),
         ("Sequence[Proposal]",),
         "process",
+        promotion_risk="high",
     ),
     "scheduler": _contract(
         "scheduler",
         ("ScheduleDefinition", "ScheduleFire"),
         ("SchedulerPort", "ScheduleLease"),
         "process",
+        promotion_risk="high",
     ),
     "delivery.adapter": _contract(
         "delivery.adapter",
@@ -166,6 +186,7 @@ _SLOT_CONTRACTS = {
         ("DeliveryReceipt",),
         "process",
         failure_mode="fail_closed",
+        promotion_risk="high",
     ),
     "artifact.renderer": _contract(
         "artifact.renderer",
@@ -173,6 +194,7 @@ _SLOT_CONTRACTS = {
         ("ArtifactRenderResult",),
         "invocation",
         failure_mode="fallback_next",
+        promotion_scenarios=("artifact-renderer.roundtrip",),
     ),
     "ui.task.toolbar": _contract(
         "ui.task.toolbar",
@@ -181,6 +203,7 @@ _SLOT_CONTRACTS = {
         "experience",
         failure_mode="isolated",
         stability="experience",
+        promotion_risk="low",
     ),
     "ui.task.tab": _contract(
         "ui.task.tab",
@@ -189,6 +212,7 @@ _SLOT_CONTRACTS = {
         "experience",
         failure_mode="isolated",
         stability="experience",
+        promotion_risk="low",
     ),
     "ui.task.inspector": _contract(
         "ui.task.inspector",
@@ -197,6 +221,7 @@ _SLOT_CONTRACTS = {
         "experience",
         failure_mode="isolated",
         stability="experience",
+        promotion_risk="low",
     ),
     "ui.artifact.preview": _contract(
         "ui.artifact.preview",
@@ -205,6 +230,7 @@ _SLOT_CONTRACTS = {
         "experience",
         failure_mode="isolated",
         stability="experience",
+        promotion_risk="low",
     ),
     "ui.settings": _contract(
         "ui.settings",
@@ -213,6 +239,7 @@ _SLOT_CONTRACTS = {
         "experience",
         failure_mode="isolated",
         stability="experience",
+        promotion_risk="low",
     ),
 }
 
@@ -232,5 +259,6 @@ __all__ = [
     "CONTRIBUTION_SLOTS",
     "SLOT_CONTRACTS",
     "SlotContract",
+    "SlotPromotionRisk",
     "slot_contract",
 ]

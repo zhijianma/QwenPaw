@@ -90,6 +90,7 @@ class _DenyGate:
         self,
         candidate: CapabilityPromotionCandidate,
         release: CapabilityReleaseTag,
+        scenario_evidence=(),
     ):
         return build_capability_promotion_assessment(
             candidate,
@@ -102,6 +103,7 @@ class _DenyGate:
                     CapabilityCheckOutcome.FAILED,
                 ),
             ),
+            additional_evidence=tuple(scenario_evidence),
         )
 
 
