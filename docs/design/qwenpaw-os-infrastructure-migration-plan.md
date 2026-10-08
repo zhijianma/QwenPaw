@@ -528,6 +528,10 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     启动 repair 补建 outbox 后会再次读取 Control Ledger：来源 Invocation 已被
     Interrupt，或 Action 请求后出现 Stop 时立即取消，关闭“控制提交—outbox 发布”
     的崩溃竞态。
+  - [x] 新的原生用户 Submission 先持久入队，再取消同一 ChatSpec 的旧 Action retry；
+    自动 Interaction、Model Recovery、Harness 与 Background continuation 使用独立
+    envelope，不被误判为新意图。若在入队与取消之间崩溃，启动 fence 通过来源
+    Invocation 的 Submission sequence 识别更晚用户输入并取消旧 continuation。
   - [ ] 在上述单一身份上接入自动 retry dispatcher：必须同时具备 attempt budget、
     Stop/Interrupt fencing、无流式输出边界，以及 Runtime Orchestrator 内的执行入口；
     不能仅凭 `retryable=true` 或绕过 Orchestrator 直接重新调用工具。

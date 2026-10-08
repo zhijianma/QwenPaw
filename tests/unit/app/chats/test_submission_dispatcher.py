@@ -95,6 +95,53 @@ from qwenpaw.runtime.model_step_contexts import (
 
 
 @pytest.mark.asyncio
+async def test_new_user_submission_cancels_pending_action_retries(
+    tmp_path: Path,
+) -> None:
+    control = InvocationControlService(
+        store=SQLiteInvocationControl(tmp_path / "control.sqlite3"),
+    )
+    workspace = SimpleNamespace(agent_id="default")
+    dispatcher = WorkspaceChatSubmissionDispatcher(
+        workspace=workspace,
+        control=control,
+    )
+    cancelled = []
+
+    class RetryStore:
+        async def cancel_for_conversation(
+            self,
+            *,
+            agent_id,
+            conversation_id,
+        ):
+            cancelled.append((agent_id, conversation_id))
+            return ()
+
+    # Isolate enqueue ordering: durable submission first, retry cancel second.
+    # pylint: disable=protected-access
+    dispatcher._action_retries = RetryStore()
+    # pylint: enable=protected-access
+    receipt = await dispatcher.enqueue(
+        TurnSubmissionRequest(
+            agent_id="default",
+            conversation_id="chat-new-intent",
+            content="new user intent",
+            input_envelope=SubmissionInputEnvelope(
+                kind=CONSOLE_SUBMISSION_ENVELOPE,
+                payload={"content_parts": []},
+            ),
+            idempotency_key="new-user-intent",
+        ),
+        expected_revision=0,
+    )
+
+    assert receipt.submission_id is not None
+    assert cancelled == [("default", "chat-new-intent")]
+    await control.close()
+
+
+@pytest.mark.asyncio
 async def test_workspace_dispatcher_repairs_action_retry_outbox(
     tmp_path: Path,
 ) -> None:

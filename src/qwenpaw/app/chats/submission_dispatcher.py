@@ -223,7 +223,7 @@ class WorkspaceChatSubmissionDispatcher:
             agent_id=checkpoint.agent_id,
             conversation_id=conversation_id,
         )
-        return any(
+        controlled = any(
             (
                 record.command.kind
                 is ControlCommandKind.INTERRUPT_CURRENT
@@ -235,6 +235,28 @@ class WorkspaceChatSubmissionDispatcher:
                 and record.command.requested_at >= checkpoint.created_at
             )
             for record in controls
+        )
+        if controlled:
+            return True
+        submissions = await self._control.scan_submissions_for_conversation(
+            agent_id=checkpoint.agent_id,
+            conversation_id=conversation_id,
+        )
+        source = next(
+            (
+                item
+                for item in submissions
+                if item.invocation_id == checkpoint.invocation_id
+            ),
+            None,
+        )
+        if source is None:
+            return False
+        return any(
+            item.sequence > source.sequence
+            and item.input_envelope is not None
+            and item.input_envelope.kind == CONSOLE_SUBMISSION_ENVELOPE
+            for item in submissions
         )
 
     async def _run_resource_waits(self) -> None:
@@ -1181,6 +1203,15 @@ class WorkspaceChatSubmissionDispatcher:
             request,
             expected_revision=expected_revision,
         )
+        if (
+            self._action_retries is not None
+            and request.input_envelope is not None
+            and request.input_envelope.kind == CONSOLE_SUBMISSION_ENVELOPE
+        ):
+            await self._action_retries.cancel_for_conversation(
+                agent_id=request.agent_id,
+                conversation_id=request.conversation_id,
+            )
         self._dispatcher.wake()
         return receipt
 
