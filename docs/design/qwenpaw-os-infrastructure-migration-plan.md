@@ -1037,8 +1037,14 @@ Cron 不形成独立审批或产物事实源。
     OS/插件管理面通过 `GET /api/plugins/capability-releases` 只读公开当前 generation
     和 stable tags；启动期从 Workspace Registry 读取同一事实源，不依赖 Task route，
     也不暴露实现、配置或 Secret。
-    关键词发现索引、持久 Promotion/Evaluation Journal、授权晋升门禁与
-    Workstation/Hub Release Registry 仍待实现。
+  - [x] Kernel 冻结 Candidate、Promotion Check/Evaluation/Event 与 Journal/Gate Port；
+    Lite 使用 `0600` append-once WAL。activate 与 rollback 均先写 prepared、发布内存
+    generation、再写 committed；commit 失败恢复旧 snapshot/tag/fence 并写 aborted。
+    `registry_epoch_id + generation` 区分跨进程重启的同号 generation；Plugin 管理面
+    通过 `GET /api/plugins/capability-promotions` 只读查询，不开放远程晋升或回滚。
+  - [ ] 按 Slot 风险补齐真实 Scenario Runner、Evidence Bundle、人工授权策略与
+    deactivate WAL；当前自动 Gate 仅结构化既有 schema/implementation/health 门禁。
+    关键词发现索引与 Workstation/Hub Release Registry 仍待实现。
 
 - [x] 每个公开扩展模块均有 system/plugin contract tests；system-only 模块具有
   核心激活、固定 generation、失败关闭和代际排空合同。

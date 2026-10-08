@@ -222,6 +222,9 @@ async def lifespan(  # pylint: disable=too-many-statements,too-many-branches
     try:
         from .app_services import AppServiceManager
         from .workspace_registry import WorkspaceRegistry
+        from ..capabilities.promotions import (
+            FilesystemCapabilityPromotionJournal,
+        )
 
         app_services = AppServiceManager()
         await app_services.start()
@@ -229,6 +232,9 @@ async def lifespan(  # pylint: disable=too-many-statements,too-many-branches
 
         workspace_registry = WorkspaceRegistry(
             app_services=app_services,
+            capability_promotion_journal=(
+                FilesystemCapabilityPromotionJournal(WORKING_DIR)
+            ),
         )
         app.state.workspace_registry = workspace_registry
         logger.debug("Runtime infrastructure initialized")

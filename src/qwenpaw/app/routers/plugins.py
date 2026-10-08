@@ -17,7 +17,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile, File
+from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -46,6 +46,20 @@ def _ui_contribution_projection(manifest) -> list[dict[str, str]]:
         for item in manifest.contributions
         if item.slot.startswith("ui.")
     ]
+
+
+def _capability_registry(request: Request):
+    """Resolve the Host-owned Registry throughout startup ordering."""
+    loader = getattr(request.app.state, "plugin_loader", None)
+    registry = getattr(loader, "capability_registry", None)
+    if registry is not None:
+        return registry
+    workspace_registry = getattr(
+        request.app.state,
+        "workspace_registry",
+        None,
+    )
+    return getattr(workspace_registry, "capability_registry", None)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -693,31 +707,53 @@ async def list_plugins(request: Request):
 )
 async def list_capability_releases(request: Request) -> dict:
     """Return content-safe stable tags for system and plugin providers."""
-    loader = getattr(request.app.state, "plugin_loader", None)
-    registry = getattr(loader, "capability_registry", None)
-    if registry is None:
-        workspace_registry = getattr(
-            request.app.state,
-            "workspace_registry",
-            None,
-        )
-        registry = getattr(
-            workspace_registry,
-            "capability_registry",
-            None,
-        )
+    registry = _capability_registry(request)
     if registry is None:
         raise HTTPException(
             status_code=503,
             detail="Capability registry is not ready yet. Try again shortly.",
         )
     return {
+        "registry_epoch_id": str(registry.registry_epoch_id),
         "registry_generation": registry.generation,
         "channel": "stable",
         "items": [
             release.model_dump(mode="json")
             for release in registry.stable_releases()
         ],
+    }
+
+
+@router.get(
+    "/capability-promotions",
+    summary="List capability promotion evidence",
+    description=(
+        "Return append-only candidate evaluation and promotion WAL phases."
+    ),
+)
+async def list_capability_promotions(
+    request: Request,
+    provider_id: str | None = Query(
+        default=None,
+        pattern=r"^[a-z0-9][a-z0-9_.-]*$",
+    ),
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> dict:
+    """Return content-safe promotion history from the OS Registry."""
+    registry = _capability_registry(request)
+    if registry is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Capability registry is not ready yet. Try again shortly.",
+        )
+    events = await registry.promotion_events(
+        provider_id=provider_id,
+        limit=limit,
+    )
+    return {
+        "registry_epoch_id": str(registry.registry_epoch_id),
+        "registry_generation": registry.generation,
+        "items": [event.model_dump(mode="json") for event in events],
     }
 
 

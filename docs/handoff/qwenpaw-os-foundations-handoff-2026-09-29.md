@@ -464,6 +464,22 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   Capability release；响应不含 implementation、Secret 或 credential。该接口不提供
   远程回滚写操作，避免未经授权扩大管理面。
 
+### 2026-10-08 Promotion/Evaluation Journal
+
+- Kernel 已冻结 Candidate、Promotion Check、Evaluation、Event 及 Journal/Gate Port。
+  Candidate 只持久化 bundle hash，Event 只引用内容安全 release/evidence identity，
+  不保存实现对象、bundle payload、配置值或 Secret。
+- Lite Journal 使用 `0600` append-once 文件。activate 与 provider rollback 共用
+  prepared/committed WAL；prepare 失败不发布，commit 失败恢复旧 generation、stable
+  tag 和 rollback fence，并尽力追加 aborted，因此可安全重试。
+- 每次 Registry 启动生成 `registry_epoch_id`，Event 和管理 API 同时返回；跨重启历史中
+  多个 generation 2 因 epoch 不同而不会混淆。旧 Event 无 epoch 时仍可读取为 null。
+- `GET /api/plugins/capability-promotions` 提供 provider filter 与有界 limit，只读暴露
+  WAL。真实 8004 返回相同 epoch 的 prepared/committed，以及跨三个 epoch 的同号
+  generation 2 历史；candidate hash 稳定，未发现敏感字段泄漏。
+- 当前 Gate 只把既有 schema、Slot implementation 与 health check 结构化为 Evaluation；
+  高风险 Scenario Runner、Evidence Bundle、人工授权和 deactivate WAL 尚未完成。
+
 ### 本阶段此前已执行的定点验证
 
 - 后端核心路径定点测试：70 项通过。

@@ -334,8 +334,15 @@ release hash 做一次 provider 级回滚；回滚产生单调递增的新 gener
 provider，不撤销期间其他 provider 的发布，旧 Invocation lease 继续使用原版本。
 
 该回滚点只保存当前进程内的可执行对象，不伪装为跨重启代码恢复。进程重启仍从已安装
-manifest 重新装配；Lite 关键词发现索引、持久 Promotion/Evaluation Journal、授权晋升
-门禁以及 Workstation/Hub 的远端 Release Registry 仍待实现。
+manifest 重新装配。Lite 已增加 `0600` append-once Promotion Journal：Candidate 只保存
+bundle hash，Evaluation 保存结构化 check/evidence identity，发布和回滚都按
+`prepared -> committed` 写 WAL；prepare 失败不发布，commit 失败在 Registry 锁内恢复
+旧 snapshot/tag/fence 并写 `aborted`。每次进程启动生成 `registry_epoch_id`，因此重启后
+重复出现的 generation 2 不会在历史中混为同一发布。
+
+当前自动 Gate 只把既有 schema、Slot implementation 与 health check 形成显式 allow/
+deny Evaluation。Lite 关键词发现索引、高风险 Scenario/Evidence 评价、deactivate WAL、
+人工授权策略以及 Workstation/Hub 的远端 Release Registry 仍待实现。
 
 ### A7. Outcome、Trajectory 与 Evaluation
 
@@ -595,6 +602,12 @@ Approval、幂等和副作用证据。验证在安装事务内自动完成，因
 这一门禁还为后续受控自进化预留边界：生产 Badcase 可以生成候选 Scenario、Skill
 或 Policy，但只能进入 shadow generation，不能由运行中的 Agent 自行修改当前
 generation。
+
+截至 2026-10-08，Candidate、Check、Evaluation、Promotion Event 与 Journal Port 已冻结；
+system/plugin activate 和 provider rollback 进入同一 WAL，真实管理 API 可读取跨重启
+历史。尚未完成的不是“是否有 Gate”，而是按风险等级补齐真实 Scenario Runner、
+Evidence Bundle 和人工授权策略；在这些完成前不能把 contract-only allow 称为完整发布
+认证。
 
 ## 5. 不建议直接吸收的内容
 

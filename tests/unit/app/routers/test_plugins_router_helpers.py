@@ -26,12 +26,16 @@ from qwenpaw.app.routers.plugins import (
     _list_plugins_from_disk,
     _safe_extract_zip,
     install_plugin,
+    list_capability_promotions,
     list_capability_releases,
     list_plugins,
     router as plugins_router,
 )
 from qwenpaw.app.routers.frontend_plugin import list_frontend_plugins
 from qwenpaw.capabilities import GenerationRegistry
+from qwenpaw.capabilities.promotions import (
+    FilesystemCapabilityPromotionJournal,
+)
 from qwenpaw.kernel.models import (
     CapabilityBundle,
     CapabilityContribution,
@@ -497,6 +501,7 @@ async def test_list_capability_releases_is_stable_and_content_safe():
     result = await list_capability_releases(request)
 
     assert result["registry_generation"] == 3
+    assert result["registry_epoch_id"] == str(registry.registry_epoch_id)
     assert result["channel"] == "stable"
     assert [item["provider_id"] for item in result["items"]] == [
         "provider.alpha",
@@ -540,7 +545,58 @@ async def test_list_capability_releases_uses_os_registry_during_startup():
     result = await list_capability_releases(request)
 
     assert result == {
+        "registry_epoch_id": str(registry.registry_epoch_id),
         "registry_generation": 1,
         "channel": "stable",
         "items": [],
     }
+
+
+@pytest.mark.asyncio
+async def test_list_capability_promotions_reads_durable_wal(tmp_path):
+    journal = FilesystemCapabilityPromotionJournal(tmp_path)
+    registry = GenerationRegistry(promotion_journal=journal)
+    provider_id = "provider.audit"
+    await registry.activate_bundle(
+        CapabilityBundle(
+            provider_id=provider_id,
+            provider_kind=CapabilityProviderKind.SYSTEM,
+            version="1.0.0",
+            contributions=(
+                CapabilityContribution(
+                    contribution_id="factory",
+                    slot="agent.factory",
+                    entrypoint="tests:factory",
+                ),
+            ),
+        ),
+        lambda _declaration: _ReleaseFactory(
+            f"{provider_id}.factory",
+        ),
+    )
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                plugin_loader=SimpleNamespace(
+                    capability_registry=registry,
+                ),
+            ),
+        ),
+    )
+
+    result = await list_capability_promotions(
+        request,
+        provider_id=provider_id,
+        limit=10,
+    )
+
+    assert result["registry_generation"] == 2
+    assert result["registry_epoch_id"] == str(registry.registry_epoch_id)
+    assert [item["phase"] for item in result["items"]] == [
+        "committed",
+        "prepared",
+    ]
+    assert all(
+        item["candidate"]["provider_id"] == provider_id
+        for item in result["items"]
+    )

@@ -14,9 +14,12 @@ parallel startup) is inherited unchanged.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .multi_agent_manager import MultiAgentManager
+
+if TYPE_CHECKING:
+    from ..kernel import CapabilityPromotionJournal
 
 logger = logging.getLogger(__name__)
 
@@ -29,13 +32,18 @@ class WorkspaceRegistry(MultiAgentManager):
         *,
         app_services: Any = None,
         bootstrap_plugins_kwargs: dict[str, Any] | None = None,
+        capability_promotion_journal: (
+            CapabilityPromotionJournal | None
+        ) = None,
     ) -> None:
         super().__init__()
         from ..capabilities import GenerationRegistry
 
         self.app_services = app_services
         self._bootstrap_kwargs = bootstrap_plugins_kwargs or {}
-        self.capability_registry = GenerationRegistry()
+        self.capability_registry = GenerationRegistry(
+            promotion_journal=capability_promotion_journal,
+        )
 
     def _create_workspace(self, agent_id: str, workspace_dir: str) -> Any:
         """Override to run bootstrap_plugins after creation."""

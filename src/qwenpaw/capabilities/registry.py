@@ -9,17 +9,37 @@ import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import NoReturn
+from uuid import UUID, uuid4
 
 from ..kernel.models import (
     CapabilityBundle,
     CapabilityContribution,
     CapabilityDescriptor,
 )
-from ..kernel.ports import CapabilityLease
-from ..kernel.releases import CapabilityReleaseTag
+from ..kernel.ports import (
+    CapabilityLease,
+    CapabilityPromotionGate,
+    CapabilityPromotionJournal,
+)
+from ..kernel.releases import (
+    CapabilityCheckOutcome,
+    CapabilityEvaluationDecision,
+    CapabilityPromotionAction,
+    CapabilityPromotionCandidate,
+    CapabilityPromotionCheck,
+    CapabilityPromotionEvaluation,
+    CapabilityPromotionEvent,
+    CapabilityPromotionPhase,
+    CapabilityReleaseTag,
+)
 from .contracts import (
     CapabilityImplementationError,
     validate_capability_implementation,
+)
+from .promotions import (
+    ContractCapabilityPromotionGate,
+    rejected_contract_evaluation,
 )
 
 ContributionFactory = Callable[
@@ -60,6 +80,35 @@ class _ProviderRollbackPoint:
 
     promoted_release_hash: str
     contributions: Mapping[str, ActivatedContribution]
+
+
+@dataclass(frozen=True)
+class _PromotionTransaction:
+    """Prepared in-memory state for one provider promotion."""
+
+    operation_id: UUID
+    candidate: CapabilityPromotionCandidate
+    evaluation: CapabilityPromotionEvaluation
+    previous_snapshot: RegistrySnapshot
+    previous_release: CapabilityReleaseTag | None
+    previous_rollback: _ProviderRollbackPoint | None
+    previous_contributions: Mapping[str, ActivatedContribution]
+    snapshot: RegistrySnapshot
+    release: CapabilityReleaseTag
+
+
+@dataclass(frozen=True)
+class _RollbackTransaction:
+    """Prepared in-memory state for one fenced provider rollback."""
+
+    operation_id: UUID
+    candidate: CapabilityPromotionCandidate
+    evaluation: CapabilityPromotionEvaluation
+    previous_snapshot: RegistrySnapshot
+    previous_release: CapabilityReleaseTag
+    rollback_point: _ProviderRollbackPoint
+    snapshot: RegistrySnapshot
+    target_release: CapabilityReleaseTag | None
 
 
 class GenerationLease(CapabilityLease):
@@ -120,7 +169,13 @@ class GenerationLease(CapabilityLease):
 class GenerationRegistry:
     """Publish complete provider updates as one atomic generation."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        promotion_journal: CapabilityPromotionJournal | None = None,
+        promotion_gate: CapabilityPromotionGate | None = None,
+        registry_epoch_id: UUID | None = None,
+    ) -> None:
         initial = RegistrySnapshot(
             generation=1,
             capabilities=MappingProxyType({}),
@@ -133,11 +188,21 @@ class GenerationRegistry:
         self._provider_cleanup: dict[str, list[Callable[[], None]]] = {}
         self._stable_releases: dict[str, CapabilityReleaseTag] = {}
         self._rollback_points: dict[str, _ProviderRollbackPoint] = {}
+        self._promotion_journal = promotion_journal
+        self._promotion_gate = (
+            promotion_gate or ContractCapabilityPromotionGate()
+        )
+        self._registry_epoch_id = registry_epoch_id or uuid4()
 
     @property
     def generation(self) -> int:
         """Return the currently published generation."""
         return self._current.generation
+
+    @property
+    def registry_epoch_id(self) -> UUID:
+        """Return the process epoch that scopes generation numbers."""
+        return self._registry_epoch_id
 
     def current_descriptor(
         self,
@@ -162,6 +227,69 @@ class GenerationRegistry:
                 key=lambda item: item.provider_id,
             ),
         )
+
+    async def promotion_events(
+        self,
+        *,
+        provider_id: str | None = None,
+        limit: int = 100,
+    ) -> tuple[CapabilityPromotionEvent, ...]:
+        """Read durable promotion phases when a Journal is configured."""
+        if self._promotion_journal is None:
+            return ()
+        events = await self._promotion_journal.list_events(
+            provider_id=provider_id,
+            limit=limit,
+        )
+        return tuple(events)
+
+    async def _append_promotion_event(
+        self,
+        event: CapabilityPromotionEvent,
+    ) -> None:
+        if self._promotion_journal is not None:
+            await self._promotion_journal.append(event)
+
+    async def _record_rejected_activation(
+        self,
+        *,
+        operation_id: UUID,
+        candidate: CapabilityPromotionCandidate,
+        check_id: str,
+    ) -> None:
+        if self._promotion_journal is None:
+            return
+        evaluation = rejected_contract_evaluation(
+            candidate,
+            check_id=check_id,
+        )
+        event = CapabilityPromotionEvent.create(
+            operation_id=operation_id,
+            registry_epoch_id=self._registry_epoch_id,
+            action=CapabilityPromotionAction.PROMOTE,
+            phase=CapabilityPromotionPhase.REJECTED,
+            candidate=candidate,
+            evaluation=evaluation,
+            from_generation=self.generation,
+            target_generation=None,
+            previous_release_hash=(
+                release.release_hash
+                if (
+                    release := self.stable_release(candidate.provider_id)
+                )
+                is not None
+                else None
+            ),
+            target_release=None,
+            reason_code=check_id,
+        )
+        try:
+            await self._append_promotion_event(event)
+        except Exception:  # pylint: disable=broad-except
+            logger.exception(
+                "failed to journal rejected capability promotion: %s",
+                candidate.provider_id,
+            )
 
     async def pin(
         self,
@@ -215,99 +343,351 @@ class GenerationRegistry:
         factory: ContributionFactory,
     ) -> RegistrySnapshot:
         """Stage and atomically publish a system or plugin bundle."""
-        staged: dict[str, ActivatedContribution] = {}
+        operation_id = uuid4()
+        candidate = CapabilityPromotionCandidate.create(
+            provider_id=bundle.provider_id,
+            provider_kind=bundle.provider_kind,
+            version=bundle.version,
+            bundle_payload=bundle.model_dump(mode="json"),
+        )
         try:
-            for declaration in bundle.contributions:
-                implementation = factory(declaration)
-                if inspect.isawaitable(implementation):
-                    implementation = await implementation
-                health_check = getattr(implementation, "health_check", None)
-                if health_check is not None:
-                    healthy = health_check()
-                    if inspect.isawaitable(healthy):
-                        healthy = await healthy
-                    if healthy is not True:
-                        raise ActivationError(
-                            f"health check failed for "
-                            f"{declaration.contribution_id}",
-                        )
-                validate_capability_implementation(
-                    bundle.provider_id,
-                    declaration,
-                    implementation,
-                )
-                descriptor = CapabilityDescriptor(
-                    capability_id=(
-                        f"{bundle.provider_id}."
-                        f"{declaration.contribution_id}"
-                    ),
-                    slot=declaration.slot,
-                    provider_id=bundle.provider_id,
-                    provider_kind=bundle.provider_kind,
-                    version=bundle.version,
-                    input_schema=declaration.input_schema,
-                    output_schema=declaration.output_schema,
-                    config_schema=declaration.config_schema,
-                    restart_policy=bundle.restart_policy,
-                    metadata=declaration.metadata,
-                )
-                staged[descriptor.capability_id] = ActivatedContribution(
-                    descriptor=descriptor,
-                    implementation=implementation,
-                )
+            staged = await self._stage_bundle(bundle, factory)
         except Exception as exc:
-            if isinstance(exc, ActivationError):
-                raise
-            if isinstance(exc, CapabilityImplementationError):
-                raise ActivationError(str(exc)) from exc
-            raise ActivationError(
-                f"failed to stage provider '{bundle.provider_id}'",
-            ) from exc
+            await self._handle_stage_failure(
+                operation_id=operation_id,
+                candidate=candidate,
+                provider_id=bundle.provider_id,
+                error=exc,
+            )
 
         async with self._lock:
-            previous = {
-                capability_id: contribution
-                for capability_id, contribution in (
-                    self._current.capabilities.items()
-                )
-                if contribution.descriptor.provider_id == bundle.provider_id
-            }
-            capabilities = {
-                capability_id: contribution
-                for capability_id, contribution in (
-                    self._current.capabilities.items()
-                )
-                if contribution.descriptor.provider_id != bundle.provider_id
-            }
-            capabilities.update(staged)
-            generation = self._current.generation + 1
-            snapshot = RegistrySnapshot(
-                generation=generation,
-                capabilities=MappingProxyType(capabilities),
+            transaction = await self._prepare_promotion(
+                operation_id=operation_id,
+                candidate=candidate,
+                bundle=bundle,
+                staged=staged,
             )
-            descriptors = tuple(
-                contribution.descriptor
-                for contribution in staged.values()
+            return await self._commit_promotion(transaction)
+
+    async def _stage_bundle(
+        self,
+        bundle: CapabilityBundle,
+        factory: ContributionFactory,
+    ) -> dict[str, ActivatedContribution]:
+        staged: dict[str, ActivatedContribution] = {}
+        for declaration in bundle.contributions:
+            implementation = factory(declaration)
+            if inspect.isawaitable(implementation):
+                implementation = await implementation
+            health_check = getattr(implementation, "health_check", None)
+            if health_check is not None:
+                healthy = health_check()
+                if inspect.isawaitable(healthy):
+                    healthy = await healthy
+                if healthy is not True:
+                    raise ActivationError(
+                        f"health check failed for "
+                        f"{declaration.contribution_id}",
+                    )
+            validate_capability_implementation(
+                bundle.provider_id,
+                declaration,
+                implementation,
             )
-            release = CapabilityReleaseTag.create(
+            descriptor = CapabilityDescriptor(
+                capability_id=(
+                    f"{bundle.provider_id}.{declaration.contribution_id}"
+                ),
+                slot=declaration.slot,
                 provider_id=bundle.provider_id,
                 provider_kind=bundle.provider_kind,
                 version=bundle.version,
-                promoted_generation=generation,
-                descriptors=descriptors,
+                input_schema=declaration.input_schema,
+                output_schema=declaration.output_schema,
+                config_schema=declaration.config_schema,
+                restart_policy=bundle.restart_policy,
+                metadata=declaration.metadata,
             )
-            self._rollback_points[bundle.provider_id] = (
-                _ProviderRollbackPoint(
-                    promoted_release_hash=release.release_hash,
-                    contributions=MappingProxyType(previous),
-                )
+            staged[descriptor.capability_id] = ActivatedContribution(
+                descriptor=descriptor,
+                implementation=implementation,
             )
-            self._stable_releases[bundle.provider_id] = release
-            self._current = snapshot
-            self._snapshots[generation] = snapshot
-            self._leases[generation] = 0
-            self._reclaim_unleased()
-            return snapshot
+        return staged
+
+    async def _handle_stage_failure(
+        self,
+        *,
+        operation_id: UUID,
+        candidate: CapabilityPromotionCandidate,
+        provider_id: str,
+        error: Exception,
+    ) -> NoReturn:
+        if isinstance(error, ActivationError) and (
+            "health check failed" in str(error)
+        ):
+            check_id = "contract.health"
+        elif isinstance(error, CapabilityImplementationError):
+            check_id = "contract.implementation"
+        else:
+            check_id = "contract.staging"
+        await self._record_rejected_activation(
+            operation_id=operation_id,
+            candidate=candidate,
+            check_id=check_id,
+        )
+        if isinstance(error, ActivationError):
+            raise error
+        if isinstance(error, CapabilityImplementationError):
+            raise ActivationError(str(error)) from error
+        raise ActivationError(
+            f"failed to stage provider '{provider_id}'",
+        ) from error
+
+    async def _prepare_promotion(
+        self,
+        *,
+        operation_id: UUID,
+        candidate: CapabilityPromotionCandidate,
+        bundle: CapabilityBundle,
+        staged: Mapping[str, ActivatedContribution],
+    ) -> _PromotionTransaction:
+        previous_snapshot = self._current
+        previous_release = self._stable_releases.get(bundle.provider_id)
+        previous_rollback = self._rollback_points.get(bundle.provider_id)
+        previous = {
+            capability_id: contribution
+            for capability_id, contribution in (
+                self._current.capabilities.items()
+            )
+            if contribution.descriptor.provider_id == bundle.provider_id
+        }
+        capabilities = {
+            capability_id: contribution
+            for capability_id, contribution in (
+                self._current.capabilities.items()
+            )
+            if contribution.descriptor.provider_id != bundle.provider_id
+        }
+        capabilities.update(staged)
+        generation = previous_snapshot.generation + 1
+        snapshot = RegistrySnapshot(
+            generation=generation,
+            capabilities=MappingProxyType(capabilities),
+        )
+        release = CapabilityReleaseTag.create(
+            provider_id=bundle.provider_id,
+            provider_kind=bundle.provider_kind,
+            version=bundle.version,
+            promoted_generation=generation,
+            descriptors=tuple(
+                contribution.descriptor
+                for contribution in staged.values()
+            ),
+        )
+        evaluation = await self._evaluate_release(
+            operation_id=operation_id,
+            candidate=candidate,
+            release=release,
+            previous_snapshot=previous_snapshot,
+            previous_release=previous_release,
+        )
+        return _PromotionTransaction(
+            operation_id=operation_id,
+            candidate=candidate,
+            evaluation=evaluation,
+            previous_snapshot=previous_snapshot,
+            previous_release=previous_release,
+            previous_rollback=previous_rollback,
+            previous_contributions=MappingProxyType(previous),
+            snapshot=snapshot,
+            release=release,
+        )
+
+    async def _evaluate_release(
+        self,
+        *,
+        operation_id: UUID,
+        candidate: CapabilityPromotionCandidate,
+        release: CapabilityReleaseTag,
+        previous_snapshot: RegistrySnapshot,
+        previous_release: CapabilityReleaseTag | None,
+    ) -> CapabilityPromotionEvaluation:
+        try:
+            evaluation = await self._promotion_gate.evaluate(
+                candidate,
+                release,
+            )
+        except Exception as exc:
+            evaluation = rejected_contract_evaluation(
+                candidate,
+                check_id="evaluation.error",
+            )
+            await self._append_rejected_evaluation(
+                operation_id=operation_id,
+                candidate=candidate,
+                evaluation=evaluation,
+                previous_snapshot=previous_snapshot,
+                previous_release=previous_release,
+                reason_code="evaluation.error",
+            )
+            raise ActivationError(
+                f"promotion evaluation failed for "
+                f"'{candidate.provider_id}'",
+            ) from exc
+        if evaluation.decision is not CapabilityEvaluationDecision.ALLOW:
+            await self._append_rejected_evaluation(
+                operation_id=operation_id,
+                candidate=candidate,
+                evaluation=evaluation,
+                previous_snapshot=previous_snapshot,
+                previous_release=previous_release,
+                reason_code="evaluation.not_allowed",
+            )
+            raise ActivationError(
+                f"promotion evaluation did not allow "
+                f"'{candidate.provider_id}'",
+            )
+        return evaluation
+
+    async def _append_rejected_evaluation(
+        self,
+        *,
+        operation_id: UUID,
+        candidate: CapabilityPromotionCandidate,
+        evaluation: CapabilityPromotionEvaluation,
+        previous_snapshot: RegistrySnapshot,
+        previous_release: CapabilityReleaseTag | None,
+        reason_code: str,
+    ) -> None:
+        rejected = CapabilityPromotionEvent.create(
+            operation_id=operation_id,
+            registry_epoch_id=self._registry_epoch_id,
+            action=CapabilityPromotionAction.PROMOTE,
+            phase=CapabilityPromotionPhase.REJECTED,
+            candidate=candidate,
+            evaluation=evaluation,
+            from_generation=previous_snapshot.generation,
+            target_generation=None,
+            previous_release_hash=(
+                previous_release.release_hash
+                if previous_release is not None
+                else None
+            ),
+            target_release=None,
+            reason_code=reason_code,
+        )
+        try:
+            await self._append_promotion_event(rejected)
+        except Exception as exc:
+            raise ActivationError(
+                f"promotion rejection journal failed for "
+                f"'{candidate.provider_id}'",
+            ) from exc
+
+    def _transaction_event(
+        self,
+        transaction: _PromotionTransaction,
+        phase: CapabilityPromotionPhase,
+        *,
+        reason_code: str | None = None,
+    ) -> CapabilityPromotionEvent:
+        previous_release = transaction.previous_release
+        return CapabilityPromotionEvent.create(
+            operation_id=transaction.operation_id,
+            registry_epoch_id=self._registry_epoch_id,
+            action=CapabilityPromotionAction.PROMOTE,
+            phase=phase,
+            candidate=transaction.candidate,
+            evaluation=transaction.evaluation,
+            from_generation=transaction.previous_snapshot.generation,
+            target_generation=transaction.snapshot.generation,
+            previous_release_hash=(
+                previous_release.release_hash
+                if previous_release is not None
+                else None
+            ),
+            target_release=transaction.release,
+            reason_code=reason_code,
+        )
+
+    async def _commit_promotion(
+        self,
+        transaction: _PromotionTransaction,
+    ) -> RegistrySnapshot:
+        provider_id = transaction.candidate.provider_id
+        prepared = self._transaction_event(
+            transaction,
+            CapabilityPromotionPhase.PREPARED,
+        )
+        try:
+            await self._append_promotion_event(prepared)
+        except Exception as exc:
+            raise ActivationError(
+                f"promotion journal prepare failed for '{provider_id}'",
+            ) from exc
+
+        self._rollback_points[provider_id] = _ProviderRollbackPoint(
+            promoted_release_hash=transaction.release.release_hash,
+            contributions=transaction.previous_contributions,
+        )
+        self._stable_releases[provider_id] = transaction.release
+        self._current = transaction.snapshot
+        self._snapshots[transaction.snapshot.generation] = (
+            transaction.snapshot
+        )
+        self._leases[transaction.snapshot.generation] = 0
+        committed = self._transaction_event(
+            transaction,
+            CapabilityPromotionPhase.COMMITTED,
+        )
+        try:
+            await self._append_promotion_event(committed)
+        except Exception as exc:
+            self._restore_promotion(transaction)
+            await self._journal_aborted_promotion(transaction)
+            raise ActivationError(
+                f"promotion journal commit failed for '{provider_id}'",
+            ) from exc
+        self._reclaim_unleased()
+        return transaction.snapshot
+
+    def _restore_promotion(
+        self,
+        transaction: _PromotionTransaction,
+    ) -> None:
+        provider_id = transaction.candidate.provider_id
+        self._current = transaction.previous_snapshot
+        self._snapshots.pop(transaction.snapshot.generation, None)
+        self._leases.pop(transaction.snapshot.generation, None)
+        if transaction.previous_release is None:
+            self._stable_releases.pop(provider_id, None)
+        else:
+            self._stable_releases[provider_id] = (
+                transaction.previous_release
+            )
+        if transaction.previous_rollback is None:
+            self._rollback_points.pop(provider_id, None)
+        else:
+            self._rollback_points[provider_id] = (
+                transaction.previous_rollback
+            )
+
+    async def _journal_aborted_promotion(
+        self,
+        transaction: _PromotionTransaction,
+    ) -> None:
+        aborted = self._transaction_event(
+            transaction,
+            CapabilityPromotionPhase.ABORTED,
+            reason_code="journal.commit_failed",
+        )
+        try:
+            await self._append_promotion_event(aborted)
+        except Exception:  # pylint: disable=broad-except
+            logger.exception(
+                "failed to journal aborted capability promotion: %s",
+                transaction.candidate.provider_id,
+            )
 
     async def rollback_provider(
         self,
@@ -317,57 +697,207 @@ class GenerationRegistry:
     ) -> RegistrySnapshot:
         """Rollback one provider without reverting unrelated promotions."""
         async with self._lock:
-            current_release = self._stable_releases.get(provider_id)
-            point = self._rollback_points.get(provider_id)
-            if current_release is None or point is None:
-                raise ReleaseRollbackError(
-                    f"provider '{provider_id}' has no rollback point",
-                )
-            if current_release.release_hash != expected_release_hash:
-                raise ReleaseRollbackError(
-                    f"provider '{provider_id}' stable release changed",
-                )
-            if point.promoted_release_hash != expected_release_hash:
-                raise ReleaseRollbackError(
-                    f"provider '{provider_id}' rollback point is stale",
-                )
+            transaction = self._prepare_rollback(
+                provider_id,
+                expected_release_hash=expected_release_hash,
+            )
+            return await self._commit_rollback(transaction)
 
-            capabilities = {
-                capability_id: contribution
-                for capability_id, contribution in (
-                    self._current.capabilities.items()
-                )
-                if contribution.descriptor.provider_id != provider_id
-            }
-            capabilities.update(point.contributions)
-            generation = self._current.generation + 1
-            snapshot = RegistrySnapshot(
-                generation=generation,
-                capabilities=MappingProxyType(capabilities),
+    def _prepare_rollback(
+        self,
+        provider_id: str,
+        *,
+        expected_release_hash: str,
+    ) -> _RollbackTransaction:
+        current_release = self._stable_releases.get(provider_id)
+        point = self._rollback_points.get(provider_id)
+        if current_release is None or point is None:
+            raise ReleaseRollbackError(
+                f"provider '{provider_id}' has no rollback point",
             )
-            previous_descriptors = tuple(
-                contribution.descriptor
-                for contribution in point.contributions.values()
+        if current_release.release_hash != expected_release_hash:
+            raise ReleaseRollbackError(
+                f"provider '{provider_id}' stable release changed",
             )
-            if previous_descriptors:
-                descriptor = previous_descriptors[0]
-                self._stable_releases[provider_id] = (
-                    CapabilityReleaseTag.create(
-                        provider_id=provider_id,
-                        provider_kind=descriptor.provider_kind,
-                        version=descriptor.version,
-                        promoted_generation=generation,
-                        descriptors=previous_descriptors,
-                    )
-                )
-            else:
-                self._stable_releases.pop(provider_id, None)
-            self._rollback_points.pop(provider_id, None)
-            self._current = snapshot
-            self._snapshots[generation] = snapshot
-            self._leases[generation] = 0
-            self._reclaim_unleased()
-            return snapshot
+        if point.promoted_release_hash != expected_release_hash:
+            raise ReleaseRollbackError(
+                f"provider '{provider_id}' rollback point is stale",
+            )
+        capabilities = {
+            capability_id: contribution
+            for capability_id, contribution in (
+                self._current.capabilities.items()
+            )
+            if contribution.descriptor.provider_id != provider_id
+        }
+        capabilities.update(point.contributions)
+        generation = self._current.generation + 1
+        snapshot = RegistrySnapshot(
+            generation=generation,
+            capabilities=MappingProxyType(capabilities),
+        )
+        descriptors = tuple(
+            contribution.descriptor
+            for contribution in point.contributions.values()
+        )
+        target_release = self._rollback_target_release(
+            current_release,
+            descriptors,
+            generation,
+        )
+        candidate = CapabilityPromotionCandidate.create(
+            provider_id=provider_id,
+            provider_kind=current_release.provider_kind,
+            version=(
+                target_release.version
+                if target_release is not None
+                else current_release.version
+            ),
+            bundle_payload={
+                "action": CapabilityPromotionAction.ROLLBACK.value,
+                "provider_id": provider_id,
+                "target_release": (
+                    target_release.model_dump(mode="json")
+                    if target_release is not None
+                    else None
+                ),
+            },
+        )
+        evaluation = CapabilityPromotionEvaluation(
+            candidate_id=candidate.candidate_id,
+            candidate_hash=candidate.candidate_hash,
+            evaluator_id="qwenpaw.rollback-gate",
+            decision=CapabilityEvaluationDecision.ALLOW,
+            checks=(
+                CapabilityPromotionCheck(
+                    check_id="rollback.release-fence",
+                    outcome=CapabilityCheckOutcome.PASSED,
+                ),
+            ),
+        )
+        return _RollbackTransaction(
+            operation_id=uuid4(),
+            candidate=candidate,
+            evaluation=evaluation,
+            previous_snapshot=self._current,
+            previous_release=current_release,
+            rollback_point=point,
+            snapshot=snapshot,
+            target_release=target_release,
+        )
+
+    @staticmethod
+    def _rollback_target_release(
+        current_release: CapabilityReleaseTag,
+        descriptors: tuple[CapabilityDescriptor, ...],
+        generation: int,
+    ) -> CapabilityReleaseTag | None:
+        if not descriptors:
+            return None
+        descriptor = descriptors[0]
+        return CapabilityReleaseTag.create(
+            provider_id=current_release.provider_id,
+            provider_kind=descriptor.provider_kind,
+            version=descriptor.version,
+            promoted_generation=generation,
+            descriptors=descriptors,
+        )
+
+    def _rollback_event(
+        self,
+        transaction: _RollbackTransaction,
+        phase: CapabilityPromotionPhase,
+        *,
+        reason_code: str | None = None,
+    ) -> CapabilityPromotionEvent:
+        return CapabilityPromotionEvent.create(
+            operation_id=transaction.operation_id,
+            registry_epoch_id=self._registry_epoch_id,
+            action=CapabilityPromotionAction.ROLLBACK,
+            phase=phase,
+            candidate=transaction.candidate,
+            evaluation=transaction.evaluation,
+            from_generation=transaction.previous_snapshot.generation,
+            target_generation=transaction.snapshot.generation,
+            previous_release_hash=(
+                transaction.previous_release.release_hash
+            ),
+            target_release=transaction.target_release,
+            reason_code=reason_code,
+        )
+
+    async def _commit_rollback(
+        self,
+        transaction: _RollbackTransaction,
+    ) -> RegistrySnapshot:
+        provider_id = transaction.candidate.provider_id
+        try:
+            await self._append_promotion_event(
+                self._rollback_event(
+                    transaction,
+                    CapabilityPromotionPhase.PREPARED,
+                ),
+            )
+        except Exception as exc:
+            raise ReleaseRollbackError(
+                f"rollback journal prepare failed for '{provider_id}'",
+            ) from exc
+        self._current = transaction.snapshot
+        self._snapshots[transaction.snapshot.generation] = (
+            transaction.snapshot
+        )
+        self._leases[transaction.snapshot.generation] = 0
+        if transaction.target_release is None:
+            self._stable_releases.pop(provider_id, None)
+        else:
+            self._stable_releases[provider_id] = (
+                transaction.target_release
+            )
+        self._rollback_points.pop(provider_id, None)
+        try:
+            await self._append_promotion_event(
+                self._rollback_event(
+                    transaction,
+                    CapabilityPromotionPhase.COMMITTED,
+                ),
+            )
+        except Exception as exc:
+            self._restore_rollback(transaction)
+            await self._journal_aborted_rollback(transaction)
+            raise ReleaseRollbackError(
+                f"rollback journal commit failed for '{provider_id}'",
+            ) from exc
+        self._reclaim_unleased()
+        return transaction.snapshot
+
+    def _restore_rollback(
+        self,
+        transaction: _RollbackTransaction,
+    ) -> None:
+        provider_id = transaction.candidate.provider_id
+        self._current = transaction.previous_snapshot
+        self._snapshots.pop(transaction.snapshot.generation, None)
+        self._leases.pop(transaction.snapshot.generation, None)
+        self._stable_releases[provider_id] = transaction.previous_release
+        self._rollback_points[provider_id] = transaction.rollback_point
+
+    async def _journal_aborted_rollback(
+        self,
+        transaction: _RollbackTransaction,
+    ) -> None:
+        try:
+            await self._append_promotion_event(
+                self._rollback_event(
+                    transaction,
+                    CapabilityPromotionPhase.ABORTED,
+                    reason_code="journal.commit_failed",
+                ),
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.exception(
+                "failed to journal aborted capability rollback: %s",
+                transaction.candidate.provider_id,
+            )
 
     async def release(self, generation: int) -> None:
         """Release one lease and reclaim obsolete unreferenced snapshots."""
