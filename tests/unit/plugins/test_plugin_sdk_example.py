@@ -272,6 +272,9 @@ async def test_scheduler_provider_activates_and_persists_definition(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from qwenpaw.plugins import sdk
+    from qwenpaw.capabilities.promotions import (
+        LiteCapabilityPromotionScenarioRunner,
+    )
 
     root = (
         Path(__file__).parents[3]
@@ -280,22 +283,26 @@ async def test_scheduler_provider_activates_and_persists_definition(
         / "scheduler-provider"
     )
     database_path = tmp_path / "scheduler.db"
-    monkeypatch.setenv(
-        "QWENPAW_EXAMPLE_SCHEDULER_DB",
-        str(database_path),
-    )
     monkeypatch.syspath_prepend(str(root))
     provider_module = importlib.import_module("scheduler_provider.provider")
     manifest = PluginManifest.from_dict(
         json.loads((root / "plugin.json").read_text(encoding="utf-8")),
     )
-    registry = GenerationRegistry()
+    registry = GenerationRegistry(
+        promotion_scenario_runner=LiteCapabilityPromotionScenarioRunner(),
+    )
     snapshot = await registry.activate(
         manifest,
         lambda _: provider_module.create_scheduler(),
     )
+    assert not database_path.exists()
     lease = await registry.pin(snapshot.generation)
-    scheduler = lease.implementation("scheduler-provider.local-durable")
+    provider = lease.implementation("scheduler-provider.local-durable")
+    from qwenpaw.scheduling import SchedulerStoreHost
+
+    scheduler = await provider.open(
+        SchedulerStoreHost(sdk.SQLiteSchedulerStore(database_path)),
+    )
     definition = sdk.ScheduleDefinition(
         agent_id="default",
         schedule_id="daily-review",

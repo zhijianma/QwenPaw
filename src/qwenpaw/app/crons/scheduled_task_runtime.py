@@ -25,6 +25,7 @@ from ...kernel import (
     TaskStatus,
 )
 from ...scheduling import ScheduleDispatchResult, ScheduledTaskDispatcher
+from ...scheduling import SQLiteSchedulerStore, SchedulerStoreHost
 from ...tasks.service import TaskService
 from ..task_runtime import (
     TaskApplicationBindings,
@@ -89,12 +90,17 @@ class LiteScheduledTaskRuntime:  # pylint: disable=too-few-public-methods
         )
 
     async def _dependencies(self):
+        from ...constant import WORKING_DIR
+
         bindings = await self._host.compose(self._workspace)
         dispatcher = ScheduledTaskDispatcher(
             capability_resolver=bindings.runtime.capability_resolver,
             task_application=bindings.tasks,
             task_orchestrator=bindings.orchestrator,
             ledger_workspace_dir=Path(self._workspace.workspace_dir),
+            scheduler_host=SchedulerStoreHost(
+                SQLiteSchedulerStore(WORKING_DIR / "scheduler.db"),
+            ),
         )
         return bindings, dispatcher
 

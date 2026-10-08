@@ -643,6 +643,29 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   通过；文件级 AST、mypy、flake8、pylint 门禁通过。真实 8004 generation 2 的
   channel/inbox routing 与 renderer round-trip 均为 passed；未执行全仓测试。
 
+### 2026-10-08 Scheduler Provider Migration
+
+- 原 `scheduler` Contribution 已迁移为无状态 `scheduler.provider`。Kernel 与 Plugin
+  SDK 暴露最小 `SchedulerHost`/`SchedulerProvider`；Provider 只能取得宿主注入的
+  `SchedulerPort`，不再决定 SQLite 路径、读取存储环境变量或拥有用户数据生命周期。
+  旧 `scheduler` Slot 仅保留 Dispatcher 与激活契约兼容，不再属于正式公共 Slot。
+- 内置 local durable Scheduler 与示例插件均使用同一 Provider 合同。Cron Runtime
+  在应用组合边界创建 `SQLiteSchedulerStore` 并通过 `SchedulerStoreHost` 注入，保持原
+  durable path 和 Fire 幂等语义；Plugin 安装/热替换不触碰真实 Store。
+- `scheduler-provider.catalog` Promotion Scenario 使用进程内只读 Store，查询固定合成
+  Agent 的 definitions，验证 tuple、Agent ownership、唯一 schedule ID、128 项与
+  64 KiB 上限。所有 mutation 方法都失败，场景不会创建、读取或修改用户 SQLite。
+- system/plugin 行为合同继续验证 generation-pinned Fire、唯一 Task/Run、重放幂等与
+  持久化重开；旧直连 Port 测试保留，用于约束迁移期兼容路径。
+- 长程交互架构不采用 Handbook 式“一问一答”作为执行模型：Chat 问答只是短路径与
+  UI 投影；Scheduler、Submission、Invocation、Interaction、Action、Artifact、
+  Evidence 和 typed wait 共同驱动可恢复任务。只有缺失必要事实、授权或高影响决策时
+  才进入 ask/approval，普通阶段推进不依赖用户逐轮回复。
+- 本切片 83 项 Scheduler Promotion、Slot、system/plugin contract、Dispatcher、
+  SQLite、Cron Runtime 与 Plugin SDK 定点测试通过；文件级 AST、mypy、flake8、
+  pylint 门禁通过。真实 8004 最新 committed Candidate 发布
+  `scheduler.provider`，其 `scheduler-provider.catalog` 为 passed；未执行全仓测试。
+
 ### 本阶段此前已执行的定点验证
 
 - 后端核心路径定点测试：70 项通过。

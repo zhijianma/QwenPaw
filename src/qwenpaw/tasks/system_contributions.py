@@ -31,7 +31,7 @@ from ..kernel.models import (
     SensorContext,
     TaskOrder,
 )
-from ..kernel.ports import ArtifactStore, SchedulerPort
+from ..kernel.ports import ArtifactStore
 from ..runtime.strategy_directives import (
     console_strategy_parameters,
     console_strategy_request_context,
@@ -78,7 +78,6 @@ class WorkspaceLike(Protocol):
 
 WorkspaceResolver = Callable[[str], Awaitable[WorkspaceLike]]
 ArtifactStoreFactory = Callable[[Path], ArtifactStore]
-SchedulerStoreFactory = Callable[[], SchedulerPort]
 
 
 def _decode_inline_media(
@@ -521,8 +520,8 @@ SYSTEM_CAPABILITY_BUNDLE = CapabilityBundle(
         ),
         CapabilityContribution(
             contribution_id="local-durable-scheduler",
-            slot="scheduler",
-            entrypoint=("qwenpaw.scheduling.sqlite:SQLiteSchedulerStore"),
+            slot="scheduler.provider",
+            entrypoint=("qwenpaw.scheduling:HostSchedulerProvider"),
             metadata={"label": "Local durable scheduler"},
         ),
         CapabilityContribution(
@@ -552,7 +551,6 @@ SYSTEM_CAPABILITY_BUNDLE = CapabilityBundle(
 def system_contribution_factory(
     resolve_workspace: WorkspaceResolver,
     artifact_store_factory: ArtifactStoreFactory | None = None,
-    scheduler_store_factory: SchedulerStoreFactory | None = None,
 ):
     """Build the factory used by the shared generation registry."""
 
@@ -595,15 +593,11 @@ def system_contribution_factory(
                 SYSTEM_SAFE_ARTIFACT_RENDERER_ID,
             )
         elif declaration.contribution_id == "local-durable-scheduler":
-            if scheduler_store_factory is not None:
-                implementation = scheduler_store_factory()
-            else:
-                from ..constant import WORKING_DIR
-                from ..scheduling import SQLiteSchedulerStore
+            from ..scheduling import HostSchedulerProvider
 
-                implementation = SQLiteSchedulerStore(
-                    WORKING_DIR / "scheduler.db",
-                )
+            implementation = HostSchedulerProvider(
+                SYSTEM_LOCAL_SCHEDULER_ID,
+            )
         elif declaration.contribution_id == "channel-delivery":
             from ..delivery import SystemChannelDeliveryAdapter
 

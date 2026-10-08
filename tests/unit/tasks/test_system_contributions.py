@@ -26,6 +26,7 @@ from qwenpaw.kernel import (
     ScheduleFire,
     ScheduleTrigger,
     SchedulerPort,
+    SchedulerProvider,
 )
 from qwenpaw.harnesses.events import HarnessEvent, HarnessEventKind
 from qwenpaw.kernel.ports import (
@@ -190,7 +191,10 @@ async def test_system_planner_and_runner_use_shared_catalog(
         lease.resolve(SYSTEM_SAFE_ARTIFACT_RENDERER_ID).slot
         == "artifact.renderer"
     )
-    assert lease.resolve(SYSTEM_LOCAL_SCHEDULER_ID).slot == "scheduler"
+    assert (
+        lease.resolve(SYSTEM_LOCAL_SCHEDULER_ID).slot
+        == "scheduler.provider"
+    )
     assert lease.resolve(SYSTEM_INBOX_DELIVERY_ID).slot == ("delivery.adapter")
 
     task_id = uuid4()
@@ -334,15 +338,18 @@ async def test_system_scheduler_is_shared_and_agent_scoped(
     registry = GenerationRegistry()
     await registry.activate_bundle(
         SYSTEM_CAPABILITY_BUNDLE,
-        system_contribution_factory(
-            resolve_workspace,
-            scheduler_store_factory=lambda: SQLiteSchedulerStore(
-                tmp_path / "scheduler.db",
-            ),
-        ),
+        system_contribution_factory(resolve_workspace),
     )
     lease = await registry.pin()
-    scheduler = lease.implementation(SYSTEM_LOCAL_SCHEDULER_ID)
+    provider = lease.implementation(SYSTEM_LOCAL_SCHEDULER_ID)
+    from qwenpaw.scheduling import SchedulerStoreHost
+
+    assert isinstance(provider, SchedulerProvider)
+    scheduler = await provider.open(
+        SchedulerStoreHost(
+            SQLiteSchedulerStore(tmp_path / "scheduler.db"),
+        ),
+    )
 
     assert isinstance(scheduler, SchedulerPort)
     for agent_id in ("agent-a", "agent-b"):

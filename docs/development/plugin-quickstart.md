@@ -653,13 +653,17 @@ object and never silently falls back to Default when the prior strategy was
 Coding, Goal, Mission, or a plugin contribution. A missing replacement in the
 new generation fails closed before the Runner starts.
 
-Scheduler plugins implement the process-scoped `scheduler` Slot through the
-public `SchedulerPort`. Import `ScheduleDefinition`, `ScheduleTrigger`,
-`ScheduleFire`, `ScheduleLease`, and `SchedulerPort` only from
-`qwenpaw.plugins.sdk`. A scheduler owns time triggers and revisioned Fire
-leases; it must create `TaskSource.SCHEDULE` work through the host's Task
-application boundary instead of calling a Chat Runtime directly. Task budget,
-approval, artifacts, evidence, and delivery remain outside the Scheduler.
+Scheduler plugins implement the process-scoped `scheduler.provider` Slot.
+Implement `SchedulerProvider.open(host)` and obtain the admitted
+`SchedulerPort` through `SchedulerHost.scheduler_store()`. Import
+`ScheduleDefinition`, `ScheduleTrigger`, `ScheduleFire`, `ScheduleLease`,
+`SchedulerHost`, `SchedulerPort`, and `SchedulerProvider` only from
+`qwenpaw.plugins.sdk`. The plugin must not choose a database path, read a
+storage environment variable, or close Host-owned persistence. A scheduler
+owns time triggers and revisioned Fire leases; it must create
+`TaskSource.SCHEDULE` work through the host's Task application boundary instead
+of calling a Chat Runtime directly. Task budget, approval, artifacts, evidence,
+and delivery remain outside the Scheduler.
 `schedule_id` is Agent-scoped: definitions and fires both carry `agent_id`,
 and the idempotency domain is
 `agent_id + schedule_id + idempotency_key`. Implementations must never bind a
@@ -672,6 +676,14 @@ generation in the Fire identity. Planner, Strategy, and Runner must resolve
 from the same retained generation; replacing a Scheduler affects only later
 fires. An idempotent replay returns the Task already bound to the lease and
 must never create a second Task or Run.
+
+Before publication, the Host opens the Provider with an isolated process-local
+Store and performs read-only catalog discovery for a synthetic Agent. It
+rejects non-tuple results, foreign Agent ownership, duplicate IDs, more than
+128 definitions, or catalogs over 64 KiB. Every mutating Store method fails in
+this scenario, and no user SQLite file is opened. This verifies the Provider
+boundary; runtime durability and Fire idempotency remain covered by the shared
+Scheduler behavior contract.
 
 Prompt extensions use `prompt.provider` and return typed fragments:
 
@@ -1184,18 +1196,19 @@ The references cover one Chat Tool Provider, one Memory Provider, one typed
 Driver Provider, one Planner, one Strategy, one native Runner, one Harness
 Runner, one Scheduler, one Delivery Adapter, one sensor, one Artifact Renderer,
 and four contextual UI slots.
-The Scheduler example uses the SDK-exported durable SQLite implementation and
-can be replaced by another `SchedulerPort` implementation without changing
-the manifest or Task dispatcher.
+The Scheduler example is a stateless `SchedulerProvider`: it binds its stable
+identity to the `SchedulerPort` supplied by the Host. It does not import the
+SQLite implementation or own a persistence path.
 
 Driver Provider has typed tool, invocation selection and prompt contracts;
 credential material remains Driver-owned and never enters the manifest. The
 public approval Host uses the same Approval/Interaction infrastructure as
 built-ins. Profile-level provider selection and typed provider configuration
-are public and durable. Scheduler is a public Contribution Slot and must
-implement `SchedulerPort`; activation fails closed before publication when the
-Port, manifest entrypoint, capability identity, or JSON `config_schema` is
-invalid.
+are public and durable. `scheduler.provider` is a public Contribution Slot and
+must implement `SchedulerProvider`; activation fails closed before publication
+when the Provider, returned Port, manifest entrypoint, capability identity,
+read-only catalog, or JSON `config_schema` is invalid. The earlier `scheduler`
+Slot remains compatibility-only for existing bundles.
 
 ## 4. Install and update
 

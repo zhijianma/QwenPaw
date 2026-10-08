@@ -23,6 +23,7 @@ from qwenpaw.capabilities.system_drivers import (
 from qwenpaw.capabilities.promotions import (
     LiteCapabilityPromotionScenarioRunner,
 )
+from qwenpaw.scheduling import HostSchedulerProvider
 from qwenpaw.kernel import (
     ArtifactRenderDisposition,
     ArtifactRenderResult,
@@ -288,6 +289,17 @@ class _DeliveryAdapter:
         raise AssertionError("promotion scenario must not call deliver")
 
 
+class _InvalidSchedulerProvider:
+    provider_id = "example.scheduler.provider"
+
+    async def health_check(self) -> bool:
+        return True
+
+    async def open(self, host):
+        del host
+        return object()
+
+
 def _bundle(
     provider_kind: CapabilityProviderKind,
 ) -> CapabilityBundle:
@@ -380,6 +392,21 @@ def _delivery_bundle(
                 slot="delivery.adapter",
                 entrypoint="example:delivery",
                 metadata=metadata,
+            ),
+        ),
+    )
+
+
+def _scheduler_bundle() -> CapabilityBundle:
+    return CapabilityBundle(
+        provider_id="example.scheduler",
+        provider_kind=CapabilityProviderKind.PLUGIN,
+        version="1.0.0",
+        contributions=(
+            CapabilityContribution(
+                contribution_id="provider",
+                slot="scheduler.provider",
+                entrypoint="example:scheduler",
             ),
         ),
     )
@@ -874,3 +901,45 @@ async def test_delivery_adapter_without_route_hints_is_not_applicable(
     )
 
     assert scenario.outcome is CapabilityCheckOutcome.NOT_APPLICABLE
+
+
+@pytest.mark.asyncio
+async def test_host_scheduler_provider_catalog_scenario_passes() -> None:
+    bundle = _scheduler_bundle()
+    registry = GenerationRegistry(
+        promotion_scenario_runner=LiteCapabilityPromotionScenarioRunner(),
+    )
+
+    await registry.activate_bundle(
+        bundle,
+        lambda _declaration: HostSchedulerProvider(
+            "example.scheduler.provider",
+        ),
+    )
+    [evidence_bundle] = await registry.promotion_evidence(
+        _candidate(bundle).candidate_id,
+    )
+    scenario = next(
+        item
+        for item in evidence_bundle.evidence
+        if item.check_id.startswith("scenario.scheduler-provider.catalog")
+    )
+
+    assert scenario.outcome is CapabilityCheckOutcome.PASSED
+
+
+@pytest.mark.asyncio
+async def test_scheduler_provider_returning_foreign_store_is_rejected(
+) -> None:
+    bundle = _scheduler_bundle()
+    registry = GenerationRegistry(
+        promotion_scenario_runner=LiteCapabilityPromotionScenarioRunner(),
+    )
+
+    with pytest.raises(ActivationError, match="did not allow"):
+        await registry.activate_bundle(
+            bundle,
+            lambda _declaration: _InvalidSchedulerProvider(),
+        )
+
+    assert registry.generation == 1

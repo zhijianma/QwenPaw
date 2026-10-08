@@ -7,7 +7,7 @@
   "contributions": [
     {
       "id": "local-durable",
-      "slot": "scheduler",
+      "slot": "scheduler.provider",
       "entrypoint": "scheduler_provider.provider:create_scheduler"
     }
   ]

@@ -20,6 +20,7 @@ from qwenpaw.scheduling import (
     ScheduleDispatchDisposition,
     ScheduledTaskDispatcher,
     SQLiteSchedulerStore,
+    SchedulerStoreHost,
 )
 from qwenpaw.tasks.application import TaskApplicationService
 from qwenpaw.tasks.ledger import SQLiteExecutionLedger
@@ -117,6 +118,9 @@ async def _dispatch_case(
         ),
         ledger_workspace_dir=tmp_path / label,
         scheduler_capability_id=scheduler_id,
+        scheduler_host=SchedulerStoreHost(
+            SQLiteSchedulerStore(scheduler_database),
+        ),
     )
     definition = ScheduleDefinition(
         agent_id="agent-contract",
@@ -177,12 +181,7 @@ async def test_system_and_plugin_schedulers_share_dispatch_contract(
     system_registry = GenerationRegistry()
     await system_registry.activate_bundle(
         _system_bundle(include_scheduler=True),
-        system_contribution_factory(
-            resolve_workspace,
-            scheduler_store_factory=lambda: SQLiteSchedulerStore(
-                system_database,
-            ),
-        ),
+        system_contribution_factory(resolve_workspace),
     )
 
     plugin_database = tmp_path / "plugin-scheduler.sqlite3"
@@ -193,10 +192,6 @@ async def test_system_and_plugin_schedulers_share_dispatch_contract(
     )
     plugin_root = _plugin_root()
     monkeypatch.syspath_prepend(str(plugin_root))
-    monkeypatch.setenv(
-        "QWENPAW_EXAMPLE_SCHEDULER_DB",
-        str(plugin_database),
-    )
     provider_module = importlib.import_module("scheduler_provider.provider")
     manifest = PluginManifest.from_dict(
         json.loads(
@@ -226,7 +221,7 @@ async def test_system_and_plugin_schedulers_share_dispatch_contract(
         lease = await registry.pin()
         descriptor = lease.resolve(scheduler_id)
         assert descriptor is not None
-        assert descriptor.slot == "scheduler"
+        assert descriptor.slot == "scheduler.provider"
         await lease.close()
 
         result, events = await _dispatch_case(

@@ -20,6 +20,7 @@ from ..kernel.ports import (
     ProposalSensor,
     RuntimeStrategy,
     SchedulerPort,
+    SchedulerProvider,
     StopGateProvider,
     TaskPlanner,
     TaskRunner,
@@ -58,9 +59,18 @@ PUBLIC_IMPLEMENTATION_CONTRACTS: Mapping[
         "memory.provider": (MemoryProvider, "provider_id"),
         "prompt.provider": (PromptProvider, "provider_id"),
         "sensor": (ProposalSensor, "sensor_id"),
-        "scheduler": (SchedulerPort, None),
+        "scheduler.provider": (SchedulerProvider, "provider_id"),
         "delivery.adapter": (DeliveryAdapter, "adapter_id"),
         "artifact.renderer": (ArtifactRenderer, "renderer_id"),
+    },
+)
+
+COMPATIBILITY_IMPLEMENTATION_CONTRACTS: Mapping[
+    str,
+    tuple[type[object], str | None],
+] = MappingProxyType(
+    {
+        "scheduler": (SchedulerPort, None),
     },
 )
 
@@ -71,6 +81,7 @@ IMPLEMENTATION_CONTRACTS: Mapping[
     {
         **SYSTEM_IMPLEMENTATION_CONTRACTS,
         **PUBLIC_IMPLEMENTATION_CONTRACTS,
+        **COMPATIBILITY_IMPLEMENTATION_CONTRACTS,
     },
 )
 
@@ -124,6 +135,7 @@ def validate_capability_implementation(
 
 __all__ = [
     "CapabilityImplementationError",
+    "COMPATIBILITY_IMPLEMENTATION_CONTRACTS",
     "IMPLEMENTATION_CONTRACTS",
     "PUBLIC_IMPLEMENTATION_CONTRACTS",
     "SYSTEM_IMPLEMENTATION_CONTRACTS",

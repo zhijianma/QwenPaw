@@ -18,7 +18,9 @@ from ..kernel import (
     ScheduleFire,
     ScheduleLease,
     ScheduleLeaseStatus,
+    SchedulerHost,
     SchedulerPort,
+    SchedulerProvider,
     Task,
     TaskSource,
     TaskStatus,
@@ -73,6 +75,7 @@ class ScheduledTaskDispatcher:
         task_orchestrator: TaskRuntimeOrchestrator,
         ledger_workspace_dir: Path,
         scheduler_capability_id: str = DEFAULT_SCHEDULER_CAPABILITY_ID,
+        scheduler_host: SchedulerHost | None = None,
         lease_seconds: float = 30.0,
     ) -> None:
         if lease_seconds <= 0:
@@ -82,6 +85,7 @@ class ScheduledTaskDispatcher:
         self._task_orchestrator = task_orchestrator
         self._ledger_workspace_dir = Path(ledger_workspace_dir)
         self._scheduler_capability_id = scheduler_capability_id
+        self._scheduler_host = scheduler_host
         self._lease_seconds = lease_seconds
 
     async def dispatch(
@@ -98,7 +102,7 @@ class ScheduledTaskDispatcher:
         task: Task | None = None
         bound: ScheduleLease | None = None
         try:
-            scheduler = self._resolve_scheduler(generation_lease)
+            scheduler = await self._resolve_scheduler(generation_lease)
             fire = ScheduleFire(
                 agent_id=definition.agent_id,
                 schedule_id=definition.schedule_id,
@@ -288,14 +292,14 @@ class ScheduledTaskDispatcher:
             strategy_id=(definition.strategy_id or SYSTEM_DEFAULT_STRATEGY_ID),
         )
 
-    def _resolve_scheduler(self, lease) -> SchedulerPort:
+    async def _resolve_scheduler(self, lease) -> SchedulerPort:
         descriptor = lease.resolve(self._scheduler_capability_id)
         if descriptor is None:
             raise SchedulerCapabilityUnavailableError(
                 f"scheduler capability '{self._scheduler_capability_id}' "
                 "is absent",
             )
-        if descriptor.slot != "scheduler":
+        if descriptor.slot not in {"scheduler", "scheduler.provider"}:
             raise SchedulerCapabilityUnavailableError(
                 f"capability '{self._scheduler_capability_id}' declares "
                 f"slot '{descriptor.slot}'",
@@ -307,6 +311,19 @@ class ScheduledTaskDispatcher:
         implementation = lease.implementation(
             self._scheduler_capability_id,
         )
+        if descriptor.slot == "scheduler.provider":
+            if not isinstance(implementation, SchedulerProvider):
+                raise SchedulerCapabilityUnavailableError(
+                    f"capability '{self._scheduler_capability_id}' does not "
+                    "implement SchedulerProvider",
+                )
+            if self._scheduler_host is None:
+                raise SchedulerCapabilityUnavailableError(
+                    "scheduler provider requires a Host-owned Store",
+                )
+            implementation = await implementation.open(
+                self._scheduler_host,
+            )
         if not isinstance(implementation, SchedulerPort):
             raise SchedulerCapabilityUnavailableError(
                 f"capability '{self._scheduler_capability_id}' does not "

@@ -1082,10 +1082,12 @@ Cron 不形成独立审批或产物事实源。
     正确 adapter/address 被接受且 foreign adapter identity 被拒绝，绝不调用
     `deliver()`。缺少 hints 记录 `not_applicable`，错误 hints 或路由不一致失败关闭；
     system channel/inbox 与真实 local-jsonl plugin 共用门禁。
-  - [ ] `scheduler` 仍是工厂阶段自行绑定数据库的有状态 `SchedulerPort`；即使调用
-    `list_definitions()` 也可能创建/访问真实 SQLite，当前不能安全执行 Promotion
-    Scenario。先迁移为 Host-owned storage 的 `scheduler.provider`，再验证只读 catalog。
-  - [ ] 为 runner、scheduler 等剩余高风险 Slot 实现
+  - [x] `scheduler` 已迁移为无状态 `scheduler.provider`：Provider 只能通过
+    `SchedulerHost` 取得宿主管理的 `SchedulerPort`，不再拥有数据库路径、环境变量或
+    用户状态。Promotion 使用独立的进程内只读 Store 执行 `list_definitions()`，验证
+    catalog 类型、Agent 所有权、唯一 ID、128 项与 64 KiB 上限；所有写方法失败关闭，
+    不创建或读取真实 SQLite。旧 `scheduler` Slot 仅作为迁移兼容入口保留。
+  - [ ] 为 runner 等剩余高风险 Slot 实现
     无副作用或可隔离的真实 Scenario，并补齐 Evidence Artifact、人工授权策略与卸载
     授权门禁。关键词发现索引与 Workstation/Hub Release Registry 仍待实现。
 
@@ -1148,9 +1150,10 @@ Cron 不形成独立审批或产物事实源。
     Session 获取 active names，Runtime 统一执行 turn start，`/clear` 与 `/new` 统一
     reset。插件 Host 仅提供 schema 校验后的 detached config，不含 Workspace context、
     系统 Mode snapshot 或兼容 lifecycle；热替换后的旧 Session 行为不漂移。
-  - [x] `scheduler` 具有 system/plugin 行为合同：从 generation-pinned Fire
-    lease 创建唯一 Task，继续进入 Planner/Strategy/Runner 与 Artifact/Evidence
-    管线，持久化重开与重复 Fire 均不重复执行。
+  - [x] `scheduler.provider` 具有 system/plugin 行为合同：Provider 通过最小
+    `SchedulerHost` 绑定宿主持有的 Store，从 generation-pinned Fire lease 创建唯一
+    Task，继续进入 Planner/Strategy/Runner 与 Artifact/Evidence 管线；持久化重开与
+    重复 Fire 均不重复执行。旧 `scheduler` 只保留兼容解析，不再是正式公共合同。
   - [x] `delivery.adapter` 具有 system/plugin 行为合同：已提交 Task Event
     经 Projector/Worker/Dispatcher 生成固定 generation 的 Request 和持久化
     Receipt，重放不重复副作用，热卸载不破坏已 pin 的旧 lease。

@@ -182,6 +182,15 @@ _SLOT_CONTRACTS = {
         ("SchedulerPort", "ScheduleLease"),
         "process",
         promotion_risk="high",
+        stability="compatibility",
+    ),
+    "scheduler.provider": _contract(
+        "scheduler.provider",
+        ("SchedulerHost",),
+        ("SchedulerPort",),
+        "process",
+        promotion_risk="high",
+        promotion_scenarios=("scheduler-provider.catalog",),
     ),
     "delivery.adapter": _contract(
         "delivery.adapter",

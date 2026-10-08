@@ -383,6 +383,8 @@ from .ports import (
     OperationalEventPort,
     RuntimeInteractionProducer,
     SchedulerPort,
+    SchedulerHost,
+    SchedulerProvider,
     SubmissionHistoryPort,
     TaskResultHistoryPort,
 )
@@ -558,6 +560,8 @@ __all__ = [
     "WaitConditionProjectionPort",
     "RuntimeInteractionProducer",
     "SchedulerPort",
+    "SchedulerHost",
+    "SchedulerProvider",
     "InteractionKind",
     "InteractionMode",
     "InteractionPolicyError",

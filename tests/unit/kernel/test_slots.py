@@ -47,6 +47,7 @@ def test_execution_slots_fail_closed_except_renderer_fallback() -> None:
         "prompt.provider",
         "sensor",
         "scheduler",
+        "scheduler.provider",
     }
     assert all(
         slot_contract(slot).failure_mode == "fail_closed"
@@ -61,7 +62,7 @@ def test_legacy_slots_are_explicit_compatibility_boundaries() -> None:
         slot
         for slot, contract in SLOT_CONTRACTS.items()
         if contract.stability == "compatibility"
-    } == {"engine", "tool", "memory"}
+    } == {"engine", "tool", "memory", "scheduler"}
 
 
 def test_agent_factory_is_an_explicit_system_boundary() -> None:
@@ -85,6 +86,9 @@ def test_promotion_risk_and_scenarios_are_machine_readable() -> None:
     )
     assert slot_contract("delivery.adapter").promotion_scenarios == (
         "delivery-adapter.routing",
+    )
+    assert slot_contract("scheduler.provider").promotion_scenarios == (
+        "scheduler-provider.catalog",
     )
     assert slot_contract("runner").promotion_risk == "high"
     assert slot_contract("ui.settings").promotion_risk == "low"

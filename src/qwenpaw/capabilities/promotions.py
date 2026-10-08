@@ -8,6 +8,7 @@ import hashlib
 import inspect
 import json
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -43,6 +44,9 @@ from ..kernel import (
     MemoryStateConflictError,
     MemoryStateScope,
     MemoryStateSnapshot,
+    ScheduleDefinition,
+    ScheduleFire,
+    ScheduleLease,
     ToolDefinition,
     ToolSelection,
     validate_driver_session,
@@ -54,6 +58,8 @@ from ..kernel.ports import (
     DriverSession,
     MemoryProvider,
     MemorySession,
+    SchedulerProvider,
+    SchedulerPort,
     ToolProvider,
 )
 from ..kernel.slots import slot_contract
@@ -640,6 +646,51 @@ class LiteCapabilityPromotionScenarioRunner:
             return CapabilityCheckOutcome.FAILED
         return CapabilityCheckOutcome.PASSED
 
+    async def _run_scheduler_provider(
+        self,
+        implementation: object,
+        descriptor: CapabilityDescriptor | None,
+    ) -> CapabilityCheckOutcome:
+        if not isinstance(implementation, SchedulerProvider):
+            return CapabilityCheckOutcome.FAILED
+        if descriptor is None or descriptor.config_schema is not None:
+            return CapabilityCheckOutcome.FAILED
+        try:
+            store = await asyncio.wait_for(
+                implementation.open(_PromotionScenarioSchedulerHost()),
+                timeout=self._TIMEOUT_SECONDS,
+            )
+            if not isinstance(store, SchedulerPort):
+                raise ValueError("scheduler provider returned invalid store")
+            definitions = await asyncio.wait_for(
+                store.list_definitions(agent_id="promotion-scenario"),
+                timeout=self._TIMEOUT_SECONDS,
+            )
+            if not isinstance(definitions, tuple):
+                raise ValueError("scheduler catalog must be a tuple")
+            if len(definitions) > 128:
+                raise ValueError("scheduler catalog exceeds count budget")
+            schedule_ids: set[str] = set()
+            for definition in definitions:
+                if not isinstance(definition, ScheduleDefinition):
+                    raise ValueError("scheduler returned invalid definition")
+                if definition.agent_id != "promotion-scenario":
+                    raise ValueError("scheduler returned foreign definition")
+                if definition.schedule_id in schedule_ids:
+                    raise ValueError("scheduler returned duplicate IDs")
+                schedule_ids.add(definition.schedule_id)
+            encoded = json.dumps(
+                [item.model_dump(mode="json") for item in definitions],
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+            if len(encoded) > 64 * 1024:
+                raise ValueError("scheduler catalog exceeds byte budget")
+        except Exception:  # pylint: disable=broad-except
+            return CapabilityCheckOutcome.FAILED
+        return CapabilityCheckOutcome.PASSED
+
     async def run(
         self,
         candidate: CapabilityPromotionCandidate,
@@ -685,6 +736,11 @@ class LiteCapabilityPromotionScenarioRunner:
                         implementations.get(item.capability_id),
                         item.capability_id,
                         release.promoted_generation,
+                        descriptor,
+                    )
+                elif scenario_id == "scheduler-provider.catalog":
+                    outcome = await self._run_scheduler_provider(
+                        implementations.get(item.capability_id),
                         descriptor,
                     )
                 else:
@@ -889,6 +945,94 @@ class _PromotionScenarioWorkspaceDriverHost(
     async def load(self) -> tuple[tuple[()], tuple[()]]:
         """Return no real Workspace Driver tools or prompt fragments."""
         return (), ()
+
+
+class _PromotionScenarioSchedulerStore:
+    """Expose an empty catalog and reject every mutating operation."""
+
+    async def upsert(
+        self,
+        definition: ScheduleDefinition,
+    ) -> ScheduleDefinition:
+        del definition
+        raise RuntimeError("promotion scheduler is read-only")
+
+    async def remove(self, *, agent_id: str, schedule_id: str) -> bool:
+        del agent_id, schedule_id
+        raise RuntimeError("promotion scheduler is read-only")
+
+    async def list_definitions(
+        self,
+        *,
+        agent_id: str,
+    ) -> tuple[ScheduleDefinition, ...]:
+        del agent_id
+        return ()
+
+    async def claim(
+        self,
+        fire: ScheduleFire,
+        *,
+        owner_id: str,
+        lease_seconds: float,
+    ) -> ScheduleLease:
+        del fire, owner_id, lease_seconds
+        raise RuntimeError("promotion scheduler is read-only")
+
+    async def renew(
+        self,
+        lease_id: UUID,
+        *,
+        owner_id: str,
+        expected_revision: int,
+        lease_seconds: float,
+    ) -> ScheduleLease:
+        del lease_id, owner_id, expected_revision, lease_seconds
+        raise RuntimeError("promotion scheduler is read-only")
+
+    async def complete(
+        self,
+        lease_id: UUID,
+        *,
+        owner_id: str,
+        expected_revision: int,
+        task_id: UUID,
+        run_id: UUID | None = None,
+    ) -> ScheduleLease:
+        del lease_id, owner_id, expected_revision, task_id, run_id
+        raise RuntimeError("promotion scheduler is read-only")
+
+    async def fail(
+        self,
+        lease_id: UUID,
+        *,
+        owner_id: str,
+        expected_revision: int,
+        error_code: str,
+        retry_at: datetime | None = None,
+    ) -> ScheduleLease:
+        del lease_id, owner_id, expected_revision, error_code, retry_at
+        raise RuntimeError("promotion scheduler is read-only")
+
+    async def recover_expired(
+        self,
+        *,
+        agent_id: str,
+        now: datetime,
+    ) -> tuple[ScheduleLease, ...]:
+        del agent_id, now
+        raise RuntimeError("promotion scheduler is read-only")
+
+
+class _PromotionScenarioSchedulerHost:
+    """Return one process-local read-only Scheduler Store."""
+
+    def __init__(self) -> None:
+        self._store = _PromotionScenarioSchedulerStore()
+
+    def scheduler_store(self) -> SchedulerPort:
+        """Return a Store detached from all user persistence."""
+        return self._store
 
 
 class FilesystemCapabilityPromotionEvidenceStore:

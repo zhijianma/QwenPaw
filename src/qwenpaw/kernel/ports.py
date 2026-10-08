@@ -342,6 +342,26 @@ class SchedulerPort(Protocol):
 
 
 @runtime_checkable
+class SchedulerHost(Protocol):
+    """Host-owned durable Scheduler state exposed to one Provider."""
+
+    def scheduler_store(self) -> SchedulerPort:
+        """Return the admitted durable store without exposing its path."""
+
+
+@runtime_checkable
+class SchedulerProvider(Protocol):
+    """Open a Scheduler against Host-owned persistence."""
+
+    @property
+    def provider_id(self) -> str:
+        """Return the stable capability ID of this Provider."""
+
+    async def open(self, host: SchedulerHost) -> SchedulerPort:
+        """Bind scheduling behavior to one Host-owned Store."""
+
+
+@runtime_checkable
 class DeliveryAdapter(Protocol):
     """External projection boundary for already committed domain facts."""
 
