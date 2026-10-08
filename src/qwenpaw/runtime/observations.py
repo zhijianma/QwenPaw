@@ -380,6 +380,8 @@ def _model_resource_wait_observation(
         facts={
             "wait_id": str(wait.wait_id),
             "attempt_id": str(wait.attempt_id),
+            "provider_id": wait.provider_id,
+            "model_id": wait.model_id,
             "failure_class": wait.failure_class.value,
             "trigger": wait.trigger.value,
             "recovery_status": wait.status.value,

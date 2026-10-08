@@ -463,6 +463,8 @@ class ModelResourceWait(KernelModel):
     correlation_id: UUID
     agent_id: NonEmptyStr
     conversation_id: NonEmptyStr
+    provider_id: NonEmptyStr | None = None
+    model_id: NonEmptyStr | None = None
     failure_class: ModelFailureClass
     trigger: ResourceWaitTrigger
     status: ResourceWaitStatus = ResourceWaitStatus.WAITING
@@ -483,6 +485,10 @@ class ModelResourceWait(KernelModel):
         }
         if self.failure_class not in supported:
             raise ValueError("unsupported model resource failure class")
+        if (self.provider_id is None) != (self.model_id is None):
+            raise ValueError(
+                "model resource identity must include provider and model",
+            )
         if self.trigger is ResourceWaitTrigger.TIMER:
             if self.not_before is None:
                 raise ValueError("timer resource wait requires not_before")
@@ -510,6 +516,8 @@ class ModelResourceWait(KernelModel):
         agent_id: str,
         conversation_id: str,
         failure_class: ModelFailureClass,
+        provider_id: str | None = None,
+        model_id: str | None = None,
         retry_delay_seconds: float = 60,
         created_at: AwareDatetime | None = None,
     ) -> "ModelResourceWait":
@@ -525,6 +533,8 @@ class ModelResourceWait(KernelModel):
             correlation_id=correlation_id,
             agent_id=agent_id,
             conversation_id=conversation_id,
+            provider_id=provider_id,
+            model_id=model_id,
             failure_class=failure_class,
             trigger=(
                 ResourceWaitTrigger.TIMER

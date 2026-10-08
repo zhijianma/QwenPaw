@@ -287,6 +287,9 @@ async def test_model_route_returns_structured_availability() -> None:
     )
 
     result = await model_test_endpoint(
+        request=SimpleNamespace(
+            app=SimpleNamespace(state=SimpleNamespace()),
+        ),
         manager=manager,
         provider_id="modelscope",
         body=SimpleNamespace(model_id="org/model"),
@@ -301,6 +304,91 @@ async def test_model_route_returns_structured_availability() -> None:
         "modelscope",
         "org/model",
     )
+
+
+async def test_live_model_health_releases_loaded_workspace_waits() -> None:
+    manager = MagicMock()
+    manager.check_provider_model = AsyncMock(
+        return_value=SimpleNamespace(
+            success=True,
+            status="available",
+            message="",
+            http_status=200,
+            retryable=False,
+            checked_at="2026-10-08T00:00:00+00:00",
+            verification="live",
+        ),
+    )
+    resource_waits = SimpleNamespace(
+        release_provider_resource=AsyncMock(return_value=()),
+    )
+    workspace = SimpleNamespace(
+        model_resource_wait_service=resource_waits,
+    )
+    registry = SimpleNamespace(
+        list_loaded_agents=MagicMock(return_value=["default"]),
+        get_loaded_agent=MagicMock(return_value=workspace),
+    )
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(multi_agent_manager=registry),
+        ),
+    )
+
+    result = await model_test_endpoint(
+        request=request,
+        manager=manager,
+        provider_id="provider-a",
+        body=SimpleNamespace(model_id="model-a"),
+    )
+
+    assert result.success is True
+    resource_waits.release_provider_resource.assert_awaited_once_with(
+        provider_id="provider-a",
+        model_id="model-a",
+    )
+    registry.get_loaded_agent.assert_called_once_with("default")
+
+
+async def test_non_live_model_health_does_not_release_waits() -> None:
+    manager = MagicMock()
+    manager.check_provider_model = AsyncMock(
+        return_value=SimpleNamespace(
+            success=True,
+            status="available",
+            message="",
+            http_status=None,
+            retryable=False,
+            checked_at="2026-10-08T00:00:00+00:00",
+            verification="catalog",
+        ),
+    )
+    resource_waits = SimpleNamespace(
+        release_provider_resource=AsyncMock(return_value=()),
+    )
+    workspace = SimpleNamespace(
+        model_resource_wait_service=resource_waits,
+    )
+    registry = SimpleNamespace(
+        list_loaded_agents=MagicMock(return_value=["default"]),
+        get_loaded_agent=MagicMock(return_value=workspace),
+    )
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(multi_agent_manager=registry),
+        ),
+    )
+
+    result = await model_test_endpoint(
+        request=request,
+        manager=manager,
+        provider_id="provider-a",
+        body=SimpleNamespace(model_id="model-a"),
+    )
+
+    assert result.success is True
+    resource_waits.release_provider_resource.assert_not_awaited()
+    registry.get_loaded_agent.assert_not_called()
 
 
 @pytest.mark.parametrize(

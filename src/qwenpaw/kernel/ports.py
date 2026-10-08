@@ -1518,6 +1518,33 @@ class ModelCallStore(Protocol):
 
 
 @runtime_checkable
+class ModelResourceRecoveryPort(Protocol):
+    """Host boundary for durable model-resource continuation work."""
+
+    async def defer(
+        self,
+        attempt: ModelCallAttempt,
+        result: ModelCallResult,
+    ) -> ModelResourceWait | None:
+        """Persist a terminal provider failure as a resource wait."""
+
+    async def defer_model_step(
+        self,
+        attempt: ModelCallAttempt,
+        result: ModelCallResult,
+    ) -> ModelStepContinuation | None:
+        """Persist a continuation after a partial model stream."""
+
+    async def release_provider_resource(
+        self,
+        *,
+        provider_id: str,
+        model_id: str,
+    ) -> Sequence[ModelResourceWait]:
+        """Release exact waits after verified provider availability."""
+
+
+@runtime_checkable
 class ModelStepContinuationHistoryPort(Protocol):
     """Read-only partial-stream recovery history for one ChatSpec."""
 

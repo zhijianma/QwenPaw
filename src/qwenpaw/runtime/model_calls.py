@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from pathlib import Path
@@ -20,6 +21,7 @@ from ..kernel import (
     ModelFailureClass,
     ModelOutputBoundary,
     ModelRecoveryDisposition,
+    ModelResourceRecoveryPort,
     ModelResourceWait,
     ModelCallStore,
     ModelRouteReason,
@@ -35,6 +37,7 @@ from ..utils.io_utils import (
 )
 
 _Result = TypeVar("_Result")
+logger = logging.getLogger(__name__)
 _CURRENT_MODEL_CALL: ContextVar["ModelCallSession | None"] = ContextVar(
     "qwenpaw_model_call_session",
     default=None,
@@ -245,7 +248,7 @@ class ModelCallSession:
         *,
         requested_provider_id: str | None,
         requested_model_id: str | None,
-        resource_waits: Any = None,
+        resource_waits: ModelResourceRecoveryPort | None = None,
     ) -> None:
         if manifest.invocation_id != scope.invocation_id:
             raise ValueError("model-call manifest invocation mismatch")
@@ -387,6 +390,22 @@ class ModelCallSession:
                 "durably recorded",
             ) from exc
         self._last_result = result
+        if (
+            status is ModelCallStatus.SUCCEEDED
+            and self._resource_waits is not None
+        ):
+            try:
+                await self._resource_waits.release_provider_resource(
+                    provider_id=attempt.provider_id,
+                    model_id=attempt.model_id,
+                )
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "Failed to apply provider availability signal "
+                    "provider=%s model=%s",
+                    attempt.provider_id,
+                    attempt.model_id,
+                )
 
     async def defer_terminal_resource_wait(
         self,

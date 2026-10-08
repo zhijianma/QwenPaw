@@ -163,6 +163,8 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
                     correlation_id TEXT NOT NULL,
                     agent_id TEXT NOT NULL,
                     conversation_id TEXT NOT NULL,
+                    provider_id TEXT,
+                    model_id TEXT,
                     failure_class TEXT NOT NULL,
                     trigger_kind TEXT NOT NULL,
                     status TEXT NOT NULL,
@@ -222,6 +224,22 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
                 );
                 """,
             )
+            wait_columns = {
+                row["name"]
+                for row in connection.execute(
+                    "PRAGMA table_info(model_resource_waits)",
+                ).fetchall()
+            }
+            if "provider_id" not in wait_columns:
+                connection.execute(
+                    "ALTER TABLE model_resource_waits "
+                    "ADD COLUMN provider_id TEXT",
+                )
+            if "model_id" not in wait_columns:
+                connection.execute(
+                    "ALTER TABLE model_resource_waits "
+                    "ADD COLUMN model_id TEXT",
+                )
             step_columns = {
                 row["name"]
                 for row in connection.execute(
@@ -307,6 +325,8 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
             correlation_id=attempt.correlation_id,
             agent_id=self.agent_id,
             conversation_id=attempt.conversation_id,
+            provider_id=attempt.provider_id,
+            model_id=attempt.model_id,
             failure_class=result.failure_class,
             retry_delay_seconds=(
                 max(result.retry_after_seconds, 1.0)
@@ -492,8 +512,12 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
                     )
             values = self._to_values(wait)
             connection.execute(
-                "INSERT INTO model_resource_waits VALUES "
-                "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO model_resource_waits "
+                "(wait_id, attempt_id, invocation_id, correlation_id, "
+                "agent_id, conversation_id, provider_id, model_id, "
+                "failure_class, trigger_kind, status, not_before, "
+                "submission_id, revision, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 values,
             )
         return wait
@@ -505,6 +529,70 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
             released = await asyncio.to_thread(self._release_sync, wait_id)
         self.notify_change()
         return released
+
+    async def release_provider_resource(
+        self,
+        *,
+        provider_id: str,
+        model_id: str,
+    ) -> tuple[ModelResourceWait, ...]:
+        """Release exact quota waits after verified model availability."""
+        provider_id = provider_id.strip()
+        model_id = model_id.strip()
+        if not provider_id or not model_id:
+            raise ValueError("provider resource identity cannot be empty")
+        await self.start()
+        async with self._write_lock:
+            released = await asyncio.to_thread(
+                self._release_provider_resource_sync,
+                provider_id,
+                model_id,
+            )
+        if released:
+            self.notify_change()
+        return released
+
+    def _release_provider_resource_sync(
+        self,
+        provider_id: str,
+        model_id: str,
+    ) -> tuple[ModelResourceWait, ...]:
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                "SELECT * FROM model_resource_waits WHERE agent_id = ? "
+                "AND provider_id = ? AND model_id = ? AND status = ? "
+                "AND trigger_kind = ? AND failure_class = ? "
+                "ORDER BY created_at, wait_id",
+                (
+                    self.agent_id,
+                    provider_id,
+                    model_id,
+                    ResourceWaitStatus.WAITING.value,
+                    ResourceWaitTrigger.EXTERNAL_EVENT.value,
+                    ModelFailureClass.QUOTA_EXHAUSTED.value,
+                ),
+            ).fetchall()
+            released = []
+            for row in rows:
+                current = self._from_row(row)
+                updated = current.model_copy(
+                    update={
+                        "status": ResourceWaitStatus.READY,
+                        "revision": current.revision + 1,
+                        "updated_at": utc_now(),
+                    },
+                )
+                self._update(connection, updated)
+                released.append(updated)
+            connection.commit()
+            return tuple(released)
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     def _release_sync(self, wait_id: UUID) -> ModelResourceWait:
         connection = self._connect()
@@ -1292,6 +1380,8 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
             str(wait.correlation_id),
             wait.agent_id,
             wait.conversation_id,
+            wait.provider_id,
+            wait.model_id,
             wait.failure_class.value,
             wait.trigger.value,
             wait.status.value,

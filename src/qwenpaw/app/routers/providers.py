@@ -81,6 +81,31 @@ async def get_provider_manager(request: Request) -> ProviderManager:
     return request.app.state.provider_manager
 
 
+async def _release_loaded_provider_waits(
+    request: Request,
+    *,
+    provider_id: str,
+    model_id: str,
+) -> None:
+    """Publish verified availability to already-running workspaces."""
+    registry = getattr(request.app.state, "multi_agent_manager", None)
+    if registry is None:
+        return
+    for agent_id in sorted(registry.list_loaded_agents()):
+        workspace = registry.get_loaded_agent(agent_id)
+        service = getattr(
+            workspace,
+            "model_resource_wait_service",
+            None,
+        )
+        if service is None:
+            continue
+        await service.release_provider_resource(
+            provider_id=provider_id,
+            model_id=model_id,
+        )
+
+
 def _active_models_info(
     manager: ProviderManager,
     active_llm: ModelSlotConfig | None,
@@ -590,6 +615,7 @@ async def discover_models(
     summary="Test a specific model",
 )
 async def test_model(
+    request: Request,
     manager: ProviderManager = Depends(get_provider_manager),
     provider_id: str = Path(...),
     body: TestModelRequest = Body(...),
@@ -600,6 +626,12 @@ async def test_model(
             provider_id,
             body.model_id,
         )
+        if result.success and result.verification == "live":
+            await _release_loaded_provider_waits(
+                request,
+                provider_id=provider_id,
+                model_id=body.model_id,
+            )
         return TestConnectionResponse(
             success=result.success,
             message=(

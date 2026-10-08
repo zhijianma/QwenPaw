@@ -22,6 +22,7 @@
 - 稳定 `wait_id` 与来源 `attempt_id`；
 - 原 `invocation_id`、`correlation_id`、`ChatSpec.id` 和 Agent 所有权；
 - Provider 无关的 `failure_class`；
+- 内容安全的 `provider_id / model_id` 资源身份；
 - timer / external-event 触发方式、`not_before`、revision 和 dispatch 状态；
 - 成功创建的后续 `submission_id`。
 
@@ -75,6 +76,9 @@ ModelCallResult(continue_model_step, partial boundary)
   解析为有限、非负的 `retry_after_seconds`；Kernel 和 SQLite 只保存这个内容安全
   hint，不保存原始 header。无合法 hint 时回退 Lite 默认 timer。
 - `quota_exhausted`：默认等待外部资源事件，不自动循环消耗额度。
+  同一 Workspace 中该 Provider/Model 的真实成功调用，或现有 Model live probe
+  验证为 available 后，会通过 `ModelResourceRecoveryPort` 原子释放精确匹配的 wait。
+  catalog/provider-only 结果、不同模型、timer wait 与重复 signal 均不释放。
 - `transport_unavailable` / `provider_overloaded`：`RetryChatModel` 先执行有界的
   同 Invocation 短重试；整个 logical call 与 fallback 均失败后，才创建独立 timer
   Wait。Lite 对 transport、provider overload 和 rate limit 共用同 correlation 的
@@ -211,5 +215,14 @@ Adapter 声明；Kernel 不假设任意模型流可以原地续传。
   Invocation，并在 pinned generation 中重新经过当前 Permission、ToolCoordinator、
   action-scoped Sandbox 与 ActionRecorder。Stop/Interrupt、新用户输入、配置漂移、
   证据漂移或旧 checkpoint 均失败关闭；执行完成后 Submission 是权威终态。
-- [ ] Provider resource health 事件自动释放 quota wait。
+- [x] Provider resource health 自动释放精确 quota wait：新 Wait 持久化
+  Provider/Model identity；成功模型调用和 live model probe 共用
+  `ModelResourceRecoveryPort.release_provider_resource()`。旧数据库自动加列，旧记录
+  因缺失身份保持可读但禁止自动释放；probe 只通知已加载 Workspace，不为事件偷偷
+  启动 Agent。
 - [ ] 真实限流故障和进程重启的浏览器端到端演练。
+
+Lite 当前不保存跨 Workspace 的全局 health-event ledger。未加载 Workspace 不会接收
+进程内 probe signal；其任务也不会在未加载状态执行。Workstation/Hub 若需要跨进程、
+跨节点自动释放，应为同一 Port 提供 durable event Adapter，而不是扫描或直接修改各
+Workspace 的 SQLite。

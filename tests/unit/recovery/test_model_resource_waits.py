@@ -2,7 +2,7 @@
 """Tests for durable model-resource waits and restart recovery."""
 
 import sqlite3
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -32,20 +32,25 @@ from qwenpaw.recovery.model_resource_waits import (
 )
 
 
-def _attempt() -> ModelCallAttempt:
+def _attempt(
+    *,
+    provider_id: str = "provider-a",
+    model_id: str = "model-a",
+    conversation_id: str = "chat-1",
+) -> ModelCallAttempt:
     attempt_id = uuid4()
     return ModelCallAttempt(
         attempt_id=attempt_id,
         route_decision_id=uuid4(),
         invocation_id=uuid4(),
         correlation_id=uuid4(),
-        conversation_id="chat-1",
+        conversation_id=conversation_id,
         registry_generation=1,
         context_manifest_id=uuid4(),
         model_call_index=1,
         attempt_index=1,
-        provider_id="provider-a",
-        model_id="model-a",
+        provider_id=provider_id,
+        model_id=model_id,
     )
 
 
@@ -84,6 +89,8 @@ async def test_quota_wait_requires_external_release_and_survives_restart(
     assert wait is not None
     assert wait.trigger is ResourceWaitTrigger.EXTERNAL_EVENT
     assert wait.status is ResourceWaitStatus.WAITING
+    assert wait.provider_id == attempt.provider_id
+    assert wait.model_id == attempt.model_id
     assert not await service.list_ready()
 
     restarted = ModelResourceWaitService(database, agent_id="default")
@@ -124,6 +131,125 @@ async def test_quota_wait_requires_external_release_and_survives_restart(
     assert condition.kind is WaitConditionKind.RESOURCE
     assert condition.status is WaitConditionStatus.SATISFIED
     assert condition.source_id == attempt.attempt_id
+
+
+@pytest.mark.asyncio
+async def test_provider_health_releases_only_exact_quota_waits(
+    tmp_path: Path,
+) -> None:
+    service = ModelResourceWaitService(
+        tmp_path / "resource-waits.sqlite3",
+        agent_id="default",
+    )
+    matching_attempt = _attempt(conversation_id="chat-matching")
+    other_model_attempt = _attempt(
+        model_id="model-b",
+        conversation_id="chat-other-model",
+    )
+    rate_limited_attempt = _attempt(
+        conversation_id="chat-rate-limited",
+    )
+    matching = await service.defer(
+        matching_attempt,
+        _result(
+            matching_attempt,
+            ModelFailureClass.QUOTA_EXHAUSTED,
+        ),
+    )
+    other_model = await service.defer(
+        other_model_attempt,
+        _result(
+            other_model_attempt,
+            ModelFailureClass.QUOTA_EXHAUSTED,
+        ),
+    )
+    rate_limited = await service.defer(
+        rate_limited_attempt,
+        _result(
+            rate_limited_attempt,
+            ModelFailureClass.RATE_LIMITED,
+        ),
+    )
+    assert matching is not None
+    assert other_model is not None
+    assert rate_limited is not None
+
+    released = await service.release_provider_resource(
+        provider_id="provider-a",
+        model_id="model-a",
+    )
+    replay = await service.release_provider_resource(
+        provider_id="provider-a",
+        model_id="model-a",
+    )
+
+    assert [item.wait_id for item in released] == [matching.wait_id]
+    assert replay == ()
+    assert (await service.get(matching.wait_id)).status is (
+        ResourceWaitStatus.READY
+    )
+    assert (await service.get(other_model.wait_id)).status is (
+        ResourceWaitStatus.WAITING
+    )
+    assert (await service.get(rate_limited.wait_id)).status is (
+        ResourceWaitStatus.WAITING
+    )
+
+
+@pytest.mark.asyncio
+async def test_legacy_wait_schema_preserves_unscoped_waits(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "resource-waits.sqlite3"
+    wait_id = uuid4()
+    attempt_id = uuid4()
+    invocation_id = uuid4()
+    correlation_id = uuid4()
+    now = datetime.now(timezone.utc).isoformat()
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE model_resource_waits ("
+            "wait_id TEXT PRIMARY KEY, attempt_id TEXT NOT NULL UNIQUE, "
+            "invocation_id TEXT NOT NULL, correlation_id TEXT NOT NULL, "
+            "agent_id TEXT NOT NULL, conversation_id TEXT NOT NULL, "
+            "failure_class TEXT NOT NULL, trigger_kind TEXT NOT NULL, "
+            "status TEXT NOT NULL, not_before TEXT, submission_id TEXT, "
+            "revision INTEGER NOT NULL, created_at TEXT NOT NULL, "
+            "updated_at TEXT NOT NULL)",
+        )
+        connection.execute(
+            "INSERT INTO model_resource_waits VALUES "
+            "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(wait_id),
+                str(attempt_id),
+                str(invocation_id),
+                str(correlation_id),
+                "default",
+                "chat-legacy",
+                ModelFailureClass.QUOTA_EXHAUSTED.value,
+                ResourceWaitTrigger.EXTERNAL_EVENT.value,
+                ResourceWaitStatus.WAITING.value,
+                None,
+                None,
+                1,
+                now,
+                now,
+            ),
+        )
+    service = ModelResourceWaitService(database, agent_id="default")
+
+    await service.start()
+    legacy = await service.get(wait_id)
+    released = await service.release_provider_resource(
+        provider_id="provider-a",
+        model_id="model-a",
+    )
+
+    assert legacy is not None
+    assert legacy.provider_id is None
+    assert legacy.model_id is None
+    assert released == ()
 
 
 @pytest.mark.asyncio

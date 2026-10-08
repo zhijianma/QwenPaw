@@ -354,6 +354,49 @@ async def test_model_session_persists_only_terminal_resource_wait(
 
 
 @pytest.mark.asyncio
+async def test_successful_model_attempt_releases_exact_quota_wait(
+    tmp_path: Path,
+) -> None:
+    resource_waits = ModelResourceWaitService(
+        tmp_path / "resource-waits.sqlite3",
+        agent_id="default",
+    )
+    blocked_scope = _scope(tmp_path)
+    blocked = _session(
+        blocked_scope,
+        _manifest(blocked_scope),
+        lite_model_call_store(tmp_path),
+        resource_waits=resource_waits,
+    )
+    blocked_attempt = await _begin_attempt(blocked)
+    await blocked.complete(
+        blocked_attempt,
+        status=ModelCallStatus.FAILED,
+        error_kind="quota_exhausted",
+        failure_class=ModelFailureClass.QUOTA_EXHAUSTED,
+        recovery_disposition=ModelRecoveryDisposition.WAIT_RESOURCE,
+    )
+    wait = await blocked.defer_terminal_resource_wait()
+    assert wait is not None
+
+    healthy_scope = _scope(tmp_path)
+    healthy = _session(
+        healthy_scope,
+        _manifest(healthy_scope),
+        lite_model_call_store(tmp_path),
+        resource_waits=resource_waits,
+    )
+    healthy_attempt = await _begin_attempt(healthy)
+    await healthy.complete(
+        healthy_attempt,
+        status=ModelCallStatus.SUCCEEDED,
+    )
+
+    [ready] = await resource_waits.list_ready()
+    assert ready.wait_id == wait.wait_id
+
+
+@pytest.mark.asyncio
 async def test_successful_fallback_suppresses_intermediate_resource_wait(
     tmp_path: Path,
 ) -> None:

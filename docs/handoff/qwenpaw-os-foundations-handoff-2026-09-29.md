@@ -795,6 +795,24 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   Submission 终态。AST、mypy、flake8、pylint 定点门禁通过；固定 Black 23.3.0 在
   Python 3.13 上仍因访问已移除的 `ast.Str` 失败，且未改动文件。未运行全仓测试。
 
+### 2026-10-08 Provider Resource Availability Release
+
+- Kernel 新增 `ModelResourceRecoveryPort`，将 provider resource defer、partial-step
+  continuation 与精确 availability release 冻结为 Edition 可替换边界，不再让 Runtime
+  依赖 Lite SQLite 实现。
+- 新 `ModelResourceWait` 持久化内容安全的 Provider/Model identity；SQLite 对旧库自动
+  加 nullable 列，旧记录继续可读，但不会因缺少身份而被自动释放。
+- 同 Workspace 任一真实成功 ModelCall 会释放相同 Provider/Model 的 waiting quota
+  wait；现有 `/models/{provider}/models/test` 只有 live success 才向已加载 Workspace
+  发布同一 signal。不同模型、timer wait、失败或非 live probe、重复 signal 均无效。
+- release 将 wait 原子推进到 READY 并唤醒既有 dispatcher，因此长程执行无需用户再发
+  “继续”。probe 不懒加载 Agent；Lite 尚无跨 Workspace/进程 health-event ledger，Hub
+  后续应实现 durable Port Adapter，而不是扫描本地 SQLite。
+- Resource wait、ModelCall、Runtime Observation、Provider router、Chat dispatcher
+  与 Kernel dependency 共 101 项定点测试通过；AST、mypy、flake8、pylint 定点门禁
+  通过。测试收集保留 1 条既有 Pydantic `TestProviderRequest` 命名 warning；未运行
+  全仓测试。
+
 ### 本阶段此前已执行的定点验证
 
 - 后端核心路径定点测试：70 项通过。

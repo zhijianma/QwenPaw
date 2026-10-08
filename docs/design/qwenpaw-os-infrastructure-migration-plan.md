@@ -580,6 +580,12 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     写入 Submission 终态并唤醒下一轮 outbox。该路径没有模型或流式输出边界，attempt
     budget 已固化在 checkpoint；重复调度只复用同一 dispatch binding。DISPATCHED
     outbox 仅保留审计关联，执行状态以 Submission/Invocation/Action 为权威。
+  - [x] Provider resource availability 已冻结为 `ModelResourceRecoveryPort`：新
+    quota wait 固定 Provider/Model identity；同 Workspace 的真实成功调用或现有 live
+    model probe 只释放精确匹配的 external-event wait，并唤醒 durable dispatcher。
+    旧 wait 缺少 identity 时失败关闭；不同模型、timer wait、非 live probe 和重复
+    signal 不改变状态。Lite probe 只广播给已加载 Workspace，不为 health event
+    隐式启动 Agent；Hub 的跨节点 durable health event Adapter 仍属后续实现。
 - [ ] 把 WebSocket 增量续传、sticky route 和 HTTP fallback 保持为 Provider
   Adapter capability；严格验证 response identity/prefix，失败时回退持久上下文重建，
   Kernel 不感知具体传输。
