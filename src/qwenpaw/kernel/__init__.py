@@ -296,7 +296,12 @@ from .observations import (
     ObservationStatus,
     RuntimeObservation,
 )
-from .outcomes import ConversationOutcome, ConversationOutcomeStatus
+from .outcomes import (
+    ConversationOutcome,
+    ConversationOutcomeDeclaration,
+    ConversationOutcomeStatus,
+    OutcomeProducerRegistration,
+)
 from .artifacts import (
     ConversationArtifactRecord,
     ConversationTaskResultRecords,
@@ -528,8 +533,10 @@ __all__ = [
     "ConversationExecutionState",
     "ConversationRuntimeProjection",
     "ConversationOutcome",
+    "ConversationOutcomeDeclaration",
     "ConversationOutcomeStatus",
     "ConversationOutcomeStore",
+    "OutcomeProducerRegistration",
     "ConversationArtifactHistoryPort",
     "ConversationArtifactRecord",
     "ConversationTaskResultRecords",

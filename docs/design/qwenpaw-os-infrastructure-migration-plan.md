@@ -989,8 +989,13 @@ Cron 不形成独立审批或产物事实源。
       correlation、Artifact/Evidence/Verification 引用和显式 supersession 保存不可变
       Outcome。Chat Runtime 只有读取到晚于最近 Submission 且当前无 live work 的显式
       Outcome，才投影 achieved / partial / not_achieved / abandoned。
-    - [ ] 冻结 Outcome producer admission：Task-owned achieved 必须满足 Verification
-      Policy，普通 Chat 需通过 Host Outcome Broker；随后再接可回放 Trajectory。
+    - [x] 冻结 Outcome producer admission：Host Outcome Broker 对 system/plugin 使用
+      同一声明入口和热注册机制，普通 Chat 校验 Artifact/Evidence 的 ChatSpec 归属；
+      Task-owned 声明校验 Agent、ChatSpec、Task、Run 与 correlation，只有既有
+      Completion Gate 同时满足 Execution Contract、Verification Policy 和 Result
+      Package 时才允许 achieved。Producer 不直接访问 Store。
+    - [ ] 接入可回放 Trajectory，并把 Broker 装配到实际 Runtime producer 生命周期；
+      在此之前不增加公开 HTTP 写入口，也不允许模型文本声明 Outcome。
   - [ ] `BudgetLease` 与现有 `ExecutionBudget`、Usage Scope、Capability lease
     明确区分；Lite 只冻结接口，Workstation / Hub 再实现可派生和级联撤销。
 

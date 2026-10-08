@@ -485,8 +485,11 @@ WaitCondition，或预算/恢复终态才结束执行链。Assistant Message 是
 聚合同一意图的 Submission、Invocation 与阻塞 Interaction。技术执行成功后状态为
 `inactive`，而不是 `completed`；只有独立 `ConversationOutcome` 事实才能声明业务
 达成。Lite Outcome Store 要求具名 producer 和显式 supersession，并允许引用 Artifact、
-Evidence 与 Verification；当前尚不允许模型文本自动生成 Outcome。这使 Console、插件
-和未来 Task Workbench 无需从最后一条 assistant message 猜测任务状态。
+Evidence 与 Verification；Host Outcome Broker 已成为唯一写入准入边界。system 与
+plugin producer 走相同声明入口并支持热注册/注销，普通 Chat 引用必须属于当前
+ChatSpec，Task achieved 则复用已有 Execution Contract、Verification Policy 和 Result
+Package 完成门禁。模型文本仍不能自动生成 Outcome。这使 Console、插件和未来 Task
+Workbench 无需从最后一条 assistant message 猜测任务状态。
 
 模型资源等待进一步验证了这一点：一次调用因限流或额度耗尽停止时，恢复由 Runtime
 自身的等待事实和 continuation 驱动，不制造“是否继续？”对话。只有资源恢复需要

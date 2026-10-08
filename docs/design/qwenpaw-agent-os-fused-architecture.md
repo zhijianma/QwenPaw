@@ -379,7 +379,11 @@ not_achieved 与 abandoned 都必须由具名 producer 显式提交，并通过 
 变 supersession 链。执行链只在 Outcome 晚于最近 Submission、且当前没有 Queue、运行
 或 blocking Interaction 时采用 Outcome 状态；否则仍以实时执行事实为准。Outcome 可
 引用 Artifact、Evidence 与 Verification，但 producer admission 和“Task 验收通过才
-能声明 achieved”的策略仍是后续门禁，当前不得自动补写。
+能声明 achieved”的策略由 Host Outcome Broker 统一执行。system/plugin producer
+必须先由 Host 注册，均通过同一声明入口且不能直接访问 Store；普通 Chat 的引用必须
+属于当前 `ChatSpec.id`，Task-owned achieved 还必须通过既有 Execution Contract、
+Verification Policy 与 Result Package 完成门禁。Producer 支持热注册/注销，不要求
+Runtime 重启；模型文本仍不能自动补写 Outcome。
 
 Approval、Ask User、Suggestion、Steer 和 Interrupt 均是执行链中的一等事件。
 Interaction 或资源等待必须保存 durable `WaitCondition` 并释放计算资源；满足条件后

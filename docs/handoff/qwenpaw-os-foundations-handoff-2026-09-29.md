@@ -382,9 +382,16 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   让旧 Outcome 退出当前状态。
 - 固定真实 Chat 的 Runtime API 在迁移后返回 `outcome_count=0`，原历史继续保持
   inactive / failed，没有为旧 assistant message 自动补写 Outcome。
-- 本切片相邻定点验证：67 项通过。尚未实现 Outcome Producer admission；尤其
-  Task-owned achieved 还没有与 Verification Policy 建立强制门禁，因此不得由模型文本
-  或插件直接写 Store。
+- Host Outcome Broker 已实现 producer admission：system/plugin producer 使用同一入口，
+  支持 Host 热注册/注销，且不直接访问 Store；普通 Chat 的 Artifact/Evidence 引用按
+  ChatSpec 归属校验。
+- Task-owned 声明校验 Agent、ChatSpec、Task、Run 与 correlation；只有既有
+  `validate_result_projection()` 同时通过 Execution Contract、Verification Policy 和
+  Result Package 时才允许 achieved，并由 Host 写入权威 Artifact/Evidence/Verification
+  引用。
+- 本切片相邻定点验证：15 项通过；所改 Python 文件的 mypy、flake8、pylint 等静态
+  门禁通过。尚未把 Broker 装配到实际 Runtime producer 生命周期，也未开放 HTTP 写
+  入口；模型文本和插件仍不得直接写 Store。
 
 ### 本阶段此前已执行的定点验证
 
