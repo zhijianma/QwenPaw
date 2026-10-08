@@ -481,6 +481,11 @@ WaitCondition，或预算/恢复终态才结束执行链。Assistant Message 是
 投影，HTTP response 与 SSE 断开只是传输事件。该模型仍兼容短问答，因为最简单的
 执行链自然只有一个 Submission、一个 Invocation 和一个最终 Message。
 
+该裁决现已进入 Chat Runtime 公开契约：`ConversationExecutionChain` 按 correlation
+聚合同一意图的 Submission、Invocation 与阻塞 Interaction。技术执行成功后状态为
+`inactive`，而不是 `completed`；只有后续独立 Outcome 事实才能声明业务达成。这使
+Console、插件和未来 Task Workbench 无需从最后一条 assistant message 猜测任务状态。
+
 模型资源等待进一步验证了这一点：一次调用因限流或额度耗尽停止时，恢复由 Runtime
 自身的等待事实和 continuation 驱动，不制造“是否继续？”对话。只有资源恢复需要
 用户授权或高影响选择时，才正交地创建 Interaction；资源等待本身不是人机问答。

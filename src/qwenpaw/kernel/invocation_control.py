@@ -33,6 +33,18 @@ class SubmissionStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class ConversationExecutionState(str, Enum):
+    """Derived state of one intent-scoped conversation execution chain."""
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    WAITING_USER = "waiting_user"
+    INACTIVE = "inactive"
+    FAILED = "failed"
+    INTERRUPTED = "interrupted"
+    CANCELLED = "cancelled"
+
+
 class ControlCommandKind(str, Enum):
     """Explicit user intents supported by the invocation control plane."""
 
@@ -386,6 +398,59 @@ class QueueProjection(KernelModel):
         return self
 
 
+class ConversationExecutionChain(KernelModel):
+    """Derived execution state for one correlation-scoped user intent.
+
+    ``inactive`` means no Invocation is currently running. It deliberately
+    does not claim that the user's business outcome has been achieved.
+    """
+
+    schema_id: Literal["qwenpaw.conversation-execution-chain.v1"] = Field(
+        default="qwenpaw.conversation-execution-chain.v1",
+        alias="schema",
+    )
+    conversation_id: NonEmptyStr
+    correlation_id: UUID
+    state: ConversationExecutionState
+    submission_ids: tuple[UUID, ...] = Field(min_length=1)
+    invocation_ids: tuple[UUID, ...] = ()
+    head_submission_id: UUID
+    head_invocation_id: UUID | None = None
+    latest_submission_status: SubmissionStatus
+    open_interaction_ids: tuple[UUID, ...] = ()
+    accepted_at: AwareDatetime
+    latest_submission_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def validate_chain_identity(self) -> "ConversationExecutionChain":
+        """Keep the derived causal chain ordered and internally coherent."""
+        if len(self.submission_ids) != len(set(self.submission_ids)):
+            raise ValueError("execution chain submissions must be unique")
+        if len(self.invocation_ids) != len(set(self.invocation_ids)):
+            raise ValueError("execution chain invocations must be unique")
+        if self.head_submission_id != self.submission_ids[-1]:
+            raise ValueError("head submission must be the newest submission")
+        if (
+            self.head_invocation_id is not None
+            and self.head_invocation_id not in self.invocation_ids
+        ):
+            raise ValueError("head invocation must belong to the chain")
+        if len(self.open_interaction_ids) != len(
+            set(self.open_interaction_ids),
+        ):
+            raise ValueError("execution chain interactions must be unique")
+        waiting = self.state is ConversationExecutionState.WAITING_USER
+        if waiting != bool(self.open_interaction_ids):
+            raise ValueError(
+                "waiting_user requires at least one open interaction",
+            )
+        if self.latest_submission_at < self.accepted_at:
+            raise ValueError(
+                "execution chain submission time precedes accepted_at",
+            )
+        return self
+
+
 class ConversationRuntimeProjection(KernelModel):
     """Recoverable current-state projection for one conversation runtime."""
 
@@ -393,6 +458,8 @@ class ConversationRuntimeProjection(KernelModel):
     conversation_id: NonEmptyStr
     queue: QueueProjection
     interactions: tuple[InteractionRequest, ...] = ()
+    execution_chains: tuple[ConversationExecutionChain, ...] = ()
+    execution_window_truncated: bool = False
     activity: ObservationPage = Field(default_factory=ObservationPage)
     cursor: NonEmptyStr
     observed_at: AwareDatetime = Field(default_factory=utc_now)
@@ -415,6 +482,16 @@ class ConversationRuntimeProjection(KernelModel):
                 raise ValueError(
                     "runtime projection interaction conversation_id mismatch",
                 )
+        for chain in self.execution_chains:
+            if chain.conversation_id != self.conversation_id:
+                raise ValueError(
+                    "runtime projection execution chain owner mismatch",
+                )
+        correlations = [item.correlation_id for item in self.execution_chains]
+        if len(correlations) != len(set(correlations)):
+            raise ValueError(
+                "runtime projection execution chains must be unique",
+            )
         for observation in self.activity.items:
             if observation.conversation_id != self.conversation_id:
                 raise ValueError(
@@ -432,6 +509,8 @@ __all__ = [
     "ControlCommandStatus",
     "ControlRecord",
     "ControlReceipt",
+    "ConversationExecutionChain",
+    "ConversationExecutionState",
     "ConversationRuntimeProjection",
     "InvalidSubmissionTransition",
     "QueueProjection",

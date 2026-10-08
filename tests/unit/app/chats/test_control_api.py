@@ -311,6 +311,43 @@ async def test_chat_submission_persists_versioned_input_before_dispatch(
 
 
 @pytest.mark.asyncio
+async def test_runtime_api_exposes_inactive_execution_not_completion(
+    tmp_path: Path,
+) -> None:
+    app, service, _ = await _control_context(tmp_path)
+    correlation_id = uuid4()
+    invocation_id = uuid4()
+    lease = await service.begin_turn(
+        TurnSubmissionRequest(
+            agent_id="default",
+            conversation_id="chat-spec-1",
+            content="produce a response",
+            idempotency_key="runtime-chain-source",
+            correlation_id=correlation_id,
+        ),
+        invocation_id=invocation_id,
+    )
+    await service.finish_turn(lease, SubmissionStatus.SUCCEEDED)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get("/api/chats/chat-spec-1/runtime")
+
+    assert response.status_code == 200
+    [chain] = response.json()["execution_chains"]
+    assert chain["schema"] == "qwenpaw.conversation-execution-chain.v1"
+    assert chain["correlation_id"] == str(correlation_id)
+    assert chain["state"] == "inactive"
+    assert chain["latest_submission_status"] == "succeeded"
+    assert chain["invocation_ids"] == [str(invocation_id)]
+    assert "completed" not in chain.values()
+    assert response.json()["execution_window_truncated"] is False
+    await service.close()
+
+
+@pytest.mark.asyncio
 async def test_chat_submission_server_sequences_concurrent_appends(
     tmp_path: Path,
 ) -> None:

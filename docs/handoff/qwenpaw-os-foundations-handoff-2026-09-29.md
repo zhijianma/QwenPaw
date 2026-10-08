@@ -352,6 +352,23 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - 进程内 pending hint 在注入前按 binding 去重；跨 Invocation 恢复不产生重复结果。
 - 本切片相邻契约验证：118 项通过；仍需真实浏览器长工具与进程重启演练。
 
+### 2026-10-08 Conversation Execution Chain 投影
+
+- Kernel 新增 `ConversationExecutionChain` 与 `ConversationExecutionState`，Chat
+  Runtime 从权威 Submission / Interaction 按 correlation 派生，不建立第二事实源。
+- 同一意图可跨多个 Submission / Invocation；blocking Interaction 投影为
+  `waiting_user`，后续 continuation 重新进入 `running`。
+- Submission `succeeded` 只投影为 `inactive`，不从 assistant message、HTTP response
+  或 SSE 结束推断业务完成。Outcome Store、Verification 联动与 Trajectory 仍待实现。
+- Runtime SSE 仅读取最近 200 个 Submission 并合并当前 Queue，返回
+  `execution_window_truncated` 明示截断，不调用全量 Observation 重建接口。
+- 本切片相邻定点验证：64 项通过；覆盖领域校验、游标、Runtime API、SQLite/Service
+  合同以及同一 correlation 跨两次 Invocation 的状态变化。
+- 运行中的固定 Chat `1ee31988-b37a-48b9-b6ce-423c52f6a3a9` 已通过真实
+  `GET /api/chats/{id}/runtime` 返回 v3 cursor；历史窗口明确标记截断，成功
+  Submission 均为 `inactive`，失败 Submission 为 `failed`，没有产生伪
+  `completed` 状态。
+
 ### 本阶段此前已执行的定点验证
 
 - 后端核心路径定点测试：70 项通过。

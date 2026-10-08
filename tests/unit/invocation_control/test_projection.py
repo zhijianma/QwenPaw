@@ -14,6 +14,7 @@ from qwenpaw.invocation_control import (
     SQLiteInvocationControl,
 )
 from qwenpaw.kernel import (
+    ConversationExecutionState,
     ConversationRuntimeProjection,
     InteractionKind,
     InteractionMode,
@@ -25,6 +26,7 @@ from qwenpaw.kernel import (
     ObservationStage,
     ObservationStatus,
     RuntimeObservation,
+    SubmissionStatus,
     TurnSubmissionRequest,
 )
 from qwenpaw.kernel.models import utc_now
@@ -179,4 +181,141 @@ async def test_projection_cursor_tracks_semantic_activity(tmp_path) -> None:
             activity=ObservationPage(items=(foreign,)),
             cursor="v2-invalid-owner",
         )
+    await control.close()
+
+
+@pytest.mark.asyncio
+async def test_execution_chain_does_not_treat_response_as_outcome(
+    tmp_path,
+) -> None:
+    control = InvocationControlService(
+        store=SQLiteInvocationControl(tmp_path / "control.sqlite3"),
+    )
+    interactions = InteractionService(tmp_path / "interactions.sqlite3")
+    projection_service = ConversationRuntimeProjectionService(
+        control,
+        interactions,
+    )
+    correlation_id = uuid4()
+    first_invocation_id = uuid4()
+    first = await control.begin_turn(
+        TurnSubmissionRequest(
+            agent_id="default",
+            conversation_id="chat-1",
+            content="complete a multi-step intent",
+            idempotency_key="intent-source",
+            correlation_id=correlation_id,
+        ),
+        invocation_id=first_invocation_id,
+    )
+    await control.finish_turn(first, SubmissionStatus.SUCCEEDED)
+
+    inactive = await projection_service.read(
+        agent_id="default",
+        conversation_id="chat-1",
+    )
+
+    assert len(inactive.execution_chains) == 1
+    [chain] = inactive.execution_chains
+    assert chain.correlation_id == correlation_id
+    assert chain.state is ConversationExecutionState.INACTIVE
+    assert chain.latest_submission_status is SubmissionStatus.SUCCEEDED
+    assert chain.invocation_ids == (first_invocation_id,)
+
+    interaction = InteractionRequest(
+        kind=InteractionKind.USER_INPUT,
+        mode=InteractionMode.BLOCKING,
+        agent_id="default",
+        conversation_id="chat-1",
+        invocation_id=first_invocation_id,
+        correlation_id=correlation_id,
+        user_input_reason=UserInputReason.MATERIAL_PREFERENCE,
+        title="Choose format",
+        prompt="Markdown or HTML?",
+    )
+    await interactions.open(interaction)
+    waiting = await projection_service.read(
+        agent_id="default",
+        conversation_id="chat-1",
+    )
+
+    [chain] = waiting.execution_chains
+    assert chain.state is ConversationExecutionState.WAITING_USER
+    assert chain.open_interaction_ids == (interaction.interaction_id,)
+
+    await interactions.cancel_invocation(
+        first_invocation_id,
+        detail="continued in a new invocation",
+        include_non_blocking=False,
+    )
+    second_invocation_id = uuid4()
+    second = await control.begin_turn(
+        TurnSubmissionRequest(
+            agent_id="default",
+            conversation_id="chat-1",
+            content="[durable continuation]",
+            idempotency_key="intent-continuation",
+            correlation_id=correlation_id,
+        ),
+        invocation_id=second_invocation_id,
+    )
+    running = await projection_service.read(
+        agent_id="default",
+        conversation_id="chat-1",
+    )
+
+    [chain] = running.execution_chains
+    assert chain.state is ConversationExecutionState.RUNNING
+    assert chain.submission_ids == (
+        first.submission.submission_id,
+        second.submission.submission_id,
+    )
+    assert chain.invocation_ids == (
+        first_invocation_id,
+        second_invocation_id,
+    )
+    assert chain.head_invocation_id == second_invocation_id
+    await control.finish_turn(second, SubmissionStatus.SUCCEEDED)
+    await control.close()
+
+
+@pytest.mark.asyncio
+async def test_execution_chain_projection_reports_bounded_window(
+    tmp_path,
+) -> None:
+    control = InvocationControlService(
+        store=SQLiteInvocationControl(tmp_path / "control.sqlite3"),
+    )
+    interactions = InteractionService(tmp_path / "interactions.sqlite3")
+    projection_service = ConversationRuntimeProjectionService(
+        control,
+        interactions,
+        execution_submission_limit=1,
+    )
+    older_correlation_id = uuid4()
+    newer_correlation_id = uuid4()
+    for idempotency_key, correlation_id in (
+        ("older-intent", older_correlation_id),
+        ("newer-intent", newer_correlation_id),
+    ):
+        assert control.store is not None
+        await control.store.submit(
+            TurnSubmissionRequest(
+                agent_id="default",
+                conversation_id="chat-1",
+                content=idempotency_key,
+                idempotency_key=idempotency_key,
+                correlation_id=correlation_id,
+            ),
+        )
+
+    projection = await projection_service.read(
+        agent_id="default",
+        conversation_id="chat-1",
+    )
+
+    assert projection.execution_window_truncated is True
+    assert {
+        item.correlation_id for item in projection.execution_chains
+    } == {older_correlation_id, newer_correlation_id}
     await control.close()

@@ -367,6 +367,11 @@ Codex 的“边收流边执行工具”建立在其 Provider 事件协议、工�
 8. 同一长程意图跨多个 Invocation 时保持同一 `ChatSpec.id` 和
    `correlation_id`，每个 Invocation 有独立终态。
 9. 短问答继续通过单 Submission、单 Invocation 快速路径完成。
+
+当前后端已将上述身份约束固化为 `ConversationExecutionChain` 只读投影：同一
+correlation 的多次 Submission / Invocation 聚合展示；blocking Interaction 显式进入
+`waiting_user`；单次 Runtime 返回成功只进入 `inactive`，不推断业务 Outcome。Outcome
+事实与 Verification 联动仍是独立后续切片，不能以该投影存在冒充完成。
 10. Chat 可显示等待资源、等待用户和正在恢复，但不能把它们伪装成 Queue 项。
 11. 进程重启后不尝试恢复旧 Python stack，只从 durable boundary 恢复。
 12. macOS、Linux、Windows 分别验证 monotonic、sleep/suspend 与 deadline 语义。

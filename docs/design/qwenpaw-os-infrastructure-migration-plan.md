@@ -356,9 +356,14 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
 定位：用持续执行链替代内核中的隐含“一问一答”假设，同时保留 Chat 的简单交互
 体验。该模块属于 Chat-first Runtime 基建，不要求提前开发 Task 页面。
 
-- [ ] 冻结持续执行身份：`ChatSpec.id` 是 Conversation，`Submission.id` 是一次
+- [x] 冻结持续执行身份：`ChatSpec.id` 是 Conversation，`Submission.id` 是一次
   输入，`Invocation.id` 是一次运行尝试，`correlation_id` 贯穿同一长程意图；
   禁止用 assistant message 或 `session_id` 推断生命周期。
+  - [x] Chat Runtime 由权威 Submission 与 Interaction 按 correlation 派生有界
+    `ConversationExecutionChain`；同一意图跨 Invocation 保留完整因果身份。一次
+    Submission `succeeded` 后仅进入 `inactive`，绝不伪装业务 `completed`；阻塞
+    Interaction 显式投影为 `waiting_user`，续行后恢复 running。SSE 使用有界历史窗口，
+    `execution_window_truncated` 明示窗口是否截断，不在每次轮询中全表重建。
 - [ ] 完成 Conversation Activity 只读投影；它从 Submission、Invocation、
   ModelCall、Action、Interaction、Artifact、Evidence 与 Verification 权威事实
   派生，不复制第二套状态，也不把恢复状态伪装成 Queue 项。
@@ -978,8 +983,9 @@ Cron 不形成独立审批或产物事实源。
       `qwen3.8-max`，Adapter/Formatter 版本为 `2.2.2b1`，调用成功且价格未知。
     - [ ] Workstation / Hub 的健康度、成本和数据边界动态路由仍待实现。Lite 当前
       继续使用确定性主模型与显式 fallback 顺序，不静默切换。
-  - [ ] Run Completion、Verification 与业务 Outcome 分层；Event 能派生可回放
-    Trajectory，但本阶段不建设完整 Evaluation UI。
+  - [ ] Run Completion、Verification 与业务 Outcome 分层；当前已阻止 Invocation
+    success 被投影成业务完成，但 Outcome 权威 Store、Verification 联动与可回放
+    Trajectory 仍待实现，本阶段不建设完整 Evaluation UI。
   - [ ] `BudgetLease` 与现有 `ExecutionBudget`、Usage Scope、Capability lease
     明确区分；Lite 只冻结接口，Workstation / Hub 再实现可派生和级联撤销。
 

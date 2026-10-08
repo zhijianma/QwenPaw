@@ -365,6 +365,15 @@ ChatSpec.id
 - `Invocation.id` 只标识一次 Runtime 尝试，不跨进程复活；
 - Assistant message 是面向人的输出，不是 Runtime 状态机的终止标志。
 
+Chat Runtime 已按 `correlation_id` 从权威 Submission 与 Interaction 派生
+`ConversationExecutionChain`：同一意图的多次 Submission / Invocation 保持一个执行
+链，状态明确区分 queued、running、waiting_user、failed、interrupted、cancelled 与
+inactive。`inactive` 只表示当前没有运行中的 Invocation；即使最近一次 Submission 为
+`succeeded`，也不表示业务 Outcome 已达成。后续 Outcome 必须来自独立权威事实，不能
+由 assistant message、HTTP response 或 SSE 结束推断。公开投影使用最近 200 条
+Submission 加当前 Queue 的有界窗口，并显式返回 `execution_window_truncated`；完整
+历史仍由权威 History Port 提供。
+
 Approval、Ask User、Suggestion、Steer 和 Interrupt 均是执行链中的一等事件。
 Interaction 或资源等待必须保存 durable `WaitCondition` 并释放计算资源；满足条件后
 由 outbox 创建新的 continuation Submission，而不是恢复旧 Python 调用栈。
