@@ -919,7 +919,7 @@ class RuntimeActionRecorder:
         status: ActionStatus,
         error_code: str = "",
         retryable: bool = False,
-    ) -> None:
+    ) -> CommittedActionItem:
         """Commit content-free terminal evidence for a Harness action."""
         request = context.extra.get(ACTION_REQUEST_CONTEXT_KEY)
         if not isinstance(request, ActionRequest):
@@ -957,6 +957,13 @@ class RuntimeActionRecorder:
                 "Harness action completed but its result could not be "
                 "durably verified",
             ) from exc
+        return CommittedActionItem(
+            action_id=request.action_id,
+            invocation_id=request.invocation_id,
+            conversation_id=request.conversation_id,
+            executor_item_id=context.tool_call_id,
+            observation_digest=result.observation_digest,
+        )
 
 
 def lite_action_store(workspace_dir: Path) -> FilesystemActionStore:

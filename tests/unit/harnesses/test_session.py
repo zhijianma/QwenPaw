@@ -2,6 +2,7 @@
 """Tests for materialized third-party Agent sessions."""
 
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from agentscope.state import AgentState
@@ -9,6 +10,10 @@ from agentscope.state import AgentState
 from qwenpaw.app.chats.session import SafeJSONSession
 from qwenpaw.app.chats.utils import agentscope_msg_to_message
 from qwenpaw.harnesses.session import HarnessSessionBridge
+from qwenpaw.kernel import (
+    COMMITTED_ACTION_ITEM_METADATA_KEY,
+    CommittedActionItem,
+)
 from qwenpaw.schemas import (
     AgentRequest,
     AgentResponse,
@@ -86,11 +91,19 @@ async def test_bridge_persists_refreshable_reasoning_and_tools(
         output=[reasoning, tool_call, tool_output, answer],
         status=RunStatus.Completed,
     )
+    committed_item = CommittedActionItem(
+        action_id=uuid4(),
+        invocation_id=uuid4(),
+        conversation_id="chat-spec-1",
+        executor_item_id="tool-1",
+        observation_digest=f"sha256:{'a' * 64}",
+    )
 
     await bridge.append_turn(
         request=request,
         response=response,
         backend="codex",
+        committed_items={"tool-1": committed_item},
     )
 
     persisted = await session.get_session_state_dict(
@@ -109,6 +122,9 @@ async def test_bridge_persists_refreshable_reasoning_and_tools(
     ]
     assert restored[1].content[0].text == "Checking"
     assert restored[3].content[0].data["output"] == "1 passed"
+    assert state.context[3].content[0].metadata[
+        COMMITTED_ACTION_ITEM_METADATA_KEY
+    ] == committed_item.model_dump(mode="json")
 
 
 @pytest.mark.asyncio

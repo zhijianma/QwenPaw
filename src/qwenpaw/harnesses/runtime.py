@@ -637,6 +637,11 @@ class HarnessRuntime:
                     request=request,
                     response=response,
                     backend=backend,
+                    committed_items=(
+                        action_tracker.committed_items
+                        if action_tracker is not None
+                        else None
+                    ),
                 )
             except Exception:
                 logger.warning(
@@ -644,6 +649,18 @@ class HarnessRuntime:
                     session_id,
                     exc_info=True,
                 )
+                if (
+                    action_tracker is not None
+                    and action_tracker.committed_items
+                ):
+                    response.status = RunStatus.Failed
+                    response.error = {
+                        "code": "harness_context_commit_failed",
+                        "message": (
+                            "Harness actions completed, but their context "
+                            "could not be committed. Do not retry actions."
+                        ),
+                    }
         if task_cancelled:
             raise asyncio.CancelledError
         yield tagged(response)

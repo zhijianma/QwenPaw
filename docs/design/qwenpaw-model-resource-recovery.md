@@ -182,8 +182,12 @@ Adapter 声明；Kernel 不假设任意模型流可以原地续传。
 - [x] 对 terminal/certain Action 验证 Agent context 中的 `CommittedActionItem`，保存
   不可变私有 snapshot，并用内容安全 `ModelStepContextCheckpoint` 自动续行；同步
   ToolResult 与同 Invocation 内已进入上下文的后台 hint 使用同一协议。
-- [ ] 为 Harness Provider 实现“远端完成且结果已进入模型上下文”的 Adapter binding；
-  仅收到完成 event 时继续失败关闭。
+- [x] 受控 Harness turn 通过 Session Bridge 将已持久化 ActionResult 与规范化 tool
+  output 绑定为 `CommittedActionItem`；只有 session 原子写入时 binding 才进入上下文，
+  completion event 本身与 provider history hydrate 均不会猜测该事实。Action 已成功但
+  session 写入失败时 Harness Invocation 失败关闭，并明确禁止重做 Action。
+- [ ] Harness 断流后从 provider thread / QwenPaw session 双重校验 committed context，
+  再创建 durable continuation；当前不会仅凭 completion event 自动恢复。
 - [ ] 后台 Action 跨 Invocation 完成后由 durable continuation 主动触发新执行，而非
   等待用户再发送一条消息。
 - [ ] Provider resource health 事件自动释放 quota wait。

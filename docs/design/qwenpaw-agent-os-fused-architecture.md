@@ -557,8 +557,9 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
     持久化 pending / uncertain / durable-context 三类 assessment；同步 terminal Action
     与同 Invocation 内进入上下文的后台完成 hint，已通过 provider-neutral
     `CommittedActionItem`、不可变私有 snapshot 和内容安全 Checkpoint 自动续行。
-    Harness completion 尚缺“结果已进入模型上下文”的 binding，后台跨 Invocation 主动
-    continuation 也尚未接入。
+    受控 Harness completion 已由 Session Bridge 在原子写入规范化 tool output 时附加
+    同一 binding；completion event 与 history hydrate 不会伪造该事实。Harness 断流
+    continuation 和后台跨 Invocation 主动 continuation 仍未接入。
 - [ ] Workstation / Hub 再实现按能力、健康、成本和数据边界的动态路由；Lite 当前
   继续使用确定性主模型与显式 fallback 顺序，不冒充智能路由器。
 - 区分 Run Completion、Verification 与业务 Outcome，并预留 Trajectory 投影。

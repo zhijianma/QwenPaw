@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
+from qwenpaw.app.chats.session import SafeJSONSession
 from qwenpaw.capabilities import GenerationRegistry
 from qwenpaw.harnesses.base import HarnessAdapter
 from qwenpaw.harnesses.events import (
@@ -29,8 +30,10 @@ from qwenpaw.invocation_control import (
     SQLiteInvocationControl,
 )
 from qwenpaw.kernel import (
+    COMMITTED_ACTION_ITEM_METADATA_KEY,
     ActionKind,
     ActionStatus,
+    CommittedActionItem,
     ControlCommandStatus,
     SideEffectStatus,
     SubmissionStatus,
@@ -175,6 +178,16 @@ class IncompleteToolAdapter(FakeAdapter):
             kind=HarnessEventKind.ERROR,
             text="provider connection lost",
         )
+
+
+class FailingSession:
+    """Fail only when a materialized Harness turn is committed."""
+
+    async def get_session_state_dict(self, *_args, **_kwargs) -> dict:
+        return {}
+
+    async def save_session_state(self, **_kwargs) -> None:
+        raise OSError("session store unavailable")
 
 
 class CommandAdapter(FakeAdapter):
@@ -634,8 +647,10 @@ async def test_controlled_harness_records_remote_action_evidence(
         ),
         capability_registry=registry,
     )
+    session = SafeJSONSession(str(tmp_path / "sessions"))
     runtime = HarnessRuntime(
         tmp_path,
+        session=session,
         workspace=workspace,
         environment_manager=_environment_manager(tmp_path),
     )
@@ -668,6 +683,25 @@ async def test_controlled_harness_records_remote_action_evidence(
     assert record.result is not None
     assert record.result.status is ActionStatus.SUCCEEDED
     assert record.result.side_effect_status is SideEffectStatus.SUCCEEDED
+    persisted = await session.get_session_state_dict(
+        "chat-1",
+        "chat-1",
+        "console",
+    )
+    context = persisted["agent"]["state"]["context"]
+    result_block = next(
+        block
+        for message in context
+        for block in message.get("content", [])
+        if block.get("type") == "tool_result"
+    )
+    committed_item = CommittedActionItem.model_validate(
+        result_block["metadata"][COMMITTED_ACTION_ITEM_METADATA_KEY],
+    )
+    assert committed_item.action_id == record.request.action_id
+    assert committed_item.observation_digest == (
+        record.result.observation_digest
+    )
 
 
 @pytest.mark.asyncio
@@ -709,6 +743,52 @@ async def test_controlled_harness_marks_unfinished_remote_action_unknown(
     assert record.result.status is ActionStatus.UNKNOWN
     assert record.result.error_code == "harness_turn_error"
     assert record.result.side_effect_status is SideEffectStatus.UNCERTAIN
+
+
+@pytest.mark.asyncio
+async def test_harness_action_fails_closed_when_context_commit_fails(
+    tmp_path: Path,
+) -> None:
+    control = InvocationControlService(
+        store=SQLiteInvocationControl(tmp_path / "control.sqlite3"),
+    )
+    workspace = SimpleNamespace(
+        workspace_dir=tmp_path,
+        invocation_control=control,
+        interaction_service=InteractionService(
+            tmp_path / "interactions.sqlite3",
+        ),
+        capability_registry=GenerationRegistry(),
+    )
+    runtime = HarnessRuntime(
+        tmp_path,
+        session=FailingSession(),
+        workspace=workspace,
+        environment_manager=_environment_manager(tmp_path),
+    )
+    runtime._adapters["codex"] = ToolAdapter()
+
+    output = [
+        item
+        async for item in runtime.stream(
+            backend="codex",
+            request=_os_request(),
+            cwd=tmp_path.resolve(),
+        )
+    ]
+    [record] = await lite_action_store(
+        tmp_path,
+    ).list_for_conversation("chat-spec-1")
+
+    assert output[-1].status == "failed"
+    assert output[-1].error["code"] == "harness_context_commit_failed"
+    assert record.result is not None
+    assert record.result.status is ActionStatus.SUCCEEDED
+    queue = await control.read_queue(
+        agent_id="default",
+        conversation_id="chat-spec-1",
+    )
+    assert queue.active_submission_id is None
 
 
 @pytest.mark.asyncio

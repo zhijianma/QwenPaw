@@ -91,3 +91,11 @@ async def test_approval_creates_action_before_provider_completion(
     assert completed.result is not None
     assert completed.result.status is ActionStatus.SUCCEEDED
     assert completed.result.approval_ids == (approval_id,)
+    committed = tracker.committed_items["item-approval"]
+    assert committed.action_id == completed.request.action_id
+    assert committed.invocation_id == invocation_id
+    assert committed.conversation_id == "chat-spec-1"
+    assert committed.executor_item_id == "item-approval"
+    assert committed.observation_digest == (
+        completed.result.observation_digest
+    )

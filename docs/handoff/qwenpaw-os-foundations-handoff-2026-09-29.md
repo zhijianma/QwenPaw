@@ -296,6 +296,11 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   的崩溃窗口，从该 snapshot 创建后续 Invocation；pending/uncertain 继续失败关闭。
 - checkpoint 绑定来源 Submission；如果之后已有新 Submission 被接受，旧 continuation
   取消而不是覆盖新上下文，enqueue race 继续由 Queue revision 关闭。
+- 受控 Codex/Qoder Harness 的 ActionResult 持久化后，Tracker 生成内容安全的
+  `CommittedActionItem`；Session Bridge 仅在对应规范化 tool output 原子写入 Chat
+  context 时附加 binding。provider completion event、未知终态和 history hydrate 不会
+  被误当成 model-visible commit。若 Action 成功但 session 写入失败，Harness
+  Invocation 失败关闭并保留成功 Action 证据，后续不得自动重做。
 - 状态经现有 Chat Runtime Observation 展示为 pending / accepted / cancelled /
   blocked / failed，不伪造 Queue 项，不依赖 Task 页面或前端私有状态。
 - Kernel/SDK 新增只读 `ModelRecoveryHistoryPort`；独立查询 Adapter 从同一恢复事实
@@ -306,9 +311,9 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - “一问一答”只保留为 Chat 快速路径和 UI 投影；长程执行链只在 Outcome、显式
   Stop / Interrupt、不可自动化的 typed Wait 或预算/恢复终态结束，不依赖用户发送
   “继续”。
-- 尚未完成：Harness Provider 的 model-visible committed-item binding、后台 Action 跨
-  Invocation 的主动 continuation、Provider token 级原地续传，以及真实断流与进程重启
-  的浏览器端到端演练。
+- 尚未完成：Harness 断流后的 provider-thread/session 双重校验与 durable continuation、
+  后台 Action 跨 Invocation 的主动 continuation、Provider token 级原地续传，以及真实
+  断流与进程重启的浏览器端到端演练。
 
 ### 本阶段此前已执行的定点验证
 

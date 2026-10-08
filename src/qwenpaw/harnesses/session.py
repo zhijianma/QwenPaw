@@ -5,12 +5,17 @@ from __future__ import annotations
 
 import json
 import mimetypes
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from agentscope.message import Msg
 from agentscope.state import AgentState
 
+from ..kernel import (
+    COMMITTED_ACTION_ITEM_METADATA_KEY,
+    CommittedActionItem,
+)
 from ..runtime._state_utils import StateProxy
 from ..schemas import AgentResponse, Message, MessageType
 from .events import HarnessHistoryItem, HarnessHistoryKind
@@ -71,6 +76,7 @@ class HarnessSessionBridge:
         request: Any,
         response: AgentResponse,
         backend: str,
+        committed_items: Mapping[str, CommittedActionItem] | None = None,
     ) -> None:
         """Append one request and its normalized output atomically."""
         session_id = str(getattr(request, "session_id", "") or "default")
@@ -90,7 +96,13 @@ class HarnessSessionBridge:
         if not isinstance(context, list):
             context = []
         context.extend(self._request_messages(request, backend))
-        context.extend(self._response_messages(response, backend))
+        context.extend(
+            self._response_messages(
+                response,
+                backend,
+                committed_items=committed_items,
+            ),
+        )
         state["context"] = context
 
         proxy = StateProxy()
@@ -193,12 +205,24 @@ class HarnessSessionBridge:
         cls,
         response: AgentResponse,
         backend: str,
+        *,
+        committed_items: Mapping[str, CommittedActionItem] | None = None,
     ) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = []
         for item in response.output:
             block = cls._output_block(item)
             if block is None:
                 continue
+            if block.get("type") == "tool_result":
+                committed_item = (committed_items or {}).get(
+                    str(block.get("id") or ""),
+                )
+                if committed_item is not None:
+                    block["metadata"] = {
+                        COMMITTED_ACTION_ITEM_METADATA_KEY: (
+                            committed_item.model_dump(mode="json")
+                        ),
+                    }
             role = cls._enum_value(item.role) or "assistant"
             if role == "tool":
                 role = "assistant"

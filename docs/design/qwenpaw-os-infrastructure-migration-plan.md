@@ -447,8 +447,12 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     `ModelStepContextCheckpoint` 自动续行；dispatcher 逐一校验 provider-neutral
     `CommittedActionItem`。同步 ToolResult 与同 Invocation 内进入上下文的后台 hint
     使用相同 binding，并修复 snapshot-first 的崩溃窗口。
-  - [ ] Harness Provider 补齐“结果已进入模型上下文”的 binding；仅有远端完成事件时
-    继续失败关闭。后台 Action 跨 Invocation 的主动 continuation 也仍待实现。
+  - [x] 受控 Harness Provider 已在 ActionResult 持久化后，由 Session Bridge 把对应
+    tool output 与 `CommittedActionItem` 一起原子写入 Chat context；仅有远端完成事件
+    或 provider history hydrate 时不生成 binding。若 Action 已成功但 context commit
+    失败，Invocation 标记失败并保留成功 Action 证据，禁止自动重做。
+  - [ ] Harness 断流后的 provider-thread/session 双重校验与 durable continuation，及
+    后台 Action 跨 Invocation 的主动 continuation 仍待实现。
 - [ ] 把 WebSocket 增量续传、sticky route 和 HTTP fallback 保持为 Provider
   Adapter capability；严格验证 response identity/prefix，失败时回退持久上下文重建，
   Kernel 不感知具体传输。

@@ -11,6 +11,7 @@ from uuid import UUID
 from ..kernel import (
     ActionStatus,
     ApprovalSource,
+    CommittedActionItem,
     EnvironmentRef,
     EnvironmentResolution,
     InvocationScope,
@@ -77,6 +78,7 @@ class HarnessActionTracker:
         self._recorder = recorder
         self._environment_ref: EnvironmentRef | None = None
         self._contexts: dict[str, ToolCallContext] = {}
+        self._committed_items: dict[str, CommittedActionItem] = {}
 
     def bind_environment(self, resolution: EnvironmentResolution) -> None:
         """Bind the environment evidence persisted before provider dispatch."""
@@ -91,6 +93,11 @@ class HarnessActionTracker:
     def backend(self) -> str:
         """Return the provider identity bound to this tracker."""
         return self._backend
+
+    @property
+    def committed_items(self) -> dict[str, CommittedActionItem]:
+        """Return model-context candidates backed by terminal evidence."""
+        return dict(self._committed_items)
 
     def _context(
         self,
@@ -184,11 +191,12 @@ class HarnessActionTracker:
         if context is None:
             return
         status, error_code = _terminal_status(event)
-        await self._recorder.complete_harness_remote(
+        committed_item = await self._recorder.complete_harness_remote(
             context,
             status=status,
             error_code=error_code,
         )
+        self._committed_items[event.item_id] = committed_item
         self._contexts.pop(event.item_id, None)
 
     async def finalize_pending(
