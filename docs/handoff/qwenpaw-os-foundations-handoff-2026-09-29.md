@@ -247,6 +247,17 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - 定点验证覆盖 Wait 取消、单次 dispatch、HTTP Stop、crash-after-enqueue 与确定性
   Stop/enqueue 竞态；该模块不涉及 Task 页面。
 
+### 2026-10-08 Provider Retry-After 持久化等待
+
+- 统一 Model Error Policy 解析 `Retry-After` delta-seconds 与 HTTP-date，拒绝负数、
+  NaN 和 infinity；Provider 原始 header 不进入 Kernel。
+- `ModelRecoveryDecision` / `ModelCallResult` 只保存内容安全
+  `retry_after_seconds`，领域校验限制其只能用于 `rate_limited + wait_resource`。
+- Resource Wait 优先使用 durable hint 计算 `not_before`，缺失时回退 Lite 默认 60 秒；
+  重启后沿用首次记录，不按新配置漂移。
+- 共享 WaitCondition 投影公开可选 `not_before`，Chat 可展示可重试时间而无需读取
+  Provider 私有异常或前端自行猜测。
+
 ### 本阶段此前已执行的定点验证
 
 - 后端核心路径定点测试：70 项通过。

@@ -268,6 +268,41 @@ async def test_token_wrapper_records_transport_recovery_contract(
 
 
 @pytest.mark.asyncio
+async def test_token_wrapper_records_rate_limit_retry_hint(
+    tmp_path: Path,
+) -> None:
+    scope = _scope(tmp_path)
+    store = lite_model_call_store(tmp_path)
+    session = _session(scope, _manifest(scope), store)
+    provider = AsyncMock()
+    provider.model = "model-a"
+    provider.credential = None
+    provider.parameters = None
+    provider.stream = False
+    provider.context_size = 32_768
+    provider.formatter = object()
+    error = RuntimeError("rate limited")
+    error.status_code = 429
+    error.headers = {"Retry-After": "45"}
+    provider.side_effect = error
+    wrapper = TokenRecordingModelWrapper("provider-a", provider)
+
+    with pytest.raises(RuntimeError, match="rate limited"):
+        await call_with_model_session(
+            session,
+            lambda: wrapper(messages=[]),
+        )
+    [record] = await store.list_for_conversation("chat-1")
+
+    assert record.result is not None
+    assert record.result.failure_class is ModelFailureClass.RATE_LIMITED
+    assert record.result.recovery_disposition is (
+        ModelRecoveryDisposition.WAIT_RESOURCE
+    )
+    assert record.result.retry_after_seconds == 45.0
+
+
+@pytest.mark.asyncio
 async def test_model_session_persists_only_terminal_resource_wait(
     tmp_path: Path,
 ) -> None:
@@ -585,6 +620,24 @@ def test_result_requires_complete_recovery_contract() -> None:
             conversation_id="chat-1",
             status=ModelCallStatus.FAILED,
             failure_class=ModelFailureClass.TRANSPORT_UNAVAILABLE,
+        )
+
+
+def test_retry_after_requires_rate_limited_resource_wait() -> None:
+    with pytest.raises(
+        ValueError,
+        match="retry-after hint requires rate-limited resource wait",
+    ):
+        ModelCallResult(
+            attempt_id=uuid4(),
+            invocation_id=uuid4(),
+            conversation_id="chat-1",
+            status=ModelCallStatus.FAILED,
+            failure_class=ModelFailureClass.TRANSPORT_UNAVAILABLE,
+            recovery_disposition=(
+                ModelRecoveryDisposition.RETRY_TRANSPORT
+            ),
+            retry_after_seconds=10,
         )
 
 

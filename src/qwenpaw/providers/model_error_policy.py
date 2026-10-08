@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Literal
 
 import anthropic
@@ -72,10 +75,43 @@ class ModelRecoveryDecision:
 
     failure_class: ModelFailureClass
     disposition: ModelRecoveryDisposition
+    retry_after_seconds: float | None = None
 
 
 class IncompleteModelStreamError(ConnectionError):
     """Raised when a provider stream ends without a terminal chunk."""
+
+
+def extract_retry_after_seconds(
+    exc: Exception,
+    *,
+    now: datetime | None = None,
+) -> float | None:
+    """Return a validated delta-seconds hint from provider headers."""
+    headers = getattr(exc, "headers", None) or getattr(
+        getattr(exc, "response", None),
+        "headers",
+        None,
+    )
+    if not headers:
+        return None
+    raw = headers.get("Retry-After") or headers.get("retry-after")
+    if raw is None:
+        return None
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        try:
+            retry_at = parsedate_to_datetime(str(raw))
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=timezone.utc)
+        current = now or datetime.now(timezone.utc)
+        seconds = max((retry_at - current).total_seconds(), 0.0)
+    if not math.isfinite(seconds) or seconds < 0:
+        return None
+    return seconds
 
 
 def classify_model_error(exc: Exception) -> ModelErrorDecision:
@@ -215,6 +251,11 @@ def classify_model_recovery(
     return ModelRecoveryDecision(
         failure_class=failure_class,
         disposition=disposition,
+        retry_after_seconds=(
+            extract_retry_after_seconds(exc)
+            if failure_class is ModelFailureClass.RATE_LIMITED
+            else None
+        ),
     )
 
 

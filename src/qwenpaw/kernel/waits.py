@@ -129,7 +129,7 @@ class ModelResourceWait(KernelModel):
         agent_id: str,
         conversation_id: str,
         failure_class: ModelFailureClass,
-        retry_delay_seconds: int = 60,
+        retry_delay_seconds: float = 60,
         created_at: AwareDatetime | None = None,
     ) -> "ModelResourceWait":
         """Build the default Lite wait without provider payloads."""
@@ -232,6 +232,7 @@ class WaitCondition(KernelModel):
     continuation: ContinuationRef
     revision: int = Field(ge=1)
     created_at: AwareDatetime
+    not_before: AwareDatetime | None = None
     resolved_at: AwareDatetime | None = None
 
     @model_validator(mode="after")

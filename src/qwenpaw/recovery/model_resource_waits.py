@@ -150,7 +150,11 @@ class ModelResourceWaitService:
             agent_id=self.agent_id,
             conversation_id=attempt.conversation_id,
             failure_class=result.failure_class,
-            retry_delay_seconds=self.rate_limit_delay_seconds,
+            retry_delay_seconds=(
+                self.rate_limit_delay_seconds
+                if result.retry_after_seconds is None
+                else max(result.retry_after_seconds, 1.0)
+            ),
             created_at=result.completed_at,
         )
         await self.start()
@@ -531,6 +535,7 @@ class ModelResourceWaitService:
             ),
             revision=wait.revision,
             created_at=wait.created_at,
+            not_before=wait.not_before,
             resolved_at=wait.updated_at if terminal else None,
         )
 

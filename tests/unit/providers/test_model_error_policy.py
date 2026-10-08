@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 
 import anthropic
 import httpx
@@ -14,6 +15,7 @@ from qwenpaw.kernel import ModelFailureClass, ModelRecoveryDisposition
 from qwenpaw.providers.model_error_policy import (
     classify_model_error,
     classify_model_recovery,
+    extract_retry_after_seconds,
 )
 
 
@@ -182,6 +184,30 @@ def test_quota_is_not_misclassified_as_short_rate_limit() -> None:
     assert decision.retryable is False
     assert recovery.failure_class is ModelFailureClass.QUOTA_EXHAUSTED
     assert recovery.disposition is ModelRecoveryDisposition.WAIT_RESOURCE
+
+
+def test_rate_limit_recovery_preserves_retry_after_seconds() -> None:
+    error = HttpError(429)
+    error.headers = {"Retry-After": "12.5"}  # type: ignore[attr-defined]
+
+    recovery = classify_model_recovery(error)
+
+    assert recovery.failure_class is ModelFailureClass.RATE_LIMITED
+    assert recovery.disposition is ModelRecoveryDisposition.WAIT_RESOURCE
+    assert recovery.retry_after_seconds == 12.5
+
+
+def test_retry_after_supports_http_date_and_rejects_non_finite() -> None:
+    current = datetime(2026, 10, 8, 0, 0, tzinfo=timezone.utc)
+    dated = HttpError(429)
+    dated.headers = {  # type: ignore[attr-defined]
+        "Retry-After": "Thu, 08 Oct 2026 00:02:00 GMT",
+    }
+    invalid = HttpError(429)
+    invalid.headers = {"Retry-After": "inf"}  # type: ignore[attr-defined]
+
+    assert extract_retry_after_seconds(dated, now=current) == 120.0
+    assert extract_retry_after_seconds(invalid, now=current) is None
 
 
 def test_partial_stream_uses_continuation_not_transport_replay() -> None:

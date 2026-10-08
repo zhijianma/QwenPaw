@@ -291,6 +291,8 @@ Codex 的“边收流边执行工具”建立在其 Provider 事件协议、工�
   整请求重放；
 - [x] quota、budget、auth、policy 和 user interrupt 与网络错误分开分类；
 - [x] 输出 semantic observation，供 Chat 展示恢复状态；
+- [x] Rate Limit 的 `Retry-After` 秒数/HTTP-date 归一化为内容安全 hint，重试耗尽后
+  进入 Resource Wait 的动态 `not_before`，不保存 Provider header；
 - [ ] 把 transport retry 的短等待预算与后续 durable wait policy 完全统一。
 
 ### R2：Resource Wait 与恢复调度

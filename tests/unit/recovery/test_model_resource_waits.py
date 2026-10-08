@@ -40,6 +40,8 @@ def _attempt() -> ModelCallAttempt:
 def _result(
     attempt: ModelCallAttempt,
     failure_class: ModelFailureClass,
+    *,
+    retry_after_seconds: float | None = None,
 ) -> ModelCallResult:
     return ModelCallResult(
         attempt_id=attempt.attempt_id,
@@ -49,6 +51,7 @@ def _result(
         error_kind=failure_class.value,
         failure_class=failure_class,
         recovery_disposition=ModelRecoveryDisposition.WAIT_RESOURCE,
+        retry_after_seconds=retry_after_seconds,
     )
 
 
@@ -132,6 +135,43 @@ async def test_rate_limit_wait_uses_timer_without_provider_payload(
     assert wait.not_before is not None
     assert 0 < await service.seconds_until_next_timer() <= 5
     assert not await service.list_ready()
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_wait_prefers_durable_retry_after_hint(
+    tmp_path: Path,
+) -> None:
+    attempt = _attempt()
+    service = ModelResourceWaitService(
+        tmp_path / "resource-waits.sqlite3",
+        agent_id="default",
+        rate_limit_delay_seconds=5,
+    )
+
+    result = _result(
+        attempt,
+        ModelFailureClass.RATE_LIMITED,
+        retry_after_seconds=120.0,
+    )
+    wait = await service.defer(attempt, result)
+
+    assert wait is not None
+    assert wait.not_before is not None
+    delay = (wait.not_before - wait.created_at).total_seconds()
+    assert delay == 120.0
+    [condition] = await service.list_wait_conditions(
+        agent_id="default",
+        conversation_id="chat-1",
+    )
+    assert condition.not_before == wait.not_before
+
+    restarted = ModelResourceWaitService(
+        tmp_path / "resource-waits.sqlite3",
+        agent_id="default",
+        rate_limit_delay_seconds=1,
+    )
+    replayed = await restarted.defer(attempt, result)
+    assert replayed == wait
 
 
 @pytest.mark.asyncio

@@ -294,6 +294,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
         retryable = False
         failure_class: ModelFailureClass | None = None
         recovery_disposition: ModelRecoveryDisposition | None = None
+        retry_after_seconds: float | None = None
         if error is not None:
             from ..providers.model_error_policy import (
                 classify_model_error,
@@ -307,6 +308,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
             )
             failure_class = recovery.failure_class
             recovery_disposition = recovery.disposition
+            retry_after_seconds = recovery.retry_after_seconds
             if isinstance(error, Exception):
                 error_kind = classify_model_error(error).kind
                 retryable = is_retryable_same_model(error)
@@ -321,6 +323,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
             output_boundary=output_boundary,
             failure_class=failure_class,
             recovery_disposition=recovery_disposition,
+            retry_after_seconds=retry_after_seconds,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cost_micros=cost_micros,

@@ -1690,6 +1690,11 @@ class ModelCallResult(KernelModel):
     output_boundary: ModelOutputBoundary | None = None
     failure_class: ModelFailureClass | None = None
     recovery_disposition: ModelRecoveryDisposition | None = None
+    retry_after_seconds: float | None = Field(
+        default=None,
+        ge=0,
+        allow_inf_nan=False,
+    )
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
     cost_micros: int | None = Field(default=None, ge=0)
@@ -1709,6 +1714,14 @@ class ModelCallResult(KernelModel):
             )
         if self.status is ModelCallStatus.SUCCEEDED and has_failure:
             raise ValueError("successful model call cannot require recovery")
+        if self.retry_after_seconds is not None and (
+            self.failure_class is not ModelFailureClass.RATE_LIMITED
+            or self.recovery_disposition
+            is not ModelRecoveryDisposition.WAIT_RESOURCE
+        ):
+            raise ValueError(
+                "retry-after hint requires rate-limited resource wait",
+            )
         if (
             self.emitted_content
             and self.recovery_disposition

@@ -45,8 +45,9 @@ ModelCallResult(wait_resource)
 waiting / ready -- Interrupt or Stop-and-Clear fence --> cancelled
 ```
 
-- `rate_limited`：Lite 使用有界 timer；后续可由 Provider Adapter 提供经过校验的
-  retry hint，但不能把原始 header 直接写入 Kernel。
+- `rate_limited`：统一错误策略将 Provider `Retry-After` 的 delta-seconds 或 HTTP-date
+  解析为有限、非负的 `retry_after_seconds`；Kernel 和 SQLite 只保存这个内容安全
+  hint，不保存原始 header。无合法 hint 时回退 Lite 默认 timer。
 - `quota_exhausted`：默认等待外部资源事件，不自动循环消耗额度。
 - enqueue 与 outbox 标记之间崩溃时，稳定 idempotency key 会取得同一 Submission，
   不重复创建执行。
@@ -98,7 +99,8 @@ Adapter 声明；Kernel 不假设任意模型流可以原地续传。
   transport policy 安全重试，已经产生内容时禁止整请求重放。
 - [x] Interrupt / Stop-and-Clear 对资源恢复提交建立持久化 fencing；竞态 enqueue
   使用 Queue revision 关闭，取消后的 Wait 不会复活旧任务。
-- [ ] 从真实 Provider retry-after hint 计算动态等待时间。
+- [x] 从真实 Provider `Retry-After` 秒数或 HTTP-date 计算动态等待时间，并通过共享
+  WaitCondition `not_before` 投影供 Chat 查询。
 - [ ] 从部分流边界创建可验证的新 Model Step continuation。
 - [ ] Action uncertainty 与 Checkpoint 决定恢复前自动对账。
 - [ ] Provider resource health 事件自动释放 quota wait。

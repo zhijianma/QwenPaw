@@ -50,6 +50,7 @@ from ..constant import (
 from .error_utils import extract_status_code as _extract_status_code
 from .model_capability_cache import get_capability_cache
 from .model_error_policy import (
+    extract_retry_after_seconds as _extract_retry_after,
     is_retryable_same_model,
 )
 from .rate_limiter import LLMRateLimiter, get_rate_limiter
@@ -305,27 +306,6 @@ def _enable_reasoning_content_fallback(
                 pending.append(wrapped)
 
     return False
-
-
-def _extract_retry_after(exc: Exception) -> float | None:
-    """Parse the Retry-After header value (in seconds) from an exception.
-
-    Handles both OpenAI and Anthropic SDK exception shapes, which expose
-    headers either directly on the exception or on an attached response object.
-    """
-    headers = getattr(exc, "headers", None) or getattr(
-        getattr(exc, "response", None),
-        "headers",
-        None,
-    )
-    if headers:
-        raw = headers.get("Retry-After") or headers.get("retry-after")
-        if raw:
-            try:
-                return float(raw)
-            except (TypeError, ValueError):
-                pass
-    return None
 
 
 def _normalize_retry_config(retry_config: RetryConfig | None) -> RetryConfig:
