@@ -293,13 +293,18 @@ Codex 的“边收流边执行工具”建立在其 Provider 事件协议、工�
 - [x] 输出 semantic observation，供 Chat 展示恢复状态；
 - [x] Rate Limit 的 `Retry-After` 秒数/HTTP-date 归一化为内容安全 hint，重试耗尽后
   进入 Resource Wait 的动态 `not_before`，不保存 Provider header；
-- [ ] 把 transport retry 的短等待预算与后续 durable wait policy 完全统一。
+- [x] transport/provider overload 先使用 Retry wrapper 的有界 attempt budget；整个
+  logical call 与 fallback 耗尽后才进入 durable timer Wait。Transport、provider
+  overload 与 rate limit 共用跨 Invocation 自动 timer budget，默认最多 3 个 cycle；
+  耗尽后形成可查询终态，不无限占槽或循环复活。
 
 ### R2：Resource Wait 与恢复调度
 
 - [x] 模型结果为 `wait_resource` 时持久化独立资源等待；
 - [x] timer 到期或 external event 释放后，以幂等 outbox 创建 continuation；
 - [x] Lite 使用本地 SQLite source 和 worker，不引入前端 Queue 或消息中间件；
+- [x] Transport/Provider overload 经过短重试与 fallback 后转 timer Wait，并以同一
+  correlation 下的持久化 cycle budget 限制自动续行；
 - [x] Interrupt 按来源 Invocation、Stop-and-Clear 按 Conversation 对恢复提交进行
   fencing；Queue revision 关闭“检查后、入队前”的竞态，取消 Wait 不会复活；
 - [ ] Workstation/Hub 用健康探针或分布式 lease 替换 Lite Adapter。

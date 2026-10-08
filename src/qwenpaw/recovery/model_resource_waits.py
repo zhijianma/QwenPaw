@@ -16,6 +16,7 @@ from ..kernel import (
     ContinuationRef,
     ModelCallAttempt,
     ModelCallResult,
+    ModelFailureClass,
     ModelRecoveryDisposition,
     ModelResourceWait,
     ResourceWaitStatus,
@@ -54,14 +55,24 @@ class ModelResourceWaitService:
         *,
         agent_id: str,
         rate_limit_delay_seconds: int = 60,
+        transport_delay_seconds: int = 60,
+        max_automatic_recovery_cycles: int = 3,
     ) -> None:
         if not agent_id.strip():
             raise ValueError("resource wait owner cannot be empty")
         if rate_limit_delay_seconds < 1:
             raise ValueError("rate-limit delay must be positive")
+        if transport_delay_seconds < 1:
+            raise ValueError("transport delay must be positive")
+        if max_automatic_recovery_cycles < 1:
+            raise ValueError("automatic recovery cycles must be positive")
         self.database_path = Path(database_path)
         self.agent_id = agent_id
         self.rate_limit_delay_seconds = rate_limit_delay_seconds
+        self.transport_delay_seconds = transport_delay_seconds
+        self.max_automatic_recovery_cycles = (
+            max_automatic_recovery_cycles
+        )
         self._initialize_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
         self._initialized = False
@@ -107,6 +118,12 @@ class ModelResourceWaitService:
                         conversation_id,
                         updated_at
                     );
+                CREATE INDEX IF NOT EXISTS idx_model_resource_correlation
+                    ON model_resource_waits(
+                        agent_id,
+                        correlation_id,
+                        failure_class
+                    );
                 """,
             )
 
@@ -129,13 +146,22 @@ class ModelResourceWaitService:
         result: ModelCallResult,
     ) -> ModelResourceWait | None:
         """Create one idempotent wait for a resource-gated result."""
-        if (
-            result.recovery_disposition
-            is not ModelRecoveryDisposition.WAIT_RESOURCE
-        ):
+        eligible_dispositions = {
+            ModelRecoveryDisposition.RETRY_TRANSPORT,
+            ModelRecoveryDisposition.WAIT_RESOURCE,
+        }
+        if result.recovery_disposition not in eligible_dispositions:
             return None
         if result.failure_class is None:
             raise ValueError("resource wait requires a failure class")
+        supported_failures = {
+            ModelFailureClass.TRANSPORT_UNAVAILABLE,
+            ModelFailureClass.PROVIDER_OVERLOADED,
+            ModelFailureClass.RATE_LIMITED,
+            ModelFailureClass.QUOTA_EXHAUSTED,
+        }
+        if result.failure_class not in supported_failures:
+            return None
         if attempt.attempt_id != result.attempt_id:
             raise ValueError("resource wait attempt identity mismatch")
         if attempt.invocation_id != result.invocation_id:
@@ -151,9 +177,15 @@ class ModelResourceWaitService:
             conversation_id=attempt.conversation_id,
             failure_class=result.failure_class,
             retry_delay_seconds=(
-                self.rate_limit_delay_seconds
-                if result.retry_after_seconds is None
-                else max(result.retry_after_seconds, 1.0)
+                max(result.retry_after_seconds, 1.0)
+                if result.retry_after_seconds is not None
+                else self.transport_delay_seconds
+                if result.failure_class
+                in {
+                    ModelFailureClass.TRANSPORT_UNAVAILABLE,
+                    ModelFailureClass.PROVIDER_OVERLOADED,
+                }
+                else self.rate_limit_delay_seconds
             ),
             created_at=result.completed_at,
         )
@@ -161,7 +193,10 @@ class ModelResourceWaitService:
         async with self._write_lock:
             return await asyncio.to_thread(self._defer_sync, wait)
 
-    def _defer_sync(self, wait: ModelResourceWait) -> ModelResourceWait:
+    def _defer_sync(
+        self,
+        wait: ModelResourceWait,
+    ) -> ModelResourceWait | None:
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT * FROM model_resource_waits WHERE wait_id = ?",
@@ -189,6 +224,32 @@ class ModelResourceWaitService:
                         "model resource wait has conflicting content",
                     )
                 return existing
+            if wait.failure_class in {
+                ModelFailureClass.TRANSPORT_UNAVAILABLE,
+                ModelFailureClass.PROVIDER_OVERLOADED,
+                ModelFailureClass.RATE_LIMITED,
+            }:
+                count = connection.execute(
+                    "SELECT COUNT(*) AS total "
+                    "FROM model_resource_waits WHERE agent_id = ? "
+                    "AND correlation_id = ? "
+                    "AND failure_class IN (?, ?, ?)",
+                    (
+                        self.agent_id,
+                        str(wait.correlation_id),
+                        ModelFailureClass.TRANSPORT_UNAVAILABLE.value,
+                        ModelFailureClass.PROVIDER_OVERLOADED.value,
+                        ModelFailureClass.RATE_LIMITED.value,
+                    ),
+                ).fetchone()["total"]
+                if count >= self.max_automatic_recovery_cycles:
+                    wait = wait.model_copy(
+                        update={
+                            "status": (
+                                ResourceWaitStatus.RECOVERY_EXHAUSTED
+                            ),
+                        },
+                    )
             values = self._to_values(wait)
             connection.execute(
                 "INSERT INTO model_resource_waits VALUES "
@@ -509,6 +570,7 @@ class ModelResourceWaitService:
             ResourceWaitStatus.READY,
             ResourceWaitStatus.DISPATCHED,
             ResourceWaitStatus.CANCELLED,
+            ResourceWaitStatus.RECOVERY_EXHAUSTED,
         }
         return WaitCondition(
             condition_id=wait.wait_id,
@@ -522,6 +584,9 @@ class ModelResourceWaitService:
                 }
                 else WaitConditionStatus.CANCELLED
                 if wait.status is ResourceWaitStatus.CANCELLED
+                else WaitConditionStatus.EXPIRED
+                if wait.status
+                is ResourceWaitStatus.RECOVERY_EXHAUSTED
                 else WaitConditionStatus.WAITING
             ),
             agent_id=wait.agent_id,

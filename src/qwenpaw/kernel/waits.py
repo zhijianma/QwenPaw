@@ -73,6 +73,7 @@ class ResourceWaitStatus(str, Enum):
     READY = "ready"
     DISPATCHED = "dispatched"
     CANCELLED = "cancelled"
+    RECOVERY_EXHAUSTED = "recovery_exhausted"
 
 
 class ModelResourceWait(KernelModel):
@@ -97,6 +98,8 @@ class ModelResourceWait(KernelModel):
     def validate_resource_wait(self) -> Self:
         """Keep trigger, failure, and dispatch state unambiguous."""
         supported = {
+            ModelFailureClass.TRANSPORT_UNAVAILABLE,
+            ModelFailureClass.PROVIDER_OVERLOADED,
             ModelFailureClass.RATE_LIMITED,
             ModelFailureClass.QUOTA_EXHAUSTED,
         }
@@ -136,7 +139,7 @@ class ModelResourceWait(KernelModel):
         if retry_delay_seconds < 1:
             raise ValueError("resource retry delay must be positive")
         created_at = created_at or utc_now()
-        timed = failure_class is ModelFailureClass.RATE_LIMITED
+        timed = failure_class is not ModelFailureClass.QUOTA_EXHAUSTED
         return cls(
             wait_id=wait_id,
             attempt_id=attempt_id,

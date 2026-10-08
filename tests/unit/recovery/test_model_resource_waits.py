@@ -133,6 +133,7 @@ async def test_rate_limit_wait_uses_timer_without_provider_payload(
     assert wait is not None
     assert wait.trigger is ResourceWaitTrigger.TIMER
     assert wait.not_before is not None
+    assert (wait.not_before - wait.created_at).total_seconds() == 5
     assert 0 < await service.seconds_until_next_timer() <= 5
     assert not await service.list_ready()
 
@@ -248,13 +249,14 @@ async def test_dispatch_ready_persists_callback_submission_once(
 
 
 @pytest.mark.asyncio
-async def test_non_resource_result_does_not_create_wait(
+async def test_transport_retry_exhaustion_creates_timer_wait(
     tmp_path: Path,
 ) -> None:
     attempt = _attempt()
     service = ModelResourceWaitService(
         tmp_path / "resource-waits.sqlite3",
         agent_id="default",
+        transport_delay_seconds=17,
     )
     result = ModelCallResult(
         attempt_id=attempt.attempt_id,
@@ -265,5 +267,101 @@ async def test_non_resource_result_does_not_create_wait(
         recovery_disposition=ModelRecoveryDisposition.RETRY_TRANSPORT,
     )
 
-    assert await service.defer(attempt, result) is None
+    wait = await service.defer(attempt, result)
+
+    assert wait is not None
+    assert wait.failure_class is ModelFailureClass.TRANSPORT_UNAVAILABLE
+    assert wait.trigger is ResourceWaitTrigger.TIMER
+    assert wait.not_before is not None
+    assert (wait.not_before - wait.created_at).total_seconds() == 17
     assert not await service.list_ready()
+
+
+@pytest.mark.asyncio
+async def test_transport_recovery_budget_is_bounded_and_idempotent(
+    tmp_path: Path,
+) -> None:
+    service = ModelResourceWaitService(
+        tmp_path / "resource-waits.sqlite3",
+        agent_id="default",
+        max_automatic_recovery_cycles=2,
+    )
+    first = _attempt()
+    attempts = (
+        first,
+        first.model_copy(
+            update={
+                "attempt_id": uuid4(),
+                "route_decision_id": uuid4(),
+                "invocation_id": uuid4(),
+            },
+        ),
+        first.model_copy(
+            update={
+                "attempt_id": uuid4(),
+                "route_decision_id": uuid4(),
+                "invocation_id": uuid4(),
+            },
+        ),
+    )
+
+    async def defer(
+        attempt: ModelCallAttempt,
+        failure_class: ModelFailureClass,
+    ):
+        return await service.defer(
+            attempt,
+            ModelCallResult(
+                attempt_id=attempt.attempt_id,
+                invocation_id=attempt.invocation_id,
+                conversation_id=attempt.conversation_id,
+                status=ModelCallStatus.FAILED,
+                failure_class=failure_class,
+                recovery_disposition=(
+                    ModelRecoveryDisposition.WAIT_RESOURCE
+                    if failure_class is ModelFailureClass.RATE_LIMITED
+                    else ModelRecoveryDisposition.RETRY_TRANSPORT
+                ),
+            ),
+        )
+
+    first_wait = await defer(
+        attempts[0],
+        ModelFailureClass.TRANSPORT_UNAVAILABLE,
+    )
+    second_wait = await defer(
+        attempts[1],
+        ModelFailureClass.RATE_LIMITED,
+    )
+    exhausted = await defer(
+        attempts[2],
+        ModelFailureClass.TRANSPORT_UNAVAILABLE,
+    )
+
+    assert first_wait is not None
+    assert second_wait is not None
+    assert exhausted is not None
+    assert exhausted.status is ResourceWaitStatus.RECOVERY_EXHAUSTED
+    assert await service.defer(
+        attempts[0],
+        ModelCallResult(
+            attempt_id=attempts[0].attempt_id,
+            invocation_id=attempts[0].invocation_id,
+            conversation_id=attempts[0].conversation_id,
+            status=ModelCallStatus.FAILED,
+            failure_class=ModelFailureClass.TRANSPORT_UNAVAILABLE,
+            recovery_disposition=ModelRecoveryDisposition.RETRY_TRANSPORT,
+            completed_at=first_wait.created_at,
+        ),
+    ) == first_wait
+    terminal = await service.list_wait_conditions(
+        agent_id="default",
+        conversation_id="chat-1",
+        include_terminal=True,
+    )
+    exhausted_condition = next(
+        condition
+        for condition in terminal
+        if condition.source_id == attempts[2].attempt_id
+    )
+    assert exhausted_condition.status is WaitConditionStatus.EXPIRED

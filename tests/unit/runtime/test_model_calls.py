@@ -32,6 +32,7 @@ from qwenpaw.runtime.model_calls import (
     lite_model_call_store,
 )
 from qwenpaw.recovery import ModelResourceWaitService
+from qwenpaw.providers.retry_chat_model import RetryChatModel, RetryConfig
 from qwenpaw.token_usage.model_wrapper import TokenRecordingModelWrapper
 
 
@@ -409,6 +410,129 @@ async def test_failed_logical_call_creates_resource_wait_automatically(
         conversation_id="chat-1",
     )
     assert condition.source_type == "qwenpaw.model-resource"
+
+
+@pytest.mark.asyncio
+async def test_short_transport_retry_success_does_not_create_wait(
+    tmp_path: Path,
+) -> None:
+    scope = _scope(tmp_path)
+    store = lite_model_call_store(tmp_path)
+    resource_waits = ModelResourceWaitService(
+        tmp_path / "resource-waits.sqlite3",
+        agent_id="default",
+    )
+    session = _session(
+        scope,
+        _manifest(scope),
+        store,
+        resource_waits=resource_waits,
+    )
+    provider = AsyncMock()
+    provider.model = "model-a"
+    provider.credential = None
+    provider.parameters = None
+    provider.stream = False
+    provider.context_size = 32_768
+    provider.formatter = object()
+    provider.side_effect = [
+        TimeoutError("temporary outage"),
+        ChatResponse(
+            content=[TextBlock(text="recovered")],
+            is_last=True,
+        ),
+    ]
+    recorded = TokenRecordingModelWrapper("provider-a", provider)
+    model = RetryChatModel(
+        recorded,
+        retry_config=RetryConfig(
+            enabled=True,
+            max_retries=1,
+            backoff_base=0.1,
+            backoff_cap=0.1,
+        ),
+    )
+
+    response = await call_with_model_session(
+        session,
+        lambda: model(messages=[]),
+    )
+    records = await store.list_for_conversation("chat-1")
+
+    assert response.content[0].text == "recovered"
+    assert len(records) == 2
+    results = [record.result for record in records]
+    assert all(result is not None for result in results)
+    failed = next(
+        result
+        for result in results
+        if result is not None and result.status is ModelCallStatus.FAILED
+    )
+    succeeded = next(
+        result
+        for result in results
+        if result is not None
+        and result.status is ModelCallStatus.SUCCEEDED
+    )
+    assert failed.failure_class is (
+        ModelFailureClass.TRANSPORT_UNAVAILABLE
+    )
+    assert succeeded.failure_class is None
+    assert not await resource_waits.list_wait_conditions(
+        agent_id="default",
+        conversation_id="chat-1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_exhausted_transport_retry_creates_durable_wait(
+    tmp_path: Path,
+) -> None:
+    scope = _scope(tmp_path)
+    store = lite_model_call_store(tmp_path)
+    resource_waits = ModelResourceWaitService(
+        tmp_path / "resource-waits.sqlite3",
+        agent_id="default",
+    )
+    session = _session(
+        scope,
+        _manifest(scope),
+        store,
+        resource_waits=resource_waits,
+    )
+    provider = AsyncMock()
+    provider.model = "model-a"
+    provider.credential = None
+    provider.parameters = None
+    provider.stream = False
+    provider.context_size = 32_768
+    provider.formatter = object()
+    provider.side_effect = TimeoutError("persistent outage")
+    recorded = TokenRecordingModelWrapper("provider-a", provider)
+    model = RetryChatModel(
+        recorded,
+        retry_config=RetryConfig(
+            enabled=True,
+            max_retries=1,
+            backoff_base=0.1,
+            backoff_cap=0.1,
+        ),
+    )
+
+    with pytest.raises(TimeoutError, match="persistent outage"):
+        await call_with_model_session(
+            session,
+            lambda: model(messages=[]),
+        )
+    records = await store.list_for_conversation("chat-1")
+    [condition] = await resource_waits.list_wait_conditions(
+        agent_id="default",
+        conversation_id="chat-1",
+    )
+
+    assert len(records) == 2
+    assert condition.kind.value == "resource"
+    assert condition.not_before is not None
 
 
 @pytest.mark.asyncio

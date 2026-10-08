@@ -258,6 +258,19 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - 共享 WaitCondition 投影公开可选 `not_before`，Chat 可展示可重试时间而无需读取
   Provider 私有异常或前端自行猜测。
 
+### 2026-10-08 Transport 短重试与 durable recovery 预算
+
+- 实际装配顺序已确认是 Provider → TokenRecording → Retry，多个候选模型外层再由
+  Fallback 管理；因此每个真实网络 attempt 独立留证，而 durable Wait 只在整个
+  logical call 最终失败时创建。
+- `transport_unavailable` 与 `provider_overloaded` 在短 retry/fallback 耗尽后进入独立
+  timer Wait，释放当前 Invocation 和模型连接，不要求用户发送“继续”。
+- Lite 将 transport timer 与 rate-limit timer 分开配置；transport、provider
+  overload 和 rate limit 共用跨 Invocation 自动 timer budget，默认最多 3 个 cycle，
+  并按原 `correlation_id` 统计。
+- cycle budget 耗尽形成持久化 `recovery_exhausted`，通过 WaitCondition 投影为
+  `expired`；不静默丢弃，也不会继续定时复活。
+
 ### 本阶段此前已执行的定点验证
 
 - 后端核心路径定点测试：70 项通过。

@@ -411,7 +411,10 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
   - [x] `ModelOutputBoundary` 已区分 pre-output、完整响应、部分流、终态流和
     incomplete EOF；没有终态 chunk 的 EOF 不再误记成功。无内容时允许 transport
     retry，已有内容时禁止整请求重放。
-  - [ ] transport retry 使用独立退避和预算，尊重 `Retry-After`，不消耗业务 retry；
+  - [x] transport retry 使用 Retry wrapper 的独立 attempt 预算与退避；logical call
+    和 fallback 耗尽后才转 durable timer Wait。Transport、provider overload 与
+    rate limit 共用同 correlation 的自动 timer cycle budget，耗尽后持久化
+    `recovery_exhausted`，不无限循环；
   - [x] `wait_resource` 保存独立 Resource Wait，timer/external event 成熟后由
     durable outbox 创建同 correlation 的新 Submission / Invocation，不占用旧槽位。
   - [x] Provider `Retry-After` 秒数或 HTTP-date 经统一策略归一化为有限、非负 hint，

@@ -373,7 +373,10 @@ class ModelCallSession:
             or result is None
             or attempt is None
             or result.recovery_disposition
-            is not ModelRecoveryDisposition.WAIT_RESOURCE
+            not in {
+                ModelRecoveryDisposition.RETRY_TRANSPORT,
+                ModelRecoveryDisposition.WAIT_RESOURCE,
+            }
         ):
             return
         try:

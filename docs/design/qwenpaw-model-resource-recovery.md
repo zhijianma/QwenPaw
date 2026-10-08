@@ -2,10 +2,10 @@
 
 ## 1. 目标
 
-模型限流或额度耗尽不再被压缩成一次 HTTP 请求失败，也不要求用户再发送一句话来
-推动 Agent。Runtime 将其记录为独立、可查询、可跨进程恢复的资源等待事实；资源
-恢复后创建新的 `Submission` / `Invocation`，继续使用原 `ChatSpec.id` 和
-`correlation_id`。
+模型传输中断、Provider 过载、限流或额度耗尽不再都被压缩成一次 HTTP 请求失败，
+也不要求用户再发送一句话来推动 Agent。短重试与 fallback 全部耗尽后，Runtime 将
+可恢复故障记录为独立、可查询、可跨进程恢复的资源等待事实；资源恢复后创建新的
+`Submission` / `Invocation`，继续使用原 `ChatSpec.id` 和 `correlation_id`。
 
 这不是前端消息队列，也不是 `ask_user`：
 
@@ -43,12 +43,18 @@ ModelCallResult(wait_resource)
                               new Submission / Invocation
 
 waiting / ready -- Interrupt or Stop-and-Clear fence --> cancelled
+transport recovery budget exhausted ----------------> recovery_exhausted
 ```
 
 - `rate_limited`：统一错误策略将 Provider `Retry-After` 的 delta-seconds 或 HTTP-date
   解析为有限、非负的 `retry_after_seconds`；Kernel 和 SQLite 只保存这个内容安全
   hint，不保存原始 header。无合法 hint 时回退 Lite 默认 timer。
 - `quota_exhausted`：默认等待外部资源事件，不自动循环消耗额度。
+- `transport_unavailable` / `provider_overloaded`：`RetryChatModel` 先执行有界的
+  同 Invocation 短重试；整个 logical call 与 fallback 均失败后，才创建独立 timer
+  Wait。Lite 对 transport、provider overload 和 rate limit 共用同 correlation 的
+  自动 timer budget，默认最多恢复 3 个跨 Invocation cycle，之后持久化
+  `recovery_exhausted`，投影为 `WaitCondition.expired`，不再自动复活。
 - enqueue 与 outbox 标记之间崩溃时，稳定 idempotency key 会取得同一 Submission，
   不重复创建执行。
 - `Interrupt Current` 以来源 `invocation_id` 阻止同一运行的迟到恢复；
@@ -101,6 +107,8 @@ Adapter 声明；Kernel 不假设任意模型流可以原地续传。
   使用 Queue revision 关闭，取消后的 Wait 不会复活旧任务。
 - [x] 从真实 Provider `Retry-After` 秒数或 HTTP-date 计算动态等待时间，并通过共享
   WaitCondition `not_before` 投影供 Chat 查询。
+- [x] Transport/Provider overload 的短重试耗尽后转 durable timer Wait；统一的跨
+  Invocation timer cycle budget 也覆盖 rate limit，防止长期故障形成无限恢复循环。
 - [ ] 从部分流边界创建可验证的新 Model Step continuation。
 - [ ] Action uncertainty 与 Checkpoint 决定恢复前自动对账。
 - [ ] Provider resource health 事件自动释放 quota wait。
