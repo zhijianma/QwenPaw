@@ -336,6 +336,49 @@ async def test_retry_outbox_promotes_delay_and_dispatches_once(
 
 
 @pytest.mark.asyncio
+async def test_retry_outbox_requeues_only_exact_interrupted_dispatch(
+    tmp_path: Path,
+) -> None:
+    result, checkpoint = await _admitted_retry(tmp_path)
+    store = lite_action_retry_continuation_store(tmp_path)
+    ready = await store.defer(checkpoint, result)
+    dispatch_id = uuid4()
+    dispatched = await store.dispatch(
+        ready.continuation_id,
+        lambda _continuation: asyncio.sleep(0, result=dispatch_id),
+    )
+
+    assert await store.list_dispatched(
+        agent_id=checkpoint.agent_id,
+    ) == (dispatched,)
+    with pytest.raises(
+        ActionRetryContinuationConflictError,
+        match="identity",
+    ):
+        await store.requeue_dispatched(
+            ready.continuation_id,
+            dispatch_id=uuid4(),
+        )
+
+    requeued = await store.requeue_dispatched(
+        ready.continuation_id,
+        dispatch_id=dispatch_id,
+    )
+    replay = await store.requeue_dispatched(
+        ready.continuation_id,
+        dispatch_id=dispatch_id,
+    )
+
+    assert requeued.status is ActionRetryContinuationStatus.READY
+    assert requeued.dispatch_id is None
+    assert requeued.recovered_dispatch_id == dispatch_id
+    assert replay == requeued
+    assert await store.list_dispatched(
+        agent_id=checkpoint.agent_id,
+    ) == ()
+
+
+@pytest.mark.asyncio
 async def test_retry_outbox_rejects_mismatch_and_cancels(
     tmp_path: Path,
 ) -> None:

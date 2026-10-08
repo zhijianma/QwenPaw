@@ -544,6 +544,9 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
   - [x] AgentBuilder 提供 exact-action resolver：只从已 pin 的 assembly 中打开指定
     Tool Provider，原样传入冻结的 `ToolSelection`，并要求工具名唯一命中；Provider
     不在选择内、实现身份不符、工具缺失或冲突均 fail closed，不回退到当前 generation。
+  - [x] retry outbox 支持按原 `dispatch_id` 对崩溃中断的 Submission 受控回队，并
+    持久化 `recovered_dispatch_id` 保证幂等；错误 dispatch 身份不能复活任务，重新
+    dispatch 或取消时会清理旧恢复绑定。上层仍须核实 Submission 确为 interrupted。
   - [ ] 在上述单一身份上接入自动 retry dispatcher：必须同时具备 attempt budget、
     Stop/Interrupt fencing、无流式输出边界，以及 Runtime Orchestrator 内的执行入口；
     不能仅凭 `retryable=true` 或绕过 Orchestrator 直接重新调用工具。

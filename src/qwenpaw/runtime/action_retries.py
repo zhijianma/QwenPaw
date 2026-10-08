@@ -404,6 +404,29 @@ class FilesystemActionRetryContinuationStore:
         )
         return tuple(pending)
 
+    async def list_dispatched(
+        self,
+        *,
+        agent_id: str,
+    ) -> tuple[ActionRetryContinuation, ...]:
+        """List entries already bound to a durable Submission."""
+        paths = await run_sync_io(
+            lambda: tuple(sorted(self._root.glob("*.json"))),
+        )
+        dispatched = []
+        for path in paths:
+            continuation = self._parse(await read_json_async(path))
+            if (
+                continuation.checkpoint.agent_id == agent_id
+                and continuation.status
+                is ActionRetryContinuationStatus.DISPATCHED
+            ):
+                dispatched.append(continuation)
+        dispatched.sort(
+            key=lambda item: (item.updated_at, item.continuation_id),
+        )
+        return tuple(dispatched)
+
     async def cancel(
         self,
         continuation_id: UUID,
@@ -424,6 +447,7 @@ class FilesystemActionRetryContinuationStore:
             updated = current.model_copy(
                 update={
                     "status": ActionRetryContinuationStatus.CANCELLED,
+                    "recovered_dispatch_id": None,
                     "revision": current.revision + 1,
                     "updated_at": self._clock(),
                 },
@@ -471,6 +495,47 @@ class FilesystemActionRetryContinuationStore:
                         else ActionRetryContinuationStatus.CANCELLED
                     ),
                     "dispatch_id": dispatch_id,
+                    "recovered_dispatch_id": None,
+                    "revision": current.revision + 1,
+                    "updated_at": self._clock(),
+                },
+            )
+            await self._write(updated)
+        return updated
+
+    async def requeue_dispatched(
+        self,
+        continuation_id: UUID,
+        *,
+        dispatch_id: UUID,
+    ) -> ActionRetryContinuation:
+        """Return one exact interrupted dispatch to the ready outbox."""
+        path = self._path(continuation_id)
+        async with get_path_lock(path):
+            current = await self.get(continuation_id)
+            if current is None:
+                raise ActionRetryContinuationConflictError(
+                    "Action retry continuation is unavailable",
+                )
+            if current.status is ActionRetryContinuationStatus.READY:
+                if current.recovered_dispatch_id == dispatch_id:
+                    return current
+                raise ActionRetryContinuationConflictError(
+                    "Action retry dispatch identity does not match",
+                )
+            if (
+                current.status
+                is not ActionRetryContinuationStatus.DISPATCHED
+                or current.dispatch_id != dispatch_id
+            ):
+                raise ActionRetryContinuationConflictError(
+                    "Action retry dispatch identity does not match",
+                )
+            updated = current.model_copy(
+                update={
+                    "status": ActionRetryContinuationStatus.READY,
+                    "dispatch_id": None,
+                    "recovered_dispatch_id": dispatch_id,
                     "revision": current.revision + 1,
                     "updated_at": self._clock(),
                 },

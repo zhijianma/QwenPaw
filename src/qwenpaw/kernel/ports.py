@@ -1754,6 +1754,21 @@ class ActionRetryContinuationStore(Protocol):
     ) -> ActionRetryContinuation:
         """Bind one ready entry to an idempotent dispatcher."""
 
+    async def list_dispatched(
+        self,
+        *,
+        agent_id: str,
+    ) -> Sequence[ActionRetryContinuation]:
+        """List work already bound to a durable dispatcher identity."""
+
+    async def requeue_dispatched(
+        self,
+        continuation_id: UUID,
+        *,
+        dispatch_id: UUID,
+    ) -> ActionRetryContinuation:
+        """Requeue one exact interrupted dispatch for reconciliation."""
+
 
 @runtime_checkable
 class EventPublisher(Protocol):

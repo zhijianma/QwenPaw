@@ -349,6 +349,7 @@ class ActionRetryContinuation(KernelModel):
     ready_at: AwareDatetime
     status: ActionRetryContinuationStatus
     dispatch_id: UUID | None = None
+    recovered_dispatch_id: UUID | None = None
     revision: int = Field(default=1, ge=1)
     created_at: AwareDatetime = Field(default_factory=utc_now)
     updated_at: AwareDatetime = Field(default_factory=utc_now)
@@ -360,6 +361,13 @@ class ActionRetryContinuation(KernelModel):
         if dispatched != (self.dispatch_id is not None):
             raise ValueError(
                 "dispatched Action retry requires dispatch_id",
+            )
+        if (
+            self.recovered_dispatch_id is not None
+            and self.status is not ActionRetryContinuationStatus.READY
+        ):
+            raise ValueError(
+                "recovered Action retry must return to ready",
             )
         if self.ready_at < self.created_at:
             raise ValueError("Action retry ready_at precedes creation")
