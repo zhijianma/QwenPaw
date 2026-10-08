@@ -480,6 +480,23 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - 当前 Gate 只把既有 schema、Slot implementation 与 health check 结构化为 Evaluation；
   高风险 Scenario Runner、Evidence Bundle、人工授权和 deactivate WAL 尚未完成。
 
+### 2026-10-08 Registry Epoch 贯穿 Invocation 证据链
+
+- Registry Snapshot 与 Lease 现在同时固定 `registry_epoch_id + generation`；Assembly
+  将这对身份传入 `InvocationScope`，避免进程重启后同号 generation 被误认为同一
+  次能力快照。
+- Capability Lock、Context Manifest、Route Decision 与 Model Call Attempt 均记录
+  相同 epoch。Lock 与新 Context hash 纳入 epoch；历史 Lock 没有 epoch 时继续按旧
+  hash 校验，旧记录仍可读取为 null。
+- 固定 Chat `1ee31988-b37a-48b9-b6ce-423c52f6a3a9` 真实提交返回
+  `EPOCH_OK`。该 Invocation 的 Lock、Context、Route、Attempt 均为 epoch
+  `ecb96e7a-c789-4f86-b4d7-b4e1a8505252`、generation 11；Lock hash 与 Context
+  引用一致，Route 引用的 Context Manifest ID 也一致。
+- 本切片 75 项定点测试与 AST、mypy、flake8、pylint 等文件级门禁通过；未执行
+  全仓测试。真实历史投影还观察到一条推理式 assistant 文本，因此消息投影后续必须
+  明确 reasoning、可见 assistant message 与 durable evidence 的边界，不能把内部
+  过程文本作为“一问一答”消息直接暴露。
+
 ### 本阶段此前已执行的定点验证
 
 - 后端核心路径定点测试：70 项通过。

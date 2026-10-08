@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Tests for immutable Lite capability lock persistence."""
 
+# pylint: disable=protected-access
+
 from __future__ import annotations
 
 import pytest
@@ -9,9 +11,32 @@ from pydantic import ValidationError
 from qwenpaw.capabilities import GenerationRegistry
 from qwenpaw.runtime.assembly import RuntimeAssemblyFactory
 from qwenpaw.runtime.capability_locks import (
+    CapabilityLockCompiler,
     CapabilityLockConflictError,
     FilesystemCapabilityLockStore,
 )
+
+
+@pytest.mark.asyncio
+async def test_compiler_rejects_scope_from_another_registry_epoch(
+    tmp_path,
+) -> None:
+    assembly = await RuntimeAssemblyFactory(GenerationRegistry()).open(
+        agent_id="default",
+        conversation_id="chat-lock-epoch-mismatch",
+        session_id="chat-lock-epoch-mismatch",
+        root_agent_id="default",
+        root_session_id="chat-lock-epoch-mismatch",
+        workspace_dir=tmp_path,
+    )
+    mismatched = assembly.scope.model_copy(
+        update={"registry_epoch_id": None},
+    )
+
+    with pytest.raises(ValueError, match="registry epoch mismatch"):
+        CapabilityLockCompiler.compile(mismatched, assembly._lease)
+
+    await assembly.close()
 
 
 @pytest.mark.asyncio
@@ -60,6 +85,14 @@ async def test_store_rejects_tampered_manifest_hash(tmp_path) -> None:
     payload = manifest.model_dump(mode="json")
     payload["registry_generation"] += 1
 
+    with pytest.raises(
+        ValidationError,
+        match="manifest hash is invalid",
+    ):
+        type(manifest).model_validate(payload)
+
+    payload = manifest.model_dump(mode="json")
+    payload["registry_epoch_id"] = "00000000-0000-0000-0000-000000000001"
     with pytest.raises(
         ValidationError,
         match="manifest hash is invalid",

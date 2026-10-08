@@ -1604,6 +1604,7 @@ class ContextManifest(KernelModel):
     invocation_id: UUID
     correlation_id: UUID
     conversation_id: NonEmptyStr | None = None
+    registry_epoch_id: UUID | None = None
     registry_generation: int = Field(ge=1)
     capability_lock_id: UUID | None = None
     capability_lock_hash: Annotated[
@@ -1669,6 +1670,7 @@ class RouteDecision(KernelModel):
     invocation_id: UUID
     correlation_id: UUID
     conversation_id: NonEmptyStr | None = None
+    registry_epoch_id: UUID | None = None
     registry_generation: int = Field(ge=1)
     context_manifest_id: UUID
     model_call_index: int = Field(ge=1)
@@ -1692,6 +1694,7 @@ class ModelCallAttempt(KernelModel):
     invocation_id: UUID
     correlation_id: UUID
     conversation_id: NonEmptyStr | None = None
+    registry_epoch_id: UUID | None = None
     registry_generation: int = Field(ge=1)
     context_manifest_id: UUID
     model_call_index: int = Field(ge=1)

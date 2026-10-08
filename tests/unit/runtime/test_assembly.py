@@ -135,6 +135,7 @@ async def test_open_resolves_system_agent_factory_without_task_ids(
     assert hook_provider.provider_id == DEFAULT_HOOK_PROVIDER_ID
     assert stop_gate_provider.provider_id == DEFAULT_STOP_GATE_PROVIDER_ID
     assert assembly.scope.registry_generation == 10
+    assert assembly.scope.registry_epoch_id == registry.registry_epoch_id
     assert assembly.scope.capability_lock_id is not None
     assert assembly.scope.capability_lock_hash is not None
     assert assembly.scope.environment_contract is not None
@@ -154,6 +155,7 @@ async def test_open_resolves_system_agent_factory_without_task_ids(
     )
     assert lock.lock_id == assembly.scope.capability_lock_id
     assert lock.manifest_hash == assembly.scope.capability_lock_hash
+    assert lock.registry_epoch_id == registry.registry_epoch_id
     assert tuple(item.capability_id for item in lock.releases) == (
         assembly.scope.capability_ids
     )

@@ -105,6 +105,7 @@ class InvocationScope(KernelModel):
     root_agent_id: NonEmptyStr
     root_session_id: NonEmptyStr
     workspace_dir: NonEmptyStr
+    registry_epoch_id: UUID | None = None
     registry_generation: int = Field(ge=1)
     capability_lock_id: UUID | None = None
     capability_lock_hash: Sha256Digest | None = None

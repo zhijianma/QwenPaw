@@ -32,6 +32,7 @@ def _scope() -> InvocationScope:
         root_agent_id="default",
         root_session_id="transport-session",
         workspace_dir="/tmp/qwenpaw-workspace",
+        registry_epoch_id=UUID(int=2),
         registry_generation=12,
         capability_lock_id=UUID(int=1),
         capability_lock_hash=f"sha256:{'1' * 64}",
@@ -101,6 +102,7 @@ def test_manifest_covers_actual_messages_and_capability_disclosure() -> None:
     )
 
     assert manifest.conversation_id == "chat-1"
+    assert manifest.registry_epoch_id == UUID(int=2)
     assert manifest.registry_generation == 12
     assert manifest.capability_lock_id == UUID(int=1)
     assert manifest.capability_lock_hash == f"sha256:{'1' * 64}"
@@ -115,7 +117,10 @@ def test_manifest_covers_actual_messages_and_capability_disclosure() -> None:
     tool = manifest.fragments[-1]
     assert tool.kind is ContextFragmentKind.TOOL_SCHEMA
     assert tool.source == "qwenpaw.system.workspace-tools"
-    assert tool.source_version == "registry-generation-12"
+    assert tool.source_version == (
+        "registry-epoch-00000000-0000-0000-0000-000000000002-"
+        "generation-12"
+    )
 
     persisted = manifest.model_dump_json()
     assert "secret-value" not in persisted

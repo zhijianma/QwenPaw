@@ -125,11 +125,14 @@ async def test_old_invocation_keeps_its_generation_during_activation() -> None:
     registry = GenerationRegistry()
     await registry.ensure_bundle(_bundle(), _factory)
     old_lease = await registry.pin()
+    original_epoch = registry.registry_epoch_id
 
     replacement = _bundle().model_copy(update={"version": "2.0.0"})
     await registry.activate_bundle(replacement, _factory)
 
     assert old_lease.resolve("qwenpaw.system.test.factory").version == "1.0.0"
+    assert old_lease.registry_epoch_id == original_epoch
+    assert registry.registry_epoch_id == original_epoch
     assert (
         registry.current_descriptor(
             "qwenpaw.system.test.factory",

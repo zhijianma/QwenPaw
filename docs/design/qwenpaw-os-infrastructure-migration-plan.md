@@ -1042,6 +1042,10 @@ Cron 不形成独立审批或产物事实源。
     generation、再写 committed；commit 失败恢复旧 snapshot/tag/fence 并写 aborted。
     `registry_epoch_id + generation` 区分跨进程重启的同号 generation；Plugin 管理面
     通过 `GET /api/plugins/capability-promotions` 只读查询，不开放远程晋升或回滚。
+  - [x] Registry epoch 已从 Snapshot/Lease 贯穿 InvocationScope、Capability Lock、
+    Context Manifest、Route Decision 与 Model Call Attempt；新证据 hash 纳入 epoch，
+    历史无 epoch 记录保持兼容。真实 Chat 已验证同一 Invocation 的 epoch、generation、
+    Lock hash 与 Context ID 引用闭合。
   - [ ] 按 Slot 风险补齐真实 Scenario Runner、Evidence Bundle、人工授权策略与
     deactivate WAL；当前自动 Gate 仅结构化既有 schema/implementation/health 门禁。
     关键词发现索引与 Workstation/Hub Release Registry 仍待实现。

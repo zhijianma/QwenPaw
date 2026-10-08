@@ -249,6 +249,10 @@ class ModelCallSession:
     ) -> None:
         if manifest.invocation_id != scope.invocation_id:
             raise ValueError("model-call manifest invocation mismatch")
+        if manifest.registry_epoch_id != scope.registry_epoch_id:
+            raise ValueError("model-call manifest registry epoch mismatch")
+        if manifest.registry_generation != scope.registry_generation:
+            raise ValueError("model-call manifest generation mismatch")
         self._scope = scope
         self._manifest = manifest
         self._store = store
@@ -298,6 +302,7 @@ class ModelCallSession:
                 self._scope.correlation_id or self._scope.invocation_id
             ),
             conversation_id=self._scope.conversation_id,
+            registry_epoch_id=self._scope.registry_epoch_id,
             registry_generation=self._scope.registry_generation,
             context_manifest_id=self._manifest.manifest_id,
             model_call_index=self._manifest.model_call_index,
@@ -317,6 +322,7 @@ class ModelCallSession:
             invocation_id=route.invocation_id,
             correlation_id=route.correlation_id,
             conversation_id=route.conversation_id,
+            registry_epoch_id=route.registry_epoch_id,
             registry_generation=route.registry_generation,
             context_manifest_id=route.context_manifest_id,
             model_call_index=route.model_call_index,

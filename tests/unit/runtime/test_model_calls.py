@@ -46,6 +46,7 @@ def _scope(tmp_path: Path) -> InvocationScope:
         root_agent_id="default",
         root_session_id="chat-1",
         workspace_dir=str(tmp_path),
+        registry_epoch_id=uuid4(),
         registry_generation=9,
     )
 
@@ -60,6 +61,7 @@ def _manifest(
         invocation_id=scope.invocation_id,
         correlation_id=scope.invocation_id,
         conversation_id=scope.conversation_id,
+        registry_epoch_id=scope.registry_epoch_id,
         registry_generation=scope.registry_generation,
         model_call_index=model_call_index,
         attempt_kind=attempt_kind,
@@ -87,6 +89,18 @@ def _session(
         requested_model_id="m1",
         resource_waits=resource_waits,
     )
+
+
+def test_session_rejects_manifest_from_another_registry_epoch(
+    tmp_path: Path,
+) -> None:
+    scope = _scope(tmp_path)
+    manifest = _manifest(scope).model_copy(
+        update={"registry_epoch_id": uuid4()},
+    )
+
+    with pytest.raises(ValueError, match="registry epoch mismatch"):
+        _session(scope, manifest, lite_model_call_store(tmp_path))
 
 
 async def _begin_attempt(
@@ -160,6 +174,8 @@ async def test_session_classifies_retry_and_fallback_attempts(
     assert records[2].result.cost_unknown is False
     assert records[2].route.requested_provider_id == "provider-a"
     assert records[2].route.requested_model_id == "m1"
+    assert records[2].route.registry_epoch_id == scope.registry_epoch_id
+    assert records[2].attempt.registry_epoch_id == scope.registry_epoch_id
     assert records[2].attempt.adapter_version == "2.0.7.post1"
     assert records[2].attempt.formatter_version == "2.2.2b1"
 

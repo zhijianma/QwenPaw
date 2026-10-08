@@ -231,7 +231,10 @@ class ContextManifestCompiler:
                     kind=ContextFragmentKind.TOOL_SCHEMA,
                     source=owner,
                     source_version=(
-                        f"registry-generation-"
+                        f"registry-epoch-{self._scope.registry_epoch_id}-"
+                        f"generation-{self._scope.registry_generation}"
+                        if self._scope.registry_epoch_id is not None
+                        else f"registry-generation-"
                         f"{self._scope.registry_generation}"
                     ),
                     trust_level=ContextTrustLevel.PROVIDER,
@@ -302,6 +305,10 @@ class ContextManifestCompiler:
                 fragment.model_dump(mode="json") for fragment in fragments
             ],
         }
+        if self._scope.registry_epoch_id is not None:
+            identity["registry_epoch_id"] = str(
+                self._scope.registry_epoch_id,
+            )
         identity_digest = hashlib.sha256(
             _canonical_json(identity).encode(),
         ).hexdigest()
@@ -316,6 +323,7 @@ class ContextManifestCompiler:
                 self._scope.correlation_id or self._scope.invocation_id
             ),
             conversation_id=self._scope.conversation_id,
+            registry_epoch_id=self._scope.registry_epoch_id,
             registry_generation=self._scope.registry_generation,
             capability_lock_id=self._scope.capability_lock_id,
             capability_lock_hash=self._scope.capability_lock_hash,

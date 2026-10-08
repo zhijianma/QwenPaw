@@ -893,6 +893,10 @@ class CapabilityLease(Protocol):
     def generation(self) -> int:
         """Return the pinned generation number."""
 
+    @property
+    def registry_epoch_id(self) -> UUID:
+        """Return the process epoch that scopes the generation."""
+
     def resolve(self, capability_id: str) -> CapabilityDescriptor | None:
         """Resolve one capability from the pinned generation."""
 

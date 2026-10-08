@@ -79,6 +79,7 @@ async def test_one_plugin_activates_two_slots_in_one_generation() -> None:
         "task-insights.inspector",
     }
     assert lease.generation == 2
+    assert lease.registry_epoch_id == registry.registry_epoch_id
     assert lease.resolve("task-insights.runner").slot == "runner"
     release = registry.stable_release("task-insights")
     assert release is not None

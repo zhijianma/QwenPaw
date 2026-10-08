@@ -335,6 +335,7 @@ class RuntimeAssemblyFactory:
                 root_agent_id=root_agent_id,
                 root_session_id=root_session_id,
                 workspace_dir=resolved_workspace_dir,
+                registry_epoch_id=lease.registry_epoch_id,
                 registry_generation=lease.generation,
                 approval_level=approval_level,
                 environment_contract=contract,

@@ -53,6 +53,7 @@ class CapabilityLockManifest(KernelModel):
     correlation_id: UUID
     agent_id: NonEmptyStr
     conversation_id: NonEmptyStr | None = None
+    registry_epoch_id: UUID | None = None
     registry_generation: int = Field(ge=1)
     releases: tuple[CapabilityRelease, ...] = Field(min_length=1)
     manifest_hash: Sha256Digest
@@ -68,6 +69,7 @@ class CapabilityLockManifest(KernelModel):
         conversation_id: str | None,
         registry_generation: int,
         releases: tuple[CapabilityRelease, ...],
+        registry_epoch_id: UUID | None = None,
     ) -> Self:
         """Build one deterministic, self-verifying Invocation lock."""
         return cls(
@@ -76,6 +78,7 @@ class CapabilityLockManifest(KernelModel):
             correlation_id=correlation_id,
             agent_id=agent_id,
             conversation_id=conversation_id,
+            registry_epoch_id=registry_epoch_id,
             registry_generation=registry_generation,
             releases=releases,
             manifest_hash=cls.calculate_manifest_hash(
@@ -83,6 +86,7 @@ class CapabilityLockManifest(KernelModel):
                 correlation_id=correlation_id,
                 agent_id=agent_id,
                 conversation_id=conversation_id,
+                registry_epoch_id=registry_epoch_id,
                 registry_generation=registry_generation,
                 releases=releases,
             ),
@@ -97,6 +101,7 @@ class CapabilityLockManifest(KernelModel):
         conversation_id: str | None,
         registry_generation: int,
         releases: tuple[CapabilityRelease, ...],
+        registry_epoch_id: UUID | None = None,
     ) -> str:
         """Hash stable identity and selected releases, excluding time."""
         identity = {
@@ -109,6 +114,8 @@ class CapabilityLockManifest(KernelModel):
                 item.model_dump(mode="json") for item in releases
             ],
         }
+        if registry_epoch_id is not None:
+            identity["registry_epoch_id"] = str(registry_epoch_id)
         encoded = json.dumps(
             identity,
             ensure_ascii=False,
@@ -134,6 +141,7 @@ class CapabilityLockManifest(KernelModel):
             correlation_id=self.correlation_id,
             agent_id=self.agent_id,
             conversation_id=self.conversation_id,
+            registry_epoch_id=self.registry_epoch_id,
             registry_generation=self.registry_generation,
             releases=self.releases,
         )

@@ -35,6 +35,10 @@ class CapabilityLockCompiler:
         lease: CapabilityLease,
     ) -> CapabilityLockManifest:
         """Create deterministic lock evidence without implementation data."""
+        if lease.registry_epoch_id != scope.registry_epoch_id:
+            raise ValueError("capability lease registry epoch mismatch")
+        if lease.generation != scope.registry_generation:
+            raise ValueError("capability lease generation mismatch")
         releases = []
         for capability_id in scope.capability_ids:
             descriptor = lease.resolve(capability_id)
@@ -68,6 +72,7 @@ class CapabilityLockCompiler:
             correlation_id=scope.correlation_id or scope.invocation_id,
             agent_id=scope.agent_id,
             conversation_id=scope.conversation_id,
+            registry_epoch_id=scope.registry_epoch_id,
             registry_generation=scope.registry_generation,
             releases=tuple(releases),
         )

@@ -62,6 +62,7 @@ class ActivatedContribution:
 class RegistrySnapshot:
     """Immutable registry state pinned by an active invocation."""
 
+    registry_epoch_id: UUID
     generation: int
     capabilities: Mapping[str, ActivatedContribution]
 
@@ -128,6 +129,11 @@ class GenerationLease(CapabilityLease):
         """Return the pinned generation number."""
         return self._snapshot.generation
 
+    @property
+    def registry_epoch_id(self) -> UUID:
+        """Return the process epoch that scopes this generation."""
+        return self._snapshot.registry_epoch_id
+
     def resolve(self, capability_id: str) -> CapabilityDescriptor | None:
         """Resolve a descriptor without exposing its implementation."""
         contribution = self._snapshot.capabilities.get(capability_id)
@@ -176,7 +182,9 @@ class GenerationRegistry:
         promotion_gate: CapabilityPromotionGate | None = None,
         registry_epoch_id: UUID | None = None,
     ) -> None:
+        self._registry_epoch_id = registry_epoch_id or uuid4()
         initial = RegistrySnapshot(
+            registry_epoch_id=self._registry_epoch_id,
             generation=1,
             capabilities=MappingProxyType({}),
         )
@@ -192,7 +200,6 @@ class GenerationRegistry:
         self._promotion_gate = (
             promotion_gate or ContractCapabilityPromotionGate()
         )
-        self._registry_epoch_id = registry_epoch_id or uuid4()
 
     @property
     def generation(self) -> int:
@@ -471,6 +478,7 @@ class GenerationRegistry:
         capabilities.update(staged)
         generation = previous_snapshot.generation + 1
         snapshot = RegistrySnapshot(
+            registry_epoch_id=self._registry_epoch_id,
             generation=generation,
             capabilities=MappingProxyType(capabilities),
         )
@@ -733,6 +741,7 @@ class GenerationRegistry:
         capabilities.update(point.contributions)
         generation = self._current.generation + 1
         snapshot = RegistrySnapshot(
+            registry_epoch_id=self._registry_epoch_id,
             generation=generation,
             capabilities=MappingProxyType(capabilities),
         )
@@ -925,6 +934,7 @@ class GenerationRegistry:
                 return self._current
             generation = self._current.generation + 1
             snapshot = RegistrySnapshot(
+                registry_epoch_id=self._registry_epoch_id,
                 generation=generation,
                 capabilities=MappingProxyType(capabilities),
             )

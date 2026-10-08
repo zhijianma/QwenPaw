@@ -1231,6 +1231,11 @@ class AgentBuilder:
                 invocation.correlation_id or invocation.invocation_id,
             )
             rc["os_registry_generation"] = invocation.registry_generation
+            rc.update(
+                {"os_registry_epoch_id": str(invocation.registry_epoch_id)}
+                if invocation.registry_epoch_id is not None
+                else {},
+            )
             rc["os_agent_factory_id"] = invocation.selection.agent_factory_id
             rc["os_tool_provider_ids"] = list(
                 invocation.selection.tool_provider_ids,
