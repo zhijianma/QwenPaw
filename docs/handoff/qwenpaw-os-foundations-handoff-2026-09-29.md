@@ -293,7 +293,9 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   共享 Action ID、Invocation、executor item ID、observation digest 四元 binding；随后
   保存权限 `0600` 的不可变私有 snapshot，并发布内容安全
   `ModelStepContextCheckpoint`。dispatcher 可修复 snapshot 已写但 checkpoint 尚未绑定
-  的崩溃窗口，从该 snapshot 创建后续 Invocation；pending/uncertain 继续失败关闭。
+  的崩溃窗口；该修复路径与 Runtime 首次 checkpoint 共用 `CommittedActionItem`
+  验证器，后台 hint/Harness session message 重启后仍可识别。pending/uncertain 继续
+  失败关闭。
 - checkpoint 绑定来源 Submission；如果之后已有新 Submission 被接受，旧 continuation
   取消而不是覆盖新上下文，enqueue race 继续由 Queue revision 关闭。
 - 受控 Codex/Qoder Harness 的 ActionResult 持久化后，Tracker 生成内容安全的

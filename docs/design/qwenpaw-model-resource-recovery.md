@@ -111,6 +111,9 @@ ModelCallResult(continue_model_step, partial boundary)
   Invocation、executor item ID 和 observation digest。AgentScope 原生 ToolResult 与
   后台 hint 都保留该 binding；checkpoint 必须四项精确匹配，不能用历史中重复的 call
   ID 或只完成审计、尚未进入模型上下文的 Harness event 冒充结果。
+- Runtime 首次 checkpoint 与 dispatcher 的 snapshot-first 崩溃修复使用同一个
+  `CommittedActionItem` 验证器；同步 ToolResult、后台 hint 和 Harness session tool
+  output 在重启前后不会退回旧的 call-ID-only 协议。
 - checkpoint continuation 从不可变 snapshot 装配，而不是读取可能已漂移的最新
   Chat session。若来源 Submission 之后已经接受了新输入，旧 continuation 直接进入
   cancelled，绝不越过或覆盖新输入；enqueue 仍使用 Queue revision 关闭检查后的竞态。

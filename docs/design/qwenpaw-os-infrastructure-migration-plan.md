@@ -446,7 +446,8 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
   - [x] terminal/certain Action 已通过不可变私有 Agent context snapshot 与内容安全
     `ModelStepContextCheckpoint` 自动续行；dispatcher 逐一校验 provider-neutral
     `CommittedActionItem`。同步 ToolResult 与同 Invocation 内进入上下文的后台 hint
-    使用相同 binding，并修复 snapshot-first 的崩溃窗口。
+    使用相同 binding；dispatcher 的 snapshot-first 崩溃修复也复用同一验证器，不会在
+    重启后退回旧的 call-ID-only 证明。
   - [x] 受控 Harness Provider 已在 ActionResult 持久化后，由 Session Bridge 把对应
     tool output 与 `CommittedActionItem` 一起原子写入 Chat context；仅有远端完成事件
     或 provider history hydrate 时不生成 binding。若 Action 已成功但 context commit

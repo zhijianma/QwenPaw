@@ -4,6 +4,7 @@
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from uuid import UUID, uuid4, uuid5
 
 import pytest
@@ -27,6 +28,7 @@ from qwenpaw.invocation_control import (
 from qwenpaw.interactions import InteractionService
 from qwenpaw.recovery import ModelResourceWaitService
 from qwenpaw.kernel import (
+    COMMITTED_ACTION_ITEM_METADATA_KEY,
     ActionKind,
     ActionRequest,
     ActionResult,
@@ -58,6 +60,7 @@ from qwenpaw.kernel import (
 from qwenpaw.runtime.actions import (
     lite_action_store,
     model_step_action_evidence_digest,
+    model_step_committed_action_items,
 )
 from qwenpaw.runtime.model_step_contexts import (
     lite_model_step_context_store,
@@ -741,9 +744,11 @@ async def test_partial_model_step_stops_for_action_reconciliation(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("superseded", [False, True])
+@pytest.mark.parametrize("context_form", ["tool_result", "assistant_hint"])
 async def test_terminal_action_continues_from_immutable_context(
     tmp_path: Path,
     superseded: bool,
+    context_form: str,
 ) -> None:
     manager = ChatManager(
         repo=JsonChatRepository(tmp_path / "chats.json"),
@@ -839,6 +844,12 @@ async def test_terminal_action_continues_from_immutable_context(
         invocation_id,
     )
     assert evidence_digest is not None
+    committed_items = model_step_committed_action_items(
+        actions,
+        invocation_id,
+    )
+    assert committed_items is not None
+    [committed_item] = committed_items
     checkpoint = ModelStepContextCheckpoint(
         checkpoint_id=uuid5(
             continuation.continuation_id,
@@ -851,31 +862,35 @@ async def test_terminal_action_continues_from_immutable_context(
         action_evidence_digest=evidence_digest,
         action_count=1,
     )
+    binding = committed_item.model_dump(mode="json")
+    context_message: dict[str, Any] = (
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "id": "call-1",
+                    "name": "write_file",
+                    "state": "success",
+                    "output": "written",
+                    "metadata": {
+                        COMMITTED_ACTION_ITEM_METADATA_KEY: binding,
+                    },
+                },
+            ],
+        }
+        if context_form == "tool_result"
+        else {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "written"}],
+            "metadata": {
+                COMMITTED_ACTION_ITEM_METADATA_KEY: binding,
+            },
+        }
+    )
     await lite_model_step_context_store(tmp_path).save(
         checkpoint,
-        {
-            "state": {
-                "context": [
-                    {
-                        "role": "assistant",
-                        "content": [
-                            {
-                                "type": "tool_result",
-                                "id": "call-1",
-                                "name": "write_file",
-                                "state": "success",
-                                "output": "written",
-                                "metadata": {
-                                    "qwenpaw_action_id": str(
-                                        action.action_id,
-                                    ),
-                                },
-                            },
-                        ],
-                    },
-                ],
-            },
-        },
+        {"state": {"context": [context_message]}},
     )
     if superseded:
         await control.enqueue_turn(

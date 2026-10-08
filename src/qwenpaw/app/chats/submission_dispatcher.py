@@ -187,13 +187,13 @@ class WorkspaceChatSubmissionDispatcher:
         from ...runtime.actions import (
             assess_model_step_reconciliation,
             lite_action_store,
-            model_step_action_context_bindings,
+            model_step_committed_action_items,
             model_step_action_evidence_digest,
         )
         from ...runtime.model_step_contexts import (
             ModelStepContextConflictError,
             ModelStepContextNotFoundError,
-            context_has_terminal_tool_results,
+            context_has_committed_action_items,
             lite_model_step_context_store,
         )
 
@@ -206,7 +206,7 @@ class WorkspaceChatSubmissionDispatcher:
             continuation.invocation_id,
         )
         if reconciliation is not None:
-            action_bindings = model_step_action_context_bindings(
+            committed_items = model_step_committed_action_items(
                 actions,
                 continuation.invocation_id,
             )
@@ -236,7 +236,7 @@ class WorkspaceChatSubmissionDispatcher:
                 stored_checkpoint = None
                 agent_state = None
             context_ready = (
-                action_bindings is not None
+                committed_items is not None
                 and evidence_digest is not None
                 and stored_checkpoint is not None
                 and agent_state is not None
@@ -250,9 +250,9 @@ class WorkspaceChatSubmissionDispatcher:
                 == reconciliation.action_count
                 and stored_checkpoint.action_evidence_digest
                 == evidence_digest
-                and context_has_terminal_tool_results(
+                and context_has_committed_action_items(
                     agent_state,
-                    action_bindings,
+                    committed_items,
                 )
             )
             if not context_ready:
