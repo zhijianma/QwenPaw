@@ -479,6 +479,14 @@ QwenPaw 3.0 不为四档分别建四套业务模型，而是在 Port 与 Adapter
 - 只有确实需要离线消费、重投与背压的 Hub 链路才升级为 S4。Lite 不因为“未来
   可能分布式”就强制引入消息队列。
 
+截至 2026-10-08，这一边界已成为可执行 Kernel `CommunicationContract`，并由真实
+Chat Runtime Projection 返回。Lite 明确声明两个能力：SSE 是 S2 请求流，只保留
+`snapshot_change` cursor、最新状态和 `coalesce_latest` 背压，断线后重取当前快照；
+Submission 是 S3 持久句柄，按 Conversation 排序、写入要求幂等键、由服务端 Queue
+背压，客户端断线后继续执行。Lite 没有声明 S4，因为当前 SSE 不具备逐事件保留、
+acknowledgement 或 replay offset。领域校验会拒绝“无持久保留却声称可 replay”以及
+“无 ack 却声称 durable channel”的 Adapter 配置。
+
 Handbook 第 1 章已把“请求—回答”归为上一阶段应用形态，第 4 章则采用持续
 Agent Loop、显式等待和异步续行；不能因为其中部分 HTTP/SDK 示例采用请求/响应接口，
 就把传输边界误读为长程 Agent 的运行边界。QwenPaw 仅把“一问一答”保留为短 Chat

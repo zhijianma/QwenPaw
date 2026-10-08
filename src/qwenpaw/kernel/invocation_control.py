@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 
 from pydantic import AwareDatetime, Field, model_validator
 
+from .communications import CommunicationContract
 from .models import (
     ArtifactRef,
     JsonObject,
@@ -503,6 +504,7 @@ class ConversationRuntimeProjection(KernelModel):
     execution_chains: tuple[ConversationExecutionChain, ...] = ()
     execution_window_truncated: bool = False
     activity: ObservationPage = Field(default_factory=ObservationPage)
+    communication_contract: CommunicationContract
     cursor: NonEmptyStr
     observed_at: AwareDatetime = Field(default_factory=utc_now)
 

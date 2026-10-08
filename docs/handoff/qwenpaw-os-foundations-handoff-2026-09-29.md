@@ -419,6 +419,17 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - 本切片定点验证：32 项通过，覆盖 Lease 单元、Usage Scope 和完整 Runner 相邻路径；
   未执行全仓测试。
 
+### 2026-10-08 Communication Contract
+
+- Kernel 冻结 S1/S2/S3/S4 通信能力模型，以及 ordering、idempotency、cursor、
+  retention、backpressure 和 disconnect policy；非法恢复能力组合在装配前失败。
+- Chat Runtime Projection 的 GET 与 SSE snapshot 均返回同一 Contract。当前 SSE 只
+  声明 snapshot-change reconnect，不声明 Event Log replay；durable Submission 才
+  声明客户端断线后继续执行。
+- Console TypeScript 已同步只读类型，但没有增加前端 Queue 或新的客户端状态机。
+- 本切片定点验证覆盖领域约束、Projection、HTTP/SSE 契约和关闭 SSE 后 Invocation
+  仍保持 running；未执行全仓测试或真实浏览器断线演练。
+
 ### 本阶段此前已执行的定点验证
 
 - 后端核心路径定点测试：70 项通过。

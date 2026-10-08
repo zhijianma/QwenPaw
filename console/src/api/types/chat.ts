@@ -193,6 +193,43 @@ export interface ObservationPage {
   next_cursor?: string | null;
 }
 
+export type CommunicationDeliveryMode =
+  | "request_response"
+  | "request_stream"
+  | "durable_handle"
+  | "durable_channel";
+
+export interface CommunicationCapability {
+  schema?: "qwenpaw.communication-capability.v1";
+  capability_id: string;
+  delivery_mode: CommunicationDeliveryMode;
+  ordering_scope:
+    | "none"
+    | "connection"
+    | "conversation"
+    | "correlation"
+    | "global";
+  idempotency: "not_applicable" | "optional" | "required";
+  cursor_semantics: "none" | "snapshot_change" | "replay_offset";
+  retention: "ephemeral" | "latest_state" | "durable";
+  backpressure:
+    | "none"
+    | "coalesce_latest"
+    | "server_queue"
+    | "acknowledged";
+  disconnect_policy:
+    | "cancel"
+    | "continue"
+    | "reconnect_snapshot"
+    | "resume_cursor";
+}
+
+export interface CommunicationContract {
+  schema?: "qwenpaw.communication-contract.v1";
+  contract_id: string;
+  capabilities: CommunicationCapability[];
+}
+
 export interface ConversationRuntimeProjection {
   schema?: string;
   agent_id: string;
@@ -200,6 +237,7 @@ export interface ConversationRuntimeProjection {
   queue: QueueProjection;
   interactions: ChatInteraction[];
   activity?: ObservationPage;
+  communication_contract?: CommunicationContract;
   cursor: string;
   observed_at: string;
 }

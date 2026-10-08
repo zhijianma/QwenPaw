@@ -314,6 +314,17 @@ from .budgets import (
     BudgetLeaseSnapshot,
     BudgetLeaseStatus,
 )
+from .communications import (
+    CommunicationBackpressure,
+    CommunicationCapability,
+    CommunicationContract,
+    CommunicationCursorSemantics,
+    CommunicationDeliveryMode,
+    CommunicationDisconnectPolicy,
+    CommunicationIdempotency,
+    CommunicationOrderingScope,
+    CommunicationRetention,
+)
 from .ports import (
     ActionStore,
     AgentFactory,
@@ -355,6 +366,15 @@ __all__ = [
     "BudgetLease",
     "BudgetLeaseSnapshot",
     "BudgetLeaseStatus",
+    "CommunicationBackpressure",
+    "CommunicationCapability",
+    "CommunicationContract",
+    "CommunicationCursorSemantics",
+    "CommunicationDeliveryMode",
+    "CommunicationDisconnectPolicy",
+    "CommunicationIdempotency",
+    "CommunicationOrderingScope",
+    "CommunicationRetention",
     "ActionApprovalLink",
     "ActionKind",
     "ActionRecord",

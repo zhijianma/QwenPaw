@@ -182,6 +182,7 @@ async def test_projection_cursor_tracks_semantic_activity(tmp_path) -> None:
             conversation_id="chat-1",
             queue=initial.queue,
             activity=ObservationPage(items=(foreign,)),
+            communication_contract=initial.communication_contract,
             cursor="v2-invalid-owner",
         )
     await control.close()

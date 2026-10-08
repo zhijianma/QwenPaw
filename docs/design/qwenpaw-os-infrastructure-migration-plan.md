@@ -1019,6 +1019,12 @@ Cron 不形成独立审批或产物事实源。
     配额不能超额预留，释放归还未用配额，根撤销级联后代，实际超额仍先写 Ledger。
     Lite 的 Lease identity / 状态仅进程内存在，重启后从持久 `UsageSnapshot` 重建根
     准入；Workstation / Hub 的跨主机租约、TTL、fencing 与分布式级联仍待实现。
+  - [x] Kernel `CommunicationContract` 已区分 S1 request/response、S2 request
+    stream、S3 durable handle 与 S4 durable channel，并冻结 ordering、idempotency、
+    cursor、retention、backpressure 和 disconnect policy。真实 Chat Runtime 声明
+    SSE 仅为 latest-state snapshot reconnect，Submission 才是断线后继续运行的 durable
+    handle；Lite 不虚构 replay/ack/durable-channel 能力。GET 与 SSE 首帧返回同一
+    Contract，关闭流不取消 active Invocation 的行为已有 API 测试。
 
 - [x] 每个公开扩展模块均有 system/plugin contract tests；system-only 模块具有
   核心激活、固定 generation、失败关闭和代际排空合同。

@@ -346,6 +346,14 @@ async def test_runtime_api_exposes_inactive_execution_not_completion(
     assert chain["invocation_ids"] == [str(invocation_id)]
     assert "completed" not in chain.values()
     assert response.json()["execution_window_truncated"] is False
+    communication = response.json()["communication_contract"]
+    assert communication["schema"] == "qwenpaw.communication-contract.v1"
+    assert {
+        item["delivery_mode"] for item in communication["capabilities"]
+    } == {"request_stream", "durable_handle"}
+    stream = communication["capabilities"][0]
+    assert stream["cursor_semantics"] == "snapshot_change"
+    assert stream["disconnect_policy"] == "reconnect_snapshot"
     workspace = app.dependency_overrides[get_workspace]()
     outcome = ConversationOutcome(
         agent_id="default",
@@ -637,7 +645,54 @@ async def test_runtime_snapshot_stream_recovers_queue_and_interactions(
     assert '"activity":{"schema":"qwenpaw.observation-page.v1"' in (
         first_text
     )
+    assert '"communication_contract":{' in first_text
+    assert '"cursor_semantics":"snapshot_change"' in first_text
     assert f"id: {first_cursor}" not in second_text
     assert str(interaction.interaction_id) in second_text
     await iterator.aclose()
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_closing_runtime_stream_does_not_cancel_invocation(
+    tmp_path: Path,
+) -> None:
+    app, service, _ = await _control_context(tmp_path)
+    manager = app.dependency_overrides[get_chat_manager]()
+    workspace = app.dependency_overrides[get_workspace]()
+    lease = await service.begin_turn(
+        TurnSubmissionRequest(
+            agent_id="default",
+            conversation_id="chat-spec-1",
+            content="continue without a subscriber",
+            idempotency_key="disconnect-does-not-cancel",
+        ),
+        invocation_id=uuid4(),
+    )
+
+    class ConnectedRequest:
+        @staticmethod
+        async def is_disconnected() -> bool:
+            return False
+
+    response = await stream_chat_runtime_projection(
+        "chat-spec-1",
+        ConnectedRequest(),
+        None,
+        None,
+        manager,
+        workspace,
+    )
+    iterator = response.body_iterator
+    await anext(iterator)
+    await iterator.aclose()
+
+    projection = await service.read_queue(
+        agent_id="default",
+        conversation_id="chat-spec-1",
+    )
+    assert projection.active_submission_id == lease.submission.submission_id
+    assert projection.submissions[0].status is SubmissionStatus.RUNNING
+
+    await service.finish_turn(lease, SubmissionStatus.SUCCEEDED)
     await service.close()

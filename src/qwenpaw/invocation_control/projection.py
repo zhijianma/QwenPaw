@@ -10,6 +10,15 @@ from typing import Any
 
 from ..kernel import (
     ACTIVE_SUBMISSION_STATUSES,
+    CommunicationBackpressure,
+    CommunicationCapability,
+    CommunicationContract,
+    CommunicationCursorSemantics,
+    CommunicationDeliveryMode,
+    CommunicationDisconnectPolicy,
+    CommunicationIdempotency,
+    CommunicationOrderingScope,
+    CommunicationRetention,
     ConversationExecutionChain,
     ConversationExecutionState,
     ConversationOutcome,
@@ -18,6 +27,34 @@ from ..kernel import (
     ObservationPage,
     SubmissionStatus,
     outcome_execution_state,
+)
+
+_CHAT_RUNTIME_COMMUNICATION_CONTRACT = CommunicationContract(
+    contract_id="qwenpaw.lite.chat-runtime.v1",
+    capabilities=(
+        CommunicationCapability(
+            capability_id="qwenpaw.lite.chat-runtime.snapshot-stream.v1",
+            delivery_mode=CommunicationDeliveryMode.REQUEST_STREAM,
+            ordering_scope=CommunicationOrderingScope.CONVERSATION,
+            idempotency=CommunicationIdempotency.NOT_APPLICABLE,
+            cursor_semantics=CommunicationCursorSemantics.SNAPSHOT_CHANGE,
+            retention=CommunicationRetention.LATEST_STATE,
+            backpressure=CommunicationBackpressure.COALESCE_LATEST,
+            disconnect_policy=(
+                CommunicationDisconnectPolicy.RECONNECT_SNAPSHOT
+            ),
+        ),
+        CommunicationCapability(
+            capability_id="qwenpaw.lite.chat-runtime.submission-handle.v1",
+            delivery_mode=CommunicationDeliveryMode.DURABLE_HANDLE,
+            ordering_scope=CommunicationOrderingScope.CONVERSATION,
+            idempotency=CommunicationIdempotency.REQUIRED,
+            cursor_semantics=CommunicationCursorSemantics.NONE,
+            retention=CommunicationRetention.DURABLE,
+            backpressure=CommunicationBackpressure.SERVER_QUEUE,
+            disconnect_policy=CommunicationDisconnectPolicy.CONTINUE,
+        ),
+    ),
 )
 
 
@@ -137,12 +174,14 @@ class ConversationRuntimeProjectionService:
             execution_chains=execution_chains,
             execution_window_truncated=execution_window_truncated,
             activity=activity,
+            communication_contract=_CHAT_RUNTIME_COMMUNICATION_CONTRACT,
             cursor=self._cursor(
                 queue,
                 interactions,
                 execution_chains,
                 execution_window_truncated,
                 activity,
+                _CHAT_RUNTIME_COMMUNICATION_CONTRACT,
             ),
         )
 
@@ -290,6 +329,7 @@ class ConversationRuntimeProjectionService:
         execution_chains: tuple[ConversationExecutionChain, ...],
         execution_window_truncated: bool,
         activity: ObservationPage,
+        communication_contract: CommunicationContract,
     ) -> str:
         payload = {
             "queue": queue.model_dump(
@@ -304,6 +344,9 @@ class ConversationRuntimeProjectionService:
             ],
             "execution_window_truncated": execution_window_truncated,
             "activity": activity.model_dump(mode="json"),
+            "communication_contract": communication_contract.model_dump(
+                mode="json",
+            ),
         }
         canonical = json.dumps(
             payload,

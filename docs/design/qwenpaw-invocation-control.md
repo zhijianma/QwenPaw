@@ -195,6 +195,10 @@ generation handoff 后才能判定 orphan，不能由任意新实例直接终止
     一个 ownership-checked 当前状态；`/runtime/stream` 使用稳定快照 cursor 支持
     `Last-Event-ID` 和查询 cursor 重连，空闲时发送 keepalive。Queue 或 Interaction
     任一变化都会产生新快照，相同状态不会因观察时间变化产生假更新。
+    Runtime Projection 同时返回 Kernel `CommunicationContract`：SSE 被准确声明为
+    S2 `request_stream + snapshot_change + latest_state + coalesce_latest`，重连只取
+    当前权威快照，不冒充 Event Log replay；Submission 被声明为 S3
+    `durable_handle + server_queue + continue`，关闭 SSE 不取消 Invocation。
 16. 已完成：workspace-owned Submission Dispatcher、版本化
     `SubmissionInputEnvelope` 和 `POST /chats/{chat_id}/submissions`。Dispatcher 从
     durable Queue 恢复扫描，每个 Conversation 串行、不同 Conversation 并行；通过
