@@ -323,8 +323,8 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - “一问一答”只保留为 Chat 快速路径和 UI 投影；长程执行链只在 Outcome、显式
   Stop / Interrupt、不可自动化的 typed Wait 或预算/恢复终态结束，不依赖用户发送
   “继续”。
-- 尚未完成：后台 Action 跨 Invocation 的主动 continuation、Provider token 级原地
-  续传，以及真实断流与进程重启的浏览器端到端演练。
+- 尚未完成：Provider token 级原地续传，以及真实断流、后台长工具与进程重启的
+  浏览器端到端演练。
 
 ### 2026-10-08 Harness durable continuation
 
@@ -337,6 +337,20 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   错误执行器。
 - 本切片定点验证：38 项通过；该数字仅覆盖恢复 Store、Harness Runtime、Workspace
   路由与 Chat dispatcher，不等价于全仓或浏览器端到端测试。
+
+### 2026-10-08 后台 Action durable continuation
+
+- Action Recorder 在结果 digest 确定后先保存未发布的私有 background context
+  snapshot，ActionResult 成功持久化后才发布 outbox 并允许 supervisor 通知；进程在
+  两阶段之间退出时，dispatcher 只有在 ActionStore 精确匹配 action、invocation 与
+  observation digest 后才从 snapshot 修复 outbox。
+- continuation 等待来源 Submission 进入权威终态；只有来源成功、无 Stop /
+  Interrupt、无更新的用户输入，且原 Session 没有消费同一 `CommittedActionItem`
+  时才进入 ready。
+- SessionLoadHook 把已绑定结果合并到最新 Session，而非用旧 snapshot 覆盖；同一来源
+  的多个后台 Action 可以形成兄弟 continuation，顺序合并且各自保持幂等。
+- 进程内 pending hint 在注入前按 binding 去重；跨 Invocation 恢复不产生重复结果。
+- 本切片相邻契约验证：118 项通过；仍需真实浏览器长工具与进程重启演练。
 
 ### 本阶段此前已执行的定点验证
 

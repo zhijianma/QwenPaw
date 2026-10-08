@@ -114,6 +114,7 @@ class ToolCoordinator:
         deadline_override: float | None = None,
         result_processor: ToolResultProcessor | None = None,
         background_result_processor: BackgroundResultProcessor | None = None,
+        background_completion_handler: CompletionHandler | None = None,
     ) -> AsyncGenerator[Any, None]:
         entry = self._create_entry(
             tool_call,
@@ -201,6 +202,7 @@ class ToolCoordinator:
             yield await self._begin_offload(
                 entry,
                 background_result_processor,
+                background_completion_handler,
             )
         except (asyncio.CancelledError, GeneratorExit):
             if entry.status == ToolCallStatus.RUNNING:
@@ -287,13 +289,18 @@ class ToolCoordinator:
         self,
         entry: ToolCallEntry,
         background_result_processor: BackgroundResultProcessor | None,
+        background_completion_handler: CompletionHandler | None,
     ) -> ToolResponse:
         ctx = entry.ctx
         entry.status = ToolCallStatus.OFFLOADED
         ctx.offload_deadline = None
 
         asyncio.create_task(
-            self._supervise(entry, background_result_processor),
+            self._supervise(
+                entry,
+                background_result_processor,
+                background_completion_handler,
+            ),
             name=f"toolcall-supervise-{ctx.tool_call_id}",
         )
 
@@ -955,6 +962,7 @@ class ToolCoordinator:
         self,
         entry: ToolCallEntry,
         background_result_processor: BackgroundResultProcessor | None,
+        background_completion_handler: CompletionHandler | None,
     ) -> None:
         bg = entry.background_task
         if bg is None:
@@ -980,6 +988,16 @@ class ToolCoordinator:
                 entry.ctx.session_id,
                 [],
             ).append(hint)
+
+        if background_completion_handler is not None:
+            try:
+                await background_completion_handler(entry)
+            except Exception as exc:
+                logger.warning(
+                    "background continuation handler failed: %s",
+                    exc,
+                    exc_info=True,
+                )
 
         for handler in list(self._completion_handlers):
             try:

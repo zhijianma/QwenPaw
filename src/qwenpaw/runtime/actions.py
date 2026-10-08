@@ -895,21 +895,31 @@ class RuntimeActionRecorder:
             retryable=False,
             side_effect_status=_side_effect_status(request.effect, status),
         )
+        committed_item = CommittedActionItem(
+            action_id=request.action_id,
+            invocation_id=request.invocation_id,
+            conversation_id=request.conversation_id,
+            executor_item_id=context.tool_call_id,
+            observation_digest=result.observation_digest,
+        )
+        response.metadata[COMMITTED_ACTION_ITEM_METADATA_KEY] = (
+            committed_item.model_dump(mode="json")
+        )
+        prepare_background = context.extra.get(
+            "_prepare_background_action_context",
+        )
+        if callable(prepare_background):
+            await prepare_background(
+                response,
+                context,
+                committed_item,
+            )
         try:
             await self._store.complete(result)
         except Exception as exc:
             raise ActionResultPersistenceError(
                 "tool executed but its result could not be durably verified",
             ) from exc
-        response.metadata[COMMITTED_ACTION_ITEM_METADATA_KEY] = (
-            CommittedActionItem(
-                action_id=request.action_id,
-                invocation_id=request.invocation_id,
-                conversation_id=request.conversation_id,
-                executor_item_id=context.tool_call_id,
-                observation_digest=result.observation_digest,
-            ).model_dump(mode="json")
-        )
         return response
 
     async def complete_harness_remote(

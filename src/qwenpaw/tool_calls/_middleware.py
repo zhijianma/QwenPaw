@@ -158,11 +158,67 @@ class ToolCoordinatorMiddleware(MiddlewareBase):
         if result_processors:
 
             async def _process_result(response: Any, context: Any) -> Any:
+                background_handler = request_context.get(
+                    "_background_action_completion_handler",
+                )
+                prepare_response = getattr(
+                    background_handler,
+                    "prepare_response",
+                    None,
+                )
+                if (
+                    context.offload_reason is not None
+                    and callable(prepare_response)
+                ):
+
+                    async def _prepare(
+                        prepared_response: Any,
+                        prepared_context: Any,
+                        committed_item: Any,
+                    ) -> None:
+                        await prepare_response(
+                            prepared_response,
+                            prepared_context,
+                            agent.state_dict(),
+                            committed_item,
+                        )
+
+                    context.extra[
+                        "_prepare_background_action_context"
+                    ] = _prepare
                 for processor in result_processors:
                     response = await processor(response, context)
+                commit_response = getattr(
+                    background_handler,
+                    "commit_response",
+                    None,
+                )
+                if (
+                    context.offload_reason is not None
+                    and callable(commit_response)
+                ):
+                    await commit_response(
+                        response,
+                        context,
+                        agent.state_dict(),
+                    )
                 return response
 
             result_processor = _process_result
+
+        background_completion_handler = request_context.get(
+            "_background_action_completion_handler",
+        )
+        completion_handler = None
+        if callable(background_completion_handler):
+
+            async def _complete_background(entry: Any) -> None:
+                await background_completion_handler(
+                    entry,
+                    agent.state_dict(),
+                )
+
+            completion_handler = _complete_background
 
         # Fallback refresh (e.g. flows that bypass on_reasoning).
         _capture_f1_reasoning(agent)
@@ -177,5 +233,6 @@ class ToolCoordinatorMiddleware(MiddlewareBase):
             usage_meter=usage_meter,
             result_processor=result_processor,
             background_result_processor=self._background_result_processor,
+            background_completion_handler=completion_handler,
         ):
             yield item

@@ -485,6 +485,13 @@ WaitCondition，或预算/恢复终态才结束执行链。Assistant Message 是
 自身的等待事实和 continuation 驱动，不制造“是否继续？”对话。只有资源恢复需要
 用户授权或高影响选择时，才正交地创建 Interaction；资源等待本身不是人机问答。
 
+后台 Action 也已采用同一原则：工具从前台 offload 后，Action Recorder 先准备未发布
+私有 context snapshot，再提交 ActionResult；只有精确匹配的已提交结果才能发布
+durable continuation。来源 Invocation 结束后由 Runtime 自主创建后续 Invocation，
+不要求用户追问结果或发送“继续”。并行结果通过
+`CommittedActionItem` 分别留证，并在恢复时合并最新 Session，而不是用一份旧对话
+快照覆盖另一份。
+
 这一边界已落实为可执行 `UserInputReason` 契约：新 Ask User 只能声明缺失必要事实、
 关键偏好、范围授权或高影响裁决，未分类请求在写入统一 Interaction Store 前被拒绝；
 内置 Tool、插件 SDK 和兼容 Adapter 共用同一 admission gate。历史未分类记录继续

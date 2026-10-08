@@ -211,6 +211,9 @@ from .interactions import (
     validate_interaction_admission,
 )
 from .waits import (
+    BackgroundActionContextCheckpoint,
+    BackgroundActionContinuation,
+    BackgroundActionContinuationStatus,
     ContinuationAvailability,
     ContinuationDispatchStatus,
     ContinuationMode,
@@ -612,4 +615,7 @@ __all__ = [
     "validate_task_transition",
     "ProposalNotApprovedError",
     "approved_task_order",
+    "BackgroundActionContextCheckpoint",
+    "BackgroundActionContinuation",
+    "BackgroundActionContinuationStatus",
 ]

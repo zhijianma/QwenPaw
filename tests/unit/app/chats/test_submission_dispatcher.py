@@ -8,11 +8,13 @@ from typing import Any
 from uuid import UUID, uuid4, uuid5
 
 import pytest
+from agentscope.message import Msg, TextBlock
 
 from qwenpaw.app.chats.manager import ChatManager
 from qwenpaw.app.chats.models import ChatSpec
 from qwenpaw.app.chats.repo import JsonChatRepository
 from qwenpaw.app.chats.submission_dispatcher import (
+    CONSOLE_BACKGROUND_ACTION_CONTINUATION_ENVELOPE,
     CONSOLE_HARNESS_STEP_CONTINUATION_ENVELOPE,
     CONSOLE_INTERACTION_CONTINUATION_ENVELOPE,
     CONSOLE_MODEL_RECOVERY_ENVELOPE,
@@ -21,6 +23,7 @@ from qwenpaw.app.chats.submission_dispatcher import (
     WorkspaceChatSubmissionDispatcher,
 )
 from qwenpaw.app.task_tracker import TaskTracker
+from qwenpaw.app.chats.session import SafeJSONSession
 from qwenpaw.invocation_control import (
     InvocationControlService,
     QueueRevisionConflictError,
@@ -30,6 +33,7 @@ from qwenpaw.interactions import InteractionService
 from qwenpaw.recovery import ModelResourceWaitService
 from qwenpaw.kernel import (
     COMMITTED_ACTION_ITEM_METADATA_KEY,
+    BackgroundActionContinuationStatus,
     ActionKind,
     ActionRequest,
     ActionResult,
@@ -64,6 +68,12 @@ from qwenpaw.runtime.actions import (
     lite_action_store,
     model_step_action_evidence_digest,
     model_step_committed_action_items,
+)
+from qwenpaw.runtime.background_actions import (
+    build_background_action_checkpoint,
+    build_background_action_snapshot,
+    lite_background_action_context_store,
+    lite_background_action_continuation_store,
 )
 from qwenpaw.runtime.harness_recovery import (
     build_harness_recovery_checkpoint,
@@ -1099,4 +1109,258 @@ async def test_harness_step_dispatches_one_fenced_submission(
     assert request_context["harness_recovery_checkpoint_id"] == str(
         checkpoint.checkpoint_id,
     )
+    await control.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("superseded", [False, True])
+# pylint: disable-next=too-many-statements
+async def test_background_action_repairs_snapshot_and_dispatches(
+    tmp_path: Path,
+    superseded: bool,
+) -> None:
+    manager = ChatManager(
+        repo=JsonChatRepository(tmp_path / "chats.json"),
+    )
+    chat = await manager.create_chat(
+        ChatSpec(
+            id="chat-1",
+            session_id="console:chat-1",
+            user_id="local-user",
+            channel="console",
+        ),
+    )
+    control = InvocationControlService(
+        store=SQLiteInvocationControl(tmp_path / "control.sqlite3"),
+    )
+    invocation_id = uuid4()
+    correlation_id = uuid4()
+    lease = await control.begin_turn(
+        TurnSubmissionRequest(
+            agent_id="default",
+            conversation_id=chat.id,
+            content="run background work",
+            input_envelope=SubmissionInputEnvelope(
+                kind=CONSOLE_SUBMISSION_ENVELOPE,
+                payload={},
+            ),
+            idempotency_key="background-source",
+            correlation_id=correlation_id,
+        ),
+        invocation_id=invocation_id,
+    )
+    await control.finish_turn(lease, SubmissionStatus.SUCCEEDED)
+    committed_item = CommittedActionItem(
+        action_id=uuid4(),
+        invocation_id=invocation_id,
+        conversation_id=chat.id,
+        executor_item_id="call-background",
+        observation_digest=f"sha256:{'a' * 64}",
+    )
+    action_store = lite_action_store(tmp_path)
+
+    async def commit_action(item: CommittedActionItem) -> None:
+        await action_store.begin(
+            ActionRequest(
+                action_id=item.action_id,
+                invocation_id=item.invocation_id,
+                correlation_id=correlation_id,
+                conversation_id=chat.id,
+                registry_generation=1,
+                capability_id="qwenpaw.system.test-tool",
+                kind=ActionKind.TOOL,
+                action_name="slow_tool",
+                redacted_arguments={},
+                arguments_hash=f"sha256:{'c' * 64}",
+                idempotency_key=f"tool:{item.action_id}",
+            ),
+        )
+        await action_store.complete(
+            ActionResult(
+                action_id=item.action_id,
+                invocation_id=item.invocation_id,
+                conversation_id=chat.id,
+                status=ActionStatus.SUCCEEDED,
+                observation_digest=item.observation_digest,
+            ),
+        )
+
+    await commit_action(committed_item)
+    checkpoint = build_background_action_checkpoint(
+        committed_item=committed_item,
+        source_submission_id=lease.submission.submission_id,
+        correlation_id=correlation_id,
+        agent_id="default",
+        recovery_cycle=1,
+    )
+    hint = Msg(
+        name="system",
+        role="assistant",
+        content=[TextBlock(type="text", text="private result")],
+        metadata={
+            COMMITTED_ACTION_ITEM_METADATA_KEY: (
+                committed_item.model_dump(mode="json")
+            ),
+        },
+    )
+    snapshot = build_background_action_snapshot(
+        {"state": {"context": []}},
+        hint,
+        committed_item,
+    )
+    await lite_background_action_context_store(tmp_path).save(
+        checkpoint,
+        snapshot,
+    )
+    sibling_item = committed_item.model_copy(
+        update={
+            "action_id": uuid4(),
+            "executor_item_id": "call-background-2",
+            "observation_digest": f"sha256:{'b' * 64}",
+        },
+    )
+    await commit_action(sibling_item)
+    sibling_checkpoint = build_background_action_checkpoint(
+        committed_item=sibling_item,
+        source_submission_id=lease.submission.submission_id,
+        correlation_id=correlation_id,
+        agent_id="default",
+        recovery_cycle=1,
+    )
+    sibling_hint = Msg(
+        name="system",
+        role="assistant",
+        content=[TextBlock(type="text", text="private result 2")],
+        metadata={
+            COMMITTED_ACTION_ITEM_METADATA_KEY: (
+                sibling_item.model_dump(mode="json")
+            ),
+        },
+    )
+    sibling_snapshot = build_background_action_snapshot(
+        {"state": {"context": []}},
+        sibling_hint,
+        sibling_item,
+    )
+    await lite_background_action_context_store(tmp_path).save(
+        sibling_checkpoint,
+        sibling_snapshot,
+    )
+    orphan_item = committed_item.model_copy(
+        update={
+            "action_id": uuid4(),
+            "executor_item_id": "call-orphan",
+            "observation_digest": f"sha256:{'d' * 64}",
+        },
+    )
+    orphan_checkpoint = build_background_action_checkpoint(
+        committed_item=orphan_item,
+        source_submission_id=lease.submission.submission_id,
+        correlation_id=correlation_id,
+        agent_id="default",
+        recovery_cycle=1,
+    )
+    orphan_hint = Msg(
+        name="system",
+        role="assistant",
+        content=[TextBlock(type="text", text="orphan result")],
+        metadata={
+            COMMITTED_ACTION_ITEM_METADATA_KEY: (
+                orphan_item.model_dump(mode="json")
+            ),
+        },
+    )
+    orphan_snapshot = build_background_action_snapshot(
+        {"state": {"context": []}},
+        orphan_hint,
+        orphan_item,
+    )
+    await lite_background_action_context_store(tmp_path).save(
+        orphan_checkpoint,
+        orphan_snapshot,
+    )
+    if superseded:
+        await control.enqueue_turn(
+            TurnSubmissionRequest(
+                agent_id="default",
+                conversation_id=chat.id,
+                content="newer instruction",
+                input_envelope=SubmissionInputEnvelope(
+                    kind=CONSOLE_SUBMISSION_ENVELOPE,
+                    payload={},
+                ),
+                idempotency_key="background-newer-input",
+            ),
+        )
+    workspace = SimpleNamespace(
+        agent_id="default",
+        workspace_dir=tmp_path,
+        chat_manager=manager,
+        session=SafeJSONSession(str(tmp_path / "sessions")),
+    )
+    dispatcher = WorkspaceChatSubmissionDispatcher(
+        workspace=workspace,
+        control=control,
+    )
+
+    # pylint: disable=protected-access
+    if not superseded:
+        dispatcher_store = dispatcher._background_actions
+        assert dispatcher_store is not None
+        original_dispatch = dispatcher_store.dispatch
+
+        async def fail_after_enqueue(continuation_id, dispatch):
+            current = await dispatcher_store.get(continuation_id)
+            assert current is not None
+            await dispatch(current)
+            raise RuntimeError("simulated background Action enqueue crash")
+
+        dispatcher_store.dispatch = fail_after_enqueue
+        with pytest.raises(RuntimeError, match="enqueue crash"):
+            await dispatcher._dispatch_ready_background_actions()
+        dispatcher_store.dispatch = original_dispatch
+    await dispatcher._dispatch_ready_background_actions()
+    # pylint: enable=protected-access
+
+    outbox = lite_background_action_continuation_store(tmp_path)
+    continuation = await outbox.get(checkpoint.continuation_id)
+    sibling = await outbox.get(sibling_checkpoint.continuation_id)
+    orphan = await outbox.get(orphan_checkpoint.continuation_id)
+    assert continuation is not None
+    assert sibling is not None
+    assert orphan is None
+    if superseded:
+        assert continuation.status is (
+            BackgroundActionContinuationStatus.CANCELLED
+        )
+        assert continuation.submission_id is None
+        assert sibling.status is BackgroundActionContinuationStatus.CANCELLED
+        assert sibling.submission_id is None
+        await control.close()
+        return
+    assert continuation.status is (
+        BackgroundActionContinuationStatus.DISPATCHED
+    )
+    assert sibling.status is BackgroundActionContinuationStatus.DISPATCHED
+    assert sibling.submission_id is not None
+    assert continuation.submission_id is not None
+    submission = await control.get_submission(continuation.submission_id)
+    assert submission is not None
+    assert submission.correlation_id == correlation_id
+    assert submission.input_envelope is not None
+    assert submission.input_envelope.kind == (
+        CONSOLE_BACKGROUND_ACTION_CONTINUATION_ENVELOPE
+    )
+    # pylint: disable=protected-access
+    payload = await dispatcher._materialize_background_action_payload(
+        submission.input_envelope,
+        chat,
+        submission,
+    )
+    # pylint: enable=protected-access
+    context = payload["meta"]["request_context"]
+    assert context["background_action_checkpoint_id"] == str(
+        checkpoint.checkpoint_id,
+    )
+    assert context["background_action_recovery_cycle"] == 1
     await control.close()

@@ -16,6 +16,10 @@ from ...invocation_control import (
     SubmissionDispatcher,
 )
 from ...kernel import (
+    TERMINAL_SUBMISSION_STATUSES,
+    BackgroundActionContextCheckpoint,
+    BackgroundActionContinuation,
+    BackgroundActionContinuationStatus,
     ConversationContinuation,
     ControlCommandKind,
     ControlReceipt,
@@ -27,6 +31,7 @@ from ...kernel import (
     ModelStepContinuationStatus,
     ResourceWaitStatus,
     SubmissionInputEnvelope,
+    SubmissionStatus,
     TurnSubmission,
     TurnSubmissionRequest,
 )
@@ -42,6 +47,9 @@ CONSOLE_MODEL_STEP_CONTINUATION_ENVELOPE = (
 )
 CONSOLE_HARNESS_STEP_CONTINUATION_ENVELOPE = (
     "chat.console.harness-step-continuation.v1"
+)
+CONSOLE_BACKGROUND_ACTION_CONTINUATION_ENVELOPE = (
+    "chat.console.background-action-continuation.v1"
 )
 logger = logging.getLogger(__name__)
 
@@ -66,10 +74,24 @@ class WorkspaceChatSubmissionDispatcher:
         from ...runtime.harness_recovery import (
             lite_harness_step_continuation_store,
         )
+        from ...runtime.background_actions import (
+            lite_background_action_context_store,
+            lite_background_action_continuation_store,
+        )
 
         workspace_dir = getattr(workspace, "workspace_dir", None)
         self._harness_steps = (
             lite_harness_step_continuation_store(Path(workspace_dir))
+            if workspace_dir is not None
+            else None
+        )
+        self._background_action_contexts = (
+            lite_background_action_context_store(Path(workspace_dir))
+            if workspace_dir is not None
+            else None
+        )
+        self._background_actions = (
+            lite_background_action_continuation_store(Path(workspace_dir))
             if workspace_dir is not None
             else None
         )
@@ -90,6 +112,8 @@ class WorkspaceChatSubmissionDispatcher:
             await self._dispatch_ready_model_steps()
         if self._harness_steps is not None:
             await self._dispatch_ready_harness_steps()
+        if self._background_actions is not None:
+            await self._dispatch_ready_background_actions()
         await self._dispatcher.start()
         if self._interactions is not None and self._continuation_task is None:
             self._continuation_task = asyncio.create_task(
@@ -100,6 +124,7 @@ class WorkspaceChatSubmissionDispatcher:
         if (
             self._resource_waits is not None
             or self._harness_steps is not None
+            or self._background_actions is not None
         ) and self._resource_wait_task is None:
             self._resource_wait_task = asyncio.create_task(
                 self._run_resource_waits(),
@@ -143,6 +168,8 @@ class WorkspaceChatSubmissionDispatcher:
                     await self._dispatch_ready_model_steps()
                 if self._harness_steps is not None:
                     await self._dispatch_ready_harness_steps()
+                if self._background_actions is not None:
+                    await self._dispatch_ready_background_actions()
             except Exception:  # pylint: disable=broad-except
                 logger.exception("Failed to dispatch model resource wait")
                 delay = 1.0
@@ -441,6 +468,234 @@ class WorkspaceChatSubmissionDispatcher:
             )
         return receipt.submission_id
 
+    async def _dispatch_ready_background_actions(self) -> None:
+        """Repair, reconcile, and dispatch completed background Actions."""
+        if (
+            self._background_actions is None
+            or self._background_action_contexts is None
+        ):
+            return
+        checkpoints = await self._background_action_contexts.list_checkpoints(
+            agent_id=self._workspace.agent_id,
+        )
+        for checkpoint in checkpoints:
+            if await self._background_action_is_committed(checkpoint):
+                await self._background_actions.defer(checkpoint)
+        continuations = await self._background_actions.list_pending(
+            agent_id=self._workspace.agent_id,
+        )
+        first_error: Exception | None = None
+        for continuation in continuations:
+            try:
+                await self._dispatch_background_action(continuation)
+            except Exception as exc:  # pylint: disable=broad-except
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
+
+    # pylint: disable-next=too-many-return-statements
+    async def _dispatch_background_action(
+        self,
+        continuation: BackgroundActionContinuation,
+    ) -> None:
+        """Continue only after source completion and context validation."""
+        checkpoint = continuation.checkpoint
+        if (
+            continuation.status
+            is BackgroundActionContinuationStatus.WAITING_SOURCE
+        ):
+            source = await self._control.get_submission(
+                checkpoint.source_submission_id,
+            )
+            if source is None:
+                await self._background_actions.transition(
+                    continuation.continuation_id,
+                    BackgroundActionContinuationStatus.CANCELLED,
+                )
+                return
+            if source.status not in TERMINAL_SUBMISSION_STATUSES:
+                return
+            if source.status is not SubmissionStatus.SUCCEEDED:
+                await self._background_actions.transition(
+                    continuation.continuation_id,
+                    BackgroundActionContinuationStatus.CANCELLED,
+                )
+                return
+            if await self._background_action_is_superseded(continuation):
+                await self._background_actions.transition(
+                    continuation.continuation_id,
+                    BackgroundActionContinuationStatus.CANCELLED,
+                )
+                return
+            chat = await self._workspace.chat_manager.get_chat(
+                checkpoint.committed_item.conversation_id,
+            )
+            if chat is None:
+                await self._background_actions.transition(
+                    continuation.continuation_id,
+                    BackgroundActionContinuationStatus.CANCELLED,
+                )
+                return
+            session_state = (
+                await self._workspace.session.get_session_state_dict(
+                    session_id=chat.session_id,
+                    user_id=chat.user_id,
+                    channel=chat.channel,
+                )
+            )
+            from ...runtime.model_step_contexts import (
+                context_has_committed_action_items,
+            )
+
+            persisted_agent_state = session_state.get("agent")
+            if isinstance(
+                persisted_agent_state,
+                dict,
+            ) and context_has_committed_action_items(
+                persisted_agent_state,
+                (checkpoint.committed_item,),
+            ):
+                await self._background_actions.transition(
+                    continuation.continuation_id,
+                    BackgroundActionContinuationStatus.CANCELLED,
+                )
+                return
+            continuation = await self._background_actions.transition(
+                continuation.continuation_id,
+                BackgroundActionContinuationStatus.READY,
+            )
+        if continuation.status is not BackgroundActionContinuationStatus.READY:
+            return
+        dispatched = await self._background_actions.dispatch(
+            continuation.continuation_id,
+            self._enqueue_background_action,
+        )
+        if dispatched.status is BackgroundActionContinuationStatus.DISPATCHED:
+            self._dispatcher.wake()
+
+    async def _background_action_is_superseded(
+        self,
+        continuation: BackgroundActionContinuation,
+    ) -> bool:
+        checkpoint = continuation.checkpoint
+        conversation_id = checkpoint.committed_item.conversation_id
+        controls = await self._control.scan_for_conversation(
+            agent_id=checkpoint.agent_id,
+            conversation_id=conversation_id,
+        )
+        if any(
+            (
+                record.command.kind
+                in {
+                    ControlCommandKind.INTERRUPT_CURRENT,
+                    ControlCommandKind.STOP_AND_CLEAR,
+                }
+                and record.command.target_invocation_id
+                == checkpoint.committed_item.invocation_id
+            )
+            or (
+                record.command.kind is ControlCommandKind.STOP_AND_CLEAR
+                and record.command.requested_at >= continuation.created_at
+            )
+            for record in controls
+        ):
+            return True
+        submissions = await self._control.scan_submissions_for_conversation(
+            agent_id=checkpoint.agent_id,
+            conversation_id=conversation_id,
+        )
+        source = next(
+            (
+                item
+                for item in submissions
+                if item.submission_id == checkpoint.source_submission_id
+            ),
+            None,
+        )
+        idempotency_key = (
+            "background-action-continuation:"
+            f"{continuation.continuation_id}"
+        )
+        return source is None or any(
+            item.sequence > source.sequence
+            and item.idempotency_key != idempotency_key
+            and not item.idempotency_key.startswith(
+                "background-action-continuation:",
+            )
+            for item in submissions
+        )
+
+    async def _background_action_is_committed(
+        self,
+        checkpoint: BackgroundActionContextCheckpoint,
+    ) -> bool:
+        """Require ActionStore to confirm the snapshot's exact digest."""
+        from ...runtime.actions import lite_action_store
+
+        records = await lite_action_store(
+            Path(self._workspace.workspace_dir),
+        ).scan_for_conversation(
+            checkpoint.committed_item.conversation_id,
+        )
+        return any(
+            record.request.action_id == checkpoint.committed_item.action_id
+            and record.result is not None
+            and record.result.invocation_id
+            == checkpoint.committed_item.invocation_id
+            and record.result.observation_digest
+            == checkpoint.committed_item.observation_digest
+            for record in records
+        )
+
+    async def _enqueue_background_action(
+        self,
+        continuation: BackgroundActionContinuation,
+    ) -> UUID | None:
+        """Create one fenced Submission for a committed background result."""
+        if await self._background_action_is_superseded(continuation):
+            return None
+        checkpoint = continuation.checkpoint
+        conversation_id = checkpoint.committed_item.conversation_id
+        projection = await self._control.read_queue(
+            agent_id=checkpoint.agent_id,
+            conversation_id=conversation_id,
+        )
+        idempotency_key = (
+            "background-action-continuation:"
+            f"{continuation.continuation_id}"
+        )
+        request = TurnSubmissionRequest(
+            agent_id=checkpoint.agent_id,
+            conversation_id=conversation_id,
+            content="[background Action continuation]",
+            request_context={
+                "channel": "console",
+                "background_action_continuation_id": str(
+                    continuation.continuation_id,
+                ),
+            },
+            input_envelope=SubmissionInputEnvelope(
+                kind=CONSOLE_BACKGROUND_ACTION_CONTINUATION_ENVELOPE,
+                payload={
+                    "continuation_id": str(
+                        continuation.continuation_id,
+                    ),
+                },
+            ),
+            idempotency_key=idempotency_key,
+            correlation_id=checkpoint.correlation_id,
+        )
+        receipt = await self._control.enqueue_turn(
+            request,
+            expected_revision=projection.revision,
+        )
+        if receipt.submission_id is None:
+            raise RuntimeError(
+                "background Action enqueue returned no submission",
+            )
+        return receipt.submission_id
+
     async def _enqueue_model_step(
         self,
         continuation: ModelStepContinuation,
@@ -671,6 +926,7 @@ class WorkspaceChatSubmissionDispatcher:
         envelope: SubmissionInputEnvelope,
     ) -> None:
         if envelope.kind not in {
+            CONSOLE_BACKGROUND_ACTION_CONTINUATION_ENVELOPE,
             CONSOLE_SUBMISSION_ENVELOPE,
             CONSOLE_INTERACTION_CONTINUATION_ENVELOPE,
             CONSOLE_HARNESS_STEP_CONTINUATION_ENVELOPE,
@@ -691,6 +947,12 @@ class WorkspaceChatSubmissionDispatcher:
 
         if envelope.kind == CONSOLE_INTERACTION_CONTINUATION_ENVELOPE:
             payload = await self._materialize_continuation_payload(
+                envelope,
+                chat,
+                submission,
+            )
+        elif envelope.kind == CONSOLE_BACKGROUND_ACTION_CONTINUATION_ENVELOPE:
+            payload = await self._materialize_background_action_payload(
                 envelope,
                 chat,
                 submission,
@@ -812,6 +1074,105 @@ class WorkspaceChatSubmissionDispatcher:
                     ),
                     "harness_step_continuation_id": str(continuation_id),
                     "harness_recovery_cycle": continuation.recovery_cycle,
+                },
+            },
+        }
+
+    async def _materialize_background_action_payload(
+        self,
+        envelope: SubmissionInputEnvelope,
+        chat: Any,
+        submission: TurnSubmission,
+    ) -> dict[str, Any]:
+        """Resolve one background Action pointer into a verified input."""
+        if (
+            self._background_actions is None
+            or self._background_action_contexts is None
+        ):
+            raise RuntimeError("background Action recovery is unavailable")
+        try:
+            continuation_id = UUID(
+                str(envelope.payload["continuation_id"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                "invalid background Action continuation envelope",
+            ) from exc
+        continuation = await self._background_actions.get(continuation_id)
+        if continuation is None:
+            raise ValueError("background Action continuation is unavailable")
+        checkpoint = continuation.checkpoint
+        if (
+            checkpoint.agent_id != submission.agent_id
+            or checkpoint.committed_item.conversation_id
+            != submission.conversation_id
+            or checkpoint.committed_item.conversation_id != chat.id
+        ):
+            raise ValueError(
+                "background Action continuation does not belong to ChatSpec",
+            )
+        if (
+            continuation.status
+            is not BackgroundActionContinuationStatus.DISPATCHED
+            or continuation.submission_id != submission.submission_id
+        ):
+            raise ValueError(
+                "background Action is not bound to this Submission",
+            )
+        stored_checkpoint, agent_state = (
+            await self._background_action_contexts.load(
+                checkpoint.checkpoint_id,
+            )
+        )
+        if stored_checkpoint != checkpoint:
+            raise ValueError("background Action checkpoint does not match")
+        if not await self._background_action_is_committed(checkpoint):
+            raise ValueError(
+                "background Action result is not durably committed",
+            )
+        from ...runtime.model_step_contexts import (
+            context_has_committed_action_items,
+        )
+
+        if not context_has_committed_action_items(
+            agent_state,
+            (checkpoint.committed_item,),
+        ):
+            raise ValueError(
+                "background Action context does not prove its result",
+            )
+        return {
+            "channel_id": chat.channel,
+            "sender_id": chat.user_id,
+            "content_parts": [
+                {
+                    "type": "text",
+                    "text": (
+                        "QwenPaw background Action recovery: continue from "
+                        "the committed result in the bound private context."
+                    ),
+                },
+            ],
+            "message_metadata": {
+                "qwenpaw_client_message_id": submission.idempotency_key,
+                "qwenpaw_background_action_continuation": str(
+                    continuation_id,
+                ),
+            },
+            "message_id": submission.idempotency_key,
+            "meta": {
+                "session_id": chat.session_id,
+                "user_id": chat.user_id,
+                "request_context": {
+                    "background_action_checkpoint_id": str(
+                        checkpoint.checkpoint_id,
+                    ),
+                    "background_action_continuation_id": str(
+                        continuation_id,
+                    ),
+                    "background_action_recovery_cycle": (
+                        checkpoint.recovery_cycle
+                    ),
                 },
             },
         }
@@ -1095,6 +1456,7 @@ class WorkspaceChatSubmissionDispatcher:
 
 
 __all__ = [
+    "CONSOLE_BACKGROUND_ACTION_CONTINUATION_ENVELOPE",
     "CONSOLE_INTERACTION_CONTINUATION_ENVELOPE",
     "CONSOLE_HARNESS_STEP_CONTINUATION_ENVELOPE",
     "CONSOLE_MODEL_RECOVERY_ENVELOPE",

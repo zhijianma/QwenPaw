@@ -343,6 +343,11 @@ Codex 的“边收流边执行工具”建立在其 Provider 事件协议、工�
   durable continuation 启动后续 Invocation。outbox 使用稳定幂等键并沿用
   `ChatSpec.id` 与 correlation；Stop / Interrupt、来源后的新输入、Queue revision、
   反向绑定、backend 一致性和 2-cycle 预算共同限制恢复。
+- [x] 已完成后台 Action 的跨 Invocation 主动 continuation：结果 digest 确定后先准备
+  未发布私有 snapshot，ActionResult 成功提交后才发布 durable outbox；snapshot-first
+  repair 也必须精确匹配 ActionStore 结果。来源成功且未被 Stop / Interrupt / 新输入
+  覆盖时自动续行。恢复加载时把结果合并到最新 Session，
+  因此同一来源的并行后台 Action 不会用旧快照相互覆盖。
 
 ### R4：可选 Provider 增量续传
 

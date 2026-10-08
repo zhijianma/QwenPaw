@@ -561,8 +561,9 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
     同一 binding；completion event 与 history hydrate 不会伪造该事实。Harness 断流
     已通过 `HarnessRecoveryContextCheckpoint` 四方校验并持久化 admission；共享
     dispatcher 已用 durable outbox 创建 fenced continuation，并校验 Stop / Interrupt、
-    新输入、Queue revision、反向绑定、backend 与 2-cycle 预算。后台 Action 跨
-    Invocation 主动 continuation 仍未接入。
+    新输入、Queue revision、反向绑定、backend 与 2-cycle 预算。后台 Action 也已在
+    结果 digest 确定后先准备未发布私有 context snapshot，ActionResult 成功落库后再由
+    同一 dispatcher 跨 Invocation 主动续行；并行结果合并到最新 Session，不相互覆盖。
 - [ ] Workstation / Hub 再实现按能力、健康、成本和数据边界的动态路由；Lite 当前
   继续使用确定性主模型与显式 fallback 顺序，不冒充智能路由器。
 - 区分 Run Completion、Verification 与业务 Outcome，并预留 Trajectory 投影。

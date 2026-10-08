@@ -460,8 +460,12 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     context identity、provider history、Chat session binding、ActionStore digest 四方
     一致才以 `0600` 不可变文件落盘；provider context digest 绑定 Invocation 与来源
     Submission，原始 ID 不持久化且不能跨任务关联。
-  - [ ] 共享 dispatcher 消费 Harness checkpoint 创建 fenced continuation，以及后台
-    Action 跨 Invocation 的主动 continuation 仍待实现。
+  - [x] 共享 dispatcher 消费 Harness checkpoint 创建 fenced continuation；后台
+    Action 在结果 digest 确定后先准备未发布私有 snapshot，结果提交成功后再发布
+    durable outbox，来源成功且未被用户输入或控制命令覆盖时跨 Invocation 主动续行。
+    并行后台结果以 binding 去重并合并最新 Session，不依赖用户发送“继续”；启动修复
+    只有在 ActionStore 精确匹配 action、invocation 与 observation digest 时才发布
+    孤立 snapshot。
 - [ ] 把 WebSocket 增量续传、sticky route 和 HTTP fallback 保持为 Provider
   Adapter capability；严格验证 response identity/prefix，失败时回退持久上下文重建，
   Kernel 不感知具体传输。

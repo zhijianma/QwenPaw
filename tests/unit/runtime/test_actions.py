@@ -322,6 +322,42 @@ async def test_action_store_is_private_and_never_persists_raw_values(
 
 
 @pytest.mark.asyncio
+async def test_background_snapshot_is_prepared_before_result_commit(
+    tmp_path: Path,
+) -> None:
+    scope = _scope(tmp_path)
+    store = FilesystemActionStore(tmp_path)
+    recorder = RuntimeActionRecorder(scope, store)
+    context = _context()
+    await recorder.begin(
+        context,
+        effect=ToolEffect.NONE,
+        policy_decision="allow",
+    )
+    observed_result_states: list[bool] = []
+
+    async def prepare_background(_response, _context, _item) -> None:
+        [record] = await store.list_for_conversation("chat-1")
+        observed_result_states.append(record.result is None)
+
+    context.extra["_prepare_background_action_context"] = (
+        prepare_background
+    )
+    response = ToolResponse(
+        content=[TextBlock(type="text", text="background result")],
+        id=context.tool_call_id,
+        state=ToolResultState.SUCCESS,
+    )
+
+    await recorder.complete(response, context)
+
+    [record] = await store.list_for_conversation("chat-1")
+    assert observed_result_states == [True]
+    assert record.result is not None
+    assert COMMITTED_ACTION_ITEM_METADATA_KEY in response.metadata
+
+
+@pytest.mark.asyncio
 async def test_explicit_browser_kind_replaces_legacy_tool_inference(
     tmp_path: Path,
 ) -> None:

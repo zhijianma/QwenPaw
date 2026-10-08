@@ -198,7 +198,13 @@ Adapter 声明；Kernel 不假设任意模型流可以原地续传。
   Stop / Interrupt、来源之后的新输入、Queue revision、执行前反向绑定和 backend
   一致性共同阻止迟到或串错执行，自动恢复最多 2 个 cycle。恢复仍要求四方 admission，
   不会仅凭 completion event 自动恢复。
-- [ ] 后台 Action 跨 Invocation 完成后由 durable continuation 主动触发新执行，而非
-  等待用户再发送一条消息。
+- [x] 后台 Action 跨 Invocation 完成后由 durable continuation 主动触发新执行，而非
+  等待用户再发送一条消息。Action Recorder 计算结果 digest 后先准备带
+  `CommittedActionItem` 的未发布私有 context snapshot；ActionResult 成功落库后才
+  发布内容安全 outbox。来源
+  Submission 成功终止、未被 Stop / Interrupt 或新用户输入覆盖，且原 Session 尚未
+  消费该 binding 时才创建新 Invocation。snapshot-first repair、稳定幂等键和 2-cycle
+  预算覆盖崩溃窗口；同一来源的并行后台 Action 作为兄弟 continuation 顺序合并到最新
+  Session，不用旧快照互相覆盖。
 - [ ] Provider resource health 事件自动释放 quota wait。
 - [ ] 真实限流故障和进程重启的浏览器端到端演练。

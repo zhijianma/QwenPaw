@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import Any, Iterable
+from uuid import UUID
 
 from ..agents.acp.meta import ACP_PROJECT_DIR_META_KEY
 from ..utils.io_utils import run_sync_io
@@ -667,6 +668,41 @@ class AgentBuilder:
                 invocation,
                 FilesystemEnvironmentStore(Path(workspace_dir)),
             )
+            raw_submission_id = request_context.get("os_submission_id")
+            if (
+                raw_submission_id is not None
+                and invocation.conversation_id is not None
+                and ctx.workspace is not None
+            ):
+                from .background_actions import (
+                    BackgroundActionCompletionHandler,
+                )
+
+                raw_cycle = request_context.get(
+                    "background_action_recovery_cycle",
+                    0,
+                )
+                prior_cycle = (
+                    raw_cycle
+                    if isinstance(raw_cycle, int)
+                    and not isinstance(raw_cycle, bool)
+                    and raw_cycle >= 0
+                    else 0
+                )
+                request_context[
+                    "_background_action_completion_handler"
+                ] = BackgroundActionCompletionHandler(
+                    workspace=ctx.workspace,
+                    source_submission_id=UUID(str(raw_submission_id)),
+                    invocation_id=invocation.invocation_id,
+                    conversation_id=invocation.conversation_id,
+                    correlation_id=(
+                        invocation.correlation_id
+                        or invocation.invocation_id
+                    ),
+                    agent_id=invocation.agent_id,
+                    recovery_cycle=prior_cycle + 1,
+                )
 
         # Toolkit.
         extra_tools = self._collect_coding_mode_tools(

@@ -573,6 +573,70 @@ async def test_result_processor_also_commits_offloaded_completion():
 
 
 @pytest.mark.asyncio
+async def test_middleware_checkpoints_before_background_notification():
+    coordinator = ToolCoordinator(
+        default_timeout_secs=0.001,
+        offload_on_deadline=True,
+    )
+    events: list[str] = []
+    notified = asyncio.Event()
+
+    class Recorder:
+        @staticmethod
+        async def complete(response, _context):
+            events.append("action")
+            return response
+
+    class BackgroundHandler:
+        @staticmethod
+        async def commit_response(response, context, _state):
+            del response
+            assert context.offload_reason is not None
+            events.append("checkpoint")
+
+        async def __call__(self, _entry, _state):
+            events.append("notification")
+            notified.set()
+
+    agent = type(
+        "AgentStub",
+        (),
+        {
+            "_request_context": {
+                "session_id": "session-1",
+                "agent_id": "agent-1",
+                "root_session_id": "root-1",
+                "root_agent_id": "parent-agent",
+                "_action_recorder": Recorder(),
+                "_background_action_completion_handler": (
+                    BackgroundHandler()
+                ),
+            },
+            "state_dict": lambda self: {"state": {"context": []}},
+        },
+    )()
+    middleware = ToolCoordinatorMiddleware(coordinator=coordinator)
+    tool_call = _ToolCall(id="call-bg-order", name="slow_tool")
+
+    async def next_handler(
+        tool_call: _ToolCall,
+    ) -> AsyncGenerator[Any, None]:
+        await asyncio.sleep(0.03)
+        yield _text_response(tool_call.id, "done")
+
+    output = await _collect(
+        middleware.on_acting(
+            agent,
+            {"tool_call": tool_call},
+            next_handler,
+        ),
+    )
+    assert output[-1].metadata["offloaded"] is True
+    await asyncio.wait_for(notified.wait(), timeout=1)
+    assert events == ["action", "checkpoint", "notification"]
+
+
+@pytest.mark.asyncio
 async def test_middleware_caller_observes_coordinator_response():
     coordinator = ToolCoordinator()
     usage_meter = _ConcurrencyMeter()
@@ -622,6 +686,10 @@ async def test_background_completion_emits_hint():
         offload_on_deadline=True,
     )
     tool_call = _ToolCall(id="call-bg", name="slow_tool")
+    completions = []
+
+    async def on_background_completion(entry):
+        completions.append(entry.ctx.tool_call_id)
 
     async def next_handler(
         tool_call: _ToolCall,
@@ -636,6 +704,7 @@ async def test_background_completion_emits_hint():
             session_id="session-bg",
             agent_id="agent-1",
             root_session_id="root-1",
+            background_completion_handler=on_background_completion,
         ),
     )
     hint = await asyncio.wait_for(
@@ -651,6 +720,7 @@ async def test_background_completion_emits_hint():
         if getattr(block, "type", None) == "text"
     )
     assert "slow_tool" in text_block.text
+    assert completions == ["call-bg"]
 
 
 @pytest.mark.asyncio

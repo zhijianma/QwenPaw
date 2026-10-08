@@ -9,11 +9,21 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from agentscope.message import Msg, TextBlock
 
 from qwenpaw.agents.acp.meta import ACP_EPHEMERAL_META_KEY
 from qwenpaw.hooks.session.session_hook import SessionLoadHook, SessionSaveHook
 from qwenpaw.hooks.session.signals import SESSION_SAVE_SUCCEEDED_KEY
-from qwenpaw.kernel import ModelStepContextCheckpoint
+from qwenpaw.kernel import (
+    COMMITTED_ACTION_ITEM_METADATA_KEY,
+    CommittedActionItem,
+    ModelStepContextCheckpoint,
+)
+from qwenpaw.runtime.background_actions import (
+    build_background_action_checkpoint,
+    build_background_action_snapshot,
+    lite_background_action_context_store,
+)
 from qwenpaw.runtime.model_step_contexts import (
     lite_model_step_context_store,
 )
@@ -126,6 +136,61 @@ async def test_model_step_recovery_loads_bound_immutable_context(
     assert session.loaded is False
     assert ctx.session_state == checkpoint_state
     assert ctx.mode_state == {"mission": {"active": True}}
+
+
+async def test_background_action_loads_bound_immutable_context(tmp_path):
+    session = _FakeSession()
+    session.load_payload = {"state": {"context": []}}
+    item = CommittedActionItem(
+        action_id=uuid4(),
+        invocation_id=uuid4(),
+        conversation_id="chat-1",
+        executor_item_id="call-1",
+        observation_digest=f"sha256:{'b' * 64}",
+    )
+    checkpoint = build_background_action_checkpoint(
+        committed_item=item,
+        source_submission_id=uuid4(),
+        correlation_id=uuid4(),
+        agent_id="default",
+        recovery_cycle=1,
+    )
+    hint = Msg(
+        name="system",
+        role="assistant",
+        content=[TextBlock(type="text", text="private result")],
+        metadata={
+            COMMITTED_ACTION_ITEM_METADATA_KEY: item.model_dump(mode="json"),
+        },
+    )
+    checkpoint_state = build_background_action_snapshot(
+        {"state": {"context": []}},
+        hint,
+        item,
+    )
+    await lite_background_action_context_store(tmp_path).save(
+        checkpoint,
+        checkpoint_state,
+    )
+    ctx = _ctx(session, ephemeral=False)
+    ctx.agent_id = "default"
+    ctx.workspace_dir = tmp_path
+    ctx.request.request_context.update(
+        {
+            "background_action_checkpoint_id": str(
+                checkpoint.checkpoint_id,
+            ),
+            "background_action_continuation_id": str(
+                checkpoint.continuation_id,
+            ),
+            "os_conversation_id": "chat-1",
+        },
+    )
+
+    await SessionLoadHook().run(ctx)
+
+    assert session.loaded is True
+    assert ctx.session_state == checkpoint_state
 
 
 async def test_failed_session_save_does_not_mark_turn_as_persisted():

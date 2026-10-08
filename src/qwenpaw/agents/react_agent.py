@@ -1563,6 +1563,21 @@ class QwenPawAgent(CodingModeMixin, Agent):
             return
         hints = await mgr.pop_pending_hints(session_id)
         for hint in hints:
+            from ..runtime.background_actions import (
+                committed_item_from_response,
+            )
+            from ..runtime.model_step_contexts import (
+                context_has_committed_action_items,
+            )
+
+            committed_item = committed_item_from_response(hint)
+            if committed_item is not None and (
+                context_has_committed_action_items(
+                    self.state_dict(),
+                    (committed_item,),
+                )
+            ):
+                continue
             self.state.context.append(hint)
 
     async def _reply(self, **kwargs: Any) -> Any:

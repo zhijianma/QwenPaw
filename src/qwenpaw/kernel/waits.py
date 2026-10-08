@@ -11,6 +11,7 @@ from uuid import UUID
 from pydantic import AwareDatetime, Field, StringConstraints, model_validator
 
 from .models import (
+    CommittedActionItem,
     KernelModel,
     ModelFailureClass,
     ModelOutputBoundary,
@@ -90,6 +91,16 @@ class ModelStepContinuationStatus(str, Enum):
 class HarnessStepContinuationStatus(str, Enum):
     """Lifecycle of one Harness recovery continuation outbox entry."""
 
+    READY = "ready"
+    DISPATCHED = "dispatched"
+    CANCELLED = "cancelled"
+    RECOVERY_EXHAUSTED = "recovery_exhausted"
+
+
+class BackgroundActionContinuationStatus(str, Enum):
+    """Lifecycle of one completed background Action continuation."""
+
+    WAITING_SOURCE = "waiting_source"
     READY = "ready"
     DISPATCHED = "dispatched"
     CANCELLED = "cancelled"
@@ -237,6 +248,58 @@ class HarnessStepContinuation(KernelModel):
             raise ValueError(
                 "dispatched Harness continuation requires submission_id",
             )
+        if self.updated_at < self.created_at:
+            raise ValueError("updated_at cannot precede created_at")
+        return self
+
+
+class BackgroundActionContextCheckpoint(KernelModel):
+    """Content-safe reference to a private background result snapshot."""
+
+    checkpoint_id: UUID
+    continuation_id: UUID
+    committed_item: CommittedActionItem
+    source_submission_id: UUID
+    correlation_id: UUID
+    agent_id: NonEmptyStr
+    recovery_cycle: int = Field(ge=1)
+    created_at: AwareDatetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def validate_background_action_checkpoint(self) -> Self:
+        """Require the committed result to belong to one Conversation."""
+        if self.committed_item.conversation_id is None:
+            raise ValueError(
+                "background Action checkpoint requires conversation_id",
+            )
+        return self
+
+
+class BackgroundActionContinuation(KernelModel):
+    """Durable continuation after one offloaded Action completes."""
+
+    continuation_id: UUID
+    checkpoint: BackgroundActionContextCheckpoint
+    status: BackgroundActionContinuationStatus = (
+        BackgroundActionContinuationStatus.WAITING_SOURCE
+    )
+    submission_id: UUID | None = None
+    revision: int = Field(default=1, ge=1)
+    created_at: AwareDatetime = Field(default_factory=utc_now)
+    updated_at: AwareDatetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def validate_background_action_continuation(self) -> Self:
+        """Require an exact dispatch binding and coherent timestamps."""
+        dispatched = (
+            self.status is BackgroundActionContinuationStatus.DISPATCHED
+        )
+        if dispatched != (self.submission_id is not None):
+            raise ValueError(
+                "dispatched background continuation requires submission_id",
+            )
+        if self.continuation_id != self.checkpoint.continuation_id:
+            raise ValueError("background continuation checkpoint mismatch")
         if self.updated_at < self.created_at:
             raise ValueError("updated_at cannot precede created_at")
         return self
@@ -475,6 +538,9 @@ class WaitCondition(KernelModel):
 
 
 __all__ = [
+    "BackgroundActionContextCheckpoint",
+    "BackgroundActionContinuation",
+    "BackgroundActionContinuationStatus",
     "ContinuationAvailability",
     "ContinuationDispatchStatus",
     "ContinuationMode",

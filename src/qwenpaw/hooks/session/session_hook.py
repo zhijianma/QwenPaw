@@ -9,6 +9,7 @@ agent state back to session storage after the response completes.
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 from uuid import UUID
 
@@ -55,7 +56,9 @@ class SessionLoadHook(LifecycleHook):
         session = getattr(ctx.workspace, "session", None)
         if session is None:
             return HookResult()
-        checkpoint_state = await self._load_model_step_checkpoint(ctx)
+        checkpoint_state = await self._load_background_action_checkpoint(ctx)
+        if checkpoint_state is None:
+            checkpoint_state = await self._load_model_step_checkpoint(ctx)
         if checkpoint_state is not None:
             ctx.session_state = checkpoint_state
         else:
@@ -93,6 +96,107 @@ class SessionLoadHook(LifecycleHook):
                     ctx.session_state,
                 )
         return HookResult()
+
+    @staticmethod
+    async def _load_background_action_checkpoint(
+        ctx: HookContext,
+    ) -> dict | None:
+        """Load a private snapshot bound to one background continuation."""
+        request_context = (
+            getattr(ctx.request, "request_context", None) or {}
+        )
+        raw_checkpoint_id = request_context.get(
+            "background_action_checkpoint_id",
+        )
+        if raw_checkpoint_id is None:
+            return None
+        try:
+            checkpoint_id = UUID(str(raw_checkpoint_id))
+            continuation_id = UUID(
+                str(request_context["background_action_continuation_id"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                "invalid background Action checkpoint binding",
+            ) from exc
+        from ...runtime.background_actions import (
+            lite_background_action_context_store,
+        )
+
+        checkpoint, state = await lite_background_action_context_store(
+            ctx.workspace_dir,
+        ).load(checkpoint_id)
+        if (
+            checkpoint.continuation_id != continuation_id
+            or checkpoint.agent_id != ctx.agent_id
+            or checkpoint.committed_item.conversation_id
+            != request_context.get("os_conversation_id")
+        ):
+            raise ValueError(
+                "background Action checkpoint ownership mismatch",
+            )
+        from ...runtime.model_step_contexts import (
+            context_has_committed_action_items,
+        )
+
+        request = ctx.request
+        proxy = StateProxy()
+        await ctx.workspace.session.load_session_state(
+            session_id=ctx.session_id,
+            user_id=getattr(request, "user_id", "") or ctx.session_id,
+            channel=getattr(request, "channel", "") or "",
+            agent=proxy,
+        )
+        merged = copy.deepcopy(proxy.data or state)
+        if context_has_committed_action_items(
+            merged,
+            (checkpoint.committed_item,),
+        ):
+            return merged
+        snapshot_state = state.get("state")
+        snapshot_context = (
+            snapshot_state.get("context")
+            if isinstance(snapshot_state, dict)
+            else None
+        )
+        merged_state = merged.get("state")
+        merged_context = (
+            merged_state.get("context")
+            if isinstance(merged_state, dict)
+            else None
+        )
+        if (
+            not isinstance(snapshot_context, list)
+            or not snapshot_context
+            or not isinstance(merged_context, list)
+        ):
+            raise ValueError(
+                "background Action context cannot merge into Session",
+            )
+        result_message = next(
+            (
+                message
+                for message in reversed(snapshot_context)
+                if context_has_committed_action_items(
+                    {"state": {"context": [message]}},
+                    (checkpoint.committed_item,),
+                )
+            ),
+            None,
+        )
+        if result_message is None:
+            raise ValueError(
+                "background Action snapshot has no bound result message",
+            )
+        merged_context.append(copy.deepcopy(result_message))
+        if not context_has_committed_action_items(
+            merged,
+            (checkpoint.committed_item,),
+        ):
+            raise ValueError(
+                "background Action Session merge lost its binding",
+            )
+        return merged
 
     @staticmethod
     async def _load_model_step_checkpoint(
