@@ -19,6 +19,7 @@ from agentscope.state import AgentState
 
 from qwenpaw.app.chats.session import SafeJSONSession
 from qwenpaw.kernel import (
+    COMMITTED_ACTION_ITEM_METADATA_KEY,
     ActionKind,
     ActionRequest,
     ActionResult,
@@ -219,6 +220,13 @@ async def test_terminal_action_context_becomes_recoverable_checkpoint(
                         state=ToolResultState.SUCCESS,
                         metadata={
                             "qwenpaw_action_id": str(action.action_id),
+                            COMMITTED_ACTION_ITEM_METADATA_KEY: {
+                                "action_id": str(action.action_id),
+                                "invocation_id": str(invocation_id),
+                                "conversation_id": "chat-1",
+                                "executor_item_id": "call-1",
+                                "observation_digest": f"sha256:{'b' * 64}",
+                            },
                         },
                     ),
                 ],

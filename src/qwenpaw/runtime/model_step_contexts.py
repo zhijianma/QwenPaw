@@ -7,7 +7,11 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from ..kernel import ModelStepContextCheckpoint
+from ..kernel import (
+    COMMITTED_ACTION_ITEM_METADATA_KEY,
+    CommittedActionItem,
+    ModelStepContextCheckpoint,
+)
 from ..utils.io_utils import (
     get_path_lock,
     read_json_async,
@@ -161,6 +165,59 @@ def context_has_terminal_tool_results(
     return found == set(expected.items())
 
 
+def context_has_committed_action_items(
+    agent_state: dict[str, Any],
+    expected_items: tuple[CommittedActionItem, ...],
+) -> bool:
+    """Verify exact durable Action bindings are model-visible in context."""
+    if not expected_items:
+        return False
+    expected = {
+        (
+            str(item.action_id),
+            str(item.invocation_id),
+            item.executor_item_id,
+            item.observation_digest,
+        )
+        for item in expected_items
+    }
+    found: set[tuple[str, str, str, str]] = set()
+    state = agent_state.get("state")
+    context = state.get("context") if isinstance(state, dict) else None
+    if not isinstance(context, list):
+        return False
+    for message in context:
+        if not isinstance(message, dict):
+            continue
+        candidates = [message.get("metadata")]
+        content = message.get("content")
+        if isinstance(content, list):
+            candidates.extend(
+                block.get("metadata")
+                for block in content
+                if isinstance(block, dict)
+                and block.get("type") == "tool_result"
+                and block.get("state") != "running"
+            )
+        for metadata in candidates:
+            if not isinstance(metadata, dict):
+                continue
+            payload = metadata.get(COMMITTED_ACTION_ITEM_METADATA_KEY)
+            try:
+                item = CommittedActionItem.model_validate(payload)
+            except (TypeError, ValueError):
+                continue
+            binding = (
+                str(item.action_id),
+                str(item.invocation_id),
+                item.executor_item_id,
+                item.observation_digest,
+            )
+            if binding in expected:
+                found.add(binding)
+    return found == expected
+
+
 def lite_model_step_context_store(
     workspace_dir: Path,
 ) -> FilesystemModelStepContextStore:
@@ -173,6 +230,7 @@ __all__ = [
     "MODEL_STEP_CONTEXT_SCHEMA",
     "ModelStepContextConflictError",
     "ModelStepContextNotFoundError",
+    "context_has_committed_action_items",
     "context_has_terminal_tool_results",
     "lite_model_step_context_store",
 ]

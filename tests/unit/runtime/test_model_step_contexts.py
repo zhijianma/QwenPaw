@@ -6,9 +6,14 @@ from uuid import uuid4
 
 import pytest
 
-from qwenpaw.kernel import ModelStepContextCheckpoint
+from qwenpaw.kernel import (
+    COMMITTED_ACTION_ITEM_METADATA_KEY,
+    CommittedActionItem,
+    ModelStepContextCheckpoint,
+)
 from qwenpaw.runtime.model_step_contexts import (
     ModelStepContextConflictError,
+    context_has_committed_action_items,
     context_has_terminal_tool_results,
     lite_model_step_context_store,
 )
@@ -52,6 +57,16 @@ def _state(
             ],
         },
     }
+
+
+def _committed_item() -> CommittedActionItem:
+    return CommittedActionItem(
+        action_id=uuid4(),
+        invocation_id=uuid4(),
+        conversation_id="chat-1",
+        executor_item_id="call-background",
+        observation_digest=f"sha256:{'b' * 64}",
+    )
 
 
 @pytest.mark.asyncio
@@ -99,3 +114,28 @@ async def test_context_snapshot_rejects_conflicting_state(tmp_path) -> None:
 
     with pytest.raises(ModelStepContextConflictError):
         await store.save(checkpoint, _state("call-2"))
+
+
+def test_background_hint_proves_exact_committed_action_item() -> None:
+    item = _committed_item()
+    state = {
+        "state": {
+            "context": [
+                {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "done"}],
+                    "metadata": {
+                        COMMITTED_ACTION_ITEM_METADATA_KEY: item.model_dump(
+                            mode="json",
+                        ),
+                    },
+                },
+            ],
+        },
+    }
+
+    assert context_has_committed_action_items(state, (item,))
+    changed = item.model_copy(
+        update={"observation_digest": f"sha256:{'c' * 64}"},
+    )
+    assert not context_has_committed_action_items(state, (changed,))

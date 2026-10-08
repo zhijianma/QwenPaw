@@ -103,12 +103,14 @@ ModelCallResult(continue_model_step, partial boundary)
   `action_reconciliation_required`，不自动重做；assessment 与 continuation 一同
   持久化并投影到 Activity，旧记录没有 assessment 时仍可读取。
 - 所有 Action 已终态且副作用确定时，Runtime 还必须证明 Agent snapshot 中存在每个
-  executor call 对应的终态 ToolResult。它先原子保存不可变私有 snapshot，再发布
+  executor item 对应的 `CommittedActionItem`。同步 ToolResult 与后台完成 hint 都携带
+  同一内容安全 binding；它先原子保存不可变私有 snapshot，再发布
   `ModelStepContextCheckpoint`；如果进程恰好在两步之间退出，dispatcher 可从稳定
   checkpoint ID 重新发现 snapshot 并补齐元数据。
-- Action Recorder 将 `action_id` 写入 AgentScope 原生 `ToolResultBlock.metadata`；
-  checkpoint 验证同时匹配 executor call ID 与 Action ID，不能用历史中恰好重复的
-  call ID 冒充当前 Invocation 的结果。旧 ToolResult 没有该绑定时保持阻塞。
+- Action Recorder 在结果持久化成功后生成 `CommittedActionItem`，绑定 Action ID、
+  Invocation、executor item ID 和 observation digest。AgentScope 原生 ToolResult 与
+  后台 hint 都保留该 binding；checkpoint 必须四项精确匹配，不能用历史中重复的 call
+  ID 或只完成审计、尚未进入模型上下文的 Harness event 冒充结果。
 - checkpoint continuation 从不可变 snapshot 装配，而不是读取可能已漂移的最新
   Chat session。若来源 Submission 之后已经接受了新输入，旧 continuation 直接进入
   cancelled，绝不越过或覆盖新输入；enqueue 仍使用 Queue revision 关闭检查后的竞态。
@@ -177,9 +179,12 @@ Adapter 声明；Kernel 不假设任意模型流可以原地续传。
   `action_reconciliation_required`，不自动重放副作用。
 - [x] 根据真实 `ActionRecord` 将阻塞原因分类为 pending result、uncertain side
   effect 或 durable context required，并跨重启持久化内容安全计数。
-- [x] 对 terminal/certain Action 验证 Agent context 中的终态 ToolResult，保存不可变
-  私有 snapshot，并用内容安全 `ModelStepContextCheckpoint` 自动续行；pending / uncertain
-  Action 继续失败关闭，新 Submission 会取消旧 snapshot continuation。
-- [ ] 为后台 Action 和 Provider committed-item protocol 扩展同一 checkpoint 契约。
+- [x] 对 terminal/certain Action 验证 Agent context 中的 `CommittedActionItem`，保存
+  不可变私有 snapshot，并用内容安全 `ModelStepContextCheckpoint` 自动续行；同步
+  ToolResult 与同 Invocation 内已进入上下文的后台 hint 使用同一协议。
+- [ ] 为 Harness Provider 实现“远端完成且结果已进入模型上下文”的 Adapter binding；
+  仅收到完成 event 时继续失败关闭。
+- [ ] 后台 Action 跨 Invocation 完成后由 durable continuation 主动触发新执行，而非
+  等待用户再发送一条消息。
 - [ ] Provider resource health 事件自动释放 quota wait。
 - [ ] 真实限流故障和进程重启的浏览器端到端演练。

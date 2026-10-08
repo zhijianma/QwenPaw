@@ -35,6 +35,7 @@ NamespacedId = Annotated[
 ]
 JsonObject = dict[str, JsonValue]
 TOOL_ARTIFACT_OUTPUTS_METADATA_KEY = "qwenpaw_artifact_outputs"
+COMMITTED_ACTION_ITEM_METADATA_KEY = "qwenpaw_committed_action_item"
 
 
 def utc_now() -> datetime:
@@ -525,6 +526,22 @@ class ActionResult(KernelModel):
     retryable: bool = False
     side_effect_status: SideEffectStatus | None = None
     completed_at: AwareDatetime = Field(default_factory=utc_now)
+
+
+class CommittedActionItem(KernelModel):
+    """Content-safe binding between Action evidence and model context."""
+
+    action_id: UUID
+    invocation_id: UUID
+    conversation_id: NonEmptyStr | None = None
+    executor_item_id: NonEmptyStr
+    observation_digest: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True,
+            pattern=r"^sha256:[0-9a-f]{64}$",
+        ),
+    ]
 
 
 class ActionRecord(KernelModel):

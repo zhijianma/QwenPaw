@@ -29,6 +29,7 @@ from qwenpaw.drivers.capabilities import (
     DriverInvocationResult,
 )
 from qwenpaw.kernel import (
+    COMMITTED_ACTION_ITEM_METADATA_KEY,
     ActionKind,
     ActionRecord,
     ActionRequest,
@@ -36,6 +37,7 @@ from qwenpaw.kernel import (
     ActionStatus,
     ArtifactRef,
     CapabilitySelection,
+    CommittedActionItem,
     DriverToolDefinition,
     EvidenceRef,
     EnvironmentRef,
@@ -57,6 +59,7 @@ from qwenpaw.runtime.actions import (
     model_step_action_call_ids,
     model_step_action_context_bindings,
     model_step_action_evidence_digest,
+    model_step_committed_action_items,
 )
 from qwenpaw.runtime.environments import (
     LiteEnvironmentResolver,
@@ -225,6 +228,18 @@ def test_model_step_action_evidence_requires_stable_executor_call_id() -> None:
         [record],
         invocation_id,
     ) == (("call-1", str(record.request.action_id)),)
+    committed_items = model_step_committed_action_items(
+        [record],
+        invocation_id,
+    )
+    assert committed_items is not None
+    assert len(committed_items) == 1
+    committed_item = committed_items[0]
+    assert committed_item.action_id == record.request.action_id
+    assert committed_item.executor_item_id == "call-1"
+    assert committed_item.observation_digest == (
+        record.result.observation_digest
+    )
     assert model_step_action_call_ids(
         [_action_record(invocation_id, suffix="legacy")],
         invocation_id,
@@ -264,6 +279,16 @@ async def test_action_store_is_private_and_never_persists_raw_values(
     assert record.result.status is ActionStatus.SUCCEEDED
     assert response.metadata[ACTION_RESULT_CONTEXT_KEY] == str(
         request.action_id,
+    )
+    committed_item = CommittedActionItem.model_validate(
+        response.metadata[COMMITTED_ACTION_ITEM_METADATA_KEY],
+    )
+    assert committed_item.action_id == request.action_id
+    assert committed_item.invocation_id == scope.invocation_id
+    assert committed_item.conversation_id == "chat-1"
+    assert committed_item.executor_item_id == context.tool_call_id
+    assert committed_item.observation_digest == (
+        record.result.observation_digest
     )
     assert request.arguments["apiToken"] == "do-not-persist"
 

@@ -327,11 +327,14 @@ Codex 的“边收流边执行工具”建立在其 Provider 事件协议、工�
 - [x] 读取真实 `ActionRecord`，将阻塞原因和计数持久化为 pending result、uncertain
   side effect 或 durable context required；不把“Action 已成功”误等同于“模型上下文
   已可恢复”；
-- [x] terminal/certain Action 只有在不可变 Agent context snapshot 能逐一证明终态
-  ToolResult 时才生成 `ModelStepContextCheckpoint` 并自动续行；snapshot 私有存储，
+- [x] terminal/certain Action 只有在不可变 Agent context snapshot 能逐一证明
+  `CommittedActionItem` 时才生成 `ModelStepContextCheckpoint` 并自动续行；同步
+  ToolResult 与同 Invocation 内的后台完成 hint 使用同一 provider-neutral binding，
+  snapshot 私有存储，
   Kernel 与 Activity 仅公开内容安全引用和计数。来源之后出现新 Submission 时取消旧
   continuation，避免用旧 checkpoint 覆盖新上下文；
-- [ ] 只有具备 committed action protocol 的 Adapter 才能启用流内执行。
+- [ ] Harness Adapter 必须同时证明远端结果已提交且已进入模型上下文，才能启用流内
+  执行；单独的 provider completion event 不满足该协议。
 
 ### R4：可选 Provider 增量续传
 

@@ -288,8 +288,10 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   `action_reconciliation_required`。现在会从真实 `ActionRecord` 生成并持久化内容安全
   assessment，区分 pending result、uncertain side effect 和 durable context
   required；仍不会自动重做或猜测副作用结果。
-- terminal/certain Action 现在会进一步校验 Agent snapshot 中每个 executor call 的
-  终态 ToolResult，保存权限 `0600` 的不可变私有 snapshot，并发布内容安全
+- terminal/certain Action 现在会进一步校验 Agent snapshot 中每个 executor item 的
+  `CommittedActionItem`。同步 ToolResult 与同 Invocation 内进入上下文的后台完成 hint
+  共享 Action ID、Invocation、executor item ID、observation digest 四元 binding；随后
+  保存权限 `0600` 的不可变私有 snapshot，并发布内容安全
   `ModelStepContextCheckpoint`。dispatcher 可修复 snapshot 已写但 checkpoint 尚未绑定
   的崩溃窗口，从该 snapshot 创建后续 Invocation；pending/uncertain 继续失败关闭。
 - checkpoint 绑定来源 Submission；如果之后已有新 Submission 被接受，旧 continuation
@@ -304,8 +306,9 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - “一问一答”只保留为 Chat 快速路径和 UI 投影；长程执行链只在 Outcome、显式
   Stop / Interrupt、不可自动化的 typed Wait 或预算/恢复终态结束，不依赖用户发送
   “继续”。
-- 尚未完成：后台 Action / Provider committed item 的 checkpoint 协议、Provider token
-  级原地续传、真实断流与进程重启的浏览器端到端演练。
+- 尚未完成：Harness Provider 的 model-visible committed-item binding、后台 Action 跨
+  Invocation 的主动 continuation、Provider token 级原地续传，以及真实断流与进程重启
+  的浏览器端到端演练。
 
 ### 本阶段此前已执行的定点验证
 

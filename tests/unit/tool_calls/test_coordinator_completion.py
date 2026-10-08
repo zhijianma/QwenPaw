@@ -12,7 +12,11 @@ import pytest
 from agentscope.message import TextBlock, ToolResultBlock, ToolResultState
 from agentscope.tool import ToolChunk, ToolResponse
 
-from qwenpaw.kernel.models import UsageDelta, UsageSnapshot
+from qwenpaw.kernel import (
+    COMMITTED_ACTION_ITEM_METADATA_KEY,
+    UsageDelta,
+    UsageSnapshot,
+)
 from qwenpaw.tool_calls import ToolCoordinator, ToolCoordinatorMiddleware
 from qwenpaw.tool_calls._context import CancelReason, ToolCallContext
 from qwenpaw.tool_calls._entry import ToolCallEntry, ToolCallStatus
@@ -537,6 +541,10 @@ async def test_result_processor_also_commits_offloaded_completion():
         context: ToolCallContext,
     ) -> ToolResponse:
         response.metadata["artifact_committed"] = context.tool_call_id
+        response.metadata[COMMITTED_ACTION_ITEM_METADATA_KEY] = {
+            "action_id": "action-1",
+            "invocation_id": "invocation-1",
+        }
         return response
 
     events = await _collect(
@@ -551,13 +559,17 @@ async def test_result_processor_also_commits_offloaded_completion():
     )
     assert events[-1].metadata["offloaded"] is True
 
-    await asyncio.wait_for(
+    hint = await asyncio.wait_for(
         _wait_for_hint(coordinator, "session-1"),
         timeout=1,
     )
     entry = coordinator.get(tool_call.id)
     assert entry is not None
     assert entry.final_response.metadata["artifact_committed"] == tool_call.id
+    assert hint.metadata[COMMITTED_ACTION_ITEM_METADATA_KEY] == {
+        "action_id": "action-1",
+        "invocation_id": "invocation-1",
+    }
 
 
 @pytest.mark.asyncio

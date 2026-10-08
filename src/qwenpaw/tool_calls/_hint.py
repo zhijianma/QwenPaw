@@ -7,6 +7,8 @@ from typing import Any
 
 from agentscope.message import Msg, TextBlock
 
+from ..kernel import COMMITTED_ACTION_ITEM_METADATA_KEY
+
 
 def make_offload_hint_msg(entry: Any) -> Any:
     """Construct a hint Msg for a completed offloaded tool call.
@@ -29,8 +31,16 @@ def make_offload_hint_msg(entry: Any) -> Any:
         ),
     )
     result_blocks = list(entry.final_response.content or [])
+    response_metadata = entry.final_response.metadata or {}
+    committed_item = response_metadata.get(
+        COMMITTED_ACTION_ITEM_METADATA_KEY,
+    )
+    metadata = {}
+    if isinstance(committed_item, dict):
+        metadata[COMMITTED_ACTION_ITEM_METADATA_KEY] = dict(committed_item)
     return Msg(
         name="system",
         role="assistant",
         content=[notification] + result_blocks,
+        metadata=metadata,
     )

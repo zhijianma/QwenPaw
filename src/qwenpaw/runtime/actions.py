@@ -22,6 +22,8 @@ from ..kernel import (
     ActionStatus,
     ApprovalSource,
     ArtifactRef,
+    COMMITTED_ACTION_ITEM_METADATA_KEY,
+    CommittedActionItem,
     EvidenceRef,
     EnvironmentRef,
     DriverToolDefinition,
@@ -132,7 +134,7 @@ def model_step_action_evidence_digest(
         is not ModelStepReconciliationReason.DURABLE_CONTEXT_REQUIRED
     ):
         return None
-    evidence = []
+    evidence: list[dict[str, Any]] = []
     for record in records:
         if record.request.invocation_id != invocation_id:
             continue
@@ -197,6 +199,41 @@ def model_step_action_context_bindings(
         bindings.append((call_id, str(request.action_id)))
     bindings.sort()
     return tuple(bindings)
+
+
+def model_step_committed_action_items(
+    records: Sequence[ActionRecord],
+    invocation_id: UUID,
+) -> tuple[CommittedActionItem, ...] | None:
+    """Return exact terminal Action bindings for model-visible context."""
+    if model_step_action_evidence_digest(records, invocation_id) is None:
+        return None
+    items: list[CommittedActionItem] = []
+    for record in records:
+        request = record.request
+        result = record.result
+        if request.invocation_id != invocation_id:
+            continue
+        if result is None:
+            return None
+        prefix = f"{request.kind.value}:{invocation_id}:"
+        if not request.idempotency_key.startswith(prefix):
+            return None
+        executor_item_id = request.idempotency_key[len(prefix) :]
+        if not executor_item_id:
+            return None
+        items.append(
+            CommittedActionItem(
+                action_id=request.action_id,
+                invocation_id=request.invocation_id,
+                conversation_id=request.conversation_id,
+                executor_item_id=executor_item_id,
+                observation_digest=result.observation_digest,
+            ),
+        )
+    if len({item.executor_item_id for item in items}) != len(items):
+        return None
+    return tuple(sorted(items, key=lambda item: item.executor_item_id))
 
 
 def _json_value(value: Any) -> Any:
@@ -864,6 +901,15 @@ class RuntimeActionRecorder:
             raise ActionResultPersistenceError(
                 "tool executed but its result could not be durably verified",
             ) from exc
+        response.metadata[COMMITTED_ACTION_ITEM_METADATA_KEY] = (
+            CommittedActionItem(
+                action_id=request.action_id,
+                invocation_id=request.invocation_id,
+                conversation_id=request.conversation_id,
+                executor_item_id=context.tool_call_id,
+                observation_digest=result.observation_digest,
+            ).model_dump(mode="json")
+        )
         return response
 
     async def complete_harness_remote(
@@ -939,6 +985,7 @@ __all__ = [
     "ACTION_REQUEST_CONTEXT_KEY",
     "ACTION_REQUEST_STATE_KEY",
     "ACTION_RESULT_CONTEXT_KEY",
+    "COMMITTED_ACTION_ITEM_METADATA_KEY",
     "ActionConflictError",
     "ActionRequestPersistenceError",
     "ActionResultPersistenceError",
@@ -949,6 +996,7 @@ __all__ = [
     "lite_action_store",
     "model_step_action_call_ids",
     "model_step_action_context_bindings",
+    "model_step_committed_action_items",
     "model_step_action_evidence_digest",
     "public_action_record",
 ]
