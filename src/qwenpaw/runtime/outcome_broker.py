@@ -78,11 +78,7 @@ class HostOutcomeBroker:
     def bind(self, producer_id: str) -> OutcomeProducerLease | None:
         """Pin current producer admission for one Invocation."""
         producer = self._producers.get(producer_id)
-        return (
-            OutcomeProducerLease(producer)
-            if producer is not None
-            else None
-        )
+        return OutcomeProducerLease(producer) if producer is not None else None
 
     def _producer(
         self,
@@ -237,6 +233,15 @@ class HostOutcomeBroker:
     ) -> ConversationOutcome:
         """Apply admission and persist one materialized outcome."""
         self._producer(declaration, lease)
+        get_outcome = getattr(self._store, "get", None)
+        existing = (
+            await get_outcome(declaration.outcome_id)
+            if callable(get_outcome)
+            else None
+        )
+        if existing is not None:
+            self._validate_idempotent_replay(existing, declaration)
+            return existing
         references = (
             declaration.artifact_ids,
             declaration.evidence_ids,
@@ -264,8 +269,48 @@ class HostOutcomeBroker:
             supersedes_outcome_id=declaration.supersedes_outcome_id,
             created_at=declaration.declared_at,
         )
-        await self._store.append(outcome)
+        try:
+            await self._store.append(outcome)
+        except Exception as error:  # noqa: BLE001
+            get_after_conflict = getattr(self._store, "get", None)
+            if not callable(get_after_conflict):
+                raise
+            concurrent = await get_after_conflict(outcome.outcome_id)
+            if concurrent is None:
+                raise
+            try:
+                self._validate_idempotent_replay(concurrent, declaration)
+            except OutcomeAdmissionError as replay_error:
+                raise error from replay_error
+            return concurrent
         return outcome
+
+    @staticmethod
+    def _validate_idempotent_replay(
+        existing: ConversationOutcome,
+        declaration: ConversationOutcomeDeclaration,
+    ) -> None:
+        """Allow a new Invocation to confirm one exact business outcome."""
+        comparable = (
+            "outcome_id",
+            "agent_id",
+            "conversation_id",
+            "correlation_id",
+            "status",
+            "producer_id",
+            "summary",
+            "task_id",
+            "run_id",
+            "artifact_ids",
+            "evidence_ids",
+            "verification_ids",
+            "supersedes_outcome_id",
+        )
+        if any(
+            getattr(existing, field) != getattr(declaration, field)
+            for field in comparable
+        ):
+            raise OutcomeAdmissionError("outcome_replay_conflict")
 
 
 __all__ = ["HostOutcomeBroker", "OutcomeAdmissionError"]

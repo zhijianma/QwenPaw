@@ -78,10 +78,6 @@ def make_update_goal(owner: "GoalMode") -> Any:
             finished = await owner.finish_current(
                 status=ConversationOutcomeStatus.ACHIEVED,
                 verdict="satisfied",
-                summary=(
-                    "The active long-running goal was explicitly marked "
-                    "complete."
-                ),
             )
             if not finished:
                 return (
@@ -101,10 +97,6 @@ def make_update_goal(owner: "GoalMode") -> Any:
         finished = await owner.finish_current(
             status=ConversationOutcomeStatus.NOT_ACHIEVED,
             verdict="blocked",
-            summary=(
-                "The active long-running goal stopped at a confirmed "
-                "blocking boundary."
-            ),
         )
         if not finished:
             return (
@@ -123,7 +115,7 @@ def make_update_goal(owner: "GoalMode") -> Any:
 def make_create_goal(owner: "GoalMode") -> Any:
     """Build the ``create_goal`` tool function."""
 
-    def create_goal(
+    async def create_goal(
         objective: str,
         token_budget: int = 0,
     ) -> str:
@@ -136,8 +128,6 @@ def make_create_goal(owner: "GoalMode") -> Any:
             token_budget: Positive token budget. Omit
                 unless explicitly requested.
         """
-        from .goal_mode import GoalSession
-
         if not objective or not objective.strip():
             return "Objective is required."
 
@@ -145,15 +135,17 @@ def make_create_goal(owner: "GoalMode") -> Any:
         if existing is not None:
             return "A goal is already active. " "Cancel it first with /cancel."
 
-        key = owner.current_execution_key()
-        if key is None:
-            return "A stable Chat or compatibility session is required."
-        budget = token_budget if token_budget > 0 else owner.default_max_tokens
-        session = GoalSession(
-            goal=objective.strip(),
-            max_tokens=budget,
+        created = await owner.create_current_goal(
+            objective.strip(),
+            max_tokens=(
+                token_budget if token_budget > 0 else owner.default_max_tokens
+            ),
         )
-        owner.sessions[key] = session
+        if not created:
+            return "A stable Chat or compatibility session is required."
+        session = owner.active_session()
+        assert session is not None
+        budget = session.max_tokens
         logger.info(
             "Goal created via tool: %s",
             objective.strip()[:80],

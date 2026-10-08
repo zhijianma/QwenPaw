@@ -208,9 +208,7 @@ async def test_stop_and_clear_cancels_pending_model_recovery(
             conversation_id=attempt.conversation_id,
             status=ModelCallStatus.FAILED,
             failure_class=ModelFailureClass.QUOTA_EXHAUSTED,
-            recovery_disposition=(
-                ModelRecoveryDisposition.WAIT_RESOURCE
-            ),
+            recovery_disposition=(ModelRecoveryDisposition.WAIT_RESOURCE),
         ),
     )
     assert wait is not None
@@ -309,6 +307,68 @@ async def test_chat_submission_persists_versioned_input_before_dispatch(
     assert record.input_envelope.payload["plugin_option"] == {
         "format": "brief",
     }
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_chat_submission_inherits_active_goal_correlation(
+    tmp_path: Path,
+) -> None:
+    app, service, _ = await _control_context(tmp_path)
+    workspace = app.dependency_overrides[get_workspace]()
+    goal_correlation = uuid4()
+
+    class _Resolver:
+        active = True
+
+        async def active_correlation(self, **_kwargs):
+            return goal_correlation if self.active else None
+
+    resolver = _Resolver()
+    workspace.conversation_correlation_resolver = resolver
+    payload = {
+        "idempotency_key": "goal-continuation",
+        "expected_revision": 0,
+        "content_parts": [{"type": "text", "text": "continue safely"}],
+    }
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        submitted = await client.post(
+            "/api/chats/chat-spec-1/submissions",
+            json=payload,
+        )
+
+    assert submitted.status_code == 200
+    record = await service.get_submission(
+        UUID(submitted.json()["submission_id"]),
+    )
+    assert record is not None
+    assert record.correlation_id == goal_correlation
+
+    resolver.active = False
+    terminal_payload = {
+        "idempotency_key": "post-goal-input",
+        "expected_revision": submitted.json()["revision"],
+        "content_parts": [{"type": "text", "text": "new intent"}],
+    }
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        terminal = await client.post(
+            "/api/chats/chat-spec-1/submissions",
+            json=terminal_payload,
+        )
+
+    assert terminal.status_code == 200
+    terminal_record = await service.get_submission(
+        UUID(terminal.json()["submission_id"]),
+    )
+    assert terminal_record is not None
+    assert terminal_record.correlation_id != goal_correlation
     await service.close()
 
 
@@ -642,9 +702,7 @@ async def test_runtime_snapshot_stream_recovers_queue_and_interactions(
 
     assert "event: snapshot" in first_text
     assert '"interactions":[]' in first_text
-    assert '"activity":{"schema":"qwenpaw.observation-page.v1"' in (
-        first_text
-    )
+    assert '"activity":{"schema":"qwenpaw.observation-page.v1"' in (first_text)
     assert '"communication_contract":{' in first_text
     assert '"cursor_semantics":"snapshot_change"' in first_text
     assert f"id: {first_cursor}" not in second_text

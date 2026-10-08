@@ -678,6 +678,14 @@ hook, and stop-gate behavior belongs in those independent public Slots rather
 than being hidden inside a Mode Provider. See
 `examples/plugins/runtime-provider-kit/runtime_provider_kit/mode.py`.
 
+The SDK exports `GoalExecution`, `GoalExecutionStore`, and
+`ConversationCorrelationResolver` so Edition adapters and contract tests can
+implement the same durable long-running model. This does not grant a plugin
+access to the built-in Goal database. The current `AgentModeHost` intentionally
+has no shared state accessor; plugin-owned long-running mode state must remain
+behind its own capability until a provider-namespaced Mode State Host is
+available. Never open `.qwenpaw/lite/goals.db` directly from a plugin.
+
 `agent.factory` is deliberately a system-only Contribution Slot. It pins the
 QwenPaw/AgentScope framework adapter to an invocation generation, but it is not
 a plugin extension contract and is not exported by `qwenpaw.plugins.sdk`.

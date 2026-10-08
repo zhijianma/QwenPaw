@@ -78,6 +78,11 @@ from ...kernel.outcomes import (
     ConversationOutcomeRequest,
     ConversationOutcomeStatus,
 )
+from ...kernel.goals import (
+    GoalExecution,
+    GoalExecutionConflictError,
+    GoalExecutionStatus,
+)
 from ...kernel.models import (
     ACTION_RETRY_DECISION_METADATA_KEY,
     ACTION_RETRY_HINT_METADATA_KEY,
@@ -195,6 +200,7 @@ from ...kernel.ports import (
     CommandHost,
     CommandProvider,
     CommandSession,
+    ConversationCorrelationResolver,
     ConversationForkPort,
     DeliveryAdapter,
     DeliveryProjectionPort,
@@ -213,6 +219,7 @@ from ...kernel.ports import (
     HookHost,
     HookProvider,
     HookSession,
+    GoalExecutionStore,
     StopGateHost,
     StopGateProvider,
     StopGateSession,
@@ -317,9 +324,14 @@ __all__ = [
     "ConversationForkOrigin",
     "ConversationForkPort",
     "ConversationForkResult",
+    "ConversationCorrelationResolver",
     "ConversationOutcome",
     "ConversationOutcomeRequest",
     "ConversationOutcomeStatus",
+    "GoalExecution",
+    "GoalExecutionConflictError",
+    "GoalExecutionStatus",
+    "GoalExecutionStore",
     "DeliveryAdapter",
     "DeliveryAttempt",
     "DeliveryAttemptConflictError",

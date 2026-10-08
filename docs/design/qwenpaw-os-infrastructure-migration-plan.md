@@ -1122,6 +1122,13 @@ Cron 不形成独立审批或产物事实源。
       Outcome Broker 分别落 `ACHIEVED` 与 `NOT_ACHIEVED`，再结束 Goal。Outcome
       持久化失败时 Goal 保持 active，Assistant Message、Tool 返回或 SSE 完成均不能
       冒充业务完成。迭代与预算上限仍只是技术终态，不凭空声明完成或部分完成。
+    - [x] Goal active state 已迁入 revisioned `GoalExecutionStore`；Lite SQLite 保存
+      objective、预算、进度、correlation 与确定性 Outcome intent。新 Invocation 在
+      mode turn-start 恢复领域快照，不恢复旧协程。`OUTCOME_PENDING` 关闭 Outcome
+      成功/Goal finalize 前的崩溃窗口，Broker 通过可选 exact lookup 跨 Invocation
+      幂等确认；业务字段变化失败关闭。Chat Submission admission 通过
+      `ConversationCorrelationResolver` 在 Goal active/pending 时继承原 correlation，
+      terminal 后才创建新意图。
     - [x] 接入 correlation-scoped 可回放 Trajectory：复用现有 Model、Action、
       Submission、Steer/Interrupt、Interaction、Artifact、Evidence、Verification、
       Wait/Recovery 与 Compaction Observation，并把完整 Outcome supersession 链投影为

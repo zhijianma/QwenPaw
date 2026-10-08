@@ -583,6 +583,10 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
     长程意图；模型调用 `update_goal` 只是 Outcome 请求，必须由当前 Invocation 的 Host
     Broker 持久化后才生效。无 Chat 的 Channel 保留 session fallback，短问答无需进入
     Goal Mode。
+  - [x] Lite Goal 已通过 Kernel `GoalExecutionStore` 持久化并在 turn-start 恢复；CAS
+    revision 阻止 active replacement 和契约漂移，pending Outcome 可跨 Invocation
+    幂等收敛。Chat admission 在 active Goal 中继承同一 correlation；`/clear`、预算和
+    迭代上限只产生明确技术终态，不制造业务完成。
 - [ ] 冻结 Model Recovery Contract：区分连接前失败、部分流中断、Provider 限流、
   quota/budget/auth/policy、用户 Interrupt 与 unknown；transport retry 不消耗业务
   retry，超过短等待预算后持久化 Resource Wait 并释放运行槽。

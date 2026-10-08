@@ -108,7 +108,16 @@ class ContextVarsSetupHook(LifecycleHook):
                 producer_id="qwenpaw.system.goal-mode",
                 provider_kind=CapabilityProviderKind.SYSTEM,
             )
-        set_current_outcome_context(conversation_id, outcome_host)
+        set_current_outcome_context(
+            conversation_id,
+            outcome_host,
+            agent_id=(invocation.agent_id if invocation is not None else None),
+            correlation_id=(
+                (invocation.correlation_id or invocation.invocation_id)
+                if invocation is not None
+                else None
+            ),
+        )
         usage_context = (
             request_context if isinstance(request_context, dict) else {}
         )

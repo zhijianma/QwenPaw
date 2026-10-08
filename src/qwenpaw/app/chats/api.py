@@ -934,6 +934,27 @@ async def submit_chat_turn(
     )
     if body.model_slot_override is not None:
         native_payload["model_slot_override"] = body.model_slot_override
+    correlation_id = None
+    correlation_resolver = getattr(
+        workspace,
+        "conversation_correlation_resolver",
+        None,
+    )
+    resolve_correlation = getattr(
+        correlation_resolver,
+        "active_correlation",
+        None,
+    )
+    if callable(resolve_correlation):
+        correlation_id = await resolve_correlation(
+            agent_id=workspace.agent_id,
+            conversation_id=chat_id,
+        )
+    submission_fields = (
+        {"correlation_id": correlation_id}
+        if correlation_id is not None
+        else {}
+    )
     request = TurnSubmissionRequest(
         agent_id=workspace.agent_id,
         conversation_id=chat_id,
@@ -946,6 +967,7 @@ async def submit_chat_turn(
             payload=native_payload,
         ),
         idempotency_key=body.idempotency_key,
+        **submission_fields,
     )
     return await _apply_chat_control(
         dispatcher.enqueue(

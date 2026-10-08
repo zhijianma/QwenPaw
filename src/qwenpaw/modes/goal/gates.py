@@ -18,6 +18,7 @@ from ...loop.gates.base import (
 )
 from ...loop.gates.loop_gate import LoopGate
 from ...loop.gates.rubric import RubricVerdict
+from ...kernel import ConversationOutcomeStatus, GoalExecutionStatus
 
 if TYPE_CHECKING:
     from .goal_mode import GoalMode
@@ -123,10 +124,14 @@ class GoalTurnGate(LoopGate):
 
         if session.iteration >= self._max_iterations:
             session.active = False
+            session.status = GoalExecutionStatus.EXHAUSTED
+            session.last_verdict = "max_iterations_reached"
+            await self._mode.persist_current()
             return StopHandlerResult(
                 action=StopAction.TERMINATE,
                 reason="Max iterations reached",
             )
+        await self._mode.persist_current()
         return StopHandlerResult(
             action=StopAction.INTERRUPT_AND_CONTINUE,
         )
@@ -187,6 +192,9 @@ class GoalBudgetGate(LoopGate):
             return _bypass
 
         session.active = False
+        session.status = GoalExecutionStatus.EXHAUSTED
+        session.last_verdict = "token_budget_exceeded"
+        await self._mode.persist_current()
         return StopHandlerResult(
             action=StopAction.TERMINATE,
             reason="Token budget exceeded",
@@ -246,6 +254,15 @@ class RubricGate(LoopGate):
                 "Goal completed at iter=%d",
                 session.iteration,
             )
+            completed = await self._mode.finish_current(
+                status=ConversationOutcomeStatus.ACHIEVED,
+                verdict="satisfied",
+            )
+            if not completed:
+                return StopHandlerResult(
+                    action=StopAction.INTERRUPT_AND_CONTINUE,
+                    reason="Goal outcome persistence is still pending",
+                )
             return StopHandlerResult(
                 action=StopAction.TERMINATE,
                 reason=evaluation.explanation,

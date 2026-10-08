@@ -828,6 +828,27 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - Goal lifecycle 与 Outcome Host 共 20 项定点测试通过；新增/变更 Python 文件的
   AST、mypy、Black、flake8、pylint 与凭据扫描均通过。未运行全仓测试。
 
+### 2026-10-08 Durable Goal Execution Chain
+
+- Kernel 新增版本化 `GoalExecution`、`GoalExecutionStore` 与
+  `ConversationCorrelationResolver`；Plugin SDK 同步导出稳定类型，但当前未向任意
+  插件开放共享内置 Goal 写权限。
+- Lite `.qwenpaw/lite/goals.db` 以 Agent + `ChatSpec.id` 保存 objective、correlation、
+  预算、进度、终态 intent 和 CAS revision。active Goal 不能被覆盖，同一 Goal 的身份、
+  objective、预算和开始时间不能漂移；POSIX 数据库及 WAL/SHM owner-only。
+- `AgentMode.on_turn_start()` 在 Stop Gate scope 评估前恢复 Goal snapshot，不恢复旧
+  Python 协程。迭代/token 进度逐边界持久化；`/clear` 写 abandoned，预算或迭代上限写
+  exhausted，均不伪造业务 Outcome。
+- Goal 完成采用 `OUTCOME_PENDING -> Host declare -> COMPLETED/BLOCKED`。确定性
+  outcome ID 与 exact lookup 关闭“Outcome 已提交、Goal 尚未 finalize”的崩溃窗口；
+  新 Invocation 只能确认业务字段完全相同的结果，变化时失败关闭。
+- Chat durable submission 在 active/pending Goal 中继承原 correlation，Goal terminal
+  后恢复新意图分配；transport session 或 HTTP request 不再切断长程因果链。
+- Goal、Outcome、Chat API、Stop Gate、Runtime lifecycle 与 Plugin SDK 共 88 项定点
+  测试通过；
+  包含真实 SQLite 重启、CAS 冲突、契约漂移、`/clear`、进度恢复、跨 Invocation
+  Outcome 对账和 submission correlation 继承。未运行全仓测试。
+
 ### 本阶段此前已执行的定点验证
 
 - 后端核心路径定点测试：70 项通过。

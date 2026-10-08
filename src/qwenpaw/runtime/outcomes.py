@@ -138,9 +138,7 @@ class SQLiteConversationOutcomeStore:
                 ),
             ).fetchone()
             latest = (
-                self._parse(latest_row)
-                if latest_row is not None
-                else None
+                self._parse(latest_row) if latest_row is not None else None
             )
             if latest is None and outcome.supersedes_outcome_id is not None:
                 raise ConversationOutcomeConflictError(
@@ -183,6 +181,21 @@ class SQLiteConversationOutcomeStore:
         async with self._write_lock:
             await asyncio.to_thread(self._append_sync, outcome)
 
+    def _get_sync(self, outcome_id: UUID) -> ConversationOutcome | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT model_json FROM conversation_outcomes "
+                "WHERE outcome_id = ?",
+                (str(outcome_id),),
+            ).fetchone()
+        self._protect_files()
+        return self._parse(row) if row is not None else None
+
+    async def get(self, outcome_id: UUID) -> ConversationOutcome | None:
+        """Return one immutable outcome by id for recovery replay."""
+        await self.initialize()
+        return await asyncio.to_thread(self._get_sync, outcome_id)
+
     def _latest_for_correlations_sync(
         self,
         agent_id: str,
@@ -210,9 +223,7 @@ class SQLiteConversationOutcomeStore:
             outcome = self._parse(row)
             latest.setdefault(outcome.correlation_id, outcome)
         return tuple(
-            latest[item]
-            for item in correlation_ids
-            if item in latest
+            latest[item] for item in correlation_ids if item in latest
         )
 
     async def latest_for_correlations(

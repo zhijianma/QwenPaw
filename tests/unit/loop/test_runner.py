@@ -22,7 +22,14 @@ def _goal_handler() -> StopHandler:
         max_tokens=300000,
         tokens_used=0,
     )
-    mode: Any = SimpleNamespace(session_by_ctx_var=lambda: session)
+
+    async def persist_current() -> bool:
+        return True
+
+    mode: Any = SimpleNamespace(
+        session_by_ctx_var=lambda: session,
+        persist_current=persist_current,
+    )
     handler = StopHandler()
     handler.register(GoalTurnGate(mode))
     return handler

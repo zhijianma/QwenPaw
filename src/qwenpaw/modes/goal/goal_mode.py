@@ -14,7 +14,9 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from agentscope.message import Msg, TextBlock
 
@@ -25,6 +27,8 @@ from ...app.agent_context import (
 from ...kernel import (
     ConversationOutcomeRequest,
     ConversationOutcomeStatus,
+    GoalExecution,
+    GoalExecutionStatus,
 )
 from ...loop.gates import (
     GoalStatusRubric,
@@ -48,6 +52,7 @@ from .prompts import (
 )
 
 if TYPE_CHECKING:
+    from ...kernel import GoalExecutionStore
     from ...runtime.prompt_manager import (
         PromptContributor,
     )
@@ -70,6 +75,14 @@ class GoalSession:
     tokens_used: int = 0
     last_verdict: str = ""
     last_feedback: str = ""
+    goal_id: UUID = field(default_factory=uuid4)
+    agent_id: str = ""
+    conversation_id: str = ""
+    correlation_id: UUID | None = None
+    revision: int = 0
+    status: GoalExecutionStatus = GoalExecutionStatus.ACTIVE
+    outcome_id: UUID | None = None
+    outcome_status: ConversationOutcomeStatus | None = None
     started_at: float = field(
         default_factory=time.time,
     )
@@ -91,11 +104,12 @@ class GoalMode(AgentMode):
 
     name = "goal"
 
-    def __init__(self) -> None:
+    def __init__(self, store: GoalExecutionStore | None = None) -> None:
         self._sessions: dict[str, GoalSession] = {}
         self._default_max_iterations = DEFAULT_MAX_ITERATIONS
         self._default_max_tokens = DEFAULT_MAX_TOKENS
         self._handler: StopHandler | None = None
+        self._store = store
 
     @property
     def sessions(self) -> dict[str, GoalSession]:
@@ -151,9 +165,60 @@ class GoalMode(AgentMode):
         ctx: HookContext,
     ) -> None:
         """Clear the current Chat-owned goal on /new or /clear."""
-        self._sessions.pop(self._context_execution_key(ctx), None)
+        key = self._context_execution_key(ctx)
+        invocation = getattr(ctx, "invocation_scope", None)
+        conversation_id = getattr(invocation, "conversation_id", None)
+        agent_id = getattr(invocation, "agent_id", None)
+        if self._store is not None and conversation_id and agent_id:
+            current = await self._store.read(
+                agent_id=agent_id,
+                conversation_id=conversation_id,
+            )
+            if current is not None and current.status in {
+                GoalExecutionStatus.ACTIVE,
+                GoalExecutionStatus.OUTCOME_PENDING,
+            }:
+                abandoned = current.model_copy(
+                    update={
+                        "status": GoalExecutionStatus.ABANDONED,
+                        "outcome_id": None,
+                        "outcome_status": None,
+                        "last_verdict": "abandoned",
+                    },
+                )
+                await self._store.write(
+                    abandoned,
+                    expected_revision=current.revision,
+                )
+        self._sessions.pop(key, None)
         if self._handler is not None:
             self._handler.reset_session()
+
+    async def on_turn_start(self, ctx: HookContext) -> None:
+        """Restore durable Goal state before stop-gate scope selection."""
+        invocation = ctx.invocation_scope
+        if (
+            self._store is None
+            or invocation is None
+            or invocation.conversation_id is None
+        ):
+            return
+        execution = await self._store.read(
+            agent_id=invocation.agent_id,
+            conversation_id=invocation.conversation_id,
+        )
+        key = invocation.conversation_id
+        if execution is None or execution.status in {
+            GoalExecutionStatus.COMPLETED,
+            GoalExecutionStatus.BLOCKED,
+            GoalExecutionStatus.ABANDONED,
+            GoalExecutionStatus.EXHAUSTED,
+        }:
+            self._sessions.pop(key, None)
+            return
+        self._sessions[key] = self._session_from_execution(execution)
+        if execution.status is GoalExecutionStatus.OUTCOME_PENDING:
+            await self._finish_pending(self._sessions[key])
 
     # ---- AgentMode interface ----
 
@@ -224,6 +289,12 @@ class GoalMode(AgentMode):
     def setup(self, workspace: object) -> None:
         """Register gates into the goal-scoped handler."""
         super().setup(workspace)
+
+        from ...runtime.goals import lite_goal_execution_store
+
+        if self._store is None:
+            self._store = lite_goal_execution_store(workspace.workspace_dir)
+        setattr(workspace, "conversation_correlation_resolver", self._store)
 
         goal_config = workspace.config.running.loop.goal
         self._default_max_iterations = goal_config.max_iterations
@@ -316,12 +387,22 @@ class GoalMode(AgentMode):
         session_key = self._current_session_key(
             ctx,
         )
-        session = GoalSession(
-            goal=goal_text,
-            max_iterations=self._default_max_iterations,
+        created = await self.create_current_goal(
+            goal_text,
             max_tokens=self._default_max_tokens,
+            ctx=ctx,
         )
-        self._sessions[session_key] = session
+        if not created:
+            return Msg(
+                name="system",
+                role="system",
+                content=[
+                    TextBlock(
+                        type="text",
+                        text="An active goal already exists for this Chat.",
+                    ),
+                ],
+            )
 
         logger.info(
             "Goal mode activated: %s (key=%s)",
@@ -405,13 +486,124 @@ class GoalMode(AgentMode):
         *,
         status: ConversationOutcomeStatus,
         verdict: str,
-        summary: str,
     ) -> bool:
         """Persist business disposition before ending a Chat goal."""
-        from ...runtime.outcome_context import current_outcome_context
-
         session = self.active_session()
         if session is None:
+            return False
+        if session.status is GoalExecutionStatus.OUTCOME_PENDING:
+            if session.outcome_status is not status:
+                return False
+        else:
+            session.outcome_id = uuid5(
+                NAMESPACE_URL,
+                f"qwenpaw:goal:{session.goal_id}:{status.value}",
+            )
+            session.outcome_status = status
+            session.status = GoalExecutionStatus.OUTCOME_PENDING
+            session.last_verdict = verdict
+            if not await self.persist_current():
+                session.status = GoalExecutionStatus.ACTIVE
+                session.outcome_id = None
+                session.outcome_status = None
+                return False
+        return await self._finish_pending(session)
+
+    async def create_current_goal(
+        self,
+        objective: str,
+        *,
+        max_tokens: int,
+        ctx: Any | None = None,
+    ) -> bool:
+        """Create one Chat-owned Goal or a legacy in-memory fallback."""
+        from ...runtime.outcome_context import current_outcome_context
+
+        outcome_context = current_outcome_context()
+        invocation = getattr(ctx, "invocation_scope", None)
+        conversation_id = (
+            getattr(invocation, "conversation_id", None)
+            or outcome_context.conversation_id
+        )
+        agent_id = (
+            getattr(invocation, "agent_id", None)
+            or outcome_context.agent_id
+            or ""
+        )
+        correlation_id = (
+            getattr(invocation, "correlation_id", None)
+            or getattr(invocation, "invocation_id", None)
+            or outcome_context.correlation_id
+        )
+        fallback_key = (
+            self._current_session_key(ctx)
+            if ctx is not None
+            else self.current_execution_key()
+        )
+        key = str(conversation_id or fallback_key or "")
+        if not key:
+            return False
+        existing = self._sessions.get(key)
+        if existing is not None and existing.active:
+            return False
+        session = GoalSession(
+            goal=objective.strip(),
+            max_iterations=self._default_max_iterations,
+            max_tokens=max_tokens,
+            agent_id=str(agent_id),
+            conversation_id=str(conversation_id or ""),
+            correlation_id=correlation_id,
+        )
+        if (
+            self._store is not None
+            and conversation_id
+            and agent_id
+            and correlation_id is not None
+        ):
+            current = await self._store.read(
+                agent_id=str(agent_id),
+                conversation_id=str(conversation_id),
+            )
+            if current is not None and current.status in {
+                GoalExecutionStatus.ACTIVE,
+                GoalExecutionStatus.OUTCOME_PENDING,
+            }:
+                self._sessions[key] = self._session_from_execution(current)
+                return False
+            session.revision = current.revision if current is not None else 0
+            persisted = await self._store.write(
+                self._execution_from_session(session),
+                expected_revision=session.revision,
+            )
+            session = self._session_from_execution(persisted)
+        self._sessions[key] = session
+        return True
+
+    async def persist_current(self) -> bool:
+        """CAS-persist current progress when the Goal is Chat-owned."""
+        session = self.session_by_ctx_var()
+        if session is None or not session.conversation_id:
+            return True
+        if self._store is None:
+            return True
+        try:
+            persisted = await self._store.write(
+                self._execution_from_session(session),
+                expected_revision=session.revision,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Goal progress persistence failed")
+            return False
+        session.revision = persisted.revision
+        session.started_at = persisted.started_at.timestamp()
+        self._sessions[session.conversation_id] = session
+        return True
+
+    async def _finish_pending(self, session: GoalSession) -> bool:
+        """Idempotently declare and close one prepared Goal outcome."""
+        from ...runtime.outcome_context import current_outcome_context
+
+        if session.outcome_id is None or session.outcome_status is None:
             return False
         outcome_context = current_outcome_context()
         if outcome_context.conversation_id is not None:
@@ -421,18 +613,88 @@ class GoalMode(AgentMode):
             try:
                 await outcome_context.host.declare(
                     ConversationOutcomeRequest(
-                        status=status,
-                        summary=summary,
+                        outcome_id=session.outcome_id,
+                        status=session.outcome_status,
+                        summary=self._outcome_summary(
+                            session.outcome_status,
+                        ),
                     ),
                 )
             except Exception:  # noqa: BLE001
                 logger.exception("Goal outcome declaration failed")
                 return False
+        session.status = (
+            GoalExecutionStatus.COMPLETED
+            if session.outcome_status is ConversationOutcomeStatus.ACHIEVED
+            else GoalExecutionStatus.BLOCKED
+        )
+        if not await self.persist_current():
+            session.status = GoalExecutionStatus.OUTCOME_PENDING
+            return False
         session.active = False
-        session.last_verdict = verdict
-        if status is ConversationOutcomeStatus.ACHIEVED:
+        if session.status is GoalExecutionStatus.COMPLETED:
             self.deactivate()
         return True
+
+    @staticmethod
+    def _outcome_summary(status: ConversationOutcomeStatus) -> str:
+        if status is ConversationOutcomeStatus.ACHIEVED:
+            return "The active long-running goal was explicitly completed."
+        return (
+            "The active long-running goal stopped at a confirmed "
+            "blocking boundary."
+        )
+
+    @staticmethod
+    def _session_from_execution(execution: GoalExecution) -> GoalSession:
+        return GoalSession(
+            goal=execution.objective,
+            active=execution.status
+            in {
+                GoalExecutionStatus.ACTIVE,
+                GoalExecutionStatus.OUTCOME_PENDING,
+            },
+            iteration=execution.iteration,
+            max_iterations=execution.max_iterations,
+            max_tokens=execution.token_budget,
+            tokens_used=execution.tokens_used,
+            last_verdict=execution.last_verdict,
+            last_feedback=execution.last_feedback,
+            goal_id=execution.goal_id,
+            agent_id=execution.agent_id,
+            conversation_id=execution.conversation_id,
+            correlation_id=execution.correlation_id,
+            revision=execution.revision,
+            status=execution.status,
+            outcome_id=execution.outcome_id,
+            outcome_status=execution.outcome_status,
+            started_at=execution.started_at.timestamp(),
+        )
+
+    @staticmethod
+    def _execution_from_session(session: GoalSession) -> GoalExecution:
+        assert session.correlation_id is not None
+        return GoalExecution(
+            goal_id=session.goal_id,
+            agent_id=session.agent_id,
+            conversation_id=session.conversation_id,
+            correlation_id=session.correlation_id,
+            objective=session.goal,
+            status=session.status,
+            iteration=session.iteration,
+            max_iterations=session.max_iterations,
+            tokens_used=session.tokens_used,
+            token_budget=session.max_tokens,
+            last_verdict=session.last_verdict,
+            last_feedback=session.last_feedback,
+            outcome_id=session.outcome_id,
+            outcome_status=session.outcome_status,
+            revision=session.revision,
+            started_at=datetime.fromtimestamp(
+                session.started_at,
+                timezone.utc,
+            ),
+        )
 
     def get_session(
         self,

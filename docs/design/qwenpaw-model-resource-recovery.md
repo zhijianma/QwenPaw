@@ -151,6 +151,11 @@ Goal Mode 是当前长程快速路径，而不是另一套 Task 状态机。它�
 active，避免把 Tool 调用成功、最终文本或连接关闭误判为业务完成。预算与迭代上限只
 结束本次技术运行，不自动制造缺少证据的业务 Outcome。
 
+Goal state 现由 Lite `GoalExecutionStore` 持久化；进度、预算、correlation 和待声明
+Outcome 均可跨进程恢复。完成使用 `OUTCOME_PENDING -> Host declare -> terminal`，
+崩溃后由新 Invocation 以确定性 outcome ID 对账。Chat 新输入在 active/pending 时继承
+原 correlation，终态后才形成新意图。
+
 当前 Console 兼容 Adapter 会从 typed envelope 装配固定、内容最小化的 runtime
 recovery input。Resource Wait 与 Model Step Continuation 都只传递权威事实引用；这是
 旧消息执行入口的桥接，不是把恢复重新定义为用户消息。后续 Runtime 原生输入应直接

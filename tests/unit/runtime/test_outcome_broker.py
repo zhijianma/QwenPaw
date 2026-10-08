@@ -26,6 +26,7 @@ from qwenpaw.kernel.models import (
     VerificationPolicy,
     VerificationResult,
     VerificationStatus,
+    utc_now,
 )
 from qwenpaw.runtime.outcome_broker import (
     HostOutcomeBroker,
@@ -156,6 +157,63 @@ async def test_chat_outcome_requires_registered_producer(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_outcome_replay_can_cross_invocations(tmp_path) -> None:
+    broker = HostOutcomeBroker(
+        store=lite_conversation_outcome_store(tmp_path),
+        conversation_artifacts=_Artifacts(),
+        producers=(_producer(),),
+    )
+    declaration = ConversationOutcomeDeclaration(
+        agent_id="default",
+        conversation_id="chat-1",
+        correlation_id=uuid4(),
+        status=ConversationOutcomeStatus.ACHIEVED,
+        producer_id="qwenpaw.system.outcome",
+        summary="The durable goal is complete.",
+        invocation_id=uuid4(),
+        registry_generation=1,
+    )
+    first = await broker.declare(declaration)
+
+    replay = declaration.model_copy(
+        update={
+            "invocation_id": uuid4(),
+            "registry_generation": 2,
+            "declared_at": utc_now(),
+        },
+    )
+    second = await broker.declare(replay)
+
+    assert second == first
+
+
+@pytest.mark.asyncio
+async def test_outcome_replay_rejects_changed_business_claim(tmp_path) -> None:
+    broker = HostOutcomeBroker(
+        store=lite_conversation_outcome_store(tmp_path),
+        conversation_artifacts=_Artifacts(),
+        producers=(_producer(),),
+    )
+    declaration = ConversationOutcomeDeclaration(
+        agent_id="default",
+        conversation_id="chat-1",
+        correlation_id=uuid4(),
+        status=ConversationOutcomeStatus.ACHIEVED,
+        producer_id="qwenpaw.system.outcome",
+        summary="The durable goal is complete.",
+    )
+    await broker.declare(declaration)
+
+    with pytest.raises(
+        OutcomeAdmissionError,
+        match="outcome_replay_conflict",
+    ):
+        await broker.declare(
+            declaration.model_copy(update={"summary": "Changed claim."}),
+        )
+
+
+@pytest.mark.asyncio
 async def test_chat_outcome_rejects_unowned_references(tmp_path) -> None:
     broker = HostOutcomeBroker(
         store=lite_conversation_outcome_store(tmp_path),
@@ -187,9 +245,7 @@ def _verified_task():
     contract = ExecutionContract(
         goal="Translate README installation",
         acceptance=(criterion,),
-        required_artifacts=(
-            ArtifactRequirement(kind="document.readme_it"),
-        ),
+        required_artifacts=(ArtifactRequirement(kind="document.readme_it"),),
         verification_policy=VerificationPolicy(
             verifier_ids=("verifier.tests",),
             require_evidence=True,

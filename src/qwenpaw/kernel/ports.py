@@ -121,6 +121,7 @@ from .inbox import InboxItem
 from .operational import OperationalEvent
 from .observations import ObservationPage, RuntimeObservation
 from .outcomes import ConversationOutcome, ConversationOutcomeRequest
+from .goals import GoalExecution
 from .waits import ConversationContinuation, WaitCondition
 from .artifacts import (
     ConversationArtifactRecord,
@@ -1641,6 +1642,48 @@ class ConversationOutcomeStore(Protocol):
         correlation_ids: Sequence[UUID],
     ) -> Sequence[ConversationOutcome]:
         """Return at most one latest outcome for each requested intent."""
+
+
+@runtime_checkable
+class ConversationOutcomeLookupPort(Protocol):
+    """Optional exact lookup used for cross-Invocation idempotency."""
+
+    async def get(self, outcome_id: UUID) -> ConversationOutcome | None:
+        """Return one immutable outcome by id for recovery replay."""
+
+
+@runtime_checkable
+class GoalExecutionStore(Protocol):
+    """Revisioned source of the current long-running Goal per Chat."""
+
+    async def read(
+        self,
+        *,
+        agent_id: str,
+        conversation_id: str,
+    ) -> GoalExecution | None:
+        """Return the current durable Goal snapshot for one Chat."""
+
+    async def write(
+        self,
+        execution: GoalExecution,
+        *,
+        expected_revision: int,
+    ) -> GoalExecution:
+        """Create or replace one exact observed Goal revision."""
+
+
+@runtime_checkable
+class ConversationCorrelationResolver(Protocol):
+    """Resolve an active long-running intent at submission admission."""
+
+    async def active_correlation(
+        self,
+        *,
+        agent_id: str,
+        conversation_id: str,
+    ) -> UUID | None:
+        """Return the active correlation or None for a new intent."""
 
 
 @runtime_checkable
