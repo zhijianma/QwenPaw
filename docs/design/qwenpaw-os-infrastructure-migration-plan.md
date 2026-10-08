@@ -1072,7 +1072,12 @@ Cron 不形成独立审批或产物事实源。
     32 KiB prompt、共享 Tool catalog 规则与 5 秒 open/close timeout，并保证失败路径
     仍关闭 Session。真实 `runtime-provider-kit.project-memory` 与内置 Workspace Memory
     Provider 共用门禁；Evidence 不保存 prompt 或 state value。
-  - [ ] 为 runner、driver、scheduler、delivery 等高风险 Slot 分别实现
+  - [x] `driver.provider` 已接入 catalog-only Session Scenario：Plugin Host 无
+    Credential 且拒绝 open 阶段 Approval，系统私有 Host 只返回空兼容目录；场景复用
+    Kernel `validate_driver_session`，验证 provider ownership、唯一 capability/name、
+    128 tools、64 KiB catalog、16 fragments、32 KiB prompt 与 close timeout，绝不调用
+    `invoke()`。Runtime 继续兼容导出同一验证函数，不再维护第二份规则。
+  - [ ] 为 runner、scheduler、delivery 等高风险 Slot 分别实现
     无副作用或可隔离的真实 Scenario，并补齐 Evidence Artifact、人工授权策略与卸载
     授权门禁。关键词发现索引与 Workstation/Hub Release Registry 仍待实现。
 

@@ -16,6 +16,10 @@ from qwenpaw.capabilities.system_memory import (
     SYSTEM_MEMORY_CAPABILITY_BUNDLE,
     system_memory_contribution_factory,
 )
+from qwenpaw.capabilities.system_drivers import (
+    SYSTEM_DRIVER_CAPABILITY_BUNDLE,
+    system_driver_contribution_factory,
+)
 from qwenpaw.capabilities.promotions import (
     LiteCapabilityPromotionScenarioRunner,
 )
@@ -29,7 +33,10 @@ from qwenpaw.kernel import (
     CapabilityPromotionCandidate,
     CapabilityProviderKind,
     CapabilityPromotionAssessment,
+    DriverApprovalRequest,
+    DriverToolDefinition,
     MemoryStateScope,
+    PromptFragment,
     ToolDefinition,
 )
 
@@ -178,6 +185,83 @@ class _MemoryProvider:
         return self.session
 
 
+async def _driver_invoke(payload):
+    return payload
+
+
+class _DriverSession:
+    def __init__(
+        self,
+        provider_id: str,
+        *,
+        foreign_tool: bool = False,
+    ) -> None:
+        self.provider_id = provider_id
+        self._foreign_tool = foreign_tool
+        self.closed = False
+
+    def list_tools(self):
+        return (
+            DriverToolDefinition(
+                provider_id=(
+                    "foreign.driver"
+                    if self._foreign_tool
+                    else self.provider_id
+                ),
+                capability_id="driver://promotion/tools/read#invoke",
+                name="promotion_driver_read",
+                invoke=_driver_invoke,
+            ),
+        )
+
+    def prompt_fragments(self):
+        return (
+            PromptFragment(
+                fragment_id=f"{self.provider_id}.policy",
+                content="Promotion scenario policy.",
+            ),
+        )
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class _DriverProvider:
+    provider_id = "example.driver.provider"
+
+    def __init__(
+        self,
+        *,
+        foreign_tool: bool = False,
+        approval_on_open: bool = False,
+    ) -> None:
+        self._foreign_tool = foreign_tool
+        self._approval_on_open = approval_on_open
+        self.session: _DriverSession | None = None
+
+    async def health_check(self) -> bool:
+        return True
+
+    async def open(self, scope, host):
+        assert scope.selection.driver_provider_id == self.provider_id
+        assert host.config_snapshot() == {}
+        assert host.credential("service") is None
+        assert not hasattr(host, "load")
+        if self._approval_on_open:
+            await host.require_approval(
+                DriverApprovalRequest(
+                    provider_id=self.provider_id,
+                    capability_id="driver://promotion/open#invoke",
+                    tool_name="promotion_open",
+                ),
+            )
+        self.session = _DriverSession(
+            self.provider_id,
+            foreign_tool=self._foreign_tool,
+        )
+        return self.session
+
+
 def _bundle(
     provider_kind: CapabilityProviderKind,
 ) -> CapabilityBundle:
@@ -232,6 +316,21 @@ def _memory_bundle() -> CapabilityBundle:
                 contribution_id="provider",
                 slot="memory.provider",
                 entrypoint="example:memory",
+            ),
+        ),
+    )
+
+
+def _driver_bundle() -> CapabilityBundle:
+    return CapabilityBundle(
+        provider_id="example.driver",
+        provider_kind=CapabilityProviderKind.PLUGIN,
+        version="1.0.0",
+        contributions=(
+            CapabilityContribution(
+                contribution_id="provider",
+                slot="driver.provider",
+                entrypoint="example:driver",
             ),
         ),
     )
@@ -577,4 +676,83 @@ async def test_system_memory_provider_uses_same_session_scenario() -> None:
 
     lease = await registry.pin()
     assert lease.resolve("qwenpaw.system.memory.workspace-memory") is not None
+    await lease.close()
+
+
+@pytest.mark.asyncio
+async def test_plugin_driver_provider_catalog_scenario_passes() -> None:
+    bundle = _driver_bundle()
+    provider = _DriverProvider()
+    registry = GenerationRegistry(
+        promotion_scenario_runner=LiteCapabilityPromotionScenarioRunner(),
+    )
+
+    await registry.activate_bundle(
+        bundle,
+        lambda _declaration: provider,
+    )
+    [evidence_bundle] = await registry.promotion_evidence(
+        _candidate(bundle).candidate_id,
+    )
+    scenario = next(
+        item
+        for item in evidence_bundle.evidence
+        if item.check_id.startswith("scenario.driver-provider.catalog")
+    )
+
+    assert scenario.outcome is CapabilityCheckOutcome.PASSED
+    assert provider.session is not None
+    assert provider.session.closed
+
+
+@pytest.mark.asyncio
+async def test_foreign_driver_tool_blocks_publication_and_closes() -> None:
+    bundle = _driver_bundle()
+    provider = _DriverProvider(foreign_tool=True)
+    registry = GenerationRegistry(
+        promotion_scenario_runner=LiteCapabilityPromotionScenarioRunner(),
+    )
+
+    with pytest.raises(ActivationError, match="did not allow"):
+        await registry.activate_bundle(
+            bundle,
+            lambda _declaration: provider,
+        )
+
+    assert registry.generation == 1
+    assert provider.session is not None
+    assert provider.session.closed
+
+
+@pytest.mark.asyncio
+async def test_driver_approval_during_open_blocks_publication() -> None:
+    bundle = _driver_bundle()
+    provider = _DriverProvider(approval_on_open=True)
+    registry = GenerationRegistry(
+        promotion_scenario_runner=LiteCapabilityPromotionScenarioRunner(),
+    )
+
+    with pytest.raises(ActivationError, match="did not allow"):
+        await registry.activate_bundle(
+            bundle,
+            lambda _declaration: provider,
+        )
+
+    assert registry.generation == 1
+    assert provider.session is None
+
+
+@pytest.mark.asyncio
+async def test_system_driver_provider_uses_same_catalog_scenario() -> None:
+    registry = GenerationRegistry(
+        promotion_scenario_runner=LiteCapabilityPromotionScenarioRunner(),
+    )
+
+    await registry.activate_bundle(
+        SYSTEM_DRIVER_CAPABILITY_BUNDLE,
+        system_driver_contribution_factory,
+    )
+
+    lease = await registry.pin()
+    assert lease.resolve("qwenpaw.system.drivers.workspace-driver") is not None
     await lease.close()

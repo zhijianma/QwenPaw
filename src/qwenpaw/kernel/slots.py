@@ -145,6 +145,7 @@ _SLOT_CONTRACTS = {
         ("DriverSession",),
         "invocation",
         promotion_risk="high",
+        promotion_scenarios=("driver-provider.catalog",),
     ),
     "memory": _contract(
         "memory",

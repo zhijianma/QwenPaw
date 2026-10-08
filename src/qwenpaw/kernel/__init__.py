@@ -10,6 +10,7 @@ from .driver import (
     CapabilityCredentialUnavailableError,
     DriverApprovalRejectedError,
     DriverCredentialUnavailableError,
+    validate_driver_session,
 )
 from .models import (
     ActionApprovalLink,
@@ -630,6 +631,7 @@ __all__ = [
     "ConversationTaskResultRecords",
     "DriverApprovalRejectedError",
     "DriverCredentialUnavailableError",
+    "validate_driver_session",
     "DriverApprovalRequest",
     "DriverToolDefinition",
     "EnvironmentContract",

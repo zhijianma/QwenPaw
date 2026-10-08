@@ -597,10 +597,30 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   被拒绝且 Session 正常关闭。
 - 该边界是 Host capability isolation，不是 OS sandbox。恶意本地 Python 插件仍可绕过
   SDK 直接访问系统资源；sync `get_prompt()` / `list_tools()` 也还没有可强制终止的
-  进程隔离。Driver、Runner、Delivery 不能在缺少 sandbox/Action Plane 时直接试跑。
+  进程隔离。Driver、Runner、Delivery 的副作用方法不能在缺少 sandbox/Action Plane
+  时直接试跑。
 - 本切片 148 项 Promotion、Slot、Tool/Memory Provider、Memory State、Assembly、
   Plugin SDK、system contribution、Workspace Registry 与管理 API 定点测试通过；
   文件级 AST、mypy、flake8、pylint 门禁通过，未执行全仓测试。
+
+### 2026-10-08 Driver Provider Promotion Scenario
+
+- Driver Session 的纯目录验证从 Runtime 归位到 Kernel；Runtime 保留兼容导出，实际
+  Toolkit 装配与 Promotion 使用同一 `validate_driver_session`，避免规则漂移。新增
+  64 KiB tool catalog 序列化预算，补足原有 128 tools、16 fragments 和 32 KiB prompt
+  限制。
+- `driver.provider` 新增 `driver-provider.catalog` Scenario。Plugin Host 只提供空配置、
+  无 Credential，并拒绝 open 阶段的 Approval；内置 Provider 使用独立私有 Host，
+  `load()` 只返回空兼容目录，第三方看不到该方法。
+- 场景打开 staged Session，验证 Session/provider identity、tool ownership、唯一
+  capability/name、input schema、effect/risk/reversible 和 Prompt Fragment ownership，
+  但绝不调用 `invoke()`。open/close 受 5 秒预算约束，验证失败后仍关闭 Session。
+- 真实 `runtime-provider-kit.example-driver` 与内置 Workspace Driver Provider 走同一
+  门禁；foreign tool ownership 和 open 阶段 Approval 均在 generation 发布前被拒绝。
+  真正 Driver 调用仍必须经过 Tool Guard、Approval、Action Request/Result 与 Evidence。
+- 本切片 165 项 Promotion、Kernel Driver、Driver 合同、Tool/Memory/Driver Provider、
+  Assembly、Plugin SDK、system contribution、Workspace Registry 与管理 API 定点测试
+  通过；文件级 AST、mypy、flake8、pylint 门禁通过，未执行全仓测试。
 
 ### 本阶段此前已执行的定点验证
 

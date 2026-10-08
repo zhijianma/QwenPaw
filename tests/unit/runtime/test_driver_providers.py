@@ -313,6 +313,28 @@ def test_driver_session_rejects_foreign_tool_ownership() -> None:
         validate_driver_session(session, "example.driver")
 
 
+def test_driver_session_rejects_oversized_tool_catalog() -> None:
+    async def invoke(payload: dict[str, object]) -> object:
+        return payload
+
+    session = SimpleNamespace(
+        provider_id="example.driver",
+        list_tools=lambda: (
+            DriverToolDefinition(
+                provider_id="example.driver",
+                capability_id="driver://example/tools/large#invoke",
+                name="large_tool",
+                description="x" * (64 * 1024),
+                invoke=invoke,
+            ),
+        ),
+        prompt_fragments=lambda: (),
+    )
+
+    with pytest.raises(ValueError, match="catalog is too large"):
+        validate_driver_session(session, "example.driver")
+
+
 def _approval_context(
     interactions: InteractionService,
 ) -> dict[str, object]:

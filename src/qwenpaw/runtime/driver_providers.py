@@ -10,6 +10,7 @@ from typing import Any, Mapping
 
 from ..kernel.driver import (
     DriverApprovalRejectedError,
+    validate_driver_session,
 )
 from ..kernel.models import (
     DriverApprovalRequest,
@@ -21,10 +22,6 @@ from .provider_credentials import (
     WorkspaceCredentialHandle,
     provider_credential_handle,
 )
-
-_MAX_DRIVER_TOOLS = 128
-_MAX_DRIVER_PROMPT_FRAGMENTS = 16
-_MAX_DRIVER_PROMPT_BYTES = 32 * 1024
 
 
 class ProviderDriverHost:
@@ -208,83 +205,6 @@ async def close_driver_session(session: object | None) -> None:
     result = close()
     if inspect.isawaitable(result):
         await result
-
-
-def _validate_driver_definitions(
-    definitions: tuple[DriverToolDefinition, ...],
-    provider_id: str,
-) -> None:
-    """Validate typed tools and their provider ownership."""
-    if len(definitions) > _MAX_DRIVER_TOOLS:
-        raise ValueError(
-            f"driver provider '{provider_id}' returned too many tools",
-        )
-    capability_ids: set[str] = set()
-    tool_names: set[str] = set()
-    for definition in definitions:
-        if not isinstance(definition, DriverToolDefinition):
-            raise TypeError(
-                f"driver provider '{provider_id}' returned an untyped tool",
-            )
-        if definition.provider_id != provider_id:
-            raise ValueError(
-                f"driver tool '{definition.name}' has foreign ownership",
-            )
-        if definition.capability_id in capability_ids:
-            raise ValueError("driver capability IDs must be unique")
-        if definition.name in tool_names:
-            raise ValueError("driver tool names must be unique")
-        capability_ids.add(definition.capability_id)
-        tool_names.add(definition.name)
-
-
-def _validate_driver_fragments(
-    fragments: tuple[PromptFragment, ...],
-    provider_id: str,
-) -> None:
-    """Validate bounded prompts and their provider ownership."""
-    if len(fragments) > _MAX_DRIVER_PROMPT_FRAGMENTS:
-        raise ValueError(
-            f"driver provider '{provider_id}' returned too many prompts",
-        )
-    fragment_ids: set[str] = set()
-    prompt_bytes = 0
-    for fragment in fragments:
-        if not isinstance(fragment, PromptFragment):
-            raise TypeError(
-                f"driver provider '{provider_id}' returned an untyped prompt",
-            )
-        if not fragment.fragment_id.startswith(f"{provider_id}."):
-            raise ValueError(
-                f"driver prompt '{fragment.fragment_id}' has foreign "
-                "ownership",
-            )
-        if fragment.fragment_id in fragment_ids:
-            raise ValueError("driver prompt IDs must be unique")
-        fragment_ids.add(fragment.fragment_id)
-        prompt_bytes += len(fragment.content.encode("utf-8"))
-    if prompt_bytes > _MAX_DRIVER_PROMPT_BYTES:
-        raise ValueError(
-            f"driver provider '{provider_id}' prompt content is too large",
-        )
-
-
-def validate_driver_session(
-    session: object,
-    provider_id: str,
-) -> tuple[tuple[DriverToolDefinition, ...], tuple[PromptFragment, ...]]:
-    """Validate one pinned Driver session before Toolkit publication."""
-    if getattr(session, "provider_id", None) != provider_id:
-        raise TypeError(
-            f"driver session for '{provider_id}' has a mismatched identity",
-        )
-    definitions = tuple(session.list_tools())
-    fragments = tuple(session.prompt_fragments())
-    _validate_driver_definitions(definitions, provider_id)
-    _validate_driver_fragments(fragments, provider_id)
-    return definitions, tuple(
-        sorted(fragments, key=lambda item: (item.priority, item.fragment_id)),
-    )
 
 
 __all__ = [

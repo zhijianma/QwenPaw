@@ -33,15 +33,20 @@ from ..kernel import (
     CapabilityReleaseTag,
     CapabilitySelection,
     CapabilityDescriptor,
+    DriverApprovalRejectedError,
+    DriverApprovalRequest,
     InvocationScope,
     MemoryStateConflictError,
     MemoryStateScope,
     MemoryStateSnapshot,
     ToolDefinition,
     ToolSelection,
+    validate_driver_session,
 )
 from ..kernel.ports import (
     ArtifactRenderer,
+    DriverProvider,
+    DriverSession,
     MemoryProvider,
     MemorySession,
     ToolProvider,
@@ -496,6 +501,56 @@ class LiteCapabilityPromotionScenarioRunner:
             else CapabilityCheckOutcome.PASSED
         )
 
+    async def _run_driver_provider(
+        self,
+        implementation: object,
+        capability_id: str,
+        generation: int,
+        descriptor: CapabilityDescriptor | None,
+    ) -> CapabilityCheckOutcome:
+        if not isinstance(implementation, DriverProvider):
+            return CapabilityCheckOutcome.FAILED
+        config_outcome = self._empty_config_outcome(descriptor)
+        if config_outcome is not None:
+            return config_outcome
+        session: DriverSession | None = None
+        failed = False
+        host_type = (
+            _PromotionScenarioWorkspaceDriverHost
+            if descriptor.provider_kind is CapabilityProviderKind.SYSTEM
+            else _PromotionScenarioDriverHost
+        )
+        try:
+            session = await asyncio.wait_for(
+                implementation.open(
+                    _promotion_driver_invocation_scope(
+                        capability_id,
+                        generation,
+                    ),
+                    host_type(),
+                ),
+                timeout=self._TIMEOUT_SECONDS,
+            )
+            if not isinstance(session, DriverSession):
+                raise ValueError("driver provider returned an invalid session")
+            validate_driver_session(session, capability_id)
+        except Exception:  # pylint: disable=broad-except
+            failed = True
+        finally:
+            if session is not None:
+                try:
+                    await asyncio.wait_for(
+                        session.close(),
+                        timeout=self._TIMEOUT_SECONDS,
+                    )
+                except Exception:  # pylint: disable=broad-except
+                    failed = True
+        return (
+            CapabilityCheckOutcome.FAILED
+            if failed
+            else CapabilityCheckOutcome.PASSED
+        )
+
     async def run(
         self,
         candidate: CapabilityPromotionCandidate,
@@ -524,6 +579,13 @@ class LiteCapabilityPromotionScenarioRunner:
                     )
                 elif scenario_id == "memory-provider.session":
                     outcome = await self._run_memory_provider(
+                        implementations.get(item.capability_id),
+                        item.capability_id,
+                        release.promoted_generation,
+                        descriptor,
+                    )
+                elif scenario_id == "driver-provider.catalog":
+                    outcome = await self._run_driver_provider(
                         implementations.get(item.capability_id),
                         item.capability_id,
                         release.promoted_generation,
@@ -565,6 +627,25 @@ def _promotion_invocation_scope(
         registry_generation=generation,
         selection=CapabilitySelection(
             memory_provider_id=capability_id,
+        ),
+    )
+
+
+def _promotion_driver_invocation_scope(
+    capability_id: str,
+    generation: int,
+) -> InvocationScope:
+    """Create an isolated Driver catalog-discovery fixture."""
+    return InvocationScope(
+        agent_id="promotion-scenario",
+        conversation_id="promotion-scenario",
+        session_id="promotion-scenario",
+        root_agent_id="promotion-scenario",
+        root_session_id="promotion-scenario",
+        workspace_dir=".",
+        registry_generation=generation,
+        selection=CapabilitySelection(
+            driver_provider_id=capability_id,
         ),
     )
 
@@ -680,6 +761,38 @@ class _PromotionScenarioWorkspaceMemoryHost(
     def compatibility_backend(self) -> None:
         """Let the built-in adapter bind an inert empty backend."""
         return None
+
+
+class _PromotionScenarioDriverHost:
+    """Expose no credentials or approval side effects during promotion."""
+
+    async def require_approval(
+        self,
+        request: DriverApprovalRequest,
+    ) -> None:
+        """Reject approval attempts outside a real Invocation."""
+        raise DriverApprovalRejectedError(
+            request.capability_id,
+            "promotion scenarios cannot request approval",
+        )
+
+    def config_snapshot(self) -> dict:
+        """Return empty non-secret config for catalog discovery."""
+        return {}
+
+    def credential(self, alias: str) -> None:
+        """Deny credential access during promotion scenarios."""
+        del alias
+
+
+class _PromotionScenarioWorkspaceDriverHost(
+    _PromotionScenarioDriverHost,
+):
+    """Add only the built-in Provider's inert compatibility loader."""
+
+    async def load(self) -> tuple[tuple[()], tuple[()]]:
+        """Return no real Workspace Driver tools or prompt fragments."""
+        return (), ()
 
 
 class FilesystemCapabilityPromotionEvidenceStore:

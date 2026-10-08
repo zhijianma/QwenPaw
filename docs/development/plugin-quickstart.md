@@ -1049,6 +1049,17 @@ approval; denial, timeout or persistence failure raises
 normally. Never catch that error and execute the side effect anyway. See
 `examples/plugins/runtime-provider-kit/runtime_provider_kit/driver.py`.
 
+Promotion opens the staged Driver once with empty non-secret configuration,
+no credentials, and an approval method that always rejects. It validates the
+same Kernel-owned Session/catalog contract used at runtime: provider ownership,
+unique capability IDs and names, 128-tool and 64 KiB catalog limits, at most
+16 Prompt Fragments and 32 KiB of prompt content. It never calls `invoke()`.
+Requesting approval during `open()` is invalid because no real Invocation or
+Action exists yet; approval belongs inside the returned tool's invocation
+path. The Session must close within five seconds even after validation fails.
+Built-in Driver discovery uses a separate private Host returning an empty
+compatibility catalog, so third-party plugins cannot probe `load()`.
+
 Every Driver definition must classify its effect, risk, and reversibility so
 the host can persist an `ActionRequest` before invocation. The compatibility
 defaults are deliberately conservative (`external_write`, `high`, and not
