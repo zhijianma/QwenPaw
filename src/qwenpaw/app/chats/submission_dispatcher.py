@@ -20,6 +20,7 @@ from ...kernel import (
     TERMINAL_SUBMISSION_STATUSES,
     ActionRecord,
     ActionRetryContinuation,
+    ActionRetryContinuationStatus,
     BackgroundActionContextCheckpoint,
     BackgroundActionContinuation,
     BackgroundActionContinuationStatus,
@@ -46,6 +47,7 @@ from ...kernel import (
     TurnSubmission,
     TurnSubmissionRequest,
 )
+from ...utils.io_utils import run_sync_io
 from .input_context import persist_pending_project_dirs
 
 CONSOLE_SUBMISSION_ENVELOPE = "chat.console.native.v1"
@@ -150,6 +152,7 @@ class WorkspaceChatSubmissionDispatcher:
                 action_store=self._actions,
             )
             await self._cancel_superseded_action_retries()
+            await self._dispatch_ready_action_retries()
         if self._resource_waits is not None:
             await self._dispatch_ready_resource_waits()
             await self._dispatch_ready_model_steps()
@@ -169,6 +172,7 @@ class WorkspaceChatSubmissionDispatcher:
             self._resource_waits is not None
             or self._harness_steps is not None
             or self._background_actions is not None
+            or self._action_retries is not None
         ) and self._resource_wait_task is None:
             self._resource_wait_task = asyncio.create_task(
                 self._run_resource_waits(),
@@ -274,13 +278,23 @@ class WorkspaceChatSubmissionDispatcher:
         expected_payload = {
             "continuation_id": str(continuation.continuation_id),
         }
-        if (
-            submission.agent_id != checkpoint.agent_id
-            or submission.conversation_id != checkpoint.conversation_id
-            or envelope is None
-            or envelope.kind != CONSOLE_ACTION_RETRY_ENVELOPE
-            or envelope.payload != expected_payload
-        ):
+        expected = (
+            ActionRetryContinuationStatus.DISPATCHED,
+            continuation.dispatch_id,
+            checkpoint.agent_id,
+            checkpoint.conversation_id,
+            CONSOLE_ACTION_RETRY_ENVELOPE,
+            expected_payload,
+        )
+        actual = (
+            continuation.status,
+            submission.submission_id,
+            submission.agent_id,
+            submission.conversation_id,
+            envelope.kind if envelope is not None else None,
+            envelope.payload if envelope is not None else None,
+        )
+        if actual != expected:
             raise RuntimeError(
                 "interrupted Action retry Submission identity mismatch",
             )
@@ -374,6 +388,76 @@ class WorkspaceChatSubmissionDispatcher:
             for item in submissions
         )
 
+    async def _dispatch_ready_action_retries(self) -> None:
+        """Bind every ready Action retry to one durable Submission."""
+        pending = await self._action_retries.list_pending(
+            agent_id=self._workspace.agent_id,
+        )
+        first_error: Exception | None = None
+        for continuation in pending:
+            if (
+                continuation.status
+                is not ActionRetryContinuationStatus.READY
+            ):
+                continue
+            try:
+                if await self._action_retry_is_superseded(continuation):
+                    await self._action_retries.cancel(
+                        continuation.continuation_id,
+                    )
+                    continue
+                dispatched = await self._action_retries.dispatch(
+                    continuation.continuation_id,
+                    self._enqueue_action_retry,
+                )
+                if dispatched.dispatch_id is not None:
+                    self._dispatcher.wake()
+            except Exception as exc:  # pylint: disable=broad-except
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
+
+    async def _enqueue_action_retry(
+        self,
+        continuation: ActionRetryContinuation,
+    ) -> UUID | None:
+        """Enqueue one content-free pointer after final fencing."""
+        checkpoint = continuation.checkpoint
+        conversation_id = checkpoint.conversation_id
+        if conversation_id is None:
+            return None
+        if await self._action_retry_is_superseded(continuation):
+            return None
+        projection = await self._control.read_queue(
+            agent_id=checkpoint.agent_id,
+            conversation_id=conversation_id,
+        )
+        receipt = await self._control.enqueue_turn(
+            TurnSubmissionRequest(
+                agent_id=checkpoint.agent_id,
+                conversation_id=conversation_id,
+                content="[Action retry]",
+                input_envelope=SubmissionInputEnvelope(
+                    kind=CONSOLE_ACTION_RETRY_ENVELOPE,
+                    payload={
+                        "continuation_id": str(
+                            continuation.continuation_id,
+                        ),
+                    },
+                ),
+                idempotency_key=(
+                    f"action-retry:{continuation.continuation_id}:"
+                    f"{continuation.revision}"
+                ),
+                correlation_id=checkpoint.correlation_id,
+            ),
+            expected_revision=projection.revision,
+        )
+        if receipt.submission_id is None:
+            raise RuntimeError("Action retry enqueue returned no identity")
+        return receipt.submission_id
+
     async def _run_resource_waits(self) -> None:
         """Dispatch matured waits without depending on an HTTP request."""
         while True:
@@ -388,6 +472,8 @@ class WorkspaceChatSubmissionDispatcher:
                     await self._dispatch_ready_harness_steps()
                 if self._background_actions is not None:
                     await self._dispatch_ready_background_actions()
+                if self._action_retries is not None:
+                    await self._dispatch_ready_action_retries()
             except Exception:  # pylint: disable=broad-except
                 logger.exception("Failed to dispatch model resource wait")
                 delay = 1.0
@@ -1336,6 +1422,7 @@ class WorkspaceChatSubmissionDispatcher:
         envelope: SubmissionInputEnvelope,
     ) -> None:
         if envelope.kind not in {
+            CONSOLE_ACTION_RETRY_ENVELOPE,
             CONSOLE_BACKGROUND_ACTION_CONTINUATION_ENVELOPE,
             CONSOLE_SUBMISSION_ENVELOPE,
             CONSOLE_INTERACTION_CONTINUATION_ENVELOPE,
@@ -1346,6 +1433,9 @@ class WorkspaceChatSubmissionDispatcher:
             raise ValueError(
                 f"unsupported submission input envelope: {envelope.kind}",
             )
+        if envelope.kind == CONSOLE_ACTION_RETRY_ENVELOPE:
+            await self._execute_action_retry(submission, envelope)
+            return
         chat = await self._workspace.chat_manager.get_chat(
             submission.conversation_id,
         )
@@ -1409,6 +1499,83 @@ class WorkspaceChatSubmissionDispatcher:
             raise RuntimeError("conversation gained another active runtime")
         async for _ in tracker.stream_from_queue(queue, chat.id):
             pass
+
+    async def _execute_action_retry(
+        self,
+        submission: TurnSubmission,
+        envelope: SubmissionInputEnvelope,
+    ) -> None:
+        """Execute one fixed Action attempt without model inference."""
+        if (
+            self._action_retries is None
+            or self._action_retry_inputs is None
+            or self._actions is None
+        ):
+            raise RuntimeError("Action retry runtime is unavailable")
+        try:
+            continuation_id = UUID(str(envelope.payload["continuation_id"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("invalid Action retry envelope") from exc
+        continuation = await self._action_retries.get(continuation_id)
+        if continuation is None:
+            raise ValueError("Action retry continuation is unavailable")
+        self._validate_action_retry_submission(continuation, submission)
+        if await self._action_retry_is_superseded(continuation):
+            raise RuntimeError("Action retry was superseded before admission")
+        from ...runtime.action_execution import (
+            ActionRetryExecutionAdmission,
+            ActionRetryExecutionPlan,
+            RuntimeActionRetryRunner,
+        )
+        from ...runtime.builder import AgentBuilder
+
+        prepared = await ActionRetryExecutionAdmission(
+            input_store=self._action_retry_inputs,
+            action_store=self._actions,
+        ).prepare(continuation)
+        plan = ActionRetryExecutionPlan.from_prepared(prepared)
+        if submission.invocation_id is not None:
+            raise RuntimeError("queued Action retry already has an Invocation")
+        lease = await self._control.begin_submitted_turn(
+            submission.submission_id,
+            invocation_id=plan.invocation_id,
+            agent_id=submission.agent_id,
+            conversation_id=submission.conversation_id,
+        )
+        services = getattr(self._workspace, "app_services", None)
+        coordinator = getattr(services, "tool_coordinator", None)
+        if coordinator is None:
+            await self._control.finish_turn(lease, SubmissionStatus.FAILED)
+            raise RuntimeError("Tool coordinator is unavailable")
+        agent_config = self._workspace.config
+        governor = await run_sync_io(
+            AgentBuilder.build_governor,
+            self._workspace.workspace_dir,
+            getattr(agent_config, "project_dir", None),
+        )
+        terminal = SubmissionStatus.FAILED
+        try:
+            await RuntimeActionRetryRunner(
+                workspace=self._workspace,
+                coordinator=coordinator,
+                action_store=self._actions,
+                retry_input_store=self._action_retry_inputs,
+                retry_continuation_store=self._action_retries,
+            ).run(
+                prepared=prepared,
+                plan=plan,
+                agent_config=agent_config,
+                governor=governor,
+            )
+            terminal = SubmissionStatus.SUCCEEDED
+        except asyncio.CancelledError:
+            terminal = SubmissionStatus.INTERRUPTED
+            raise
+        finally:
+            if governor is not None:
+                governor.stop()
+            await self._control.finish_turn(lease, terminal)
+            self.wake_resource_waits()
 
     async def _materialize_harness_step_payload(
         self,

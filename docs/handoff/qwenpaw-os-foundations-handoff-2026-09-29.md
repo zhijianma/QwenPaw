@@ -773,6 +773,28 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   pre-commit 环境因访问已移除的 `ast.Str` 失败；源码已用项目 Conda 环境按 79 列完成
   定点格式化，未运行全仓测试。
 
+### 2026-10-08 Durable Action Retry Dispatch
+
+- Action retry 的 durable outbox 已连接 Invocation Control：READY entry 经过
+  Stop/Interrupt、新用户输入和 Queue revision fence 后，以内容安全 envelope 幂等创建
+  Submission；重复调度不会创建第二个队列项。
+- consumer 不恢复旧协程，也不调用模型。它重新加载私有 checkpoint 与源 Action，编译
+  确定性 Invocation/ToolCall 身份，取得 Runtime lease，在 pinned generation 中解析
+  exact tool，并重新经过当前 Permission、ToolCoordinator、action-scoped Sandbox 与
+  ActionRecorder。Provider config 或证据漂移均失败关闭。
+- Submission/Invocation/Action 是执行状态的权威来源；DISPATCHED outbox 只保存
+  dispatch binding 作为审计与崩溃恢复依据，不建立竞争状态机。只有进程中断且没有
+  terminal Action evidence 时，才按精确 dispatch ID requeue。
+- 长程生命周期正式采用
+  `ChatSpec.id -> correlation -> Submission -> Invocation -> Step/Action -> Outcome`。
+  “一问一答”仅是单 Invocation 的快速完成与 UI 投影；网络、资源、审批和恢复通过
+  typed wait/continuation 自主推进，只有缺失必要事实、授权或高影响裁决才等待用户。
+- `submission_dispatcher` 21 项、Action execution/retry、Invocation dispatcher、
+  Builder/Workspace 共 44 项定点测试通过，覆盖 repair、唯一 dispatch、内容安全
+  envelope、重复调度幂等、Runtime lease、pinned runner、治理上下文、Sandbox 与
+  Submission 终态。AST、mypy、flake8、pylint 定点门禁通过；固定 Black 23.3.0 在
+  Python 3.13 上仍因访问已移除的 `ast.Str` 失败，且未改动文件。未运行全仓测试。
+
 ### 本阶段此前已执行的定点验证
 
 - 后端核心路径定点测试：70 项通过。

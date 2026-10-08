@@ -34,6 +34,9 @@ from qwenpaw.runtime.actions import (
     FilesystemActionStore,
     RuntimeActionRecorder,
 )
+from qwenpaw.runtime.sandbox_environments import (
+    RuntimeSandboxEnvironmentManager,
+)
 from qwenpaw.tool_calls import ToolCoordinator
 from qwenpaw.tool_calls._context import ToolCallContext
 from qwenpaw.tool_calls._ctxvars import get_call_context
@@ -318,6 +321,8 @@ async def test_retry_execution_admission_rebuilds_durable_authority(
             assert kwargs["session_id"] == plan.chat_id
             return assembly
 
+    resolved_context = {}
+
     class Builder:
         async def resolve_governed_action_tool(
             self,
@@ -329,6 +334,7 @@ async def test_retry_execution_admission_rebuilds_durable_authority(
             request_context["_tool_provider_execution_digests"] = {
                 provider_id: plan.provider_execution_digest,
             }
+            resolved_context.update(request_context)
             return SimpleNamespace(name="stable_tool")
 
     executed = {}
@@ -342,13 +348,19 @@ async def test_retry_execution_admission_rebuilds_durable_authority(
                 state=ToolResultState.SUCCESS,
             )
 
+    coordinator = ToolCoordinator()
+    approval_coordinator = object()
     runner = RuntimeActionRetryRunner(
         workspace=SimpleNamespace(
             agent_id=scope.agent_id,
             workspace_dir=tmp_path,
             interaction_service=None,
+            app_services=SimpleNamespace(
+                approval_coordinator=approval_coordinator,
+                tool_coordinator=coordinator,
+            ),
         ),
-        coordinator=ToolCoordinator(),
+        coordinator=coordinator,
         action_store=store,
         retry_input_store=inputs,
         retry_continuation_store=outbox,
@@ -367,6 +379,12 @@ async def test_retry_execution_admission_rebuilds_durable_authority(
     assert response.state is ToolResultState.SUCCESS
     assert executed["arguments"] == {"value": "private"}
     assert executed["tool_call_id"] == plan.tool_call_id
+    assert resolved_context["approval_coordinator"] is approval_coordinator
+    assert resolved_context["tool_coordinator"] is coordinator
+    assert isinstance(
+        resolved_context["_sandbox_environment_manager"],
+        RuntimeSandboxEnvironmentManager,
+    )
     assert assembly.closed is True
     drifted = continuation.model_copy(
         update={

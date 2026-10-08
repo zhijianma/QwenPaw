@@ -6,6 +6,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid5
@@ -213,7 +214,7 @@ class GovernedActionExecutor:
                 raise GovernedActionDeniedError(
                     str(
                         decision.message
-                        or "Action denied by current policy"
+                        or "Action denied by current policy",
                     ),
                 )
 
@@ -318,6 +319,7 @@ class RuntimeActionRetryRunner:
             request_context = self._request_context(
                 recorder=recorder,
                 plan=plan,
+                scope=assembly.scope,
             )
             context = SimpleNamespace(
                 invocation_scope=assembly.scope,
@@ -356,8 +358,13 @@ class RuntimeActionRetryRunner:
         *,
         recorder: RuntimeActionRecorder,
         plan: ActionRetryExecutionPlan,
+        scope: InvocationScope,
     ) -> dict[str, Any]:
+        from .environments import FilesystemEnvironmentStore
+        from .sandbox_environments import RuntimeSandboxEnvironmentManager
+
         service = getattr(self._workspace, "interaction_service", None)
+        app_services = getattr(self._workspace, "app_services", None)
         context: dict[str, Any] = {
             "agent_id": self._workspace.agent_id,
             "session_id": plan.chat_id,
@@ -370,6 +377,24 @@ class RuntimeActionRetryRunner:
             "os_registry_generation": plan.registry_generation,
             "_action_recorder": recorder,
             "_interaction_service": service,
+            "_sandbox_environment_manager": (
+                RuntimeSandboxEnvironmentManager(
+                    scope,
+                    FilesystemEnvironmentStore(
+                        Path(self._workspace.workspace_dir),
+                    ),
+                )
+            ),
+            "approval_coordinator": getattr(
+                app_services,
+                "approval_coordinator",
+                None,
+            ),
+            "tool_coordinator": getattr(
+                app_services,
+                "tool_coordinator",
+                None,
+            ),
         }
         if service is not None:
             from ..interactions import runtime_interaction_broker_from_context

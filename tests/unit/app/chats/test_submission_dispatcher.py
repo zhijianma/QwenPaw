@@ -34,6 +34,7 @@ from qwenpaw.interactions import InteractionService
 from qwenpaw.recovery import ModelResourceWaitService
 from qwenpaw.kernel import (
     COMMITTED_ACTION_ITEM_METADATA_KEY,
+    TERMINAL_SUBMISSION_STATUSES,
     BackgroundActionContinuationStatus,
     ActionKind,
     ActionRecord,
@@ -72,6 +73,7 @@ from qwenpaw.kernel import (
     TurnSubmission,
     TurnSubmissionRequest,
     ToolEffect,
+    ToolSelection,
 )
 from qwenpaw.runtime.action_retries import (
     lite_action_retry_continuation_store,
@@ -96,6 +98,8 @@ from qwenpaw.runtime.harness_recovery import (
 from qwenpaw.runtime.model_step_contexts import (
     lite_model_step_context_store,
 )
+from qwenpaw.runtime.action_execution import RuntimeActionRetryRunner
+from qwenpaw.runtime.builder import AgentBuilder
 
 
 @pytest.mark.asyncio
@@ -146,7 +150,7 @@ async def test_new_user_submission_cancels_pending_action_retries(
 
 
 @pytest.mark.asyncio
-async def test_workspace_dispatcher_repairs_action_retry_outbox(
+async def test_workspace_dispatcher_repairs_and_dispatches_action_retry(
     tmp_path: Path,
 ) -> None:
     request = ActionRequest(
@@ -156,6 +160,8 @@ async def test_workspace_dispatcher_repairs_action_retry_outbox(
         conversation_id="chat-retry-repair",
         registry_generation=3,
         capability_id="example.retry-tool",
+        tool_selection=ToolSelection(active_modes=("coding",)),
+        provider_execution_digest=f"sha256:{'c' * 64}",
         kind=ActionKind.TOOL,
         action_name="retry_tool",
         arguments={"value": "private"},
@@ -203,23 +209,159 @@ async def test_workspace_dispatcher_repairs_action_retry_outbox(
         control=control,
     )
 
-    await dispatcher.start()
-    [continuation] = await outbox.list_pending(agent_id="default")
+    await outbox.repair(
+        agent_id="default",
+        input_store=inputs,
+        action_store=actions,
+    )
+    # pylint: disable=protected-access
+    await dispatcher._cancel_superseded_action_retries()
+    await dispatcher._dispatch_ready_action_retries()
+    # pylint: enable=protected-access
+    [continuation] = await outbox.list_dispatched(agent_id="default")
     assert continuation.checkpoint == checkpoint
+    projection = await control.read_queue(
+        agent_id="default",
+        conversation_id=request.conversation_id,
+    )
+    [submission] = projection.submissions
+    assert submission.submission_id == continuation.dispatch_id
+    assert submission.content == "[Action retry]"
+    assert submission.correlation_id == request.correlation_id
+    assert submission.input_envelope == SubmissionInputEnvelope(
+        kind=CONSOLE_ACTION_RETRY_ENVELOPE,
+        payload={
+            "continuation_id": str(continuation.continuation_id),
+        },
+    )
+    # Repeated scheduling must reuse the one durable dispatch binding.
+    # pylint: disable=protected-access
+    await dispatcher._dispatch_ready_action_retries()
+    # pylint: enable=protected-access
+    repeated = await control.read_queue(
+        agent_id="default",
+        conversation_id=request.conversation_id,
+    )
+    assert repeated.submissions == projection.submissions
     stopped = await control.stop_and_clear(
         agent_id="default",
         conversation_id=request.conversation_id,
         idempotency_key="stop-retry-repair",
-        expected_revision=0,
+        expected_revision=projection.revision,
     )
     assert stopped.status.value == "applied"
-    # The worker admission rechecks the durable ledger after repair.
-    # pylint: disable=protected-access
-    await dispatcher._cancel_superseded_action_retries()
-    # pylint: enable=protected-access
-    cancelled = await outbox.get(continuation.continuation_id)
-    assert cancelled is not None
-    assert cancelled.status.value == "cancelled"
+    terminal = await control.get_submission(submission.submission_id)
+    assert terminal is not None
+    assert terminal.status is SubmissionStatus.CANCELLED
+    # DISPATCHED is immutable audit linkage; Submission owns execution state.
+    bound = await outbox.get(continuation.continuation_id)
+    assert bound is not None
+    assert bound.status is ActionRetryContinuationStatus.DISPATCHED
+    await control.close()
+
+
+@pytest.mark.asyncio
+async def test_workspace_dispatcher_runs_pinned_action_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = ActionRequest(
+        invocation_id=uuid4(),
+        correlation_id=uuid4(),
+        agent_id="default",
+        conversation_id="chat-retry-run",
+        registry_generation=7,
+        capability_id="example.retry-tool",
+        tool_selection=ToolSelection(active_modes=("coding",)),
+        provider_execution_digest=f"sha256:{'c' * 64}",
+        kind=ActionKind.TOOL,
+        action_name="retry_tool",
+        arguments={"value": "private"},
+        redacted_arguments={"value": "[REDACTED]"},
+        arguments_hash=f"sha256:{'a' * 64}",
+        effect=ToolEffect.NONE,
+        idempotency_key="retry-run-key",
+    )
+    decision = ActionRetryDecision(
+        disposition=ActionRetryDisposition.RETRY_FROM_NEW_ACTION,
+        reason=ActionRetryReason.TRANSIENT_FAILURE,
+        provider_retryable=True,
+        max_attempts=2,
+        next_attempt=2,
+        retry_after_seconds=0,
+    )
+    inputs = lite_action_retry_input_store(tmp_path)
+    checkpoint = await inputs.save(request, decision)
+    result = ActionResult(
+        action_id=request.action_id,
+        invocation_id=request.invocation_id,
+        conversation_id=request.conversation_id,
+        status=ActionStatus.FAILED,
+        observation_digest=f"sha256:{'b' * 64}",
+        retryable=True,
+        retry_decision=decision.model_copy(
+            update={"input_checkpoint_id": checkpoint.checkpoint_id},
+        ),
+    )
+    actions = lite_action_store(tmp_path)
+    await actions.begin(request)
+    await actions.complete(result)
+    outbox = lite_action_retry_continuation_store(tmp_path)
+    await outbox.defer(checkpoint, result)
+    control = InvocationControlService(
+        store=SQLiteInvocationControl(tmp_path / "control.sqlite3"),
+    )
+    workspace = SimpleNamespace(
+        agent_id="default",
+        workspace_dir=tmp_path,
+        config=SimpleNamespace(project_dir=None),
+        app_services=SimpleNamespace(tool_coordinator=object()),
+    )
+    dispatcher = WorkspaceChatSubmissionDispatcher(
+        workspace=workspace,
+        control=control,
+    )
+
+    class Governor:
+        stopped = False
+
+        def stop(self) -> None:
+            self.stopped = True
+
+    governor = Governor()
+    monkeypatch.setattr(
+        AgentBuilder,
+        "build_governor",
+        staticmethod(lambda *_args, **_kwargs: governor),
+    )
+    observed: dict[str, Any] = {}
+
+    async def run_retry(_runner, **kwargs):
+        observed.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(RuntimeActionRetryRunner, "run", run_retry)
+
+    await dispatcher.start()
+    terminal = None
+    for _ in range(100):
+        dispatched = await outbox.list_dispatched(agent_id=request.agent_id)
+        if dispatched and dispatched[0].dispatch_id is not None:
+            terminal = await control.get_submission(
+                dispatched[0].dispatch_id,
+            )
+        if (
+            terminal is not None
+            and terminal.status in TERMINAL_SUBMISSION_STATUSES
+        ):
+            break
+        await asyncio.sleep(0.01)
+
+    assert terminal is not None
+    assert terminal.status is SubmissionStatus.SUCCEEDED
+    assert terminal.invocation_id == observed["plan"].invocation_id
+    assert observed["prepared"].arguments == {"value": "private"}
+    assert governor.stopped
     await dispatcher.stop()
     await control.close()
 

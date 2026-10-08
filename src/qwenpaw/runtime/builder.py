@@ -1212,6 +1212,19 @@ class AgentBuilder:
             return None
 
     @staticmethod
+    def build_governor(
+        workspace_dir: Any,
+        coding_project_dir: Any = None,
+        extra_project_dirs: Iterable[Any] = (),
+    ) -> Any:
+        """Build the shared governance boundary for non-model execution."""
+        return AgentBuilder._init_governor(
+            workspace_dir,
+            coding_project_dir,
+            extra_project_dirs,
+        )
+
+    @staticmethod
     def _get_local_workspace(ctx: Any) -> Any:
         workspace = getattr(ctx, "workspace", None)
         if workspace is not None:

@@ -573,9 +573,13 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     RuntimeAssembly、exact-action resolver 与 GovernedActionExecutor；执行前再次比较
     Host 当前 Provider digest，Recorder 复用同一 ActionStore/输入/outbox 并生成新
     attempt，完成后无条件释放 generation lease，全程不调用模型。
-  - [ ] 在上述单一身份上接入自动 retry dispatcher：必须同时具备 attempt budget、
-    Stop/Interrupt fencing、无流式输出边界，以及 Runtime Orchestrator 内的执行入口；
-    不能仅凭 `retryable=true` 或绕过 Orchestrator 直接重新调用工具。
+  - [x] 自动 retry dispatcher 已接入上述单一身份：READY outbox 先经过
+    Stop/Interrupt 与新用户输入 fence，再以内容安全 envelope 幂等绑定 durable
+    Submission；consumer 执行前重新做 evidence admission，并以确定性 Invocation
+    取得 Runtime lease、打开 pinned generation assembly、执行 governed Action，最后
+    写入 Submission 终态并唤醒下一轮 outbox。该路径没有模型或流式输出边界，attempt
+    budget 已固化在 checkpoint；重复调度只复用同一 dispatch binding。DISPATCHED
+    outbox 仅保留审计关联，执行状态以 Submission/Invocation/Action 为权威。
 - [ ] 把 WebSocket 增量续传、sticky route 和 HTTP fallback 保持为 Provider
   Adapter capability；严格验证 response identity/prefix，失败时回退持久上下文重建，
   Kernel 不感知具体传输。

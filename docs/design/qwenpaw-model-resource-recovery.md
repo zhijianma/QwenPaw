@@ -206,5 +206,10 @@ Adapter 声明；Kernel 不假设任意模型流可以原地续传。
   消费该 binding 时才创建新 Invocation。snapshot-first repair、稳定幂等键和 2-cycle
   预算覆盖崩溃窗口；同一来源的并行后台 Action 作为兄弟 continuation 顺序合并到最新
   Session，不用旧快照互相覆盖。
+- [x] 无副作用且证据完整的 Action retry 不依赖用户发送“继续”：durable outbox
+  幂等创建同一 `ChatSpec.id`、原 correlation 的 Submission，执行时取得新的确定性
+  Invocation，并在 pinned generation 中重新经过当前 Permission、ToolCoordinator、
+  action-scoped Sandbox 与 ActionRecorder。Stop/Interrupt、新用户输入、配置漂移、
+  证据漂移或旧 checkpoint 均失败关闭；执行完成后 Submission 是权威终态。
 - [ ] Provider resource health 事件自动释放 quota wait。
 - [ ] 真实限流故障和进程重启的浏览器端到端演练。

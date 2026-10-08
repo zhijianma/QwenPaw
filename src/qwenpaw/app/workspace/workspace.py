@@ -481,6 +481,11 @@ class Workspace:  # pylint: disable=too-many-public-methods
         """Inject the cross-workspace AppServiceManager reference."""
         self._app_services = app_services
 
+    @property
+    def app_services(self) -> Any:
+        """Expose shared runtime coordinators to workspace services."""
+        return self._app_services
+
     async def stream_query(
         self,
         request: Any,
