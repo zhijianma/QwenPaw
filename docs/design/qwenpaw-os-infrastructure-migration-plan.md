@@ -551,6 +551,10 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     authoritative reconciliation：严格校验 envelope、ChatSpec、Invocation、Action
     lineage、generation、Provider、ToolSelection 与参数哈希；已有 terminal Action
     不重放，无终态才按原 dispatch 身份回队，身份漂移和多 attempt 均 fail closed。
+  - [x] Action 与 retry checkpoint 固定 Provider execution digest，覆盖经过 schema
+    校验的 capability config 与 credential alias 映射，但不持久化配置正文、alias 或
+    secret；重试前由当前 Host 重新计算并校验，配置漂移时 fail closed。历史 Action
+    缺少 digest 时不得进入后续自动 dispatcher。
   - [ ] 在上述单一身份上接入自动 retry dispatcher：必须同时具备 attempt budget、
     Stop/Interrupt fencing、无流式输出边界，以及 Runtime Orchestrator 内的执行入口；
     不能仅凭 `retryable=true` 或绕过 Orchestrator 直接重新调用工具。

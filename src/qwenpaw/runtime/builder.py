@@ -314,7 +314,10 @@ class AgentBuilder:
         """Collect tools from pinned providers and reject collisions."""
         from ..kernel.invocation import DEFAULT_TOOL_PROVIDER_ID
         from ..kernel.ports import RuntimeInteractionProducer
-        from .provider_config import validate_provider_config
+        from .provider_config import (
+            provider_execution_digest,
+            validate_provider_config,
+        )
         from .tool_providers import (
             ProviderToolHost,
             WorkspaceToolHost,
@@ -356,6 +359,7 @@ class AgentBuilder:
         )
         tools = []
         owners: dict[str, str] = {}
+        execution_digests: dict[str, str] = {}
         for provider in tool_providers:
             provider_id = str(getattr(provider, "provider_id", ""))
             provider_config = dict(
@@ -383,6 +387,10 @@ class AgentBuilder:
                 )
             credential_refs = dict(
                 capability_credential_refs.get(provider_id, {}) or {},
+            )
+            execution_digests[provider_id] = provider_execution_digest(
+                provider_config,
+                credential_refs,
             )
             if provider_id == DEFAULT_TOOL_PROVIDER_ID:
                 host = WorkspaceToolHost(
@@ -432,6 +440,9 @@ class AgentBuilder:
                 owners[tool_name] = provider_id
                 tools.append(tool)
         request_context["_tool_provider_owners"] = dict(owners)
+        request_context["_tool_provider_execution_digests"] = dict(
+            execution_digests,
+        )
         return tools
 
     async def resolve_governed_action_tool(
@@ -481,6 +492,9 @@ class AgentBuilder:
             request_context.get("_tool_provider_owners"),
         )
         recorder.bind_tool_selection(tool_selection)
+        recorder.bind_provider_execution_digests(
+            request_context.get("_tool_provider_execution_digests"),
+        )
         matches = [
             tool for tool in tools if self._tool_name(tool) == tool_name
         ]
@@ -945,6 +959,11 @@ class AgentBuilder:
                     active_skills=tuple(effective_skills),
                     enabled_features=(),
                     request_context=request_context,
+                ),
+            )
+            action_recorder.bind_provider_execution_digests(
+                request_context.get(
+                    "_tool_provider_execution_digests",
                 ),
             )
             request_context[

@@ -865,6 +865,62 @@ async def test_action_retry_rejects_changed_tool_selection(
 
 
 @pytest.mark.asyncio
+async def test_action_retry_rejects_changed_provider_configuration(
+    tmp_path: Path,
+) -> None:
+    scope = _scope(tmp_path, "chat-retry-provider-config")
+    store = FilesystemActionStore(tmp_path)
+    first_digest = f"sha256:{'a' * 64}"
+    first_recorder = RuntimeActionRecorder(
+        scope,
+        store,
+        provider_execution_digests={
+            "qwenpaw.system.workspace-tools": first_digest,
+        },
+    )
+    first_context = _context("read_file", "call-provider-config-1")
+    await first_recorder.begin(
+        first_context,
+        effect=ToolEffect.NONE,
+        policy_decision="allow",
+    )
+    await first_recorder.complete(
+        ToolResponse(
+            content=[TextBlock(type="text", text="temporary failure")],
+            id=first_context.tool_call_id,
+            state=ToolResultState.ERROR,
+            metadata={ACTION_RETRY_HINT_METADATA_KEY: True},
+        ),
+        first_context,
+    )
+    [previous] = await store.list_for_conversation(
+        scope.conversation_id,
+    )
+    retry_scope = scope.model_copy(
+        update={
+            "invocation_id": uuid4(),
+            "correlation_id": scope.invocation_id,
+        },
+    )
+    retry_recorder = RuntimeActionRecorder(
+        retry_scope,
+        store,
+        provider_execution_digests={
+            "qwenpaw.system.workspace-tools": f"sha256:{'b' * 64}",
+        },
+    )
+
+    with pytest.raises(
+        ActionConflictError,
+        match="provider configuration mismatch",
+    ):
+        await retry_recorder.begin_retry(
+            _context("read_file", "call-provider-config-2"),
+            previous,
+        )
+
+
+@pytest.mark.asyncio
 async def test_action_retry_budget_is_persisted_and_exhausted(
     tmp_path: Path,
 ) -> None:

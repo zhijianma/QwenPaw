@@ -32,6 +32,7 @@ from qwenpaw.runtime.tool_providers import (
     tool_selection_from_request,
 )
 from qwenpaw.runtime.builder import AgentBuilder
+from qwenpaw.runtime.provider_config import provider_execution_digest
 
 
 def _sample_tool() -> None:
@@ -376,6 +377,9 @@ async def test_resolve_governed_action_tool_uses_exact_selection(
     assert request_context["_tool_provider_owners"] == {
         "configured_tool": provider.provider_id,
     }
+    assert request_context["_tool_provider_execution_digests"] == {
+        provider.provider_id: provider_execution_digest({}, {}),
+    }
     assert getattr(tool, "_qp_request_context") is request_context
     with pytest.raises(LookupError, match="resolved 0 matches"):
         await AgentBuilder().resolve_governed_action_tool(
@@ -388,6 +392,26 @@ async def test_resolve_governed_action_tool_uses_exact_selection(
             governor=None,
         )
     await assembly.close()
+
+
+def test_provider_execution_digest_tracks_aliases_without_secrets() -> None:
+    baseline = provider_execution_digest(
+        {"endpoint": "stable"},
+        {"service": "credential:one"},
+    )
+
+    assert baseline == provider_execution_digest(
+        {"endpoint": "stable"},
+        {"service": "credential:one"},
+    )
+    assert baseline != provider_execution_digest(
+        {"endpoint": "changed"},
+        {"service": "credential:one"},
+    )
+    assert baseline != provider_execution_digest(
+        {"endpoint": "stable"},
+        {"service": "credential:two"},
+    )
 
 
 @pytest.mark.asyncio

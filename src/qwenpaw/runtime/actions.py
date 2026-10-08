@@ -720,6 +720,7 @@ class RuntimeActionRecorder:
         ) = None,
         retry_of: ActionRecord | None = None,
         tool_selection: ToolSelection | None = None,
+        provider_execution_digests: dict[str, str] | None = None,
         clock: Callable[[], datetime] = utc_now,
     ) -> None:
         self._scope = scope
@@ -730,6 +731,9 @@ class RuntimeActionRecorder:
         self._retry_continuation_store = retry_continuation_store
         self._retry_of = retry_of
         self._tool_selection = tool_selection
+        self._provider_execution_digests = dict(
+            provider_execution_digests or {},
+        )
         self._clock = clock
 
     def bind_tool_owners(self, tool_owners: dict[str, str] | None) -> None:
@@ -739,6 +743,13 @@ class RuntimeActionRecorder:
     def bind_tool_selection(self, selection: ToolSelection) -> None:
         """Bind exact provider filters before any tool can execute."""
         self._tool_selection = selection
+
+    def bind_provider_execution_digests(
+        self,
+        digests: dict[str, str] | None,
+    ) -> None:
+        """Bind content-safe provider configuration identities."""
+        self._provider_execution_digests = dict(digests or {})
 
     @staticmethod
     def active_request(
@@ -837,6 +848,11 @@ class RuntimeActionRecorder:
                 retry_of.tool_selection
                 if retry_of is not None
                 else self._tool_selection
+            ),
+            provider_execution_digest=(
+                retry_of.provider_execution_digest
+                if retry_of is not None
+                else self._provider_execution_digests.get(capability_id)
             ),
             kind=kind,
             action_name=action_name,
@@ -1011,6 +1027,17 @@ class RuntimeActionRecorder:
             and previous_request.tool_selection != self._tool_selection
         ):
             raise ActionConflictError("retry action tool selection mismatch")
+        previous_digest = previous_request.provider_execution_digest
+        if (
+            previous_digest is not None
+            and self._provider_execution_digests.get(
+                previous_request.capability_id,
+            )
+            != previous_digest
+        ):
+            raise ActionConflictError(
+                "retry action provider configuration mismatch",
+            )
 
     async def begin_retry(
         self,

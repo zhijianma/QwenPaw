@@ -531,6 +531,10 @@ class ActionRequest(KernelModel):
     environment_ref: EnvironmentRef | None = None
     capability_id: NamespacedId
     tool_selection: "ToolSelection | None" = None
+    provider_execution_digest: Annotated[
+        str,
+        StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$"),
+    ] | None = None
     kind: ActionKind
     action_name: NonEmptyStr
     arguments: SkipJsonSchema[JsonObject] = Field(
@@ -653,6 +657,10 @@ class ActionRetryInputCheckpoint(KernelModel):
     registry_generation: int = Field(ge=1)
     capability_id: NamespacedId
     tool_selection: "ToolSelection | None" = None
+    provider_execution_digest: Annotated[
+        str,
+        StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$"),
+    ] | None = None
     kind: ActionKind
     action_name: NonEmptyStr
     arguments_hash: Annotated[

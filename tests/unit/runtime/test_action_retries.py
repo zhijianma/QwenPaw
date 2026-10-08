@@ -53,6 +53,7 @@ def _request() -> ActionRequest:
             enabled_features=("example.retry",),
             subagent_allowed_tools=("private_tool",),
         ),
+        provider_execution_digest=f"sha256:{'f' * 64}",
         kind=ActionKind.TOOL,
         action_name="private_tool",
         arguments={"content": "private retry body", "path": "report.md"},
@@ -120,6 +121,9 @@ async def test_private_retry_input_is_owner_only_and_idempotent(
     assert loaded == first
     assert arguments == request.arguments
     assert first.tool_selection == request.tool_selection
+    assert first.provider_execution_digest == (
+        request.provider_execution_digest
+    )
     assert "private retry body" not in first.model_dump_json()
     path = next(
         tmp_path.glob(".qwenpaw/lite/action-retry-inputs/*.json"),

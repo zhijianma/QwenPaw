@@ -114,6 +114,9 @@ class FilesystemActionRetryInputStore:
             registry_generation=request.registry_generation,
             capability_id=request.capability_id,
             tool_selection=request.tool_selection,
+            provider_execution_digest=(
+                request.provider_execution_digest
+            ),
             kind=request.kind,
             action_name=request.action_name,
             arguments_hash=request.arguments_hash,
@@ -269,6 +272,7 @@ class FilesystemActionRetryContinuationStore:
             checkpoint.registry_generation,
             checkpoint.capability_id,
             checkpoint.tool_selection,
+            checkpoint.provider_execution_digest,
             checkpoint.kind,
             checkpoint.action_name,
             checkpoint.arguments_hash,
@@ -280,6 +284,7 @@ class FilesystemActionRetryContinuationStore:
             request.registry_generation,
             request.capability_id,
             request.tool_selection,
+            request.provider_execution_digest,
             request.kind,
             request.action_name,
             request.arguments_hash,

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from copy import deepcopy
 from typing import Any
@@ -11,6 +12,23 @@ from jsonschema.exceptions import SchemaError, best_match
 from jsonschema.validators import validator_for
 
 _MAX_PROVIDER_CONFIG_BYTES = 64 * 1024
+
+
+def provider_execution_digest(
+    config: dict[str, Any],
+    credential_refs: dict[str, str],
+) -> str:
+    """Hash provider config and credential aliases without secret values."""
+    encoded = json.dumps(
+        {
+            "config": config,
+            "credential_refs": credential_refs,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
 def validate_provider_config(
@@ -59,4 +77,4 @@ def validate_provider_config(
     return deepcopy(config)
 
 
-__all__ = ["validate_provider_config"]
+__all__ = ["provider_execution_digest", "validate_provider_config"]
