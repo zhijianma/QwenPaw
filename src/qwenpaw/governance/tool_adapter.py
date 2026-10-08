@@ -551,7 +551,7 @@ async def _begin_tool_action(tool: Any) -> None:
 async def _begin_tool_side_effect(
     tool: Any,
 ) -> SideEffectReservation | None:
-    """Reserve a durable record for one declared mutating tool call."""
+    """Project one Action attempt into the legacy Task side-effect ledger."""
     request_context = getattr(tool, "_qp_request_context", {}) or {}
     broker = request_context.get("_task_side_effect_broker")
     if not isinstance(broker, SideEffectBroker):
@@ -560,31 +560,56 @@ async def _begin_tool_side_effect(
     effect = ToolEffect(tc_spec.effect)
     if effect is ToolEffect.NONE:
         return None
-    invocation_id = _optional_uuid(tc_spec.invocation_id)
-    correlation_id = _optional_uuid(tc_spec.correlation_id) or invocation_id
-    call_id = _tool_call_id()
-    idempotency_key = (
-        f"tool:{invocation_id or tc_spec.session_id}:{call_id}"
-        if call_id
-        else f"tool:{uuid.uuid4()}"
+    context = _active_tool_call_context()
+    recorder = request_context.get("_action_recorder")
+    active_request = getattr(recorder, "active_request", None)
+    action_request = (
+        active_request(context)
+        if context is not None and callable(active_request)
+        else None
     )
-    request_hash = hashlib.sha256(
-        json.dumps(
-            {
-                "action": tc_spec.tool_name,
-                "target": tc_spec.target,
-                "params": tc_spec.raw_params,
-            },
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-            default=str,
-        ).encode("utf-8"),
-    ).hexdigest()
-    decision = getattr(tool, "_qp_policy_decision", None)
-    approval_id = _optional_uuid(getattr(tool, "_qp_approval_id", ""))
+    if action_request is not None:
+        action = action_request.action_name
+        idempotency_key = f"action:{action_request.action_id}"
+        request_hash = action_request.arguments_hash.removeprefix("sha256:")
+        invocation_id = action_request.invocation_id
+        correlation_id = action_request.correlation_id
+        approval_id = action_request.approval_id
+        policy_decision = action_request.policy_decision
+    else:
+        action = tc_spec.tool_name
+        invocation_id = _optional_uuid(tc_spec.invocation_id)
+        correlation_id = (
+            _optional_uuid(tc_spec.correlation_id) or invocation_id
+        )
+        call_id = _tool_call_id()
+        idempotency_key = (
+            f"tool:{invocation_id or tc_spec.session_id}:{call_id}"
+            if call_id
+            else f"tool:{uuid.uuid4()}"
+        )
+        request_hash = hashlib.sha256(
+            json.dumps(
+                {
+                    "action": tc_spec.tool_name,
+                    "target": tc_spec.target,
+                    "params": tc_spec.raw_params,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+                default=str,
+            ).encode("utf-8"),
+        ).hexdigest()
+        decision = getattr(tool, "_qp_policy_decision", None)
+        approval_id = _optional_uuid(
+            getattr(tool, "_qp_approval_id", ""),
+        )
+        policy_decision = (
+            decision.action.value if decision is not None else "allow"
+        )
     return await broker.begin(
-        action=tc_spec.tool_name,
+        action=action,
         target=tc_spec.target,
         effect=effect,
         idempotency_key=idempotency_key,
@@ -592,9 +617,7 @@ async def _begin_tool_side_effect(
         invocation_id=invocation_id,
         correlation_id=correlation_id,
         approval_id=approval_id,
-        policy_decision=(
-            decision.action.value if decision is not None else "allow"
-        ),
+        policy_decision=policy_decision,
     )
 
 

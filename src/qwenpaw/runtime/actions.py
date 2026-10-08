@@ -632,6 +632,14 @@ class RuntimeActionRecorder:
         """Bind the final provider catalog before any tool can execute."""
         self._tool_owners = dict(tool_owners or {})
 
+    @staticmethod
+    def active_request(
+        context: ToolCallContext,
+    ) -> ActionRequest | None:
+        """Return the Action already bound to one supervised call."""
+        request = context.extra.get(ACTION_REQUEST_CONTEXT_KEY)
+        return request if isinstance(request, ActionRequest) else None
+
     def _request(
         self,
         context: ToolCallContext,

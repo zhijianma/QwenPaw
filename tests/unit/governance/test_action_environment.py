@@ -10,6 +10,7 @@ import pytest
 
 from qwenpaw.governance import tool_adapter
 from qwenpaw.kernel import (
+    ActionIdempotencyMode,
     ActionKind,
     EnvironmentRef,
     EnvironmentResolution,
@@ -110,4 +111,5 @@ async def test_sandbox_resolution_is_recorded_before_admission(
         approval_id=None,
         environment_ref=reference,
         kind=ActionKind.SHELL,
+        idempotency_mode=ActionIdempotencyMode.UNDECLARED,
     )

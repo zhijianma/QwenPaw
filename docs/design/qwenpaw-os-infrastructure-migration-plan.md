@@ -502,6 +502,15 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     Tool call ID。Host 会校验参数摘要、correlation、固定 generation 和当前环境契约；
     只有 executor 持久防重承诺可以让 effectful uncertain failure 进入安全 retry
     admission。自动 dispatcher 尚未接入，不能把 admission 当作已执行。
+  - [x] Task SideEffect Ledger 已降级为 Action attempt 的兼容投影：Action Recorder
+    存在时，SideEffect record 使用 `action:<action_id>` 作为本地防重身份，并直接继承
+    Action 的安全参数摘要、Invocation、correlation、Approval 和 Policy；不再从
+    tool-call ID 与原始参数另算一套竞争性幂等事实。没有 Action Recorder 的旧 Task
+    Runner 继续走原兼容路径。由此每个 retry attempt 都有独立本地记录，而真正跨
+    attempt 的 executor key 仍只由 Action 契约持有。
+  - [ ] 在上述单一身份上接入自动 retry dispatcher：必须同时具备 attempt budget、
+    可取消延迟、Stop/Interrupt fencing、无流式输出边界，以及重启后可判定的私有执行
+    输入；不能仅凭 `retryable=true` 重新调用工具。
 - [ ] 把 WebSocket 增量续传、sticky route 和 HTTP fallback 保持为 Provider
   Adapter capability；严格验证 response identity/prefix，失败时回退持久上下文重建，
   Kernel 不感知具体传输。
