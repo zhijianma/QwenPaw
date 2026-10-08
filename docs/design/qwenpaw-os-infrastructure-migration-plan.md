@@ -422,12 +422,16 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
   - [x] Interrupt 以来源 Invocation、Stop-and-Clear 以 Conversation 建立恢复栅栏；
     dispatcher 用 Queue revision 关闭控制检查与恢复 enqueue 之间的竞态，执行前反向
     校验 Wait 与 Submission 绑定，取消后的旧任务不能被 timer 或资源事件复活。
-- [ ] 持久化 bounded stream outcome：产生部分输出后断流时，不盲目重放完整
+- [x] 持久化 bounded stream outcome：产生部分输出后断流时，不盲目重放完整
   Turn，不把 partial assistant message 当完成；后续 Model Step 从 durable context
-  重建。
+  重建。内容安全 continuation 使用稳定 outbox、新 Submission / Invocation、原
+  correlation 与 2-cycle budget；Stop / Interrupt、crash-after-enqueue 和启动恢复均
+  已建立 fencing / 幂等边界，状态进入现有 Chat Runtime Activity。
 - [ ] 以 Action Plane 完成副作用恢复：已成功 Action 不重做，failed 服从重试
   policy，uncertain 必须先对账或取得显式授权。只有具备 provider-neutral committed
   action identity 的 Adapter 才能开启流内工具执行。
+  - [x] 过渡安全门：来源 Invocation 只要存在持久化 `ActionRequest`，Model Step
+    continuation 即进入 `action_reconciliation_required`，不自动重放任何 Action。
 - [ ] 把 WebSocket 增量续传、sticky route 和 HTTP fallback 保持为 Provider
   Adapter capability；严格验证 response identity/prefix，失败时回退持久上下文重建，
   Kernel 不感知具体传输。

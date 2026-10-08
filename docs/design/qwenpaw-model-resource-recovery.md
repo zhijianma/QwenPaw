@@ -12,6 +12,7 @@
 - Queue 只表达已接受输入的服务端执行顺序；
 - Interaction 表达审批、缺失事实、关键偏好和范围授权；
 - Resource Wait 表达运行所依赖的模型资源尚不可用；
+- Model Step Continuation 表达部分模型流结束后由持久上下文继续推进；
 - Assistant Message 只向用户表达，不决定 Runtime 生命周期。
 
 ## 2. 领域边界
@@ -26,6 +27,11 @@
 
 它不保存 Prompt、模型输出、异常正文、Provider 凭据或隐藏 reasoning。实际模型调用
 证据仍属于 `ModelCallResult`；Resource Wait 只是该事实的恢复投影和 durable outbox。
+
+`ModelStepContinuation` 同样是内容安全的 source of truth，只保存来源 attempt、
+Invocation、correlation、`ChatSpec.id`、输出边界、revision、状态和后续
+`submission_id`。半截输出只用于当次流式展示，不提交为最终 Assistant Message，
+也不作为后续模型上下文；后续步骤从已持久化的完整上下文重建。
 
 ## 3. 状态机
 
@@ -44,6 +50,18 @@ ModelCallResult(wait_resource)
 
 waiting / ready -- Interrupt or Stop-and-Clear fence --> cancelled
 transport recovery budget exhausted ----------------> recovery_exhausted
+
+ModelCallResult(continue_model_step, partial boundary)
+        |
+        v
+      ready ----------------------> dispatched
+        |        idempotent enqueue      |
+        |                                v
+        |                    new Submission / Invocation
+        |
+        +-- prior Action exists --> action_reconciliation_required
+        +-- Stop / Interrupt ----> cancelled
+        +-- cycle budget --------> recovery_exhausted
 ```
 
 - `rate_limited`：统一错误策略将 Provider `Retry-After` 的 delta-seconds 或 HTTP-date
@@ -66,6 +84,13 @@ transport recovery budget exhausted ----------------> recovery_exhausted
 - 执行恢复 Submission 前再次校验 Wait 已处于 dispatched 且反向绑定当前
   `submission_id`，取消态或伪造 envelope 不能进入 Runtime。
 - 后续执行重新检查副作用；未知或不确定的 Action 不能因模型恢复而盲目重放。
+- 部分流续行以稳定幂等键创建新的 Submission / Invocation，沿用原 correlation，
+  默认最多自动续行 2 个 cycle；进程在 enqueue 后崩溃也只会绑定同一 Submission。
+- 当前 AgentScope 只在完整响应后进入 Action 阶段；dispatcher 仍扫描来源 Invocation
+  的持久化 `ActionRequest`。一旦存在任何 Action，恢复失败关闭为
+  `action_reconciliation_required`，等待后续 Action 对账能力，不自动重做。
+- Model Step 状态通过现有 Chat Runtime Observation 投影为 pending、accepted、
+  cancelled、blocked 或 failed；它不是 Queue 假状态，也不包含半截正文。
 
 ## 4. 长程交互替代“一问一答”
 
@@ -78,9 +103,10 @@ transport recovery budget exhausted ----------------> recovery_exhausted
 4. Suggestion 是非阻塞建议，不改变执行所有权；
 5. 等待结束后由 durable continuation 主动创建新 Invocation，不要求用户发送“继续”。
 
-当前 Console 兼容 Adapter 会装配一条固定、内容最小化的 runtime recovery input，并
-标记 `qwenpaw_model_resource_wait`。这是旧消息执行入口的桥接，不是把恢复重新定义为
-用户消息；后续 Runtime 原生输入应直接消费 typed envelope。
+当前 Console 兼容 Adapter 会从 typed envelope 装配固定、内容最小化的 runtime
+recovery input。Resource Wait 与 Model Step Continuation 都只传递权威事实引用；这是
+旧消息执行入口的桥接，不是把恢复重新定义为用户消息。后续 Runtime 原生输入应直接
+消费 typed envelope。
 
 ## 5. Edition 定位
 
@@ -109,7 +135,10 @@ Adapter 声明；Kernel 不假设任意模型流可以原地续传。
   WaitCondition `not_before` 投影供 Chat 查询。
 - [x] Transport/Provider overload 的短重试耗尽后转 durable timer Wait；统一的跨
   Invocation timer cycle budget 也覆盖 rate limit，防止长期故障形成无限恢复循环。
-- [ ] 从部分流边界创建可验证的新 Model Step continuation。
-- [ ] Action uncertainty 与 Checkpoint 决定恢复前自动对账。
+- [x] 从部分流边界创建内容安全、可跨重启、可验证的新 Model Step continuation；
+  使用独立 Submission / Invocation、原 correlation 和 2-cycle 自动恢复预算。
+- [x] 来源 Invocation 存在任何持久化 Action 时失败关闭，进入
+  `action_reconciliation_required`，不自动重放副作用。
+- [ ] 根据 `ActionResult` / uncertain side-effect 与 Checkpoint 自动完成恢复对账。
 - [ ] Provider resource health 事件自动释放 quota wait。
 - [ ] 真实限流故障和进程重启的浏览器端到端演练。

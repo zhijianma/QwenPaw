@@ -47,9 +47,9 @@ Steer 是异步控制输入，Approval 是策略裁决，三者都不能退化�
 | Chat 排队与运行所有权 | 服务端持久化 queued/admitted/running/terminal | 已不依赖浏览器存活 |
 | 模型调用审计 | 已记录 route、attempt、stream success/cancel/failure 与 usage | 具备引入恢复裁决的事实基础 |
 | 模型连接前重试 | `RetryChatModel` 在尚未产生有效输出时有界重试 | 部分覆盖；尚未与业务重试预算显式分离 |
-| 流中错误 | 产生有效输出后立即抛出，不盲目重放完整请求 | 避免重复输出，但当前会让 Invocation 失败 |
+| 流中错误 | 产生有效输出后不重放完整请求，创建 bounded Model Step continuation | 半截正文不提交，后续从 durable context 重建 |
 | 工具副作用 | `ActionRequest/Result`、审批、幂等与 uncertain 状态 | 比“让模型猜工具是否执行”更适合可靠恢复 |
-| Interaction | Approval、Ask User、Suggestion 与 WaitCondition 已统一 | 持久化 Chat continuation 仍在实施 |
+| Interaction | Approval、Ask User、Suggestion、WaitCondition 与 durable continuation 已统一 | 用户只在必要事实或授权边界介入 |
 | 进程重启 | Queue、Ledger、Wait 等可查询；Python 调用栈不可恢复 | 必须创建新 Invocation，不能伪装原地续跑 |
 | 时钟 | Provider timeout、rate limiter 等已使用 `time.monotonic()` | 保留，但 suspend 语义需逐平台验证 |
 
@@ -205,10 +205,12 @@ Kernel 已新增 `ModelFailureClass` 与 `ModelRecoveryDisposition`，并将它�
 失败类别。旧结果没有这两个字段时仍可读取，但新结果一旦写入其中一个就必须同时写入
 另一个，且已产生内容的尝试不能声明整请求 transport replay。
 
-当前已完成恢复裁决、输出边界留证和 Resource Wait scheduler：限流按 timer 到期，
-quota 默认等待外部资源事件；恢复 outbox 以稳定幂等键创建同一 `ChatSpec.id` 和
-`correlation_id` 下的新 Submission / Invocation。尚未实现跨 Invocation 的 bounded
-partial-output continuation，因此不能把 `continue_model_step` 误报成已经自动恢复。
+当前已完成恢复裁决、输出边界留证、Resource Wait scheduler 和跨 Invocation 的
+bounded Model Step continuation：限流按 timer 到期，quota 默认等待外部资源事件；
+两类恢复 outbox 均以稳定幂等键创建同一 `ChatSpec.id` 和 `correlation_id` 下的新
+Submission / Invocation。部分正文不进入持久上下文或最终 Assistant Message；来源
+Invocation 只要存在 Action 就失败关闭等待对账。尚未实现 Provider token 级原地续传
+或基于 `ActionResult` / Checkpoint 的自动副作用对账，不能把新步骤误报成原流复活。
 
 ### 5.1 故障分类
 
@@ -311,9 +313,12 @@ Codex 的“边收流边执行工具”建立在其 Provider 事件协议、工�
 
 ### R3：部分流与 Action 对账
 
-- 保存 bounded partial stream outcome，而非把增量消息作为事实源；
-- 已成功 Action 不重做，uncertain Action 必须查询或人工授权；
-- 只有具备 committed action protocol 的 Adapter 才能启用流内执行。
+- [x] 保存内容安全的 bounded partial stream boundary，而非把增量正文作为事实源；
+- [x] 用稳定 outbox 创建同 correlation 的新 Model Step，crash-after-enqueue 恢复时
+  不重复创建 Submission，Stop / Interrupt 可持久化 fencing；
+- [x] 来源 Invocation 存在 Action 时进入 `action_reconciliation_required`，不重做；
+- [ ] 根据 succeeded / failed / uncertain `ActionResult` 与 Checkpoint 自动对账；
+- [ ] 只有具备 committed action protocol 的 Adapter 才能启用流内执行。
 
 ### R4：可选 Provider 增量续传
 

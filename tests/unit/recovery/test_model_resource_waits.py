@@ -11,7 +11,9 @@ from qwenpaw.kernel import (
     ModelCallResult,
     ModelCallStatus,
     ModelFailureClass,
+    ModelOutputBoundary,
     ModelRecoveryDisposition,
+    ModelStepContinuationStatus,
     ResourceWaitStatus,
     ResourceWaitTrigger,
     WaitConditionKind,
@@ -365,3 +367,67 @@ async def test_transport_recovery_budget_is_bounded_and_idempotent(
         if condition.source_id == attempts[2].attempt_id
     )
     assert exhausted_condition.status is WaitConditionStatus.EXPIRED
+
+
+@pytest.mark.asyncio
+async def test_partial_model_step_outbox_is_bounded_and_dispatches_once(
+    tmp_path: Path,
+) -> None:
+    service = ModelResourceWaitService(
+        tmp_path / "resource-waits.sqlite3",
+        agent_id="default",
+        max_model_step_recovery_cycles=1,
+    )
+    first = _attempt()
+
+    def result(attempt: ModelCallAttempt) -> ModelCallResult:
+        return ModelCallResult(
+            attempt_id=attempt.attempt_id,
+            invocation_id=attempt.invocation_id,
+            conversation_id=attempt.conversation_id,
+            status=ModelCallStatus.FAILED,
+            emitted_content=True,
+            output_boundary=ModelOutputBoundary.PARTIAL_STREAM,
+            failure_class=ModelFailureClass.STREAM_INTERRUPTED,
+            recovery_disposition=(
+                ModelRecoveryDisposition.CONTINUE_MODEL_STEP
+            ),
+        )
+
+    ready = await service.defer_model_step(first, result(first))
+    assert ready is not None
+    assert ready.status is ModelStepContinuationStatus.READY
+    submission_id = uuid4()
+    calls = 0
+
+    async def dispatch(_continuation):
+        nonlocal calls
+        calls += 1
+        return submission_id
+
+    dispatched = await service.dispatch_model_step(
+        ready.continuation_id,
+        dispatch,
+    )
+    replayed = await service.dispatch_model_step(
+        ready.continuation_id,
+        dispatch,
+    )
+    assert dispatched.status is ModelStepContinuationStatus.DISPATCHED
+    assert dispatched.submission_id == submission_id
+    assert replayed == dispatched
+    assert calls == 1
+
+    second = first.model_copy(
+        update={
+            "attempt_id": uuid4(),
+            "route_decision_id": uuid4(),
+            "invocation_id": uuid4(),
+        },
+    )
+    exhausted = await service.defer_model_step(second, result(second))
+    assert exhausted is not None
+    assert exhausted.status is (
+        ModelStepContinuationStatus.RECOVERY_EXHAUSTED
+    )
+    assert not await service.list_ready_model_steps()

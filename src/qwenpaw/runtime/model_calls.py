@@ -365,26 +365,33 @@ class ModelCallSession:
         self._last_result = result
 
     async def defer_terminal_resource_wait(self) -> None:
-        """Persist a wait only after the whole logical call has failed."""
+        """Persist recovery only after the logical model call has failed."""
         result = self._last_result
         attempt = self._previous_attempt
         if (
             self._resource_waits is None
             or result is None
             or attempt is None
-            or result.recovery_disposition
-            not in {
-                ModelRecoveryDisposition.RETRY_TRANSPORT,
-                ModelRecoveryDisposition.WAIT_RESOURCE,
-            }
         ):
             return
         try:
-            await self._resource_waits.defer(attempt, result)
+            if result.recovery_disposition in {
+                ModelRecoveryDisposition.RETRY_TRANSPORT,
+                ModelRecoveryDisposition.WAIT_RESOURCE,
+            }:
+                await self._resource_waits.defer(attempt, result)
+            elif (
+                result.recovery_disposition
+                is ModelRecoveryDisposition.CONTINUE_MODEL_STEP
+            ):
+                await self._resource_waits.defer_model_step(
+                    attempt,
+                    result,
+                )
         except Exception as exc:
             raise ModelCallPersistenceError(
-                "model result was recorded but its resource wait could "
-                "not be persisted",
+                "model result was recorded but its recovery could not "
+                "be persisted",
             ) from exc
 
 

@@ -84,6 +84,7 @@ from .interactions import (
     UserInputReason,
 )
 from .memory import MemoryStateScope, MemoryStateSnapshot
+from .waits import ModelStepContinuation
 from .scheduling import (
     ScheduleDefinition,
     ScheduleFire,
@@ -1371,6 +1372,17 @@ class ModelCallStore(Protocol):
         limit: int = 100,
     ) -> Sequence[ModelCallRecord]:
         """Return newest provider attempts for one ChatSpec identity."""
+
+
+@runtime_checkable
+class ModelStepContinuationHistoryPort(Protocol):
+    """Read-only partial-stream recovery history for one ChatSpec."""
+
+    async def scan_model_steps_for_conversation(
+        self,
+        conversation_id: str,
+    ) -> Sequence[ModelStepContinuation]:
+        """Return every content-free model-step continuation in order."""
 
 
 @runtime_checkable

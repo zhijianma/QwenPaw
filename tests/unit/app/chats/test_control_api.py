@@ -38,7 +38,9 @@ from qwenpaw.kernel import (
     ModelCallResult,
     ModelCallStatus,
     ModelFailureClass,
+    ModelOutputBoundary,
     ModelRecoveryDisposition,
+    ModelStepContinuationStatus,
     ResourceWaitStatus,
     UserInputReason,
     SteerSafePoint,
@@ -210,6 +212,29 @@ async def test_stop_and_clear_cancels_pending_model_recovery(
         ),
     )
     assert wait is not None
+    step_attempt = attempt.model_copy(
+        update={
+            "attempt_id": uuid4(),
+            "route_decision_id": uuid4(),
+            "invocation_id": uuid4(),
+        },
+    )
+    step = await workspace.model_resource_wait_service.defer_model_step(
+        step_attempt,
+        ModelCallResult(
+            attempt_id=step_attempt.attempt_id,
+            invocation_id=step_attempt.invocation_id,
+            conversation_id=step_attempt.conversation_id,
+            status=ModelCallStatus.FAILED,
+            emitted_content=True,
+            output_boundary=ModelOutputBoundary.PARTIAL_STREAM,
+            failure_class=ModelFailureClass.STREAM_INTERRUPTED,
+            recovery_disposition=(
+                ModelRecoveryDisposition.CONTINUE_MODEL_STEP
+            ),
+        ),
+    )
+    assert step is not None
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -226,9 +251,16 @@ async def test_stop_and_clear_cancels_pending_model_recovery(
     cancelled = await workspace.model_resource_wait_service.get(
         wait.wait_id,
     )
+    cancelled_step = (
+        await workspace.model_resource_wait_service.get_model_step(
+            step.continuation_id,
+        )
+    )
     assert stopped.status_code == 200
     assert cancelled is not None
     assert cancelled.status is ResourceWaitStatus.CANCELLED
+    assert cancelled_step is not None
+    assert cancelled_step.status is ModelStepContinuationStatus.CANCELLED
     await service.close()
 
 

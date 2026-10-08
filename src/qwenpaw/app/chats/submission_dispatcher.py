@@ -7,6 +7,7 @@ import asyncio
 import copy
 import json
 import logging
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -20,6 +21,8 @@ from ...kernel import (
     ControlReceipt,
     InteractionStatus,
     ModelResourceWait,
+    ModelStepContinuation,
+    ModelStepContinuationStatus,
     ResourceWaitStatus,
     SubmissionInputEnvelope,
     TurnSubmission,
@@ -32,6 +35,9 @@ CONSOLE_INTERACTION_CONTINUATION_ENVELOPE = (
     "chat.console.interaction-continuation.v1"
 )
 CONSOLE_MODEL_RECOVERY_ENVELOPE = "chat.console.model-recovery.v1"
+CONSOLE_MODEL_STEP_CONTINUATION_ENVELOPE = (
+    "chat.console.model-step-continuation.v1"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -54,7 +60,6 @@ class WorkspaceChatSubmissionDispatcher:
         )
         self._continuation_event = asyncio.Event()
         self._continuation_task: asyncio.Task[None] | None = None
-        self._resource_wait_event = asyncio.Event()
         self._resource_wait_task: asyncio.Task[None] | None = None
         self._dispatcher = SubmissionDispatcher(
             agent_id=workspace.agent_id,
@@ -66,6 +71,7 @@ class WorkspaceChatSubmissionDispatcher:
         """Recover queued Console turns after workspace services start."""
         if self._resource_waits is not None:
             await self._dispatch_ready_resource_waits()
+            await self._dispatch_ready_model_steps()
         await self._dispatcher.start()
         if self._interactions is not None and self._continuation_task is None:
             self._continuation_task = asyncio.create_task(
@@ -103,14 +109,16 @@ class WorkspaceChatSubmissionDispatcher:
 
     def wake_resource_waits(self) -> None:
         """Wake model-resource continuations after an external release."""
-        self._resource_wait_event.set()
+        if self._resource_waits is not None:
+            self._resource_waits.notify_change()
 
     async def _run_resource_waits(self) -> None:
         """Dispatch matured waits without depending on an HTTP request."""
         while True:
-            self._resource_wait_event.clear()
+            self._resource_waits.clear_change()
             try:
                 await self._dispatch_ready_resource_waits()
+                await self._dispatch_ready_model_steps()
             except Exception:  # pylint: disable=broad-except
                 logger.exception("Failed to dispatch model resource wait")
                 delay = 1.0
@@ -122,13 +130,7 @@ class WorkspaceChatSubmissionDispatcher:
                     max(next_delay, 0.05),
                     60.0,
                 )
-            try:
-                await asyncio.wait_for(
-                    self._resource_wait_event.wait(),
-                    timeout=delay,
-                )
-            except TimeoutError:
-                pass
+            await self._resource_waits.wait_for_change(delay)
 
     async def _dispatch_ready_resource_waits(self) -> None:
         waits = await self._resource_waits.list_ready()
@@ -156,6 +158,115 @@ class WorkspaceChatSubmissionDispatcher:
         )
         if dispatched.status is ResourceWaitStatus.DISPATCHED:
             self._dispatcher.wake()
+
+    async def _dispatch_ready_model_steps(self) -> None:
+        """Dispatch partial-stream continuations without polling Chat."""
+        continuations = await self._resource_waits.list_ready_model_steps()
+        first_error: Exception | None = None
+        for continuation in continuations:
+            try:
+                await self._dispatch_model_step(continuation)
+            except Exception as exc:  # pylint: disable=broad-except
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
+
+    async def _dispatch_model_step(
+        self,
+        continuation: ModelStepContinuation,
+    ) -> None:
+        """Continue only when the failed Invocation committed no Action."""
+        workspace_dir = getattr(self._workspace, "workspace_dir", None)
+        if workspace_dir is None:
+            raise RuntimeError(
+                "workspace path is required for action reconciliation",
+            )
+        from ...runtime.actions import lite_action_store
+
+        action_store = lite_action_store(Path(workspace_dir))
+        actions = await action_store.scan_for_conversation(
+            continuation.conversation_id,
+        )
+        if any(
+            record.request.invocation_id == continuation.invocation_id
+            for record in actions
+        ):
+            await self._resource_waits.require_action_reconciliation(
+                continuation.continuation_id,
+            )
+            return
+        dispatched = await self._resource_waits.dispatch_model_step(
+            continuation.continuation_id,
+            self._enqueue_model_step,
+        )
+        if dispatched.status is ModelStepContinuationStatus.DISPATCHED:
+            self._dispatcher.wake()
+
+    async def _enqueue_model_step(
+        self,
+        continuation: ModelStepContinuation,
+    ) -> UUID | None:
+        """Create one fenced Submission for a partial model step."""
+        projection = await self._control.read_queue(
+            agent_id=continuation.agent_id,
+            conversation_id=continuation.conversation_id,
+        )
+        records = await self._control.scan_for_conversation(
+            agent_id=continuation.agent_id,
+            conversation_id=continuation.conversation_id,
+        )
+        if any(
+            (
+                record.command.kind
+                in {
+                    ControlCommandKind.INTERRUPT_CURRENT,
+                    ControlCommandKind.STOP_AND_CLEAR,
+                }
+                and record.command.target_invocation_id
+                == continuation.invocation_id
+            )
+            or (
+                record.command.kind is ControlCommandKind.STOP_AND_CLEAR
+                and record.command.requested_at
+                >= continuation.created_at
+            )
+            for record in records
+        ):
+            return None
+        request = TurnSubmissionRequest(
+            agent_id=continuation.agent_id,
+            conversation_id=continuation.conversation_id,
+            content="[model step continuation]",
+            request_context={
+                "channel": "console",
+                "model_step_continuation_id": str(
+                    continuation.continuation_id,
+                ),
+            },
+            input_envelope=SubmissionInputEnvelope(
+                kind=CONSOLE_MODEL_STEP_CONTINUATION_ENVELOPE,
+                payload={
+                    "continuation_id": str(
+                        continuation.continuation_id,
+                    ),
+                },
+            ),
+            idempotency_key=(
+                "model-step-continuation:"
+                f"{continuation.continuation_id}"
+            ),
+            correlation_id=continuation.correlation_id,
+        )
+        receipt = await self._control.enqueue_turn(
+            request,
+            expected_revision=projection.revision,
+        )
+        if receipt.submission_id is None:
+            raise RuntimeError(
+                "model-step enqueue returned no submission identity",
+            )
+        return receipt.submission_id
 
     async def _enqueue_resource_wait(
         self,
@@ -325,6 +436,7 @@ class WorkspaceChatSubmissionDispatcher:
             CONSOLE_SUBMISSION_ENVELOPE,
             CONSOLE_INTERACTION_CONTINUATION_ENVELOPE,
             CONSOLE_MODEL_RECOVERY_ENVELOPE,
+            CONSOLE_MODEL_STEP_CONTINUATION_ENVELOPE,
         }:
             raise ValueError(
                 f"unsupported submission input envelope: {envelope.kind}",
@@ -346,6 +458,12 @@ class WorkspaceChatSubmissionDispatcher:
             )
         elif envelope.kind == CONSOLE_MODEL_RECOVERY_ENVELOPE:
             payload = await self._materialize_model_recovery_payload(
+                envelope,
+                chat,
+                submission,
+            )
+        elif envelope.kind == CONSOLE_MODEL_STEP_CONTINUATION_ENVELOPE:
+            payload = await self._materialize_model_step_payload(
                 envelope,
                 chat,
                 submission,
@@ -431,6 +549,75 @@ class WorkspaceChatSubmissionDispatcher:
                 "request_context": {
                     "model_resource_wait_id": str(wait.wait_id),
                     "recovered_attempt_id": str(wait.attempt_id),
+                },
+            },
+        }
+
+    async def _materialize_model_step_payload(
+        self,
+        envelope: SubmissionInputEnvelope,
+        chat: Any,
+        submission: TurnSubmission,
+    ) -> dict[str, Any]:
+        """Resolve a partial-stream pointer without replaying its text."""
+        if self._resource_waits is None:
+            raise RuntimeError("Model recovery service is unavailable")
+        try:
+            continuation_id = UUID(
+                str(envelope.payload["continuation_id"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("invalid model-step envelope") from exc
+        continuation = await self._resource_waits.get_model_step(
+            continuation_id,
+        )
+        if continuation is None:
+            raise ValueError("model-step continuation is unavailable")
+        if (
+            continuation.agent_id != submission.agent_id
+            or continuation.conversation_id
+            != submission.conversation_id
+            or continuation.conversation_id != chat.id
+        ):
+            raise ValueError(
+                "model-step continuation does not belong to its ChatSpec",
+            )
+        if (
+            continuation.status
+            is not ModelStepContinuationStatus.DISPATCHED
+            or continuation.submission_id != submission.submission_id
+        ):
+            raise ValueError(
+                "model-step continuation is not bound to this Submission",
+            )
+        return {
+            "channel_id": chat.channel,
+            "sender_id": chat.user_id,
+            "content_parts": [
+                {
+                    "type": "text",
+                    "text": (
+                        "QwenPaw runtime model-step recovery: the prior "
+                        "model stream ended before a terminal response. "
+                        "Continue the original task from durable "
+                        "conversation state. Do not treat partial output "
+                        "as committed and do not repeat external actions."
+                    ),
+                },
+            ],
+            "message_metadata": {
+                "qwenpaw_client_message_id": submission.idempotency_key,
+                "qwenpaw_model_step_continuation": str(continuation_id),
+            },
+            "message_id": submission.idempotency_key,
+            "meta": {
+                "session_id": chat.session_id,
+                "user_id": chat.user_id,
+                "request_context": {
+                    "model_step_continuation_id": str(continuation_id),
+                    "recovered_attempt_id": str(
+                        continuation.attempt_id,
+                    ),
                 },
             },
         }

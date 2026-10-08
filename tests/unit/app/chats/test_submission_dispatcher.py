@@ -14,6 +14,7 @@ from qwenpaw.app.chats.repo import JsonChatRepository
 from qwenpaw.app.chats.submission_dispatcher import (
     CONSOLE_INTERACTION_CONTINUATION_ENVELOPE,
     CONSOLE_MODEL_RECOVERY_ENVELOPE,
+    CONSOLE_MODEL_STEP_CONTINUATION_ENVELOPE,
     CONSOLE_SUBMISSION_ENVELOPE,
     WorkspaceChatSubmissionDispatcher,
 )
@@ -26,6 +27,8 @@ from qwenpaw.invocation_control import (
 from qwenpaw.interactions import InteractionService
 from qwenpaw.recovery import ModelResourceWaitService
 from qwenpaw.kernel import (
+    ActionKind,
+    ActionRequest,
     ActorRef,
     ActorType,
     ContinuationDispatchStatus,
@@ -40,12 +43,15 @@ from qwenpaw.kernel import (
     ModelCallResult,
     ModelCallStatus,
     ModelFailureClass,
+    ModelOutputBoundary,
     ModelRecoveryDisposition,
+    ModelStepContinuationStatus,
     ResourceWaitStatus,
     SubmissionInputEnvelope,
     SubmissionStatus,
     TurnSubmissionRequest,
 )
+from qwenpaw.runtime.actions import lite_action_store
 
 
 @pytest.mark.asyncio
@@ -507,5 +513,211 @@ async def test_model_recovery_honors_stop_during_enqueue_race(
     )
     assert cancelled is not None
     assert cancelled.status is ResourceWaitStatus.CANCELLED
+    assert queue.submissions == ()
+    await control.close()
+
+
+@pytest.mark.asyncio
+async def test_partial_model_step_recovers_one_correlated_submission(
+    tmp_path: Path,
+) -> None:
+    manager = ChatManager(
+        repo=JsonChatRepository(tmp_path / "chats.json"),
+    )
+    chat = await manager.create_chat(
+        ChatSpec(
+            id="chat-1",
+            session_id="console:chat-1",
+            user_id="local-user",
+            channel="console",
+        ),
+    )
+    control = InvocationControlService(
+        store=SQLiteInvocationControl(tmp_path / "control.sqlite3"),
+    )
+    recovery = ModelResourceWaitService(
+        tmp_path / "resource-waits.sqlite3",
+        agent_id="default",
+    )
+    attempt = ModelCallAttempt(
+        attempt_id=uuid4(),
+        route_decision_id=uuid4(),
+        invocation_id=uuid4(),
+        correlation_id=uuid4(),
+        conversation_id=chat.id,
+        registry_generation=1,
+        context_manifest_id=uuid4(),
+        model_call_index=1,
+        attempt_index=1,
+        provider_id="provider-a",
+        model_id="model-a",
+    )
+    continuation = await recovery.defer_model_step(
+        attempt,
+        ModelCallResult(
+            attempt_id=attempt.attempt_id,
+            invocation_id=attempt.invocation_id,
+            conversation_id=chat.id,
+            status=ModelCallStatus.FAILED,
+            emitted_content=True,
+            output_boundary=ModelOutputBoundary.PARTIAL_STREAM,
+            failure_class=ModelFailureClass.STREAM_INTERRUPTED,
+            recovery_disposition=(
+                ModelRecoveryDisposition.CONTINUE_MODEL_STEP
+            ),
+        ),
+    )
+    assert continuation is not None
+    workspace = SimpleNamespace(
+        agent_id="default",
+        workspace_dir=tmp_path,
+        chat_manager=manager,
+        model_resource_wait_service=recovery,
+    )
+    dispatcher = WorkspaceChatSubmissionDispatcher(
+        workspace=workspace,
+        control=control,
+    )
+    original_dispatch = recovery.dispatch_model_step
+
+    async def fail_after_enqueue(continuation_id, dispatch):
+        current = await recovery.get_model_step(continuation_id)
+        assert current is not None
+        await dispatch(current)
+        raise RuntimeError("simulated model-step crash after enqueue")
+
+    recovery.dispatch_model_step = fail_after_enqueue
+    # pylint: disable=protected-access
+    with pytest.raises(RuntimeError, match="model-step crash"):
+        await dispatcher._dispatch_ready_model_steps()
+    recovery.dispatch_model_step = original_dispatch
+    await dispatcher._dispatch_ready_model_steps()
+    # pylint: enable=protected-access
+
+    dispatched = await recovery.get_model_step(
+        continuation.continuation_id,
+    )
+    assert dispatched is not None
+    assert dispatched.status is ModelStepContinuationStatus.DISPATCHED
+    assert dispatched.submission_id is not None
+    submission = await control.get_submission(dispatched.submission_id)
+    assert submission is not None
+    assert submission.correlation_id == attempt.correlation_id
+    assert submission.input_envelope is not None
+    assert submission.input_envelope.kind == (
+        CONSOLE_MODEL_STEP_CONTINUATION_ENVELOPE
+    )
+    # pylint: disable=protected-access
+    payload = await dispatcher._materialize_model_step_payload(
+        submission.input_envelope,
+        chat,
+        submission,
+    )
+    # pylint: enable=protected-access
+    text = payload["content_parts"][0]["text"]
+    assert "partial output" in text
+    assert "model_step_continuation_id" in (
+        payload["meta"]["request_context"]
+    )
+    queue = await control.read_queue(
+        agent_id="default",
+        conversation_id=chat.id,
+    )
+    assert len(queue.submissions) == 1
+    await control.close()
+
+
+@pytest.mark.asyncio
+async def test_partial_model_step_stops_for_action_reconciliation(
+    tmp_path: Path,
+) -> None:
+    manager = ChatManager(
+        repo=JsonChatRepository(tmp_path / "chats.json"),
+    )
+    chat = await manager.create_chat(
+        ChatSpec(
+            id="chat-1",
+            session_id="console:chat-1",
+            user_id="local-user",
+            channel="console",
+        ),
+    )
+    control = InvocationControlService(
+        store=SQLiteInvocationControl(tmp_path / "control.sqlite3"),
+    )
+    recovery = ModelResourceWaitService(
+        tmp_path / "resource-waits.sqlite3",
+        agent_id="default",
+    )
+    attempt = ModelCallAttempt(
+        attempt_id=uuid4(),
+        route_decision_id=uuid4(),
+        invocation_id=uuid4(),
+        correlation_id=uuid4(),
+        conversation_id=chat.id,
+        registry_generation=1,
+        context_manifest_id=uuid4(),
+        model_call_index=1,
+        attempt_index=1,
+        provider_id="provider-a",
+        model_id="model-a",
+    )
+    continuation = await recovery.defer_model_step(
+        attempt,
+        ModelCallResult(
+            attempt_id=attempt.attempt_id,
+            invocation_id=attempt.invocation_id,
+            conversation_id=chat.id,
+            status=ModelCallStatus.FAILED,
+            emitted_content=True,
+            output_boundary=ModelOutputBoundary.PARTIAL_STREAM,
+            failure_class=ModelFailureClass.STREAM_INTERRUPTED,
+            recovery_disposition=(
+                ModelRecoveryDisposition.CONTINUE_MODEL_STEP
+            ),
+        ),
+    )
+    assert continuation is not None
+    await lite_action_store(tmp_path).begin(
+        ActionRequest(
+            invocation_id=attempt.invocation_id,
+            correlation_id=attempt.correlation_id,
+            conversation_id=chat.id,
+            registry_generation=1,
+            capability_id="qwenpaw.system.test-tool",
+            kind=ActionKind.TOOL,
+            action_name="write_file",
+            arguments={},
+            redacted_arguments={},
+            arguments_hash=f"sha256:{'a' * 64}",
+            idempotency_key="action-before-partial-recovery",
+        ),
+    )
+    workspace = SimpleNamespace(
+        agent_id="default",
+        workspace_dir=tmp_path,
+        chat_manager=manager,
+        model_resource_wait_service=recovery,
+    )
+    dispatcher = WorkspaceChatSubmissionDispatcher(
+        workspace=workspace,
+        control=control,
+    )
+
+    # pylint: disable=protected-access
+    await dispatcher._dispatch_ready_model_steps()
+    # pylint: enable=protected-access
+
+    blocked = await recovery.get_model_step(
+        continuation.continuation_id,
+    )
+    assert blocked is not None
+    assert blocked.status is (
+        ModelStepContinuationStatus.ACTION_RECONCILIATION_REQUIRED
+    )
+    queue = await control.read_queue(
+        agent_id="default",
+        conversation_id=chat.id,
+    )
     assert queue.submissions == ()
     await control.close()

@@ -590,7 +590,16 @@ async def test_partial_stream_records_continue_model_step(
 ) -> None:
     scope = _scope(tmp_path)
     store = lite_model_call_store(tmp_path)
-    session = _session(scope, _manifest(scope), store)
+    recovery = ModelResourceWaitService(
+        tmp_path / "resource-waits.sqlite3",
+        agent_id="default",
+    )
+    session = _session(
+        scope,
+        _manifest(scope),
+        store,
+        resource_waits=recovery,
+    )
     provider = AsyncMock()
     provider.model = "model-a"
     provider.credential = None
@@ -626,6 +635,10 @@ async def test_partial_stream_records_continue_model_step(
     assert record.result.output_boundary is (
         ModelOutputBoundary.PARTIAL_STREAM
     )
+    [continuation] = await recovery.list_ready_model_steps()
+    assert continuation.attempt_id == record.attempt.attempt_id
+    assert continuation.correlation_id == scope.invocation_id
+    assert not hasattr(continuation, "content")
 
 
 @pytest.mark.asyncio

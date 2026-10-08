@@ -158,6 +158,8 @@ from ...kernel.models import (
     ToolSelection,
 )
 from ...kernel.waits import (
+    ModelStepContinuation,
+    ModelStepContinuationStatus,
     ModelResourceWait,
     ResourceWaitStatus,
     ResourceWaitTrigger,
@@ -179,6 +181,7 @@ from ...kernel.ports import (
     DeliveryProjectionPort,
     InboxProjectionPort,
     InteractionHistoryPort,
+    ModelStepContinuationHistoryPort,
     OperationalEventPort,
     ObservationProjectionPort,
     DriverHost,
@@ -256,6 +259,8 @@ __all__ = [
     "ModelOutputBoundary",
     "ModelRecoveryDisposition",
     "ModelResourceWait",
+    "ModelStepContinuation",
+    "ModelStepContinuationStatus",
     "ModelRouteReason",
     "ResourceWaitStatus",
     "ResourceWaitTrigger",
@@ -288,6 +293,7 @@ __all__ = [
     "InboxProjectionConflictError",
     "InboxProjectionPort",
     "InteractionHistoryPort",
+    "ModelStepContinuationHistoryPort",
     "InteractionRecord",
     "OperationalEvent",
     "OperationalEventConflictError",

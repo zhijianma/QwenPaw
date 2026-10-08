@@ -17,8 +17,11 @@ from ..kernel import (
     ModelCallAttempt,
     ModelCallResult,
     ModelFailureClass,
+    ModelOutputBoundary,
     ModelRecoveryDisposition,
     ModelResourceWait,
+    ModelStepContinuation,
+    ModelStepContinuationStatus,
     ResourceWaitStatus,
     ResourceWaitTrigger,
     WaitCondition,
@@ -44,6 +47,10 @@ ResourceWaitDispatcher = Callable[
     [ModelResourceWait],
     Awaitable[UUID | None],
 ]
+ModelStepDispatcher = Callable[
+    [ModelStepContinuation],
+    Awaitable[UUID | None],
+]
 
 
 class ModelResourceWaitService:
@@ -57,6 +64,7 @@ class ModelResourceWaitService:
         rate_limit_delay_seconds: int = 60,
         transport_delay_seconds: int = 60,
         max_automatic_recovery_cycles: int = 3,
+        max_model_step_recovery_cycles: int = 2,
     ) -> None:
         if not agent_id.strip():
             raise ValueError("resource wait owner cannot be empty")
@@ -66,6 +74,8 @@ class ModelResourceWaitService:
             raise ValueError("transport delay must be positive")
         if max_automatic_recovery_cycles < 1:
             raise ValueError("automatic recovery cycles must be positive")
+        if max_model_step_recovery_cycles < 1:
+            raise ValueError("model-step recovery cycles must be positive")
         self.database_path = Path(database_path)
         self.agent_id = agent_id
         self.rate_limit_delay_seconds = rate_limit_delay_seconds
@@ -73,6 +83,10 @@ class ModelResourceWaitService:
         self.max_automatic_recovery_cycles = (
             max_automatic_recovery_cycles
         )
+        self.max_model_step_recovery_cycles = (
+            max_model_step_recovery_cycles
+        )
+        self._change_event = asyncio.Event()
         self._initialize_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
         self._initialized = False
@@ -124,6 +138,32 @@ class ModelResourceWaitService:
                         correlation_id,
                         failure_class
                     );
+                CREATE TABLE IF NOT EXISTS model_step_continuations (
+                    continuation_id TEXT PRIMARY KEY,
+                    attempt_id TEXT NOT NULL UNIQUE,
+                    invocation_id TEXT NOT NULL,
+                    correlation_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    conversation_id TEXT NOT NULL,
+                    output_boundary TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    submission_id TEXT,
+                    revision INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_model_step_ready
+                    ON model_step_continuations(
+                        agent_id,
+                        status,
+                        created_at
+                    );
+                CREATE INDEX IF NOT EXISTS idx_model_step_correlation
+                    ON model_step_continuations(
+                        agent_id,
+                        correlation_id,
+                        created_at
+                    );
                 """,
             )
 
@@ -139,6 +179,21 @@ class ModelResourceWaitService:
 
     async def close(self) -> None:
         """Close the service; SQLite connections are operation-scoped."""
+
+    def notify_change(self) -> None:
+        """Wake the workspace recovery worker without exposing its task."""
+        self._change_event.set()
+
+    def clear_change(self) -> None:
+        """Clear a consumed wake signal before inspecting durable state."""
+        self._change_event.clear()
+
+    async def wait_for_change(self, timeout: float) -> None:
+        """Wait until recovery state changes or the next timer is due."""
+        try:
+            await asyncio.wait_for(self._change_event.wait(), timeout=timeout)
+        except TimeoutError:
+            pass
 
     async def defer(
         self,
@@ -191,7 +246,110 @@ class ModelResourceWaitService:
         )
         await self.start()
         async with self._write_lock:
-            return await asyncio.to_thread(self._defer_sync, wait)
+            persisted = await asyncio.to_thread(self._defer_sync, wait)
+        self.notify_change()
+        return persisted
+
+    async def defer_model_step(
+        self,
+        attempt: ModelCallAttempt,
+        result: ModelCallResult,
+    ) -> ModelStepContinuation | None:
+        """Create an immediate continuation for one partial stream."""
+        if (
+            result.recovery_disposition
+            is not ModelRecoveryDisposition.CONTINUE_MODEL_STEP
+            or result.failure_class
+            is not ModelFailureClass.STREAM_INTERRUPTED
+        ):
+            return None
+        if not result.emitted_content or result.output_boundary not in {
+            ModelOutputBoundary.PARTIAL_STREAM,
+            ModelOutputBoundary.INCOMPLETE_STREAM_END,
+        }:
+            raise ValueError(
+                "model-step continuation requires emitted partial output",
+            )
+        if attempt.attempt_id != result.attempt_id:
+            raise ValueError("model-step attempt identity mismatch")
+        if attempt.invocation_id != result.invocation_id:
+            raise ValueError("model-step invocation identity mismatch")
+        if not attempt.conversation_id:
+            return None
+        continuation = ModelStepContinuation(
+            continuation_id=uuid5(
+                attempt.attempt_id,
+                "model-step-continuation",
+            ),
+            attempt_id=attempt.attempt_id,
+            invocation_id=attempt.invocation_id,
+            correlation_id=attempt.correlation_id,
+            agent_id=self.agent_id,
+            conversation_id=attempt.conversation_id,
+            output_boundary=result.output_boundary,
+            created_at=result.completed_at,
+            updated_at=result.completed_at,
+        )
+        await self.start()
+        async with self._write_lock:
+            persisted = await asyncio.to_thread(
+                self._defer_model_step_sync,
+                continuation,
+            )
+        self.notify_change()
+        return persisted
+
+    def _defer_model_step_sync(
+        self,
+        continuation: ModelStepContinuation,
+    ) -> ModelStepContinuation:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM model_step_continuations "
+                "WHERE continuation_id = ?",
+                (str(continuation.continuation_id),),
+            ).fetchone()
+            if row is not None:
+                existing = self._step_from_row(row)
+                immutable = (
+                    "continuation_id",
+                    "attempt_id",
+                    "invocation_id",
+                    "correlation_id",
+                    "agent_id",
+                    "conversation_id",
+                    "output_boundary",
+                    "created_at",
+                )
+                if any(
+                    getattr(existing, field)
+                    != getattr(continuation, field)
+                    for field in immutable
+                ):
+                    raise ModelResourceWaitConflictError(
+                        "model-step continuation has conflicting content",
+                    )
+                return existing
+            count = connection.execute(
+                "SELECT COUNT(*) AS total "
+                "FROM model_step_continuations WHERE agent_id = ? "
+                "AND correlation_id = ?",
+                (self.agent_id, str(continuation.correlation_id)),
+            ).fetchone()["total"]
+            if count >= self.max_model_step_recovery_cycles:
+                continuation = continuation.model_copy(
+                    update={
+                        "status": (
+                            ModelStepContinuationStatus.RECOVERY_EXHAUSTED
+                        ),
+                    },
+                )
+            connection.execute(
+                "INSERT INTO model_step_continuations VALUES "
+                "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                self._step_to_values(continuation),
+            )
+        return continuation
 
     def _defer_sync(
         self,
@@ -262,7 +420,9 @@ class ModelResourceWaitService:
         """Release an external-event wait after resource replenishment."""
         await self.start()
         async with self._write_lock:
-            return await asyncio.to_thread(self._release_sync, wait_id)
+            released = await asyncio.to_thread(self._release_sync, wait_id)
+        self.notify_change()
+        return released
 
     def _release_sync(self, wait_id: UUID) -> ModelResourceWait:
         connection = self._connect()
@@ -390,6 +550,168 @@ class ModelResourceWaitService:
                 submission_id,
             )
 
+    async def list_ready_model_steps(
+        self,
+    ) -> tuple[ModelStepContinuation, ...]:
+        """Return immediate model-step continuations in creation order."""
+        await self.start()
+        return await asyncio.to_thread(self._list_ready_model_steps_sync)
+
+    def _list_ready_model_steps_sync(
+        self,
+    ) -> tuple[ModelStepContinuation, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM model_step_continuations "
+                "WHERE agent_id = ? AND status = ? "
+                "ORDER BY created_at, continuation_id",
+                (
+                    self.agent_id,
+                    ModelStepContinuationStatus.READY.value,
+                ),
+            ).fetchall()
+        return tuple(self._step_from_row(row) for row in rows)
+
+    async def scan_model_steps_for_conversation(
+        self,
+        conversation_id: str,
+    ) -> tuple[ModelStepContinuation, ...]:
+        """Return content-free model-step recovery history for one Chat."""
+        if not conversation_id.strip():
+            raise ValueError("conversation_id cannot be empty")
+        await self.start()
+        return await asyncio.to_thread(
+            self._scan_model_steps_for_conversation_sync,
+            conversation_id,
+        )
+
+    def _scan_model_steps_for_conversation_sync(
+        self,
+        conversation_id: str,
+    ) -> tuple[ModelStepContinuation, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM model_step_continuations "
+                "WHERE agent_id = ? AND conversation_id = ? "
+                "ORDER BY created_at, continuation_id",
+                (self.agent_id, conversation_id),
+            ).fetchall()
+        return tuple(self._step_from_row(row) for row in rows)
+
+    async def dispatch_model_step(
+        self,
+        continuation_id: UUID,
+        dispatch: ModelStepDispatcher,
+    ) -> ModelStepContinuation:
+        """Serialize one model-step enqueue with cancellation."""
+        await self.start()
+        async with self._write_lock:
+            current = await asyncio.to_thread(
+                self._get_model_step_sync,
+                continuation_id,
+            )
+            if current is None:
+                raise ModelResourceWaitNotFoundError(str(continuation_id))
+            if current.status is not ModelStepContinuationStatus.READY:
+                return current
+            submission_id = await dispatch(current)
+            status = (
+                ModelStepContinuationStatus.DISPATCHED
+                if submission_id is not None
+                else ModelStepContinuationStatus.CANCELLED
+            )
+            return await asyncio.to_thread(
+                self._transition_model_step_sync,
+                continuation_id,
+                status,
+                submission_id,
+            )
+
+    async def require_action_reconciliation(
+        self,
+        continuation_id: UUID,
+    ) -> ModelStepContinuation:
+        """Fail closed when an originating Invocation owns an Action."""
+        await self.start()
+        async with self._write_lock:
+            return await asyncio.to_thread(
+                self._transition_model_step_sync,
+                continuation_id,
+                (
+                    ModelStepContinuationStatus
+                    .ACTION_RECONCILIATION_REQUIRED
+                ),
+                None,
+            )
+
+    async def get_model_step(
+        self,
+        continuation_id: UUID,
+    ) -> ModelStepContinuation | None:
+        """Load one partial-stream continuation by stable identity."""
+        await self.start()
+        return await asyncio.to_thread(
+            self._get_model_step_sync,
+            continuation_id,
+        )
+
+    def _get_model_step_sync(
+        self,
+        continuation_id: UUID,
+    ) -> ModelStepContinuation | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM model_step_continuations "
+                "WHERE continuation_id = ?",
+                (str(continuation_id),),
+            ).fetchone()
+        return self._step_from_row(row) if row is not None else None
+
+    def _transition_model_step_sync(
+        self,
+        continuation_id: UUID,
+        status: ModelStepContinuationStatus,
+        submission_id: UUID | None,
+    ) -> ModelStepContinuation:
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM model_step_continuations "
+                "WHERE continuation_id = ?",
+                (str(continuation_id),),
+            ).fetchone()
+            if row is None:
+                raise ModelResourceWaitNotFoundError(str(continuation_id))
+            current = self._step_from_row(row)
+            if current.status is status:
+                if current.submission_id != submission_id:
+                    raise ModelResourceWaitConflictError(
+                        "model-step continuation submission conflict",
+                    )
+                connection.rollback()
+                return current
+            if current.status is not ModelStepContinuationStatus.READY:
+                raise ModelResourceWaitConflictError(
+                    "only a ready model-step continuation can transition",
+                )
+            updated = current.model_copy(
+                update={
+                    "status": status,
+                    "submission_id": submission_id,
+                    "revision": current.revision + 1,
+                    "updated_at": utc_now(),
+                },
+            )
+            self._update_model_step(connection, updated)
+            connection.commit()
+            return updated
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
     async def cancel_for_conversation(
         self,
         *,
@@ -401,10 +723,12 @@ class ModelResourceWaitService:
             return ()
         await self.start()
         async with self._write_lock:
-            return await asyncio.to_thread(
+            cancelled = await asyncio.to_thread(
                 self._cancel_for_conversation_sync,
                 conversation_id,
             )
+        self.notify_change()
+        return cancelled
 
     def _cancel_for_conversation_sync(
         self,
@@ -428,6 +752,26 @@ class ModelResourceWaitService:
                 self._cancel_wait(connection, self._from_row(row))
                 for row in rows
             )
+            step_rows = connection.execute(
+                "SELECT * FROM model_step_continuations "
+                "WHERE agent_id = ? AND conversation_id = ? "
+                "AND status = ?",
+                (
+                    self.agent_id,
+                    conversation_id,
+                    ModelStepContinuationStatus.READY.value,
+                ),
+            ).fetchall()
+            for row in step_rows:
+                current = self._step_from_row(row)
+                updated = current.model_copy(
+                    update={
+                        "status": ModelStepContinuationStatus.CANCELLED,
+                        "revision": current.revision + 1,
+                        "updated_at": utc_now(),
+                    },
+                )
+                self._update_model_step(connection, updated)
             connection.commit()
             return cancelled
         except Exception:
@@ -657,6 +1001,56 @@ class ModelResourceWaitService:
                 wait.revision,
                 wait.updated_at.isoformat(),
                 str(wait.wait_id),
+            ),
+        )
+
+    @staticmethod
+    def _step_from_row(row: sqlite3.Row) -> ModelStepContinuation:
+        return ModelStepContinuation.model_validate(dict(row))
+
+    @staticmethod
+    def _step_to_values(
+        continuation: ModelStepContinuation,
+    ) -> tuple[object, ...]:
+        return (
+            str(continuation.continuation_id),
+            str(continuation.attempt_id),
+            str(continuation.invocation_id),
+            str(continuation.correlation_id),
+            continuation.agent_id,
+            continuation.conversation_id,
+            continuation.output_boundary.value,
+            continuation.status.value,
+            (
+                str(continuation.submission_id)
+                if continuation.submission_id
+                else None
+            ),
+            continuation.revision,
+            continuation.created_at.isoformat(),
+            continuation.updated_at.isoformat(),
+        )
+
+    @classmethod
+    def _update_model_step(
+        cls,
+        connection: sqlite3.Connection,
+        continuation: ModelStepContinuation,
+    ) -> None:
+        connection.execute(
+            "UPDATE model_step_continuations SET status = ?, "
+            "submission_id = ?, revision = ?, updated_at = ? "
+            "WHERE continuation_id = ?",
+            (
+                continuation.status.value,
+                (
+                    str(continuation.submission_id)
+                    if continuation.submission_id
+                    else None
+                ),
+                continuation.revision,
+                continuation.updated_at.isoformat(),
+                str(continuation.continuation_id),
             ),
         )
 

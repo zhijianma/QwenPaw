@@ -143,13 +143,13 @@ Scheduling、Plugin Generation 和 Edition Profile 为核心的 OS 基础设施�
 - Chat `wait-conditions` 合并资源等待与 Interaction 等待，Task 页面没有提前开发。
 - `ModelOutputBoundary` 已区分 pre-output、完整响应、部分流、终态流与 incomplete
   EOF；未见终态 chunk 不再被记为成功。无内容时允许 transport retry，已有内容时
-  禁止整请求重放。
-  边界只留枚举证据，不保存模型输出或隐藏 reasoning。部分流自动续行仍待实现。
+  禁止整请求重放。边界只留枚举证据，不保存模型输出或隐藏 reasoning；部分流现在
+  由 bounded Model Step continuation 创建新的 Invocation 继续。
 - “一问一答”仅保留为短 Chat 快速路径；长程工作由 Agent Loop、typed wait、
   continuation 和 checkpoint 推进，不要求用户发送“继续”。
 - 设计与未完成边界见
   `docs/design/qwenpaw-model-resource-recovery.md`。真实 retry-after、Provider health
-  自动释放、部分流 continuation boundary 和副作用对账仍待完成。
+  自动释放和副作用自动对账仍待完成；部分流 continuation boundary 已完成。
 
 - Goal 已恢复，但 Task Workbench 仍按用户要求后置。
 - Task 页面不是当前阶段验收目标。仓库中的 `console/src/pages/Tasks/`
@@ -270,6 +270,23 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   并按原 `correlation_id` 统计。
 - cycle budget 耗尽形成持久化 `recovery_exhausted`，通过 WaitCondition 投影为
   `expired`；不静默丢弃，也不会继续定时复活。
+
+### 2026-10-08 部分模型流的 bounded Model Step continuation
+
+- `stream_interrupted + continue_model_step` 且已有输出时，持久化内容安全的
+  `ModelStepContinuation`；只保存身份、边界和状态，不保存半截正文或 reasoning。
+- continuation 使用新的 Submission / Invocation、原 `ChatSpec.id` 与 correlation；
+  稳定幂等键覆盖 crash-after-enqueue，默认最多自动恢复 2 个 cycle。
+- 后续模型输入从 durable context 重建；partial stream 不提交为最终 Assistant
+  Message，也不作为已提交上下文重放。
+- Stop / Interrupt、Queue revision 和执行前反向绑定共同阻止迟到恢复；工作目录缺失
+  时 action reconciliation 失败关闭。
+- dispatcher 扫描来源 Invocation 的 `ActionRequest`；发现任何 Action 即进入
+  `action_reconciliation_required`，当前不会自动重做或猜测副作用结果。
+- 状态经现有 Chat Runtime Observation 展示为 pending / accepted / cancelled /
+  blocked / failed，不伪造 Queue 项，不依赖 Task 页面或前端私有状态。
+- 尚未完成：按 `ActionResult` / uncertain side-effect 与 Checkpoint 自动对账、
+  Provider token 级原地续传、真实断流与进程重启的浏览器端到端演练。
 
 ### 本阶段此前已执行的定点验证
 

@@ -31,6 +31,9 @@ from ..kernel import (
     ModelCallRecord,
     ModelCallStatus,
     ModelCallStore,
+    ModelStepContinuation,
+    ModelStepContinuationHistoryPort,
+    ModelStepContinuationStatus,
     ObservationCategory,
     ObservationPage,
     ObservationProjectionPort,
@@ -257,6 +260,53 @@ def _model_observations(
         **common,
     )
     return route_observation, attempt_observation, result_observation
+
+
+def _model_step_status(
+    status: ModelStepContinuationStatus,
+) -> ObservationStatus:
+    return {
+        ModelStepContinuationStatus.READY: ObservationStatus.PENDING,
+        ModelStepContinuationStatus.DISPATCHED: ObservationStatus.ACCEPTED,
+        ModelStepContinuationStatus.CANCELLED: ObservationStatus.CANCELLED,
+        ModelStepContinuationStatus.ACTION_RECONCILIATION_REQUIRED: (
+            ObservationStatus.BLOCKED
+        ),
+        ModelStepContinuationStatus.RECOVERY_EXHAUSTED: (
+            ObservationStatus.FAILED
+        ),
+    }[status]
+
+
+def _model_step_observation(
+    continuation: ModelStepContinuation,
+) -> RuntimeObservation:
+    return RuntimeObservation(
+        observation_id=_observation_id(
+            continuation.continuation_id,
+            ObservationStage.EXECUTION,
+        ),
+        category=ObservationCategory.MODEL,
+        stage=ObservationStage.EXECUTION,
+        status=_model_step_status(continuation.status),
+        source=ObservationSource(
+            source_type="qwenpaw.model.step-continuation",
+            source_id=str(continuation.continuation_id),
+        ),
+        conversation_id=continuation.conversation_id,
+        invocation_id=continuation.invocation_id,
+        correlation_id=continuation.correlation_id,
+        title="Partial model step recovery",
+        facts={
+            "continuation_id": str(continuation.continuation_id),
+            "attempt_id": str(continuation.attempt_id),
+            "output_boundary": continuation.output_boundary.value,
+            "recovery_status": continuation.status.value,
+            "submission_id": _optional_uuid(continuation.submission_id),
+            "revision": continuation.revision,
+        },
+        occurred_at=continuation.updated_at,
+    )
 
 
 def _action_observations(
@@ -839,6 +889,10 @@ async def _empty_submissions() -> Sequence[TurnSubmission]:
     return ()
 
 
+async def _empty_model_steps() -> Sequence[ModelStepContinuation]:
+    return ()
+
+
 async def _empty_conversation_artifacts(
 ) -> Sequence[ConversationArtifactRecord]:
     return ()
@@ -897,6 +951,7 @@ class LiteObservationProjection(ObservationProjectionPort):
         conversation_artifacts: ConversationArtifactHistoryPort | None = None,
         task_results: TaskResultHistoryPort | None = None,
         verifications: VerificationHistoryPort | None = None,
+        model_steps: ModelStepContinuationHistoryPort | None = None,
     ) -> None:
         self._model_calls = model_calls
         self._actions = actions
@@ -909,6 +964,7 @@ class LiteObservationProjection(ObservationProjectionPort):
         self._conversation_artifacts = conversation_artifacts
         self._task_results = task_results
         self._verifications = verifications
+        self._model_steps = model_steps
 
     async def list_for_conversation(
         self,
@@ -982,6 +1038,13 @@ class LiteObservationProjection(ObservationProjectionPort):
             and self._task_results is None
             else _empty_verifications()
         )
+        model_step_records = (
+            self._model_steps.scan_model_steps_for_conversation(
+                conversation_id,
+            )
+            if self._model_steps is not None
+            else _empty_model_steps()
+        )
         (
             model_records,
             action_records,
@@ -992,6 +1055,7 @@ class LiteObservationProjection(ObservationProjectionPort):
             resolved_conversation_artifacts,
             resolved_task_results,
             resolved_verifications,
+            resolved_model_steps,
         ) = await asyncio.gather(
             _scan_source(
                 self._model_calls,
@@ -1011,6 +1075,7 @@ class LiteObservationProjection(ObservationProjectionPort):
             conversation_artifact_records,
             task_result_records,
             verification_records,
+            model_step_records,
         )
         observations = [
             observation
@@ -1076,6 +1141,10 @@ class LiteObservationProjection(ObservationProjectionPort):
                 or resolved_verifications
             )
         )
+        observations.extend(
+            _model_step_observation(record)
+            for record in resolved_model_steps
+        )
         observations.sort(
             key=lambda item: (item.occurred_at, str(item.observation_id)),
             reverse=True,
@@ -1131,6 +1200,7 @@ def lite_observation_projection(
     conversation_artifacts: ConversationArtifactHistoryPort | None = None,
     task_results: TaskResultHistoryPort | None = None,
     verifications: VerificationHistoryPort | None = None,
+    model_steps: ModelStepContinuationHistoryPort | None = None,
 ) -> LiteObservationProjection:
     """Return the Lite semantic projection over workspace source facts."""
     from .compactions import lite_compaction_store
@@ -1149,6 +1219,7 @@ def lite_observation_projection(
         conversation_artifacts=conversation_artifacts,
         task_results=task_results,
         verifications=verifications,
+        model_steps=model_steps,
     )
 
 

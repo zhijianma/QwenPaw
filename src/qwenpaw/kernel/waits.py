@@ -13,6 +13,7 @@ from pydantic import AwareDatetime, Field, model_validator
 from .models import (
     KernelModel,
     ModelFailureClass,
+    ModelOutputBoundary,
     NonEmptyStr,
     utc_now,
 )
@@ -74,6 +75,56 @@ class ResourceWaitStatus(str, Enum):
     DISPATCHED = "dispatched"
     CANCELLED = "cancelled"
     RECOVERY_EXHAUSTED = "recovery_exhausted"
+
+
+class ModelStepContinuationStatus(str, Enum):
+    """Lifecycle of one partial-model-step continuation outbox entry."""
+
+    READY = "ready"
+    DISPATCHED = "dispatched"
+    CANCELLED = "cancelled"
+    ACTION_RECONCILIATION_REQUIRED = "action_reconciliation_required"
+    RECOVERY_EXHAUSTED = "recovery_exhausted"
+
+
+class ModelStepContinuation(KernelModel):
+    """Content-free continuation after a partial model stream fails."""
+
+    continuation_id: UUID
+    attempt_id: UUID
+    invocation_id: UUID
+    correlation_id: UUID
+    agent_id: NonEmptyStr
+    conversation_id: NonEmptyStr
+    output_boundary: ModelOutputBoundary
+    status: ModelStepContinuationStatus = (
+        ModelStepContinuationStatus.READY
+    )
+    submission_id: UUID | None = None
+    revision: int = Field(default=1, ge=1)
+    created_at: AwareDatetime = Field(default_factory=utc_now)
+    updated_at: AwareDatetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def validate_model_step_continuation(self) -> Self:
+        """Require a partial boundary and an exact dispatch binding."""
+        if self.output_boundary not in {
+            ModelOutputBoundary.PARTIAL_STREAM,
+            ModelOutputBoundary.INCOMPLETE_STREAM_END,
+        }:
+            raise ValueError(
+                "model-step continuation requires partial output boundary",
+            )
+        dispatched = (
+            self.status is ModelStepContinuationStatus.DISPATCHED
+        )
+        if dispatched != (self.submission_id is not None):
+            raise ValueError(
+                "dispatched model-step continuation requires submission_id",
+            )
+        if self.updated_at < self.created_at:
+            raise ValueError("updated_at cannot precede created_at")
+        return self
 
 
 class ModelResourceWait(KernelModel):
@@ -255,6 +306,8 @@ __all__ = [
     "ContinuationMode",
     "ContinuationRef",
     "ConversationContinuation",
+    "ModelStepContinuation",
+    "ModelStepContinuationStatus",
     "ModelResourceWait",
     "ResourceWaitStatus",
     "ResourceWaitTrigger",

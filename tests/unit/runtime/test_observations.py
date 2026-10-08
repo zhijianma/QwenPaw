@@ -36,7 +36,9 @@ from qwenpaw.kernel import (
     ModelCallAttempt,
     ModelCallResult,
     ModelCallStatus,
+    ModelFailureClass,
     ModelOutputBoundary,
+    ModelRecoveryDisposition,
     ModelRouteReason,
     ObservationCategory,
     ObservationSource,
@@ -58,6 +60,7 @@ from qwenpaw.invocation_control import (
     SQLiteInvocationControl,
 )
 from qwenpaw.runtime.model_calls import lite_model_call_store
+from qwenpaw.recovery.model_resource_waits import ModelResourceWaitService
 from qwenpaw.runtime.actions import lite_action_store
 from qwenpaw.runtime.observation_index import (
     LiteObservationIndex,
@@ -151,6 +154,75 @@ async def test_model_call_projects_policy_execution_and_evidence(
     assert "messages" not in "".join(
         item.model_dump_json() for item in observations
     )
+
+
+@pytest.mark.asyncio
+async def test_model_step_recovery_projects_content_safe_blocker(
+    tmp_path,
+) -> None:
+    conversation_id = "chat-model-step"
+    invocation_id = uuid4()
+    attempt_id = uuid4()
+    completed_at = datetime.now(timezone.utc)
+    attempt = ModelCallAttempt(
+        attempt_id=attempt_id,
+        route_decision_id=uuid4(),
+        invocation_id=invocation_id,
+        correlation_id=invocation_id,
+        conversation_id=conversation_id,
+        registry_generation=1,
+        context_manifest_id=uuid4(),
+        model_call_index=1,
+        attempt_index=1,
+        provider_id="provider-a",
+        model_id="model-a",
+        adapter_id="example.Adapter",
+        adapter_version="1.0.0",
+        started_at=completed_at - timedelta(seconds=1),
+    )
+    result = ModelCallResult(
+        attempt_id=attempt_id,
+        invocation_id=invocation_id,
+        conversation_id=conversation_id,
+        status=ModelCallStatus.FAILED,
+        error_kind="stream_interrupted",
+        retryable=True,
+        emitted_content=True,
+        output_boundary=ModelOutputBoundary.PARTIAL_STREAM,
+        failure_class=ModelFailureClass.STREAM_INTERRUPTED,
+        recovery_disposition=(
+            ModelRecoveryDisposition.CONTINUE_MODEL_STEP
+        ),
+        cost_unknown=True,
+        completed_at=completed_at,
+    )
+    recovery = ModelResourceWaitService(
+        tmp_path / "recovery.sqlite3",
+        agent_id="agent-1",
+    )
+    continuation = await recovery.defer_model_step(attempt, result)
+    assert continuation is not None
+    await recovery.require_action_reconciliation(
+        continuation.continuation_id,
+    )
+
+    observations = await lite_observation_projection(
+        tmp_path,
+        model_steps=recovery,
+    ).list_for_conversation(conversation_id)
+
+    assert len(observations) == 1
+    observation = observations[0]
+    assert observation.category is ObservationCategory.MODEL
+    assert observation.stage is ObservationStage.EXECUTION
+    assert observation.status is ObservationStatus.BLOCKED
+    assert observation.facts["recovery_status"] == (
+        "action_reconciliation_required"
+    )
+    assert observation.facts["output_boundary"] == "partial_stream"
+    serialized = observation.model_dump_json()
+    assert "partial output text" not in serialized
+    assert "messages" not in serialized
 
 
 @pytest.mark.asyncio

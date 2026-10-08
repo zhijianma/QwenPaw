@@ -598,6 +598,11 @@ async def _chat_runtime_projection_context(
         task_results=lite_task_result_history(
             Path(workspace.workspace_dir),
         ),
+        model_steps=getattr(
+            workspace,
+            "model_resource_wait_service",
+            None,
+        ),
     )
     return ConversationRuntimeProjectionService(
         control,
@@ -1571,6 +1576,11 @@ async def list_chat_observations(
         task_results=lite_task_result_history(
             Path(workspace.workspace_dir),
         ),
+        model_steps=getattr(
+            workspace,
+            "model_resource_wait_service",
+            None,
+        ),
     ).list_for_conversation(
         chat_id,
         limit=limit,
@@ -1607,6 +1617,11 @@ async def page_chat_observations(
         ),
         task_results=lite_task_result_history(
             Path(workspace.workspace_dir),
+        ),
+        model_steps=getattr(
+            workspace,
+            "model_resource_wait_service",
+            None,
         ),
     )
     try:
