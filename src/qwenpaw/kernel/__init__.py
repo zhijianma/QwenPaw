@@ -192,6 +192,7 @@ from .invocation_control import (
     SubmissionInputEnvelope,
     TurnSubmission,
     TurnSubmissionRequest,
+    outcome_execution_state,
     validate_submission_transition,
 )
 from .compaction import (
@@ -295,6 +296,7 @@ from .observations import (
     ObservationStatus,
     RuntimeObservation,
 )
+from .outcomes import ConversationOutcome, ConversationOutcomeStatus
 from .artifacts import (
     ConversationArtifactRecord,
     ConversationTaskResultRecords,
@@ -313,6 +315,7 @@ from .ports import (
     InteractionPort,
     InteractionHistoryPort,
     ConversationContinuationPort,
+    ConversationOutcomeStore,
     WaitConditionProjectionPort,
     ControlHistoryPort,
     CompactionStore,
@@ -524,6 +527,9 @@ __all__ = [
     "ConversationExecutionChain",
     "ConversationExecutionState",
     "ConversationRuntimeProjection",
+    "ConversationOutcome",
+    "ConversationOutcomeStatus",
+    "ConversationOutcomeStore",
     "ConversationArtifactHistoryPort",
     "ConversationArtifactRecord",
     "ConversationTaskResultRecords",
@@ -557,6 +563,7 @@ __all__ = [
     "SubmissionInputEnvelope",
     "TurnSubmission",
     "TurnSubmissionRequest",
+    "outcome_execution_state",
     "validate_submission_transition",
     "LifecyclePhase",
     "ModelSelection",

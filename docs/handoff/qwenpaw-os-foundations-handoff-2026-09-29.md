@@ -369,6 +369,23 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   Submission 均为 `inactive`，失败 Submission 为 `failed`，没有产生伪
   `completed` 状态。
 
+### 2026-10-08 显式 Conversation Outcome
+
+- Kernel 新增 `ConversationOutcomeStatus`、`ConversationOutcome` 与
+  `ConversationOutcomeStore`；Outcome 和 Invocation / Submission completion 分离。
+- Lite SQLite Store 要求同一 correlation 的后续 Outcome 显式 supersede 最新记录；
+  相同 ID 可幂等重放，冲突内容、跳过 supersession 和时间倒退均 fail closed。
+- Outcome 数据库及 WAL/SHM 在 POSIX 上收口为 `0600`；公开链路只返回显式业务摘要和
+  Artifact/Evidence/Verification 引用，不保存隐藏推理。
+- Chat Runtime 只有在 Outcome 不早于最近 Submission 且当前没有 active / queued /
+  blocking Interaction 时投影 achieved、partial、not_achieved 或 abandoned；新输入会
+  让旧 Outcome 退出当前状态。
+- 固定真实 Chat 的 Runtime API 在迁移后返回 `outcome_count=0`，原历史继续保持
+  inactive / failed，没有为旧 assistant message 自动补写 Outcome。
+- 本切片相邻定点验证：67 项通过。尚未实现 Outcome Producer admission；尤其
+  Task-owned achieved 还没有与 Verification Policy 建立强制门禁，因此不得由模型文本
+  或插件直接写 Store。
+
 ### 本阶段此前已执行的定点验证
 
 - 后端核心路径定点测试：70 项通过。

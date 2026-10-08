@@ -605,6 +605,7 @@ async def _chat_runtime_projection_context(
         control,
         interactions,
         observations,
+        outcomes=_conversation_outcome_store(workspace),
     )
 
 
@@ -612,6 +613,19 @@ def _model_recovery_history(workspace) -> ModelRecoveryHistory | None:
     """Return the read-only recovery adapter for one workspace."""
     service = getattr(workspace, "model_resource_wait_service", None)
     return ModelRecoveryHistory(service) if service is not None else None
+
+
+def _conversation_outcome_store(workspace):
+    """Reuse one workspace-scoped Lite outcome source."""
+    store = getattr(workspace, "conversation_outcome_store", None)
+    if store is None:
+        from ...runtime.outcomes import lite_conversation_outcome_store
+
+        store = lite_conversation_outcome_store(
+            Path(workspace.workspace_dir),
+        )
+        setattr(workspace, "conversation_outcome_store", store)
+    return store
 
 
 async def _apply_chat_control(

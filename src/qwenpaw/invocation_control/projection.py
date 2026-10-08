@@ -12,10 +12,12 @@ from ..kernel import (
     ACTIVE_SUBMISSION_STATUSES,
     ConversationExecutionChain,
     ConversationExecutionState,
+    ConversationOutcome,
     ConversationRuntimeProjection,
     InteractionMode,
     ObservationPage,
     SubmissionStatus,
+    outcome_execution_state,
 )
 
 
@@ -27,6 +29,7 @@ class ConversationRuntimeProjectionService:
         control: Any,
         interactions: Any,
         observations: Any | None = None,
+        outcomes: Any | None = None,
         *,
         activity_limit: int = 50,
         execution_chain_limit: int = 20,
@@ -35,6 +38,7 @@ class ConversationRuntimeProjectionService:
         self._control = control
         self._interactions = interactions
         self._observations = observations
+        self._outcomes = outcomes
         self._activity_limit = activity_limit
         if execution_chain_limit < 1 or execution_chain_limit > 100:
             raise ValueError(
@@ -100,10 +104,30 @@ class ConversationRuntimeProjectionService:
             )
             > self._execution_chain_limit
         )
+        correlation_ids = tuple(
+            dict.fromkeys(
+                item.correlation_id
+                for item in sorted(
+                    bounded_submissions.values(),
+                    key=lambda submission: submission.sequence,
+                    reverse=True,
+                )
+            ),
+        )[: self._execution_chain_limit]
+        outcomes = (
+            await self._outcomes.latest_for_correlations(
+                agent_id=agent_id,
+                conversation_id=conversation_id,
+                correlation_ids=correlation_ids,
+            )
+            if self._outcomes is not None and correlation_ids
+            else ()
+        )
         execution_chains = self._execution_chains(
             conversation_id,
             tuple(bounded_submissions.values()),
             interactions,
+            {item.correlation_id: item for item in outcomes},
         )
         return ConversationRuntimeProjection(
             agent_id=agent_id,
@@ -127,6 +151,7 @@ class ConversationRuntimeProjectionService:
         conversation_id: str,
         submissions: tuple[Any, ...],
         interactions: tuple[Any, ...],
+        outcomes: dict[Any, ConversationOutcome],
     ) -> tuple[ConversationExecutionChain, ...]:
         """Group authoritative attempts without inferring business outcome."""
         grouped: dict[Any, list[Any]] = {}
@@ -160,6 +185,19 @@ class ConversationRuntimeProjectionService:
                 ),
             )
             head = chain_submissions[-1]
+            latest_submission_at = max(
+                item.updated_at for item in chain_submissions
+            )
+            outcome = outcomes.get(correlation_id)
+            has_live_work = bool(blocking) or any(
+                item.status in ACTIVE_SUBMISSION_STATUSES
+                or item.status is SubmissionStatus.QUEUED
+                for item in chain_submissions
+            )
+            if outcome is not None and (
+                outcome.created_at < latest_submission_at or has_live_work
+            ):
+                outcome = None
             head_invocation_id = next(
                 (
                     item.invocation_id
@@ -175,6 +213,7 @@ class ConversationRuntimeProjectionService:
                     state=self._execution_state(
                         chain_submissions,
                         blocking,
+                        outcome,
                     ),
                     submission_ids=tuple(
                         item.submission_id for item in chain_submissions
@@ -186,10 +225,9 @@ class ConversationRuntimeProjectionService:
                     open_interaction_ids=tuple(
                         item.interaction_id for item in blocking
                     ),
+                    outcome=outcome,
                     accepted_at=chain_submissions[0].created_at,
-                    latest_submission_at=max(
-                        item.updated_at for item in chain_submissions
-                    ),
+                    latest_submission_at=latest_submission_at,
                 ),
             )
         return tuple(result)
@@ -198,6 +236,7 @@ class ConversationRuntimeProjectionService:
     def _execution_state(
         submissions: list[Any],
         blocking_interactions: tuple[Any, ...],
+        outcome: ConversationOutcome | None,
     ) -> ConversationExecutionState:
         if blocking_interactions:
             return ConversationExecutionState.WAITING_USER
@@ -208,6 +247,8 @@ class ConversationRuntimeProjectionService:
             return ConversationExecutionState.RUNNING
         if any(item.status is SubmissionStatus.QUEUED for item in submissions):
             return ConversationExecutionState.QUEUED
+        if outcome is not None:
+            return outcome_execution_state(outcome.status)
         terminal_states = {
             SubmissionStatus.FAILED: ConversationExecutionState.FAILED,
             SubmissionStatus.INTERRUPTED: (

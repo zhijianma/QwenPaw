@@ -30,6 +30,8 @@ from qwenpaw.invocation_control import (
 )
 from qwenpaw.interactions import InteractionService
 from qwenpaw.kernel import (
+    ConversationOutcome,
+    ConversationOutcomeStatus,
     ControlCommandStatus,
     InteractionKind,
     InteractionMode,
@@ -344,6 +346,25 @@ async def test_runtime_api_exposes_inactive_execution_not_completion(
     assert chain["invocation_ids"] == [str(invocation_id)]
     assert "completed" not in chain.values()
     assert response.json()["execution_window_truncated"] is False
+    workspace = app.dependency_overrides[get_workspace]()
+    outcome = ConversationOutcome(
+        agent_id="default",
+        conversation_id="chat-spec-1",
+        correlation_id=correlation_id,
+        status=ConversationOutcomeStatus.ACHIEVED,
+        producer_id="qwenpaw.system.verifier",
+        summary="The explicit acceptance verification passed.",
+    )
+    await workspace.conversation_outcome_store.append(outcome)
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        completed = await client.get("/api/chats/chat-spec-1/runtime")
+
+    [chain] = completed.json()["execution_chains"]
+    assert chain["state"] == "achieved"
+    assert chain["outcome"]["outcome_id"] == str(outcome.outcome_id)
     await service.close()
 
 

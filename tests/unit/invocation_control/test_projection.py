@@ -15,6 +15,8 @@ from qwenpaw.invocation_control import (
 )
 from qwenpaw.kernel import (
     ConversationExecutionState,
+    ConversationOutcome,
+    ConversationOutcomeStatus,
     ConversationRuntimeProjection,
     InteractionKind,
     InteractionMode,
@@ -30,6 +32,7 @@ from qwenpaw.kernel import (
     TurnSubmissionRequest,
 )
 from qwenpaw.kernel.models import utc_now
+from qwenpaw.runtime.outcomes import lite_conversation_outcome_store
 
 
 @pytest.mark.asyncio
@@ -192,9 +195,11 @@ async def test_execution_chain_does_not_treat_response_as_outcome(
         store=SQLiteInvocationControl(tmp_path / "control.sqlite3"),
     )
     interactions = InteractionService(tmp_path / "interactions.sqlite3")
+    outcomes = lite_conversation_outcome_store(tmp_path)
     projection_service = ConversationRuntimeProjectionService(
         control,
         interactions,
+        outcomes=outcomes,
     )
     correlation_id = uuid4()
     first_invocation_id = uuid4()
@@ -221,6 +226,23 @@ async def test_execution_chain_does_not_treat_response_as_outcome(
     assert chain.state is ConversationExecutionState.INACTIVE
     assert chain.latest_submission_status is SubmissionStatus.SUCCEEDED
     assert chain.invocation_ids == (first_invocation_id,)
+
+    outcome = ConversationOutcome(
+        agent_id="default",
+        conversation_id="chat-1",
+        correlation_id=correlation_id,
+        status=ConversationOutcomeStatus.ACHIEVED,
+        producer_id="qwenpaw.system.verifier",
+        summary="The requested result passed explicit verification.",
+    )
+    await outcomes.append(outcome)
+    achieved = await projection_service.read(
+        agent_id="default",
+        conversation_id="chat-1",
+    )
+    [chain] = achieved.execution_chains
+    assert chain.state is ConversationExecutionState.ACHIEVED
+    assert chain.outcome == outcome
 
     interaction = InteractionRequest(
         kind=InteractionKind.USER_INPUT,

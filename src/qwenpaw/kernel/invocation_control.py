@@ -18,6 +18,7 @@ from .models import (
 )
 from .interactions import InteractionRequest
 from .observations import ObservationPage
+from .outcomes import ConversationOutcome, ConversationOutcomeStatus
 
 
 class SubmissionStatus(str, Enum):
@@ -43,6 +44,30 @@ class ConversationExecutionState(str, Enum):
     FAILED = "failed"
     INTERRUPTED = "interrupted"
     CANCELLED = "cancelled"
+    ACHIEVED = "achieved"
+    PARTIAL = "partial"
+    NOT_ACHIEVED = "not_achieved"
+    ABANDONED = "abandoned"
+
+
+def outcome_execution_state(
+    status: ConversationOutcomeStatus,
+) -> ConversationExecutionState:
+    """Map one explicit business outcome to its execution-chain state."""
+    return {
+        ConversationOutcomeStatus.ACHIEVED: (
+            ConversationExecutionState.ACHIEVED
+        ),
+        ConversationOutcomeStatus.PARTIAL: (
+            ConversationExecutionState.PARTIAL
+        ),
+        ConversationOutcomeStatus.NOT_ACHIEVED: (
+            ConversationExecutionState.NOT_ACHIEVED
+        ),
+        ConversationOutcomeStatus.ABANDONED: (
+            ConversationExecutionState.ABANDONED
+        ),
+    }[status]
 
 
 class ControlCommandKind(str, Enum):
@@ -418,6 +443,7 @@ class ConversationExecutionChain(KernelModel):
     head_invocation_id: UUID | None = None
     latest_submission_status: SubmissionStatus
     open_interaction_ids: tuple[UUID, ...] = ()
+    outcome: ConversationOutcome | None = None
     accepted_at: AwareDatetime
     latest_submission_at: AwareDatetime
 
@@ -444,6 +470,22 @@ class ConversationExecutionChain(KernelModel):
             raise ValueError(
                 "waiting_user requires at least one open interaction",
             )
+        outcome_states = {
+            outcome_execution_state(status)
+            for status in ConversationOutcomeStatus
+        }
+        if self.outcome is None and self.state in outcome_states:
+            raise ValueError("outcome state requires an explicit outcome")
+        if self.outcome is not None:
+            if (
+                self.outcome.conversation_id != self.conversation_id
+                or self.outcome.correlation_id != self.correlation_id
+            ):
+                raise ValueError("execution chain outcome ownership mismatch")
+            if self.state is not outcome_execution_state(
+                self.outcome.status,
+            ):
+                raise ValueError("execution chain outcome state mismatch")
         if self.latest_submission_at < self.accepted_at:
             raise ValueError(
                 "execution chain submission time precedes accepted_at",
@@ -487,6 +529,13 @@ class ConversationRuntimeProjection(KernelModel):
                 raise ValueError(
                     "runtime projection execution chain owner mismatch",
                 )
+            if (
+                chain.outcome is not None
+                and chain.outcome.agent_id != self.agent_id
+            ):
+                raise ValueError(
+                    "runtime projection outcome agent owner mismatch",
+                )
         correlations = [item.correlation_id for item in self.execution_chains]
         if len(correlations) != len(set(correlations)):
             raise ValueError(
@@ -519,5 +568,6 @@ __all__ = [
     "SteerSafePoint",
     "TurnSubmission",
     "TurnSubmissionRequest",
+    "outcome_execution_state",
     "validate_submission_transition",
 ]

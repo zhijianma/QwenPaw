@@ -374,6 +374,13 @@ inactive。`inactive` 只表示当前没有运行中的 Invocation；即使最�
 Submission 加当前 Queue 的有界窗口，并显式返回 `execution_window_truncated`；完整
 历史仍由权威 History Port 提供。
 
+Lite 已冻结 `ConversationOutcome` / `ConversationOutcomeStore`：achieved、partial、
+not_achieved 与 abandoned 都必须由具名 producer 显式提交，并通过 outcome ID 建立不可
+变 supersession 链。执行链只在 Outcome 晚于最近 Submission、且当前没有 Queue、运行
+或 blocking Interaction 时采用 Outcome 状态；否则仍以实时执行事实为准。Outcome 可
+引用 Artifact、Evidence 与 Verification，但 producer admission 和“Task 验收通过才
+能声明 achieved”的策略仍是后续门禁，当前不得自动补写。
+
 Approval、Ask User、Suggestion、Steer 和 Interrupt 均是执行链中的一等事件。
 Interaction 或资源等待必须保存 durable `WaitCondition` 并释放计算资源；满足条件后
 由 outbox 创建新的 continuation Submission，而不是恢复旧 Python 调用栈。

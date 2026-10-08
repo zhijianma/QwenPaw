@@ -370,8 +370,10 @@ Codex 的“边收流边执行工具”建立在其 Provider 事件协议、工�
 
 当前后端已将上述身份约束固化为 `ConversationExecutionChain` 只读投影：同一
 correlation 的多次 Submission / Invocation 聚合展示；blocking Interaction 显式进入
-`waiting_user`；单次 Runtime 返回成功只进入 `inactive`，不推断业务 Outcome。Outcome
-事实与 Verification 联动仍是独立后续切片，不能以该投影存在冒充完成。
+`waiting_user`；单次 Runtime 返回成功只进入 `inactive`，不推断业务 Outcome。显式
+`ConversationOutcome` 现已由独立 Lite Store 保存并通过 supersession 更新，执行链只有
+在没有 live work 时采用该状态；Verification 驱动的 producer admission 仍是独立后续
+切片，不能以 Outcome 模型存在冒充验收已通过。
 10. Chat 可显示等待资源、等待用户和正在恢复，但不能把它们伪装成 Queue 项。
 11. 进程重启后不尝试恢复旧 Python stack，只从 durable boundary 恢复。
 12. macOS、Linux、Windows 分别验证 monotonic、sleep/suspend 与 deadline 语义。

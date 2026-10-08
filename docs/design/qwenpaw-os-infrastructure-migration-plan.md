@@ -984,8 +984,13 @@ Cron 不形成独立审批或产物事实源。
     - [ ] Workstation / Hub 的健康度、成本和数据边界动态路由仍待实现。Lite 当前
       继续使用确定性主模型与显式 fallback 顺序，不静默切换。
   - [ ] Run Completion、Verification 与业务 Outcome 分层；当前已阻止 Invocation
-    success 被投影成业务完成，但 Outcome 权威 Store、Verification 联动与可回放
-    Trajectory 仍待实现，本阶段不建设完整 Evaluation UI。
+    success 被投影成业务完成，本阶段不建设完整 Evaluation UI。
+    - [x] Kernel 已冻结 `ConversationOutcome` 与 Store Port；Lite SQLite 以具名 producer、
+      correlation、Artifact/Evidence/Verification 引用和显式 supersession 保存不可变
+      Outcome。Chat Runtime 只有读取到晚于最近 Submission 且当前无 live work 的显式
+      Outcome，才投影 achieved / partial / not_achieved / abandoned。
+    - [ ] 冻结 Outcome producer admission：Task-owned achieved 必须满足 Verification
+      Policy，普通 Chat 需通过 Host Outcome Broker；随后再接可回放 Trajectory。
   - [ ] `BudgetLease` 与现有 `ExecutionBudget`、Usage Scope、Capability lease
     明确区分；Lite 只冻结接口，Workstation / Hub 再实现可派生和级联撤销。
 

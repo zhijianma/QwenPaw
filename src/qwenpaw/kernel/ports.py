@@ -98,6 +98,7 @@ from .delivery import DeliveryAttempt, DeliveryReceipt, DeliveryRequest
 from .inbox import InboxItem
 from .operational import OperationalEvent
 from .observations import ObservationPage, RuntimeObservation
+from .outcomes import ConversationOutcome
 from .waits import ConversationContinuation, WaitCondition
 from .artifacts import (
     ConversationArtifactRecord,
@@ -1443,6 +1444,23 @@ class TaskResultHistoryPort(Protocol):
         conversation_id: str,
     ) -> ConversationTaskResultRecords:
         """Return one consistent result snapshot from matching Task ledgers."""
+
+
+@runtime_checkable
+class ConversationOutcomeStore(Protocol):
+    """Durable source of explicit business outcomes for Chat intents."""
+
+    async def append(self, outcome: ConversationOutcome) -> None:
+        """Append one immutable outcome with explicit supersession."""
+
+    async def latest_for_correlations(
+        self,
+        *,
+        agent_id: str,
+        conversation_id: str,
+        correlation_ids: Sequence[UUID],
+    ) -> Sequence[ConversationOutcome]:
+        """Return at most one latest outcome for each requested intent."""
 
 
 @runtime_checkable
