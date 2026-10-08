@@ -1099,8 +1099,13 @@ Cron 不形成独立审批或产物事实源。
     重试；Loader 在同一 lifecycle lock 内校验，过期确认在 hook、注册和文件变更前
     失败关闭。显式卸载 Evidence 记录 `operator-authorized=passed`，内部热替换为
     `not_applicable`，不把更新误记为人工卸载。
-  - [ ] 补齐 Evidence Artifact 与通用人工授权策略。关键词发现索引与
-    Workstation/Hub Release Registry 仍待实现。
+  - [x] Promotion Evidence Bundle 已作为标准 Evidence Artifact 暴露：Host 从唯一
+    权威 Bundle 确定性派生 `ArtifactRef` 与 canonical JSON，不复制第二份文件；
+    `content_hash`、size 和下载字节一致，时间戳不影响 Artifact identity。只读 API
+    返回 candidate/bundle/evaluator lineage，不暴露实现、配置、日志、主机路径或
+    Secret，system/plugin 共用同一路径。
+  - [ ] 补齐通用人工授权策略。关键词发现索引与 Workstation/Hub Release Registry
+    仍待实现。
 
 - [x] 每个公开扩展模块均有 system/plugin contract tests；system-only 模块具有
   核心激活、固定 generation、失败关闭和代际排空合同。

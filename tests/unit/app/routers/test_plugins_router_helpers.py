@@ -26,6 +26,7 @@ from qwenpaw.app.routers.plugins import (
     _find_plugin_dir,
     _list_plugins_from_disk,
     _safe_extract_zip,
+    get_capability_promotion_evidence_artifact,
     install_plugin,
     list_capability_promotion_evidence,
     list_capability_promotions,
@@ -671,9 +672,43 @@ async def test_list_capability_promotions_reads_durable_wal(tmp_path):
         limit=10,
     )
     [bundle] = evidence_result["items"]
+    [artifact] = evidence_result["artifacts"]
     assert bundle["candidate_id"] == candidate_id
     assert {item["check_id"] for item in bundle["evidence"]} == {
         "contract.schema",
         "contract.implementation",
         "contract.health",
     }
+    assert artifact["kind"] == "capability.promotion-evidence"
+    assert artifact["metadata"]["candidate_id"] == candidate_id
+    assert artifact["content_hash"].startswith("sha256:")
+    response = await get_capability_promotion_evidence_artifact(
+        request,
+        UUID(bundle["bundle_id"]),
+    )
+    assert response.status_code == 200
+    assert len(response.body) == artifact["size_bytes"]
+    assert response.headers["etag"] == f'"{artifact["content_hash"]}"'
+    assert json.loads(response.body)["bundle_id"] == bundle["bundle_id"]
+
+
+@pytest.mark.asyncio
+async def test_missing_promotion_evidence_artifact_returns_404():
+    registry = GenerationRegistry()
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                plugin_loader=SimpleNamespace(
+                    capability_registry=registry,
+                ),
+            ),
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_capability_promotion_evidence_artifact(
+            request,
+            UUID("00000000-0000-0000-0000-000000000001"),
+        )
+
+    assert exc_info.value.status_code == 404

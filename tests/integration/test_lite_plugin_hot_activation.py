@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Focused hot-activation test through the production plugin loader."""
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -133,6 +134,18 @@ async def test_contextual_slots_load_and_unload_without_restart(
     assert promotion_events
     evidence_bundles = await registry.promotion_evidence(
         promotion_events[-1].candidate.candidate_id,
+    )
+    artifacts = await registry.promotion_evidence_artifacts(
+        promotion_events[-1].candidate.candidate_id,
+    )
+    resolved_artifact = await registry.promotion_evidence_artifact_content(
+        evidence_bundles[-1].bundle_id,
+    )
+    assert len(artifacts) == 1
+    assert resolved_artifact is not None
+    assert resolved_artifact[0] == artifacts[0]
+    assert artifacts[0].content_hash == (
+        f"sha256:{hashlib.sha256(resolved_artifact[1]).hexdigest()}"
     )
     assert any(
         evidence.check_id

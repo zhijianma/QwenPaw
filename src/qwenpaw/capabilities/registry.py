@@ -13,6 +13,7 @@ from typing import NoReturn
 from uuid import UUID, uuid4
 
 from ..kernel.models import (
+    ArtifactRef,
     CapabilityBundle,
     CapabilityContribution,
     CapabilityDescriptor,
@@ -45,6 +46,8 @@ from .promotions import (
     ContractCapabilityPromotionGate,
     InMemoryCapabilityPromotionEvidenceStore,
     build_capability_promotion_assessment,
+    capability_promotion_evidence_artifact,
+    capability_promotion_evidence_artifact_content,
     rejected_contract_assessment,
 )
 
@@ -299,6 +302,34 @@ class GenerationRegistry:
             limit=limit,
         )
         return tuple(bundles)
+
+    async def promotion_evidence_artifacts(
+        self,
+        candidate_id: UUID,
+        *,
+        limit: int = 100,
+    ) -> tuple[ArtifactRef, ...]:
+        """Derive immutable Artifact refs from authoritative bundles."""
+        bundles = await self.promotion_evidence(
+            candidate_id,
+            limit=limit,
+        )
+        return tuple(
+            capability_promotion_evidence_artifact(bundle)
+            for bundle in bundles
+        )
+
+    async def promotion_evidence_artifact_content(
+        self,
+        bundle_id: UUID,
+    ) -> tuple[ArtifactRef, bytes] | None:
+        """Resolve one bundle-backed Artifact without a second store."""
+        bundle = await self._promotion_evidence_store.get(bundle_id)
+        if bundle is None:
+            return None
+        artifact = capability_promotion_evidence_artifact(bundle)
+        content = capability_promotion_evidence_artifact_content(bundle)
+        return artifact, content
 
     async def _persist_promotion_evidence(
         self,

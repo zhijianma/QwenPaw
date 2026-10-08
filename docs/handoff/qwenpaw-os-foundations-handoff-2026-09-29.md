@@ -705,6 +705,21 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   Evidence、Checkpoint、typed wait 和 continuation 驱动。Ask User 仅用于缺失必要
   事实、实质偏好、范围授权或高影响裁决，不能成为逐步骤推进器。
 
+### 2026-10-08 Promotion Evidence Artifact Projection
+
+- Promotion Evidence Store 仍是唯一权威事实源；没有新建 Artifact 数据库或复制 Bundle
+  文件。Registry 从持久化 Bundle 确定性派生标准 `ArtifactRef`，因此 system 与 plugin
+  发布证据使用同一条 lineage。
+- Artifact 内容是去除 `created_at` 的 canonical JSON；内容 hash、size 与下载响应字节
+  严格一致，同一 Candidate 重试不会因为时钟变化产生新 Artifact identity。
+- Evidence API 现同时返回 Bundle 和 Artifact refs；按 bundle ID 的只读下载端点返回
+  `nosniff`、ETag 与 attachment filename。公开 metadata 只有 candidate、bundle 和
+  evaluator identity，不含实现、配置、原始日志、主机路径或 Secret。
+- 本切片 62 项 Promotion domain、Registry、system API 与真实 plugin hot activation
+  定点测试通过，文件级 AST、mypy、flake8、pylint 门禁通过。运行中 8004 的 system
+  Candidate 已返回 Artifact ref；下载 7146 bytes 后复算 SHA-256 与 Ref/ETag 完全一致，
+  canonical JSON 不含 `created_at`。未运行全仓测试，通用人工授权策略仍是后续模块。
+
 ### 本阶段此前已执行的定点验证
 
 - 后端核心路径定点测试：70 项通过。

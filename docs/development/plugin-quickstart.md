@@ -1245,6 +1245,14 @@ read-only `/api/plugins/capability-promotions` and
 trace a release; neither endpoint exposes implementation objects, config
 values, or credentials.
 
+The evidence response also returns a standard `artifacts` collection. Each
+reference is derived from the authoritative Bundle rather than copied into a
+second store. Download its canonical, timestamp-independent JSON from
+`/api/plugins/capability-promotion-evidence/<bundle-id>/artifact`; the response
+bytes must match the reference's `content_hash` and `size_bytes`. Metadata is
+limited to candidate, bundle, and evaluator identity, so plugin code and host
+paths never become part of the public artifact contract.
+
 Use the same install command after changing the version to update the plugin.
 Replacement is transactional: the old capability bundle remains resolvable
 until the new bundle passes import, contract, identity, schema, and health

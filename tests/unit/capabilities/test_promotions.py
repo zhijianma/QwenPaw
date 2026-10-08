@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import stat
+from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
@@ -15,6 +17,8 @@ from qwenpaw.capabilities.promotions import (
     FilesystemCapabilityPromotionEvidenceStore,
     FilesystemCapabilityPromotionJournal,
     build_capability_promotion_assessment,
+    capability_promotion_evidence_artifact,
+    capability_promotion_evidence_artifact_content,
 )
 from qwenpaw.kernel import (
     CapabilityCheckOutcome,
@@ -111,6 +115,48 @@ def _assessment() -> CapabilityPromotionAssessment:
         evaluator_id="qwenpaw.contract-gate",
         decision=CapabilityEvaluationDecision.ALLOW,
         checks=(("contract.schema", CapabilityCheckOutcome.PASSED),),
+    )
+
+
+def test_promotion_evidence_artifact_is_canonical_and_content_safe() -> None:
+    bundle = _assessment().evidence_bundle
+    content = capability_promotion_evidence_artifact_content(bundle)
+    artifact = capability_promotion_evidence_artifact(bundle)
+    payload = json.loads(content)
+
+    assert artifact.kind == "capability.promotion-evidence"
+    assert artifact.uri.endswith(str(bundle.bundle_id))
+    assert artifact.content_hash == (
+        f"sha256:{hashlib.sha256(content).hexdigest()}"
+    )
+    assert artifact.size_bytes == len(content)
+    assert payload["bundle_id"] == str(bundle.bundle_id)
+    assert "created_at" not in payload
+    assert all("created_at" not in item for item in payload["evidence"])
+    assert "implementation" not in content.decode("utf-8")
+
+    changed_times = bundle.model_copy(
+        update={
+            "created_at": datetime(2030, 1, 1, tzinfo=timezone.utc),
+            "evidence": tuple(
+                item.model_copy(
+                    update={
+                        "created_at": datetime(
+                            2030,
+                            1,
+                            2,
+                            tzinfo=timezone.utc,
+                        ),
+                    },
+                )
+                for item in bundle.evidence
+            ),
+        },
+    )
+    assert capability_promotion_evidence_artifact(changed_times) == artifact
+    assert (
+        capability_promotion_evidence_artifact_content(changed_times)
+        == content
     )
 
 

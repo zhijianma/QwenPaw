@@ -27,9 +27,12 @@ from fastapi import (
     Request,
     UploadFile,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
+from ...capabilities.promotions import (
+    capability_promotion_evidence_artifact,
+)
 from ...plugins.contributions import ContributionValidationError
 from ...plugins.loader import PluginDeactivationAuthorizationRequired
 from ...plugins.migration import build_plugin_migration_plan
@@ -790,12 +793,58 @@ async def list_capability_promotion_evidence(
         candidate_id,
         limit=limit,
     )
+    artifacts = tuple(
+        capability_promotion_evidence_artifact(bundle)
+        for bundle in bundles
+    )
     return {
         "registry_epoch_id": str(registry.registry_epoch_id),
         "registry_generation": registry.generation,
         "candidate_id": str(candidate_id),
         "items": [bundle.model_dump(mode="json") for bundle in bundles],
+        "artifacts": [
+            artifact.model_dump(mode="json") for artifact in artifacts
+        ],
     }
+
+
+@router.get(
+    "/capability-promotion-evidence/{bundle_id}/artifact",
+    summary="Download a capability promotion evidence artifact",
+    description=(
+        "Return canonical content derived from one immutable evidence bundle."
+    ),
+)
+async def get_capability_promotion_evidence_artifact(
+    request: Request,
+    bundle_id: UUID,
+) -> Response:
+    """Return hash-verifiable evidence without exposing host paths."""
+    registry = _capability_registry(request)
+    if registry is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Capability registry is not ready yet. Try again shortly.",
+        )
+    resolved = await registry.promotion_evidence_artifact_content(bundle_id)
+    if resolved is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Capability promotion evidence bundle not found.",
+        )
+    artifact, content = resolved
+    return Response(
+        content=content,
+        media_type=artifact.media_type,
+        headers={
+            "Content-Disposition": (
+                "attachment; filename=\"capability-promotion-evidence-"
+                f"{bundle_id}.json\""
+            ),
+            "ETag": f'"{artifact.content_hash}"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.get(

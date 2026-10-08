@@ -10,7 +10,7 @@ import json
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from jsonschema.exceptions import SchemaError, best_match
 from jsonschema.validators import validator_for
@@ -190,6 +190,49 @@ def _bundle_payload(
     for evidence in payload["evidence"]:
         evidence.pop("created_at", None)
     return payload
+
+
+def capability_promotion_evidence_artifact_content(
+    bundle: CapabilityPromotionEvidenceBundle,
+) -> bytes:
+    """Return canonical, timestamp-independent evidence artifact bytes."""
+    return json.dumps(
+        _bundle_payload(bundle),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+def capability_promotion_evidence_artifact(
+    bundle: CapabilityPromotionEvidenceBundle,
+) -> ArtifactRef:
+    """Derive one immutable Artifact reference from the source bundle."""
+    content = capability_promotion_evidence_artifact_content(bundle)
+    content_hash = f"sha256:{hashlib.sha256(content).hexdigest()}"
+    artifact_id = uuid5(
+        NAMESPACE_URL,
+        (
+            "qwenpaw.capability-promotion-evidence-artifact.v1:"
+            f"{bundle.bundle_id}"
+        ),
+    )
+    return ArtifactRef(
+        artifact_id=artifact_id,
+        kind="capability.promotion-evidence",
+        uri=(
+            "qwenpaw://capability-promotion-evidence/"
+            f"{bundle.bundle_id}"
+        ),
+        media_type="application/vnd.qwenpaw.promotion-evidence+json",
+        content_hash=content_hash,
+        size_bytes=len(content),
+        metadata={
+            "candidate_id": str(bundle.candidate_id),
+            "bundle_id": str(bundle.bundle_id),
+            "evaluator_id": bundle.evaluator_id,
+        },
+    )
 
 
 class InMemoryCapabilityPromotionEvidenceStore:
@@ -1254,5 +1297,7 @@ __all__ = [
     "InMemoryCapabilityPromotionEvidenceStore",
     "LiteCapabilityPromotionScenarioRunner",
     "build_capability_promotion_assessment",
+    "capability_promotion_evidence_artifact",
+    "capability_promotion_evidence_artifact_content",
     "rejected_contract_assessment",
 ]
