@@ -333,7 +333,13 @@ async def test_chat_tool_provider_uses_pinned_public_contract(
     manifest = PluginManifest.from_dict(
         json.loads((root / "plugin.json").read_text(encoding="utf-8")),
     )
-    registry = GenerationRegistry()
+    from qwenpaw.capabilities.promotions import (
+        LiteCapabilityPromotionScenarioRunner,
+    )
+
+    registry = GenerationRegistry(
+        promotion_scenario_runner=LiteCapabilityPromotionScenarioRunner(),
+    )
     await registry.activate(
         manifest,
         lambda _: provider_module.create_provider(),

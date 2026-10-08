@@ -208,6 +208,17 @@ Workspace Tool Provider uses a private compatibility Host to migrate existing
 tools through the same `ToolDefinition` and Tool Guard pipeline; plugins must
 not depend on that adapter.
 
+Before publishing a `tool.provider`, Lite runs a bounded catalog-discovery
+scenario against the staged implementation. It supplies an inert Invocation,
+empty non-secret configuration, no credential handles, no interaction broker,
+and never invokes a returned tool. The gate rejects non-sequence catalogs,
+more than 128 tools, duplicate or oversized names, invalid result objects,
+governance target/pattern parameters absent from the callable, catalogs over
+64 KiB, and discovery taking over five seconds. A valid schema that requires
+runtime configuration produces `not_applicable`, not a false pass or failed
+install; an invalid schema fails publication. System and plugin providers use
+the same scenario and Evidence Bundle.
+
 MCP is a concrete Driver protocol, not a second Tool Provider namespace. MCP
 servers are discovered by the selected `driver.provider`, translated to
 provider-neutral Driver tool definitions, and admitted through the same Tool

@@ -1444,6 +1444,7 @@ class CapabilityPromotionScenarioRunner(Protocol):
         candidate: CapabilityPromotionCandidate,
         release: CapabilityReleaseTag,
         implementations: Mapping[str, object],
+        descriptors: Mapping[str, CapabilityDescriptor],
     ) -> Sequence[CapabilityPromotionEvidence]:
         """Return content-safe scenario evidence without leaking objects."""
 

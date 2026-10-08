@@ -567,6 +567,10 @@ class GenerationRegistry:
                     capability_id: contribution.implementation
                     for capability_id, contribution in staged.items()
                 },
+                {
+                    capability_id: contribution.descriptor
+                    for capability_id, contribution in staged.items()
+                },
             )
         assessment = await self._evaluate_release(
             operation_id=operation_id,

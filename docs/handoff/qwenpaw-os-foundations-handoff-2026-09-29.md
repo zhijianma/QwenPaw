@@ -563,6 +563,24 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   flake8、pylint 门禁通过。真实 8004 API 返回 generation 2，当前 system tasks
   Bundle 的 contract 三项与 renderer round-trip 均为 passed；未执行全仓测试。
 
+### 2026-10-08 Tool Provider Promotion Scenario
+
+- `tool.provider` 新增 `tool-provider.catalog` Scenario；Registry 将 staged descriptor
+  与 implementation 一同交给 Runner，场景使用固定 Invocation、空配置、无 Credential、
+  无 Interaction 和无真实 Workspace I/O 的 Host，只发现目录，不执行工具函数。
+- 目录门禁限制 128 项和 64 KiB，拒绝非 Sequence、无效对象、重复/超长名称，以及
+  `target_param` / `pattern_param` 不存在于 callable 参数的治理声明；目录发现受 5 秒
+  timeout 保护。legacy callable 仍作为迁移兼容输入，不因此扩大 Plugin SDK。
+- 对 `config_schema` 先验证空对象：schema 合法但需要 Agent Profile 配置时记录
+  `not_applicable`，避免误杀配置后可用的插件；schema 本身非法记录 failed 并阻止
+  generation 发布。Scenario Bundle 不保存配置、函数、Credential 或 Tool 参数。
+- 内置 Workspace Tool Provider 与真实 `chat-tool-provider` 示例均通过相同门禁；重复
+  工具名、错误 governance parameter 和非法 config schema 的负向用例均在发布前被
+  拒绝。运行期仍由 Tool Guard、Policy、Approval 与 Action Plane 管理真正调用。
+- 本切片 134 项 Promotion、Slot、Tool Provider、Assembly、Plugin SDK、system
+  contribution、Workspace Registry 和管理 API 定点测试通过；文件级 AST、mypy、
+  flake8、pylint 门禁通过，未执行全仓测试。
+
 ### 本阶段此前已执行的定点验证
 
 - 后端核心路径定点测试：70 项通过。

@@ -5,10 +5,14 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
-from pathlib import Path
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from uuid import UUID
+
+from jsonschema.exceptions import SchemaError, best_match
+from jsonschema.validators import validator_for
 
 from ..kernel import (
     ArtifactRef,
@@ -25,8 +29,13 @@ from ..kernel import (
     CapabilityPromotionEvaluation,
     CapabilityPromotionEvent,
     CapabilityReleaseTag,
+    CapabilitySelection,
+    CapabilityDescriptor,
+    InvocationScope,
+    ToolDefinition,
+    ToolSelection,
 )
-from ..kernel.ports import ArtifactRenderer
+from ..kernel.ports import ArtifactRenderer, ToolProvider
 from ..kernel.slots import slot_contract
 from ..utils.io_utils import (
     get_path_lock,
@@ -203,6 +212,8 @@ class LiteCapabilityPromotionScenarioRunner:
     """Run bounded, side-effect-free host scenarios for supported Slots."""
 
     _MAX_OUTPUT_BYTES = 64 * 1024
+    _MAX_TOOL_CATALOG_BYTES = 64 * 1024
+    _MAX_TOOLS = 128
     _TIMEOUT_SECONDS = 5.0
     _SAFE_INLINE_MEDIA_TYPES = frozenset(
         {"application/json", "text/markdown", "text/plain"},
@@ -297,36 +308,193 @@ class LiteCapabilityPromotionScenarioRunner:
             else CapabilityCheckOutcome.NOT_APPLICABLE
         )
 
+    @staticmethod
+    def _validate_tool_parameter(
+        definition: ToolDefinition,
+        parameter_name: str,
+    ) -> None:
+        if not parameter_name:
+            return
+        try:
+            parameters = inspect.signature(
+                definition.function,
+            ).parameters
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "tool governance parameter cannot be inspected",
+            ) from exc
+        if parameter_name in parameters or any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        ):
+            return
+        raise ValueError(
+            "tool governance parameter is absent from its callable",
+        )
+
+    @classmethod
+    def _validate_tool_catalog(
+        cls,
+        tools: object,
+    ) -> None:
+        if not isinstance(tools, Sequence) or isinstance(
+            tools,
+            (str, bytes, bytearray),
+        ):
+            raise ValueError("tool provider returned a non-sequence catalog")
+        if len(tools) > cls._MAX_TOOLS:
+            raise ValueError("tool provider catalog exceeds count budget")
+        names: set[str] = set()
+        serializable = []
+        for tool in tools:
+            if isinstance(tool, ToolDefinition):
+                name = tool.name
+                cls._validate_tool_parameter(tool, tool.target_param)
+                cls._validate_tool_parameter(tool, tool.pattern_param)
+                serializable.append(tool.model_dump(mode="json"))
+            elif callable(tool):
+                name = str(getattr(tool, "__name__", ""))
+                serializable.append({"legacy_callable": name})
+            else:
+                raise ValueError("tool provider returned an invalid tool")
+            if not name or len(name.encode("utf-8")) > 128:
+                raise ValueError("tool name is empty or exceeds budget")
+            if name in names:
+                raise ValueError("tool provider returned duplicate names")
+            names.add(name)
+        encoded = json.dumps(
+            serializable,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        if len(encoded) > cls._MAX_TOOL_CATALOG_BYTES:
+            raise ValueError("tool provider catalog exceeds byte budget")
+
+    async def _run_tool_provider(
+        self,
+        implementation: object,
+        capability_id: str,
+        generation: int,
+        descriptor: CapabilityDescriptor | None,
+    ) -> CapabilityCheckOutcome:
+        if not isinstance(implementation, ToolProvider):
+            return CapabilityCheckOutcome.FAILED
+        if descriptor is None:
+            return CapabilityCheckOutcome.FAILED
+        schema = descriptor.config_schema
+        if schema is not None:
+            try:
+                validator_class = validator_for(schema)
+                validator_class.check_schema(schema)
+                validation_error = best_match(
+                    validator_class(schema).iter_errors({}),
+                )
+            except SchemaError:
+                return CapabilityCheckOutcome.FAILED
+            if validation_error is not None:
+                return CapabilityCheckOutcome.NOT_APPLICABLE
+        scope = InvocationScope(
+            agent_id="promotion-scenario",
+            conversation_id="promotion-scenario",
+            session_id="promotion-scenario",
+            root_agent_id="promotion-scenario",
+            root_session_id="promotion-scenario",
+            workspace_dir=".",
+            registry_generation=generation,
+            selection=CapabilitySelection(
+                tool_provider_ids=(capability_id,),
+            ),
+        )
+        try:
+            tools = await asyncio.wait_for(
+                implementation.list_tools(
+                    scope,
+                    ToolSelection(),
+                    _PromotionScenarioToolHost(),
+                ),
+                timeout=self._TIMEOUT_SECONDS,
+            )
+            self._validate_tool_catalog(tools)
+        except Exception:  # pylint: disable=broad-except
+            return CapabilityCheckOutcome.FAILED
+        return CapabilityCheckOutcome.PASSED
+
     async def run(
         self,
         candidate: CapabilityPromotionCandidate,
         release: CapabilityReleaseTag,
         implementations: Mapping[str, object],
+        descriptors: Mapping[str, CapabilityDescriptor],
     ) -> Sequence[CapabilityPromotionEvidence]:
         """Return content-safe evidence for every supported Slot scenario."""
         evidence = []
         for item in release.releases:
             contract = slot_contract(item.slot)
-            if "artifact-renderer.roundtrip" not in (
-                contract.promotion_scenarios
-            ):
-                continue
-            outcome = await self._run_renderer(
-                implementations.get(item.capability_id),
-            )
-            evidence.append(
-                CapabilityPromotionEvidence.create(
-                    candidate=candidate,
-                    check_id=(
-                        "scenario.artifact-renderer.roundtrip."
-                        f"{item.capability_id}"
+            descriptor = descriptors.get(item.capability_id)
+            for scenario_id in contract.promotion_scenarios:
+                if descriptor is None or descriptor.slot != item.slot:
+                    outcome = CapabilityCheckOutcome.FAILED
+                elif scenario_id == "artifact-renderer.roundtrip":
+                    outcome = await self._run_renderer(
+                        implementations.get(item.capability_id),
+                    )
+                elif scenario_id == "tool-provider.catalog":
+                    outcome = await self._run_tool_provider(
+                        implementations.get(item.capability_id),
+                        item.capability_id,
+                        release.promoted_generation,
+                        descriptor,
+                    )
+                else:
+                    outcome = CapabilityCheckOutcome.FAILED
+                evidence.append(
+                    CapabilityPromotionEvidence.create(
+                        candidate=candidate,
+                        check_id=(
+                            f"scenario.{scenario_id}."
+                            f"{item.capability_id}"
+                        ),
+                        producer_id="qwenpaw.lite-scenario-runner",
+                        outcome=outcome,
+                        capability_ids=(item.capability_id,),
                     ),
-                    producer_id="qwenpaw.lite-scenario-runner",
-                    outcome=outcome,
-                    capability_ids=(item.capability_id,),
-                ),
-            )
+                )
         return tuple(evidence)
+
+
+async def _promotion_scenario_tool() -> None:
+    """Represent one inert host tool during catalog discovery."""
+
+
+class _PromotionScenarioToolHost:
+    """Expose inert invocation services to staged Tool Providers."""
+
+    def config_snapshot(self) -> dict:
+        """Return an empty detached configuration snapshot."""
+        return {}
+
+    def credential(self, alias: str) -> None:
+        """Deny credential access during promotion scenarios."""
+        del alias
+
+    def interaction_broker(self) -> None:
+        """Disable user interaction during promotion scenarios."""
+        return None
+
+    async def list_workspace_tools(
+        self,
+        selection: ToolSelection,
+    ) -> tuple[ToolDefinition, ...]:
+        """Support the system compatibility Provider without real I/O."""
+        del selection
+        return (
+            ToolDefinition(
+                function=_promotion_scenario_tool,
+                name="_promotion_scenario_tool",
+                tool_type="internal",
+            ),
+        )
 
 
 class FilesystemCapabilityPromotionEvidenceStore:

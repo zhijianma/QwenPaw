@@ -123,6 +123,7 @@ _SLOT_CONTRACTS = {
         ("Sequence[ToolDefinition]",),
         "invocation",
         promotion_risk="high",
+        promotion_scenarios=("tool-provider.catalog",),
     ),
     "runner": _contract(
         "runner",

@@ -1061,7 +1061,13 @@ Cron 不形成独立审批或产物事实源。
     type 与 attachment byte preservation。system/plugin 共用同一门禁；失败阻断
     generation，unsupported 明确记录 `not_applicable`，不冒充通过。Gate 自身异常时
     已完成的 Scenario 证据仍保留在拒绝 Bundle 中。
-  - [ ] 为 runner、tool/driver、memory、scheduler、delivery 等高风险 Slot 分别实现
+  - [x] `tool.provider` 已接入同一 staged Scenario Runner：使用无 Credential、无
+    Interaction、无真实 Workspace I/O 的 Host 执行有界 catalog discovery，不调用
+    工具本体；校验目录类型、128 项数量、唯一且有界名称、`ToolDefinition`/legacy
+    callable、治理 target/pattern 参数、64 KiB 序列化预算和 5 秒超时。空配置不满足
+    合法 schema 时记录 `not_applicable`，schema 非法或目录违规时失败关闭；真实
+    `chat-tool-provider` 与内置 Workspace Tool Provider 共用该门禁。
+  - [ ] 为 runner、driver、memory、scheduler、delivery 等高风险 Slot 分别实现
     无副作用或可隔离的真实 Scenario，并补齐 Evidence Artifact、人工授权策略与卸载
     授权门禁。关键词发现索引与 Workstation/Hub Release Registry 仍待实现。
 

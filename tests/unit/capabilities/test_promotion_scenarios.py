@@ -3,9 +3,15 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from qwenpaw.capabilities import ActivationError, GenerationRegistry
+from qwenpaw.capabilities.system_tools import (
+    SYSTEM_TOOL_CAPABILITY_BUNDLE,
+    system_tool_contribution_factory,
+)
 from qwenpaw.capabilities.promotions import (
     LiteCapabilityPromotionScenarioRunner,
 )
@@ -15,9 +21,11 @@ from qwenpaw.kernel import (
     CapabilityBundle,
     CapabilityCheckOutcome,
     CapabilityContribution,
+    CapabilityDescriptor,
     CapabilityPromotionCandidate,
     CapabilityProviderKind,
     CapabilityPromotionAssessment,
+    ToolDefinition,
 )
 
 
@@ -76,6 +84,47 @@ class _Renderer:
         )
 
 
+async def _catalog_tool(target: str = "") -> str:
+    return target
+
+
+class _ToolProvider:
+    provider_id = "example.tools.provider"
+
+    def __init__(
+        self,
+        *,
+        duplicate: bool = False,
+        invalid_target: bool = False,
+    ) -> None:
+        self._duplicate = duplicate
+        self._invalid_target = invalid_target
+
+    async def health_check(self) -> bool:
+        return True
+
+    async def list_tools(self, scope, selection, host):
+        del scope, selection
+        assert host.config_snapshot() == {}
+        assert host.credential("service") is None
+        assert host.interaction_broker() is None
+        definition = ToolDefinition(
+            function=_catalog_tool,
+            name="_catalog_tool",
+            tool_type="internal",
+            target_param=(
+                "missing_target" if self._invalid_target else "target"
+            ),
+        )
+        return (definition, definition) if self._duplicate else (definition,)
+
+
+class _SlowToolProvider(_ToolProvider):
+    async def list_tools(self, scope, selection, host):
+        await asyncio.sleep(0.05)
+        return await super().list_tools(scope, selection, host)
+
+
 def _bundle(
     provider_kind: CapabilityProviderKind,
 ) -> CapabilityBundle:
@@ -99,6 +148,24 @@ def _candidate(bundle: CapabilityBundle) -> CapabilityPromotionCandidate:
         provider_kind=bundle.provider_kind,
         version=bundle.version,
         bundle_payload=bundle.model_dump(mode="json"),
+    )
+
+
+def _tool_bundle(
+    config_schema: dict | None = None,
+) -> CapabilityBundle:
+    return CapabilityBundle(
+        provider_id="example.tools",
+        provider_kind=CapabilityProviderKind.PLUGIN,
+        version="1.0.0",
+        contributions=(
+            CapabilityContribution(
+                contribution_id="provider",
+                slot="tool.provider",
+                entrypoint="example:tools",
+                config_schema=config_schema,
+            ),
+        ),
     )
 
 
@@ -189,9 +256,44 @@ async def test_unsupported_fixture_is_not_reported_as_scenario_pass() -> None:
                 supported=False,
             ),
         },
+        {
+            "example.renderers.preview": CapabilityDescriptor(
+                capability_id="example.renderers.preview",
+                slot="artifact.renderer",
+                provider_id="example.renderers",
+                provider_kind=CapabilityProviderKind.PLUGIN,
+                version="1.0.0",
+            ),
+        },
     )
 
     assert evidence.outcome is CapabilityCheckOutcome.NOT_APPLICABLE
+
+
+@pytest.mark.asyncio
+async def test_missing_scenario_descriptor_is_failed() -> None:
+    bundle = _bundle(CapabilityProviderKind.PLUGIN)
+    candidate = _candidate(bundle)
+    release_registry = GenerationRegistry()
+    await release_registry.activate_bundle(
+        bundle,
+        lambda _declaration: _Renderer("example.renderers.preview"),
+    )
+    release = release_registry.stable_release("example.renderers")
+    assert release is not None
+
+    [evidence] = await LiteCapabilityPromotionScenarioRunner().run(
+        candidate,
+        release,
+        {
+            "example.renderers.preview": _Renderer(
+                "example.renderers.preview",
+            ),
+        },
+        {},
+    )
+
+    assert evidence.outcome is CapabilityCheckOutcome.FAILED
 
 
 @pytest.mark.asyncio
@@ -219,3 +321,131 @@ async def test_gate_error_bundle_retains_completed_scenario_evidence() -> None:
     assert outcomes[
         "scenario.artifact-renderer.roundtrip.example.renderers.preview"
     ] is CapabilityCheckOutcome.PASSED
+
+
+@pytest.mark.asyncio
+async def test_plugin_tool_provider_catalog_scenario_passes() -> None:
+    bundle = _tool_bundle()
+    registry = GenerationRegistry(
+        promotion_scenario_runner=LiteCapabilityPromotionScenarioRunner(),
+    )
+
+    await registry.activate_bundle(
+        bundle,
+        lambda _declaration: _ToolProvider(),
+    )
+    [evidence_bundle] = await registry.promotion_evidence(
+        _candidate(bundle).candidate_id,
+    )
+    scenario = next(
+        item
+        for item in evidence_bundle.evidence
+        if item.check_id.startswith("scenario.tool-provider.catalog")
+    )
+
+    assert scenario.outcome is CapabilityCheckOutcome.PASSED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider",
+    [
+        _ToolProvider(duplicate=True),
+        _ToolProvider(invalid_target=True),
+    ],
+)
+async def test_invalid_tool_catalog_prevents_publication(
+    provider: _ToolProvider,
+) -> None:
+    bundle = _tool_bundle()
+    registry = GenerationRegistry(
+        promotion_scenario_runner=LiteCapabilityPromotionScenarioRunner(),
+    )
+
+    with pytest.raises(ActivationError, match="did not allow"):
+        await registry.activate_bundle(
+            bundle,
+            lambda _declaration: provider,
+        )
+
+    assert registry.generation == 1
+
+
+@pytest.mark.asyncio
+async def test_system_tool_provider_uses_same_catalog_scenario() -> None:
+    registry = GenerationRegistry(
+        promotion_scenario_runner=LiteCapabilityPromotionScenarioRunner(),
+    )
+
+    await registry.activate_bundle(
+        SYSTEM_TOOL_CAPABILITY_BUNDLE,
+        system_tool_contribution_factory,
+    )
+    release = registry.stable_release("qwenpaw.system")
+    assert release is not None
+
+    lease = await registry.pin()
+    assert lease.resolve("qwenpaw.system.workspace-tools") is not None
+    await lease.close()
+
+
+@pytest.mark.asyncio
+async def test_required_runtime_config_is_not_reported_as_scenario_pass(
+) -> None:
+    bundle = _tool_bundle(
+        {
+            "type": "object",
+            "required": ["endpoint"],
+            "properties": {"endpoint": {"type": "string"}},
+        },
+    )
+    registry = GenerationRegistry(
+        promotion_scenario_runner=LiteCapabilityPromotionScenarioRunner(),
+    )
+
+    await registry.activate_bundle(
+        bundle,
+        lambda _declaration: _ToolProvider(),
+    )
+    [evidence_bundle] = await registry.promotion_evidence(
+        _candidate(bundle).candidate_id,
+    )
+    scenario = next(
+        item
+        for item in evidence_bundle.evidence
+        if item.check_id.startswith("scenario.tool-provider.catalog")
+    )
+
+    assert scenario.outcome is CapabilityCheckOutcome.NOT_APPLICABLE
+
+
+@pytest.mark.asyncio
+async def test_invalid_tool_provider_schema_blocks_publication() -> None:
+    bundle = _tool_bundle({"type": "not-a-json-schema-type"})
+    registry = GenerationRegistry(
+        promotion_scenario_runner=LiteCapabilityPromotionScenarioRunner(),
+    )
+
+    with pytest.raises(ActivationError, match="did not allow"):
+        await registry.activate_bundle(
+            bundle,
+            lambda _declaration: _ToolProvider(),
+        )
+
+    assert registry.generation == 1
+
+
+@pytest.mark.asyncio
+async def test_tool_catalog_timeout_blocks_publication() -> None:
+    bundle = _tool_bundle()
+    runner = LiteCapabilityPromotionScenarioRunner()
+    runner._TIMEOUT_SECONDS = 0.001  # pylint: disable=protected-access
+    registry = GenerationRegistry(promotion_scenario_runner=runner)
+
+    with pytest.raises(ActivationError, match="did not allow"):
+        await registry.activate_bundle(
+            bundle,
+            lambda _declaration: _SlowToolProvider(),
+        )
+
+    assert registry.generation == 1
