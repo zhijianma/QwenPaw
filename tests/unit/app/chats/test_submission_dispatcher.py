@@ -13,6 +13,7 @@ from qwenpaw.app.chats.manager import ChatManager
 from qwenpaw.app.chats.models import ChatSpec
 from qwenpaw.app.chats.repo import JsonChatRepository
 from qwenpaw.app.chats.submission_dispatcher import (
+    CONSOLE_HARNESS_STEP_CONTINUATION_ENVELOPE,
     CONSOLE_INTERACTION_CONTINUATION_ENVELOPE,
     CONSOLE_MODEL_RECOVERY_ENVELOPE,
     CONSOLE_MODEL_STEP_CONTINUATION_ENVELOPE,
@@ -35,6 +36,7 @@ from qwenpaw.kernel import (
     ActionStatus,
     ActorRef,
     ActorType,
+    CommittedActionItem,
     ContinuationDispatchStatus,
     ContinuationMode,
     InteractionKind,
@@ -43,6 +45,7 @@ from qwenpaw.kernel import (
     InteractionRequest,
     UserInputReason,
     InteractionResponse,
+    HarnessStepContinuationStatus,
     ModelCallAttempt,
     ModelCallResult,
     ModelCallStatus,
@@ -61,6 +64,11 @@ from qwenpaw.runtime.actions import (
     lite_action_store,
     model_step_action_evidence_digest,
     model_step_committed_action_items,
+)
+from qwenpaw.runtime.harness_recovery import (
+    build_harness_recovery_checkpoint,
+    lite_harness_recovery_context_store,
+    lite_harness_step_continuation_store,
 )
 from qwenpaw.runtime.model_step_contexts import (
     lite_model_step_context_store,
@@ -946,4 +954,149 @@ async def test_terminal_action_continues_from_immutable_context(
     assert payload["meta"]["request_context"][
         "model_step_context_checkpoint_id"
     ] == str(checkpoint.checkpoint_id)
+    await control.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("superseded", [False, True])
+# pylint: disable-next=too-many-statements
+async def test_harness_step_dispatches_one_fenced_submission(
+    tmp_path: Path,
+    superseded: bool,
+) -> None:
+    manager = ChatManager(
+        repo=JsonChatRepository(tmp_path / "chats.json"),
+    )
+    chat = await manager.create_chat(
+        ChatSpec(
+            id="chat-1",
+            session_id="console:chat-1",
+            user_id="local-user",
+            channel="console",
+        ),
+    )
+    control = InvocationControlService(
+        store=SQLiteInvocationControl(tmp_path / "control.sqlite3"),
+    )
+    invocation_id = uuid4()
+    correlation_id = uuid4()
+    lease = await control.begin_turn(
+        TurnSubmissionRequest(
+            agent_id="default",
+            conversation_id=chat.id,
+            content="edit project",
+            input_envelope=SubmissionInputEnvelope(
+                kind=CONSOLE_SUBMISSION_ENVELOPE,
+                payload={},
+            ),
+            idempotency_key="harness-source-submission",
+            correlation_id=correlation_id,
+        ),
+        invocation_id=invocation_id,
+    )
+    await control.finish_turn(lease, SubmissionStatus.FAILED)
+    committed_item = CommittedActionItem(
+        action_id=uuid4(),
+        invocation_id=invocation_id,
+        conversation_id=chat.id,
+        executor_item_id="tool-1",
+        observation_digest=f"sha256:{'a' * 64}",
+    )
+    checkpoint = build_harness_recovery_checkpoint(
+        invocation_id=invocation_id,
+        conversation_id=chat.id,
+        source_submission_id=lease.submission.submission_id,
+        backend="codex",
+        provider_context_id="private-thread-id",
+        provider_item_ids={"tool-1"},
+        action_evidence_digest=f"sha256:{'b' * 64}",
+        expected_items=(committed_item,),
+        session_items=(committed_item,),
+    )
+    assert checkpoint is not None
+    await lite_harness_recovery_context_store(tmp_path).save(checkpoint)
+    recovery = lite_harness_step_continuation_store(tmp_path)
+    continuation = await recovery.defer(
+        checkpoint,
+        correlation_id=correlation_id,
+        agent_id="default",
+        recovery_cycle=1,
+    )
+    if superseded:
+        await control.enqueue_turn(
+            TurnSubmissionRequest(
+                agent_id="default",
+                conversation_id=chat.id,
+                content="newer user instruction",
+                input_envelope=SubmissionInputEnvelope(
+                    kind=CONSOLE_SUBMISSION_ENVELOPE,
+                    payload={},
+                ),
+                idempotency_key="newer-user-submission",
+            ),
+        )
+    workspace = SimpleNamespace(
+        agent_id="default",
+        workspace_dir=tmp_path,
+        chat_manager=manager,
+    )
+    dispatcher = WorkspaceChatSubmissionDispatcher(
+        workspace=workspace,
+        control=control,
+    )
+
+    # pylint: disable=protected-access
+    dispatcher_store = dispatcher._harness_steps
+    assert dispatcher_store is not None
+    original_dispatch = dispatcher_store.dispatch
+    if not superseded:
+
+        async def fail_after_enqueue(continuation_id, dispatch):
+            current = await dispatcher_store.get(continuation_id)
+            assert current is not None
+            await dispatch(current)
+            raise RuntimeError("simulated Harness crash after enqueue")
+
+        dispatcher_store.dispatch = fail_after_enqueue
+        with pytest.raises(RuntimeError, match="crash after enqueue"):
+            await dispatcher._dispatch_ready_harness_steps()
+        dispatcher_store.dispatch = original_dispatch
+    await dispatcher._dispatch_ready_harness_steps()
+    await dispatcher._dispatch_ready_harness_steps()
+    # pylint: enable=protected-access
+
+    dispatched = await recovery.get(continuation.continuation_id)
+    assert dispatched is not None
+    if superseded:
+        assert dispatched.status is HarnessStepContinuationStatus.CANCELLED
+        assert dispatched.submission_id is None
+        await control.close()
+        return
+    assert dispatched.status is HarnessStepContinuationStatus.DISPATCHED
+    assert dispatched.submission_id is not None
+    submission = await control.get_submission(dispatched.submission_id)
+    assert submission is not None
+    assert submission.correlation_id == correlation_id
+    assert submission.input_envelope is not None
+    assert submission.input_envelope.kind == (
+        CONSOLE_HARNESS_STEP_CONTINUATION_ENVELOPE
+    )
+    queue = await control.read_queue(
+        agent_id="default",
+        conversation_id=chat.id,
+    )
+    assert len(queue.submissions) == 1
+    # pylint: disable=protected-access
+    payload = await dispatcher._materialize_harness_step_payload(
+        submission.input_envelope,
+        chat,
+        submission,
+    )
+    # pylint: enable=protected-access
+    request_context = payload["meta"]["request_context"]
+    assert request_context["harness_backend"] == "codex"
+    assert request_context["harness_recovery_cycle"] == 1
+    assert request_context["harness_recovery_checkpoint_id"] == str(
+        checkpoint.checkpoint_id,
+    )
     await control.close()

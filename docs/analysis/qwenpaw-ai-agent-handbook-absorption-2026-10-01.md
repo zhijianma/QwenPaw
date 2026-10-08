@@ -426,8 +426,10 @@ Ask User，也不保存 Prompt、异常正文或隐藏 reasoning。enqueue 后�
 模型流随后增加内容安全的 `ModelOutputBoundary`：明确区分请求尚未输出、非流式完整
 响应、部分流、看到 Provider 终态 chunk，以及没有终态 chunk 的 incomplete EOF。该记录只
 是枚举，不保存输出、摘要、哈希或隐藏 reasoning；Observation 可以据此避免把部分流
-误判成“从未输出后可直接重试”。当前仍只完成边界留证，尚未把部分流自动装配为新的
-Model Step continuation。
+误判成“从未输出后可直接重试”。部分流已能装配为 bounded Model Step
+continuation；受控 Harness 也会在四方 admission 后通过 durable outbox 创建 fenced
+continuation。两条路径都沿用 correlation、创建新 Invocation，并受 Stop / Interrupt、
+新输入、幂等与恢复预算约束。
 
 源码核验进一步确认，当前 AgentScope 在收到终态 chunk 后才把 Assistant / ToolCall
 写入 Context，Acting 也发生在完整 Reasoning 之后；它尚不具备 Codex 的“边收工具、

@@ -193,8 +193,11 @@ Adapter 声明；Kernel 不假设任意模型流可以原地续传。
   identity、provider history item、QwenPaw session binding 与 ActionStore digest；私有
   provider thread/session ID 只参与 Invocation/Submission scoped SHA-256，不进入
   checkpoint 或公开响应，也不能跨任务形成稳定关联指纹。
-- [ ] 共享 dispatcher 从该 checkpoint 创建 fenced Harness continuation；当前仅完成
-  durable admission，不会仅凭 completion event 自动恢复。
+- [x] 共享 dispatcher 从该 checkpoint 创建 fenced Harness continuation：durable
+  outbox 使用稳定幂等键创建同一 `ChatSpec.id`、原 correlation 的新 Submission；
+  Stop / Interrupt、来源之后的新输入、Queue revision、执行前反向绑定和 backend
+  一致性共同阻止迟到或串错执行，自动恢复最多 2 个 cycle。恢复仍要求四方 admission，
+  不会仅凭 completion event 自动恢复。
 - [ ] 后台 Action 跨 Invocation 完成后由 durable continuation 主动触发新执行，而非
   等待用户再发送一条消息。
 - [ ] Provider resource health 事件自动释放 quota wait。

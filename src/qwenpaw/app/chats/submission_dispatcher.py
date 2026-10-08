@@ -20,6 +20,8 @@ from ...kernel import (
     ControlCommandKind,
     ControlReceipt,
     InteractionStatus,
+    HarnessStepContinuation,
+    HarnessStepContinuationStatus,
     ModelResourceWait,
     ModelStepContinuation,
     ModelStepContinuationStatus,
@@ -37,6 +39,9 @@ CONSOLE_INTERACTION_CONTINUATION_ENVELOPE = (
 CONSOLE_MODEL_RECOVERY_ENVELOPE = "chat.console.model-recovery.v1"
 CONSOLE_MODEL_STEP_CONTINUATION_ENVELOPE = (
     "chat.console.model-step-continuation.v1"
+)
+CONSOLE_HARNESS_STEP_CONTINUATION_ENVELOPE = (
+    "chat.console.harness-step-continuation.v1"
 )
 logger = logging.getLogger(__name__)
 
@@ -58,6 +63,17 @@ class WorkspaceChatSubmissionDispatcher:
             "model_resource_wait_service",
             None,
         )
+        from ...runtime.harness_recovery import (
+            lite_harness_step_continuation_store,
+        )
+
+        workspace_dir = getattr(workspace, "workspace_dir", None)
+        self._harness_steps = (
+            lite_harness_step_continuation_store(Path(workspace_dir))
+            if workspace_dir is not None
+            else None
+        )
+        self._recovery_event = asyncio.Event()
         self._continuation_event = asyncio.Event()
         self._continuation_task: asyncio.Task[None] | None = None
         self._resource_wait_task: asyncio.Task[None] | None = None
@@ -72,6 +88,8 @@ class WorkspaceChatSubmissionDispatcher:
         if self._resource_waits is not None:
             await self._dispatch_ready_resource_waits()
             await self._dispatch_ready_model_steps()
+        if self._harness_steps is not None:
+            await self._dispatch_ready_harness_steps()
         await self._dispatcher.start()
         if self._interactions is not None and self._continuation_task is None:
             self._continuation_task = asyncio.create_task(
@@ -81,8 +99,8 @@ class WorkspaceChatSubmissionDispatcher:
             self.wake_continuations()
         if (
             self._resource_waits is not None
-            and self._resource_wait_task is None
-        ):
+            or self._harness_steps is not None
+        ) and self._resource_wait_task is None:
             self._resource_wait_task = asyncio.create_task(
                 self._run_resource_waits(),
                 name=(f"model-resource-waits:{self._workspace.agent_id}"),
@@ -109,28 +127,45 @@ class WorkspaceChatSubmissionDispatcher:
 
     def wake_resource_waits(self) -> None:
         """Wake model-resource continuations after an external release."""
+        self._recovery_event.set()
         if self._resource_waits is not None:
             self._resource_waits.notify_change()
 
     async def _run_resource_waits(self) -> None:
         """Dispatch matured waits without depending on an HTTP request."""
         while True:
-            self._resource_waits.clear_change()
+            self._recovery_event.clear()
+            if self._resource_waits is not None:
+                self._resource_waits.clear_change()
             try:
-                await self._dispatch_ready_resource_waits()
-                await self._dispatch_ready_model_steps()
+                if self._resource_waits is not None:
+                    await self._dispatch_ready_resource_waits()
+                    await self._dispatch_ready_model_steps()
+                if self._harness_steps is not None:
+                    await self._dispatch_ready_harness_steps()
             except Exception:  # pylint: disable=broad-except
                 logger.exception("Failed to dispatch model resource wait")
                 delay = 1.0
             else:
-                next_delay = (
-                    await self._resource_waits.seconds_until_next_timer()
-                )
+                next_delay = None
+                if self._resource_waits is not None:
+                    next_delay = (
+                        await self._resource_waits.seconds_until_next_timer()
+                    )
                 delay = 60.0 if next_delay is None else min(
                     max(next_delay, 0.05),
                     60.0,
                 )
-            await self._resource_waits.wait_for_change(delay)
+            if self._resource_waits is not None:
+                await self._resource_waits.wait_for_change(delay)
+            else:
+                try:
+                    await asyncio.wait_for(
+                        self._recovery_event.wait(),
+                        timeout=delay,
+                    )
+                except TimeoutError:
+                    pass
 
     async def _dispatch_ready_resource_waits(self) -> None:
         waits = await self._resource_waits.list_ready()
@@ -295,6 +330,116 @@ class WorkspaceChatSubmissionDispatcher:
         )
         if dispatched.status is ModelStepContinuationStatus.DISPATCHED:
             self._dispatcher.wake()
+
+    async def _dispatch_ready_harness_steps(self) -> None:
+        """Dispatch admitted Harness continuations through the Chat queue."""
+        if self._harness_steps is None:
+            return
+        continuations = await self._harness_steps.list_ready(
+            agent_id=self._workspace.agent_id,
+        )
+        first_error: Exception | None = None
+        for continuation in continuations:
+            try:
+                dispatched = await self._harness_steps.dispatch(
+                    continuation.continuation_id,
+                    self._enqueue_harness_step,
+                )
+                if (
+                    dispatched.status
+                    is HarnessStepContinuationStatus.DISPATCHED
+                ):
+                    self._dispatcher.wake()
+            except Exception as exc:  # pylint: disable=broad-except
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
+
+    async def _enqueue_harness_step(
+        self,
+        continuation: HarnessStepContinuation,
+    ) -> UUID | None:
+        """Create one fenced Submission for an admitted Harness context."""
+        checkpoint = continuation.checkpoint
+        projection = await self._control.read_queue(
+            agent_id=continuation.agent_id,
+            conversation_id=checkpoint.conversation_id,
+        )
+        controls = await self._control.scan_for_conversation(
+            agent_id=continuation.agent_id,
+            conversation_id=checkpoint.conversation_id,
+        )
+        if any(
+            (
+                record.command.kind
+                in {
+                    ControlCommandKind.INTERRUPT_CURRENT,
+                    ControlCommandKind.STOP_AND_CLEAR,
+                }
+                and record.command.target_invocation_id
+                == checkpoint.invocation_id
+            )
+            or (
+                record.command.kind is ControlCommandKind.STOP_AND_CLEAR
+                and record.command.requested_at >= continuation.created_at
+            )
+            for record in controls
+        ):
+            return None
+        submissions = await self._control.scan_submissions_for_conversation(
+            agent_id=continuation.agent_id,
+            conversation_id=checkpoint.conversation_id,
+        )
+        source = next(
+            (
+                item
+                for item in submissions
+                if item.submission_id == checkpoint.source_submission_id
+            ),
+            None,
+        )
+        idempotency_key = (
+            "harness-step-continuation:"
+            f"{continuation.continuation_id}"
+        )
+        if source is None or any(
+            item.sequence > source.sequence
+            and item.idempotency_key != idempotency_key
+            for item in submissions
+        ):
+            return None
+        request = TurnSubmissionRequest(
+            agent_id=continuation.agent_id,
+            conversation_id=checkpoint.conversation_id,
+            content="[Harness step continuation]",
+            request_context={
+                "channel": "console",
+                "harness_backend": checkpoint.backend,
+                "harness_step_continuation_id": str(
+                    continuation.continuation_id,
+                ),
+            },
+            input_envelope=SubmissionInputEnvelope(
+                kind=CONSOLE_HARNESS_STEP_CONTINUATION_ENVELOPE,
+                payload={
+                    "continuation_id": str(
+                        continuation.continuation_id,
+                    ),
+                },
+            ),
+            idempotency_key=idempotency_key,
+            correlation_id=continuation.correlation_id,
+        )
+        receipt = await self._control.enqueue_turn(
+            request,
+            expected_revision=projection.revision,
+        )
+        if receipt.submission_id is None:
+            raise RuntimeError(
+                "Harness continuation enqueue returned no submission",
+            )
+        return receipt.submission_id
 
     async def _enqueue_model_step(
         self,
@@ -528,6 +673,7 @@ class WorkspaceChatSubmissionDispatcher:
         if envelope.kind not in {
             CONSOLE_SUBMISSION_ENVELOPE,
             CONSOLE_INTERACTION_CONTINUATION_ENVELOPE,
+            CONSOLE_HARNESS_STEP_CONTINUATION_ENVELOPE,
             CONSOLE_MODEL_RECOVERY_ENVELOPE,
             CONSOLE_MODEL_STEP_CONTINUATION_ENVELOPE,
         }:
@@ -561,6 +707,12 @@ class WorkspaceChatSubmissionDispatcher:
                 chat,
                 submission,
             )
+        elif envelope.kind == CONSOLE_HARNESS_STEP_CONTINUATION_ENVELOPE:
+            payload = await self._materialize_harness_step_payload(
+                envelope,
+                chat,
+                submission,
+            )
         else:
             payload = copy.deepcopy(envelope.payload)
         self._bind_runtime_identity(payload, submission)
@@ -585,6 +737,84 @@ class WorkspaceChatSubmissionDispatcher:
             raise RuntimeError("conversation gained another active runtime")
         async for _ in tracker.stream_from_queue(queue, chat.id):
             pass
+
+    async def _materialize_harness_step_payload(
+        self,
+        envelope: SubmissionInputEnvelope,
+        chat: Any,
+        submission: TurnSubmission,
+    ) -> dict[str, Any]:
+        """Resolve a Harness outbox pointer into a fenced continuation."""
+        if self._harness_steps is None:
+            raise RuntimeError("Harness recovery store is unavailable")
+        try:
+            continuation_id = UUID(
+                str(envelope.payload["continuation_id"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("invalid Harness continuation envelope") from exc
+        continuation = await self._harness_steps.get(continuation_id)
+        if continuation is None:
+            raise ValueError("Harness continuation is unavailable")
+        checkpoint = continuation.checkpoint
+        if (
+            continuation.agent_id != submission.agent_id
+            or checkpoint.conversation_id != submission.conversation_id
+            or checkpoint.conversation_id != chat.id
+        ):
+            raise ValueError(
+                "Harness continuation does not belong to its ChatSpec",
+            )
+        if (
+            continuation.status
+            is not HarnessStepContinuationStatus.DISPATCHED
+            or continuation.submission_id != submission.submission_id
+        ):
+            raise ValueError(
+                "Harness continuation is not bound to this Submission",
+            )
+        from ...runtime.harness_recovery import (
+            lite_harness_recovery_context_store,
+        )
+
+        stored = await lite_harness_recovery_context_store(
+            Path(self._workspace.workspace_dir),
+        ).load(checkpoint.checkpoint_id)
+        if stored != checkpoint:
+            raise ValueError(
+                "Harness recovery checkpoint does not match continuation",
+            )
+        return {
+            "channel_id": chat.channel,
+            "sender_id": chat.user_id,
+            "content_parts": [
+                {
+                    "type": "text",
+                    "text": (
+                        "QwenPaw Harness recovery: continue the interrupted "
+                        "task from the existing provider context. Do not "
+                        "repeat completed external actions."
+                    ),
+                },
+            ],
+            "message_metadata": {
+                "qwenpaw_client_message_id": submission.idempotency_key,
+                "qwenpaw_harness_step_continuation": str(continuation_id),
+            },
+            "message_id": submission.idempotency_key,
+            "meta": {
+                "session_id": chat.session_id,
+                "user_id": chat.user_id,
+                "request_context": {
+                    "harness_backend": checkpoint.backend,
+                    "harness_recovery_checkpoint_id": str(
+                        checkpoint.checkpoint_id,
+                    ),
+                    "harness_step_continuation_id": str(continuation_id),
+                    "harness_recovery_cycle": continuation.recovery_cycle,
+                },
+            },
+        }
 
     async def _materialize_model_recovery_payload(
         self,
@@ -866,6 +1096,7 @@ class WorkspaceChatSubmissionDispatcher:
 
 __all__ = [
     "CONSOLE_INTERACTION_CONTINUATION_ENVELOPE",
+    "CONSOLE_HARNESS_STEP_CONTINUATION_ENVELOPE",
     "CONSOLE_MODEL_RECOVERY_ENVELOPE",
     "CONSOLE_SUBMISSION_ENVELOPE",
     "WorkspaceChatSubmissionDispatcher",

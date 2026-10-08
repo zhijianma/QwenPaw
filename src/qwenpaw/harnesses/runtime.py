@@ -16,6 +16,7 @@ from ..kernel import (
     ActionStatus,
     EnvironmentResolution,
     HarnessRecoveryContextCheckpoint,
+    HarnessStepContinuation,
     InvocationScope,
     SubmissionStatus,
     TurnSubmissionRequest,
@@ -29,6 +30,7 @@ from ..runtime.actions import (
 from ..runtime.harness_recovery import (
     build_harness_recovery_checkpoint,
     lite_harness_recovery_context_store,
+    lite_harness_step_continuation_store,
 )
 from ..schemas import (
     AgentResponse,
@@ -668,18 +670,24 @@ class HarnessRuntime:
                     and action_tracker.committed_items
                     and adapter is not None
                 ):
-                    checkpoint = await self._checkpoint_recovery_context(
+                    continuation = await self._checkpoint_recovery_context(
                         backend=backend,
                         adapter=adapter,
                         action_tracker=action_tracker,
                         request=request,
                         request_context=request_context,
                     )
-                    if checkpoint is not None:
+                    if continuation is not None:
                         response.metadata = {
                             **dict(response.metadata or {}),
                             "harness_recovery_checkpoint_id": str(
-                                checkpoint.checkpoint_id,
+                                continuation.checkpoint.checkpoint_id,
+                            ),
+                            "harness_step_continuation_id": str(
+                                continuation.continuation_id,
+                            ),
+                            "harness_recovery_status": (
+                                continuation.status.value
                             ),
                         }
             except Exception:
@@ -713,7 +721,7 @@ class HarnessRuntime:
         action_tracker: HarnessActionTracker,
         request: Any,
         request_context: dict[str, Any],
-    ) -> Any:
+    ) -> HarnessStepContinuation | None:
         """Persist admission only after all independent evidence agrees."""
         if self._session_bridge is None:
             return None
@@ -784,9 +792,35 @@ class HarnessRuntime:
             )
             if checkpoint is None:
                 return None
-            return await lite_harness_recovery_context_store(
+            stored = await lite_harness_recovery_context_store(
                 self._workspace_dir,
             ).save(checkpoint)
+            raw_cycle = request_context.get("harness_recovery_cycle", 0)
+            prior_cycle = (
+                raw_cycle
+                if isinstance(raw_cycle, int)
+                and not isinstance(raw_cycle, bool)
+                and raw_cycle >= 0
+                else 0
+            )
+            continuation = await lite_harness_step_continuation_store(
+                self._workspace_dir,
+            ).defer(
+                stored,
+                correlation_id=uuid.UUID(
+                    str(request_context["os_correlation_id"]),
+                ),
+                agent_id=self._agent_id,
+                recovery_cycle=prior_cycle + 1,
+            )
+            dispatcher = getattr(
+                self._workspace,
+                "submission_dispatcher",
+                None,
+            )
+            if dispatcher is not None:
+                dispatcher.wake_resource_waits()  # pylint: disable=no-member
+            return continuation
         except Exception:  # pylint: disable=broad-except
             logger.exception(
                 "Failed to checkpoint Harness recovery context",

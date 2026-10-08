@@ -491,10 +491,18 @@ class Workspace:  # pylint: disable=too-many-public-methods
         """
         config = load_agent_config(self.agent_id)
         backend = config.backend
-        if backend != "qwenpaw":
-            request_context = dict(
-                getattr(request, "request_context", None) or {},
+        request_context = dict(
+            getattr(request, "request_context", None) or {},
+        )
+        recovery_backend = request_context.get("harness_backend")
+        if recovery_backend is not None and (
+            backend == "qwenpaw" or recovery_backend != backend
+        ):
+            raise RuntimeError(
+                "Harness continuation backend no longer matches the "
+                "configured agent backend",
             )
+        if backend != "qwenpaw":
             if request_context.get("source") == "portability_adaptation":
                 raise PermissionError(
                     "PawPort compatibility workers require the qwenpaw "

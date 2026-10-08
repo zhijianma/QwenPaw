@@ -339,8 +339,10 @@ Codex 的“边收流边执行工具”建立在其 Provider 事件协议、工�
 - [x] `HarnessRecoveryContextCheckpoint` 已同时验证 provider context identity、history
   tool item、QwenPaw session binding 与 ActionStore digest；checkpoint 不保存 provider
   thread/session ID、工具输出或异常正文。
-- [ ] 将已通过 admission 的 checkpoint 接入共享 Submission dispatcher，以 fenced
-  durable continuation 启动后续 Invocation。
+- [x] 已通过 admission 的 checkpoint 接入共享 Submission dispatcher，以 fenced
+  durable continuation 启动后续 Invocation。outbox 使用稳定幂等键并沿用
+  `ChatSpec.id` 与 correlation；Stop / Interrupt、来源后的新输入、Queue revision、
+  反向绑定、backend 一致性和 2-cycle 预算共同限制恢复。
 
 ### R4：可选 Provider 增量续传
 

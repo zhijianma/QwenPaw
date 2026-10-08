@@ -308,6 +308,11 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   的 `HarnessRecoveryContextCheckpoint`。原始 provider thread/session ID、工具输出和
   异常正文均不进入 checkpoint；受控 Harness 自建 Submission 也已回填统一的
   submission/correlation identity。
+- 已通过 admission 的 Harness checkpoint 会生成持久化
+  `HarnessStepContinuation` outbox，并由共享 Chat Submission dispatcher 创建新的
+  Invocation。stable idempotency key 覆盖 enqueue 后、outbox 标记前崩溃；Stop /
+  Interrupt、来源后的新输入、Queue revision、执行前反向绑定与原 backend 一致性
+  共同 fencing 迟到恢复，默认最多自动恢复 2 个 cycle。
 - 状态经现有 Chat Runtime Observation 展示为 pending / accepted / cancelled /
   blocked / failed，不伪造 Queue 项，不依赖 Task 页面或前端私有状态。
 - Kernel/SDK 新增只读 `ModelRecoveryHistoryPort`；独立查询 Adapter 从同一恢复事实
@@ -318,9 +323,20 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - “一问一答”只保留为 Chat 快速路径和 UI 投影；长程执行链只在 Outcome、显式
   Stop / Interrupt、不可自动化的 typed Wait 或预算/恢复终态结束，不依赖用户发送
   “继续”。
-- 尚未完成：共享 dispatcher 从 Harness checkpoint 创建 fenced continuation、后台
-  Action 跨 Invocation 的主动 continuation、Provider token 级原地续传，以及真实断流
-  与进程重启的浏览器端到端演练。
+- 尚未完成：后台 Action 跨 Invocation 的主动 continuation、Provider token 级原地
+  续传，以及真实断流与进程重启的浏览器端到端演练。
+
+### 2026-10-08 Harness durable continuation
+
+- Kernel 冻结 `HarnessStepContinuation` 的 ready / dispatched / cancelled /
+  recovery-exhausted 生命周期；outbox 只保存内容安全 checkpoint 和因果身份。
+- Harness Runtime 完成四方恢复 admission 后立即写入 outbox；服务启动和 worker
+  唤醒都会扫描 ready 项，不依赖浏览器连接或用户发送“继续”。
+- Workspace 在执行恢复 Submission 前强制校验 `harness_backend` 与当前 Agent 配置；
+  backend 已切换或回到原生 qwenpaw 时 fail closed，避免把 Provider 私有上下文交给
+  错误执行器。
+- 本切片定点验证：38 项通过；该数字仅覆盖恢复 Store、Harness Runtime、Workspace
+  路由与 Chat dispatcher，不等价于全仓或浏览器端到端测试。
 
 ### 本阶段此前已执行的定点验证
 

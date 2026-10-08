@@ -427,6 +427,10 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
   - [x] Interrupt 以来源 Invocation、Stop-and-Clear 以 Conversation 建立恢复栅栏；
     dispatcher 用 Queue revision 关闭控制检查与恢复 enqueue 之间的竞态，执行前反向
     校验 Wait 与 Submission 绑定，取消后的旧任务不能被 timer 或资源事件复活。
+  - [x] 受控 Harness 四方 admission 后写入 `HarnessStepContinuation` outbox；共享
+    dispatcher 以原 correlation 创建新 Submission / Invocation，并用 Stop / Interrupt、
+    来源后的新输入、Queue revision、执行前反向绑定、backend 一致性和 2-cycle 预算
+    fencing 恢复。
 - [x] 持久化 bounded stream outcome：产生部分输出后断流时，不盲目重放完整
   Turn，不把 partial assistant message 当完成；后续 Model Step 从 durable context
   重建。内容安全 continuation 使用稳定 outbox、新 Submission / Invocation、原

@@ -38,6 +38,7 @@ from qwenpaw.kernel import (
     ActionStatus,
     CommittedActionItem,
     ControlCommandStatus,
+    HarnessStepContinuationStatus,
     SideEffectStatus,
     SubmissionStatus,
     ToolEffect,
@@ -50,6 +51,7 @@ from qwenpaw.runtime.harness_environments import (
 )
 from qwenpaw.runtime.harness_recovery import (
     lite_harness_recovery_context_store,
+    lite_harness_step_continuation_store,
 )
 from qwenpaw.schemas import (
     AgentRequest,
@@ -882,9 +884,17 @@ async def test_interrupted_harness_persists_recovery_admission(
     checkpoint = await lite_harness_recovery_context_store(tmp_path).load(
         UUID(checkpoint_id),
     )
+    continuation = await lite_harness_step_continuation_store(tmp_path).get(
+        UUID(output[-1].metadata["harness_step_continuation_id"]),
+    )
     assert checkpoint.backend == "codex"
     assert checkpoint.action_count == 1
     assert checkpoint.action_evidence_digest
+    assert continuation is not None
+    assert continuation.checkpoint == checkpoint
+    assert continuation.recovery_cycle == 1
+    assert continuation.status is HarnessStepContinuationStatus.READY
+    assert output[-1].metadata["harness_recovery_status"] == "ready"
     assert record.result is not None
     assert "provider-thread-private" not in checkpoint.model_dump_json()
 

@@ -87,6 +87,15 @@ class ModelStepContinuationStatus(str, Enum):
     RECOVERY_EXHAUSTED = "recovery_exhausted"
 
 
+class HarnessStepContinuationStatus(str, Enum):
+    """Lifecycle of one Harness recovery continuation outbox entry."""
+
+    READY = "ready"
+    DISPATCHED = "dispatched"
+    CANCELLED = "cancelled"
+    RECOVERY_EXHAUSTED = "recovery_exhausted"
+
+
 class ModelStepReconciliationReason(str, Enum):
     """Why a partial model step cannot continue automatically."""
 
@@ -202,6 +211,35 @@ class HarnessRecoveryContextCheckpoint(KernelModel):
     ]
     action_count: int = Field(ge=1)
     created_at: AwareDatetime = Field(default_factory=utc_now)
+
+
+class HarnessStepContinuation(KernelModel):
+    """Content-safe durable continuation for an interrupted Harness turn."""
+
+    continuation_id: UUID
+    checkpoint: HarnessRecoveryContextCheckpoint
+    correlation_id: UUID
+    agent_id: NonEmptyStr
+    recovery_cycle: int = Field(ge=1)
+    status: HarnessStepContinuationStatus = (
+        HarnessStepContinuationStatus.READY
+    )
+    submission_id: UUID | None = None
+    revision: int = Field(default=1, ge=1)
+    created_at: AwareDatetime = Field(default_factory=utc_now)
+    updated_at: AwareDatetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def validate_harness_continuation(self) -> Self:
+        """Require an exact dispatch binding and coherent timestamps."""
+        dispatched = self.status is HarnessStepContinuationStatus.DISPATCHED
+        if dispatched != (self.submission_id is not None):
+            raise ValueError(
+                "dispatched Harness continuation requires submission_id",
+            )
+        if self.updated_at < self.created_at:
+            raise ValueError("updated_at cannot precede created_at")
+        return self
 
 
 class ModelStepContinuation(KernelModel):
@@ -443,6 +481,8 @@ __all__ = [
     "ContinuationRef",
     "ConversationContinuation",
     "HarnessRecoveryContextCheckpoint",
+    "HarnessStepContinuation",
+    "HarnessStepContinuationStatus",
     "ModelStepContextCheckpoint",
     "ModelStepContinuation",
     "ModelStepContinuationStatus",

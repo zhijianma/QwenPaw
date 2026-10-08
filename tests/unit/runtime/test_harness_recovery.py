@@ -6,11 +6,15 @@ from uuid import uuid4
 
 import pytest
 
-from qwenpaw.kernel import CommittedActionItem
+from qwenpaw.kernel import (
+    CommittedActionItem,
+    HarnessStepContinuationStatus,
+)
 from qwenpaw.runtime.harness_recovery import (
     HarnessRecoveryContextConflictError,
     build_harness_recovery_checkpoint,
     lite_harness_recovery_context_store,
+    lite_harness_step_continuation_store,
 )
 
 
@@ -115,3 +119,86 @@ async def test_checkpoint_store_is_private_and_immutable(tmp_path) -> None:
                 update={"provider_item_digest": f"sha256:{'c' * 64}"},
             ),
         )
+
+
+@pytest.mark.asyncio
+async def test_harness_continuation_is_idempotent_after_enqueue_crash(
+    tmp_path,
+) -> None:
+    item = _item()
+    checkpoint = build_harness_recovery_checkpoint(
+        invocation_id=item.invocation_id,
+        conversation_id="chat-1",
+        source_submission_id=uuid4(),
+        backend="codex",
+        provider_context_id="private-thread-id",
+        provider_item_ids={"tool-1"},
+        action_evidence_digest=f"sha256:{'b' * 64}",
+        expected_items=(item,),
+        session_items=(item,),
+    )
+    assert checkpoint is not None
+    store = lite_harness_step_continuation_store(tmp_path)
+    correlation_id = uuid4()
+    continuation = await store.defer(
+        checkpoint,
+        correlation_id=correlation_id,
+        agent_id="default",
+        recovery_cycle=1,
+    )
+    assert await store.defer(
+        checkpoint,
+        correlation_id=correlation_id,
+        agent_id="default",
+        recovery_cycle=1,
+    ) == continuation
+    assert await store.list_ready(agent_id="default") == (continuation,)
+
+    submission_id = uuid4()
+    dispatch_calls = 0
+
+    async def enqueue(_continuation):
+        nonlocal dispatch_calls
+        dispatch_calls += 1
+        return submission_id
+
+    first = await store.dispatch(continuation.continuation_id, enqueue)
+    second = await store.dispatch(continuation.continuation_id, enqueue)
+
+    assert first.status is HarnessStepContinuationStatus.DISPATCHED
+    assert first.submission_id == submission_id
+    assert second == first
+    assert dispatch_calls == 1
+    assert await store.list_ready(agent_id="default") == ()
+
+
+@pytest.mark.asyncio
+async def test_harness_continuation_stops_after_recovery_budget(
+    tmp_path,
+) -> None:
+    item = _item()
+    checkpoint = build_harness_recovery_checkpoint(
+        invocation_id=item.invocation_id,
+        conversation_id="chat-1",
+        source_submission_id=uuid4(),
+        backend="qoder",
+        provider_context_id="private-session-id",
+        provider_item_ids={"tool-1"},
+        action_evidence_digest=f"sha256:{'b' * 64}",
+        expected_items=(item,),
+        session_items=(item,),
+    )
+    assert checkpoint is not None
+    store = lite_harness_step_continuation_store(tmp_path)
+
+    continuation = await store.defer(
+        checkpoint,
+        correlation_id=uuid4(),
+        agent_id="default",
+        recovery_cycle=3,
+    )
+
+    assert continuation.status is (
+        HarnessStepContinuationStatus.RECOVERY_EXHAUSTED
+    )
+    assert await store.list_ready(agent_id="default") == ()

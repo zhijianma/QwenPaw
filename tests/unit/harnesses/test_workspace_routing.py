@@ -95,3 +95,27 @@ async def test_portability_adaptation_cannot_route_to_harness(
         _ = [item async for item in workspace.stream_query(request)]
 
     assert runtime.call is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("configured_backend", ["qoder", "qwenpaw"])
+async def test_harness_continuation_requires_original_backend(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    configured_backend: str,
+) -> None:
+    monkeypatch.setattr(
+        "qwenpaw.app.workspace.workspace.load_agent_config",
+        lambda _agent_id: SimpleNamespace(backend=configured_backend),
+    )
+    workspace = Workspace("agent-1", str(tmp_path / "workspace"))
+    runtime = FakeHarnessRuntime()
+    workspace._harness_runtime = runtime
+    request = SimpleNamespace(
+        request_context={"harness_backend": "codex"},
+    )
+
+    with pytest.raises(RuntimeError, match="no longer matches"):
+        _ = [item async for item in workspace.stream_query(request)]
+
+    assert runtime.call is None

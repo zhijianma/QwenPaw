@@ -553,14 +553,16 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
     继承 correlation 并创建新 Invocation；重启与 enqueue/mark 崩溃窗口保持幂等。
   - [x] Resource Wait 与 bounded Model Step continuation 已跨进程恢复；partial output
     不进入下一次上下文，Stop / Interrupt、崩溃窗口与恢复预算均有持久化边界。
-  - [ ] 成功 Action 不重做，uncertain Action 必须先对账或取得显式授权；当前已经
+  - [x] 成功 Action 不重做，uncertain Action 必须先对账或取得显式授权；当前已经
     持久化 pending / uncertain / durable-context 三类 assessment；同步 terminal Action
     与同 Invocation 内进入上下文的后台完成 hint，已通过 provider-neutral
     `CommittedActionItem`、不可变私有 snapshot 和内容安全 Checkpoint 自动续行。
     受控 Harness completion 已由 Session Bridge 在原子写入规范化 tool output 时附加
     同一 binding；completion event 与 history hydrate 不会伪造该事实。Harness 断流
-    已通过 `HarnessRecoveryContextCheckpoint` 四方校验并持久化 admission，尚待共享
-    dispatcher 创建 continuation；后台跨 Invocation 主动 continuation 也仍未接入。
+    已通过 `HarnessRecoveryContextCheckpoint` 四方校验并持久化 admission；共享
+    dispatcher 已用 durable outbox 创建 fenced continuation，并校验 Stop / Interrupt、
+    新输入、Queue revision、反向绑定、backend 与 2-cycle 预算。后台 Action 跨
+    Invocation 主动 continuation 仍未接入。
 - [ ] Workstation / Hub 再实现按能力、健康、成本和数据边界的动态路由；Lite 当前
   继续使用确定性主模型与显式 fallback 顺序，不冒充智能路由器。
 - 区分 Run Completion、Verification 与业务 Outcome，并预留 Trajectory 投影。
@@ -632,8 +634,8 @@ Slot 已实现；对应工作保留在 R0/R1/R2 路线图中。
    厂商特定序列化。后续 Model Call Plane 应记录实际 Provider usage 和格式版本。
 8. `ContextManifestStore` 已具备按 `ChatSpec.id` 查询的公共 Port，当前尚未开放
    HTTP / UI 查看入口；Task Workbench 继续按既定顺序后置。
-9. 模型流在产生部分内容后的网络中断当前仍收敛为 Invocation 失败；尚未实现
-   typed stream outcome、Resource Wait 和跨 Invocation 的自动 continuation。
+9. 模型流与受控 Harness 已具备 typed outcome、Resource Wait 或 fenced continuation；
+   尚未完成 Provider token 级原地续传和浏览器级真实断流/进程重启演练。
 
 ### 13.2 回滚原则
 

@@ -5,20 +5,30 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from uuid import UUID, uuid5
 
 from ..kernel import (
     CommittedActionItem,
     HarnessRecoveryContextCheckpoint,
+    HarnessStepContinuation,
+    HarnessStepContinuationStatus,
 )
+from ..kernel.models import utc_now
 from ..utils.io_utils import (
     get_path_lock,
     read_json_async,
+    run_sync_io,
     write_json_atomic_async,
 )
 
 HARNESS_RECOVERY_CONTEXT_SCHEMA = "qwenpaw.harness-recovery-context.v1"
+HARNESS_STEP_CONTINUATION_SCHEMA = "qwenpaw.harness-step-continuation.v1"
+HarnessStepDispatcher = Callable[
+    [HarnessStepContinuation],
+    Awaitable[UUID | None],
+]
 
 
 class HarnessRecoveryContextConflictError(RuntimeError):
@@ -27,6 +37,10 @@ class HarnessRecoveryContextConflictError(RuntimeError):
 
 class HarnessRecoveryContextNotFoundError(RuntimeError):
     """Raised when one Harness recovery checkpoint is unavailable."""
+
+
+class HarnessStepContinuationConflictError(RuntimeError):
+    """Raised when one continuation identity has conflicting state."""
 
 
 def _digest(value: object) -> str:
@@ -195,11 +209,197 @@ def lite_harness_recovery_context_store(
     return FilesystemHarnessRecoveryContextStore(workspace_dir)
 
 
+class FilesystemHarnessStepContinuationStore:
+    """Durable Harness continuation outbox consumed by the Chat dispatcher."""
+
+    def __init__(self, workspace_dir: Path) -> None:
+        self._root = (
+            Path(workspace_dir)
+            / ".qwenpaw"
+            / "lite"
+            / "harness-step-continuations"
+        )
+
+    def _path(self, continuation_id: UUID) -> Path:
+        return self._root / f"{continuation_id}.json"
+
+    @staticmethod
+    def _parse(payload: object) -> HarnessStepContinuation:
+        if not isinstance(payload, dict):
+            raise HarnessStepContinuationConflictError(
+                "Harness continuation payload must be an object",
+            )
+        if payload.get("schema") != HARNESS_STEP_CONTINUATION_SCHEMA:
+            raise HarnessStepContinuationConflictError(
+                "unsupported Harness continuation schema",
+            )
+        return HarnessStepContinuation.model_validate(
+            payload.get("continuation"),
+        )
+
+    async def _write(self, continuation: HarnessStepContinuation) -> None:
+        await write_json_atomic_async(
+            self._path(continuation.continuation_id),
+            {
+                "schema": HARNESS_STEP_CONTINUATION_SCHEMA,
+                "continuation": continuation.model_dump(mode="json"),
+            },
+            sort_keys=True,
+        )
+
+    async def defer(
+        self,
+        checkpoint: HarnessRecoveryContextCheckpoint,
+        *,
+        correlation_id: UUID,
+        agent_id: str,
+        recovery_cycle: int,
+        max_recovery_cycles: int = 2,
+    ) -> HarnessStepContinuation:
+        """Create one idempotent continuation after durable admission."""
+        continuation = HarnessStepContinuation(
+            continuation_id=uuid5(
+                checkpoint.checkpoint_id,
+                "harness-step-continuation",
+            ),
+            checkpoint=checkpoint,
+            correlation_id=correlation_id,
+            agent_id=agent_id,
+            recovery_cycle=recovery_cycle,
+            status=(
+                HarnessStepContinuationStatus.READY
+                if recovery_cycle <= max_recovery_cycles
+                else HarnessStepContinuationStatus.RECOVERY_EXHAUSTED
+            ),
+            created_at=checkpoint.created_at,
+            updated_at=checkpoint.created_at,
+        )
+        path = self._path(continuation.continuation_id)
+        async with get_path_lock(path):
+            try:
+                payload = await read_json_async(path)
+            except FileNotFoundError:
+                payload = None
+            if payload is not None:
+                existing = self._parse(payload)
+                immutable = {
+                    "continuation_id",
+                    "checkpoint",
+                    "correlation_id",
+                    "agent_id",
+                    "recovery_cycle",
+                    "created_at",
+                }
+                if existing.model_dump(include=immutable) != (
+                    continuation.model_dump(include=immutable)
+                ):
+                    raise HarnessStepContinuationConflictError(
+                        "Harness continuation already conflicts",
+                    )
+                return existing
+            await self._write(continuation)
+        return continuation
+
+    async def get(
+        self,
+        continuation_id: UUID,
+    ) -> HarnessStepContinuation | None:
+        """Read one continuation, returning None when it is absent."""
+        try:
+            payload = await read_json_async(self._path(continuation_id))
+        except FileNotFoundError:
+            return None
+        return self._parse(payload)
+
+    async def list_ready(
+        self,
+        *,
+        agent_id: str,
+    ) -> tuple[HarnessStepContinuation, ...]:
+        """List ready continuations owned by one Agent."""
+        paths = await run_sync_io(
+            lambda: tuple(sorted(self._root.glob("*.json"))),
+        )
+        ready = []
+        for path in paths:
+            try:
+                payload = await read_json_async(path)
+                continuation = self._parse(payload)
+            except (OSError, TypeError, ValueError):
+                continue
+            if (
+                continuation.agent_id == agent_id
+                and continuation.status
+                is HarnessStepContinuationStatus.READY
+            ):
+                ready.append(continuation)
+        ready.sort(key=lambda item: (item.created_at, item.continuation_id))
+        return tuple(ready)
+
+    async def dispatch(
+        self,
+        continuation_id: UUID,
+        dispatcher: HarnessStepDispatcher,
+    ) -> HarnessStepContinuation:
+        """Idempotently enqueue and bind one ready continuation."""
+        current = await self.get(continuation_id)
+        if current is None:
+            raise HarnessStepContinuationConflictError(
+                "Harness continuation is unavailable",
+            )
+        if current.status is not HarnessStepContinuationStatus.READY:
+            return current
+        submission_id = await dispatcher(current)
+        next_status = (
+            HarnessStepContinuationStatus.DISPATCHED
+            if submission_id is not None
+            else HarnessStepContinuationStatus.CANCELLED
+        )
+        path = self._path(continuation_id)
+        async with get_path_lock(path):
+            latest = await self.get(continuation_id)
+            if latest is None:
+                raise HarnessStepContinuationConflictError(
+                    "Harness continuation disappeared during dispatch",
+                )
+            if latest.status is not HarnessStepContinuationStatus.READY:
+                if (
+                    latest.submission_id is not None
+                    and submission_id is not None
+                    and latest.submission_id != submission_id
+                ):
+                    raise HarnessStepContinuationConflictError(
+                        "Harness continuation submission conflict",
+                    )
+                return latest
+            updated = latest.model_copy(
+                update={
+                    "status": next_status,
+                    "submission_id": submission_id,
+                    "revision": latest.revision + 1,
+                    "updated_at": utc_now(),
+                },
+            )
+            await self._write(updated)
+        return updated
+
+
+def lite_harness_step_continuation_store(
+    workspace_dir: Path,
+) -> FilesystemHarnessStepContinuationStore:
+    """Return the Lite Harness continuation outbox."""
+    return FilesystemHarnessStepContinuationStore(workspace_dir)
+
+
 __all__ = [
     "FilesystemHarnessRecoveryContextStore",
+    "FilesystemHarnessStepContinuationStore",
     "HARNESS_RECOVERY_CONTEXT_SCHEMA",
+    "HARNESS_STEP_CONTINUATION_SCHEMA",
     "HarnessRecoveryContextConflictError",
     "HarnessRecoveryContextNotFoundError",
+    "HarnessStepContinuationConflictError",
     "build_harness_recovery_checkpoint",
     "lite_harness_recovery_context_store",
+    "lite_harness_step_continuation_store",
 ]
