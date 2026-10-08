@@ -73,6 +73,11 @@ from ...kernel.observations import (
     ObservationStatus,
     RuntimeObservation,
 )
+from ...kernel.outcomes import (
+    ConversationOutcome,
+    ConversationOutcomeRequest,
+    ConversationOutcomeStatus,
+)
 from ...kernel.models import (
     ActionApprovalLink,
     ActionKind,
@@ -188,6 +193,8 @@ from ...kernel.ports import (
     ModelStepContinuationHistoryPort,
     OperationalEventPort,
     ObservationProjectionPort,
+    OutcomeHost,
+    OutcomeHostAccess,
     DriverHost,
     DriverCredentialHandle,
     DriverProvider,
@@ -281,6 +288,9 @@ __all__ = [
     "ConversationForkOrigin",
     "ConversationForkPort",
     "ConversationForkResult",
+    "ConversationOutcome",
+    "ConversationOutcomeRequest",
+    "ConversationOutcomeStatus",
     "DeliveryAdapter",
     "DeliveryAttempt",
     "DeliveryAttemptConflictError",
@@ -313,6 +323,8 @@ __all__ = [
     "ObservationSource",
     "ObservationStage",
     "ObservationStatus",
+    "OutcomeHost",
+    "OutcomeHostAccess",
     "RuntimeObservation",
     "ContextualTaskRunner",
     "ContextualProposalSensor",

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from uuid import UUID
 
 from ..kernel import (
@@ -30,6 +31,13 @@ class OutcomeAdmissionError(ValueError):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(code)
+
+
+@dataclass(frozen=True)
+class OutcomeProducerLease:
+    """Producer admission frozen for one already-open Invocation."""
+
+    registration: OutcomeProducerRegistration
 
 
 class HostOutcomeBroker:
@@ -63,13 +71,33 @@ class HostOutcomeBroker:
         """Stop new declarations from one producer immediately."""
         self._producers.pop(producer_id, None)
 
+    def is_registered(self, producer_id: str) -> bool:
+        """Return whether new Invocations may bind this producer."""
+        return producer_id in self._producers
+
+    def bind(self, producer_id: str) -> OutcomeProducerLease | None:
+        """Pin current producer admission for one Invocation."""
+        producer = self._producers.get(producer_id)
+        return (
+            OutcomeProducerLease(producer)
+            if producer is not None
+            else None
+        )
+
     def _producer(
         self,
         declaration: ConversationOutcomeDeclaration,
+        lease: OutcomeProducerLease | None = None,
     ) -> OutcomeProducerRegistration:
-        producer = self._producers.get(declaration.producer_id)
+        producer = (
+            lease.registration
+            if lease is not None
+            else self._producers.get(declaration.producer_id)
+        )
         if producer is None:
             raise OutcomeAdmissionError("producer_not_registered")
+        if producer.producer_id != declaration.producer_id:
+            raise OutcomeAdmissionError("producer_identity_mismatch")
         if (
             declaration.task_id is not None
             and not producer.allow_task_outcomes
@@ -192,7 +220,23 @@ class HostOutcomeBroker:
         declaration: ConversationOutcomeDeclaration,
     ) -> ConversationOutcome:
         """Validate, materialize, and persist one explicit outcome."""
-        self._producer(declaration)
+        return await self._declare(declaration)
+
+    async def declare_bound(
+        self,
+        lease: OutcomeProducerLease,
+        declaration: ConversationOutcomeDeclaration,
+    ) -> ConversationOutcome:
+        """Admit through permission pinned before a hot replacement."""
+        return await self._declare(declaration, lease)
+
+    async def _declare(
+        self,
+        declaration: ConversationOutcomeDeclaration,
+        lease: OutcomeProducerLease | None = None,
+    ) -> ConversationOutcome:
+        """Apply admission and persist one materialized outcome."""
+        self._producer(declaration, lease)
         references = (
             declaration.artifact_ids,
             declaration.evidence_ids,
@@ -211,6 +255,7 @@ class HostOutcomeBroker:
             producer_id=declaration.producer_id,
             summary=declaration.summary,
             invocation_id=declaration.invocation_id,
+            registry_generation=declaration.registry_generation,
             task_id=declaration.task_id,
             run_id=declaration.run_id,
             artifact_ids=references[0],

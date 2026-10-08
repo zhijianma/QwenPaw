@@ -389,9 +389,13 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   `validate_result_projection()` 同时通过 Execution Contract、Verification Policy 和
   Result Package 时才允许 achieved，并由 Host 写入权威 Artifact/Evidence/Verification
   引用。
-- 本切片相邻定点验证：15 项通过；所改 Python 文件的 mypy、flake8、pylint 等静态
-  门禁通过。尚未把 Broker 装配到实际 Runtime producer 生命周期，也未开放 HTTP 写
-  入口；模型文本和插件仍不得直接写 Store。
+- Broker 已装配到 Workspace 单例和真实 Invocation Host 生命周期。Tool/Driver 的
+  system/plugin Host 都实现可选 `OutcomeHostAccess`，同时不改变旧 Host Protocol；
+  Invocation 固定 Agent、ChatSpec、correlation、Invocation、generation 和 producer。
+  system capability 自动注册，plugin 必须由 Host 显式热注册后才对新 Invocation 可见；
+  已打开 Invocation 持有准入 lease，卸载不会中断旧 generation 的收尾。
+- 本轮相邻定点验证：66 项通过；未开放 HTTP 写入口，模型文本和未注册插件仍不得声明
+  Outcome，Trajectory 尚未接入。
 
 ### 本阶段此前已执行的定点验证
 

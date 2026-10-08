@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..kernel.models import ToolSelection
-from ..kernel.ports import RuntimeInteractionProducer
+from ..kernel.ports import OutcomeHost, RuntimeInteractionProducer
 from .provider_credentials import (
     WorkspaceCredentialHandle,
     provider_credential_handle,
@@ -34,6 +34,7 @@ class ProviderToolHost:
     _credential_manager: Any
     _credential_refs: dict[str, str]
     _broker: RuntimeInteractionProducer | None
+    _outcomes: OutcomeHost | None = None
 
     def config_snapshot(self) -> dict[str, Any]:
         """Return detached, schema-validated provider configuration."""
@@ -52,6 +53,10 @@ class ProviderToolHost:
         """Return the invocation broker without request-context access."""
         return self._broker
 
+    def outcome_host(self) -> OutcomeHost | None:
+        """Return only a Host-admitted invocation outcome service."""
+        return self._outcomes
+
 
 @dataclass(frozen=True)
 class WorkspaceToolHost:
@@ -65,6 +70,7 @@ class WorkspaceToolHost:
     provider_config: dict[str, Any] | None = None
     credential_manager: Any = None
     credential_refs: dict[str, str] | None = None
+    outcomes: OutcomeHost | None = None
 
     def config_snapshot(self) -> dict[str, Any]:
         """Return detached built-in provider configuration."""
@@ -98,6 +104,10 @@ class WorkspaceToolHost:
     def interaction_broker(self) -> RuntimeInteractionProducer | None:
         """Expose the broker without leaking request-context keys."""
         return _interaction_broker(self.request_context)
+
+    def outcome_host(self) -> OutcomeHost | None:
+        """Return the same admitted service exposed to plugin providers."""
+        return self.outcomes
 
 
 def tool_selection_from_request(

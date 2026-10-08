@@ -385,6 +385,14 @@ not_achieved 与 abandoned 都必须由具名 producer 显式提交，并通过 
 Verification Policy 与 Result Package 完成门禁。Producer 支持热注册/注销，不要求
 Runtime 重启；模型文本仍不能自动补写 Outcome。
 
+Runtime 装配使用独立的可选 `OutcomeHostAccess`，不修改既有 `ToolHost`、
+`DriverHost` 的必选协议，因此旧插件保持结构兼容。实际 `OutcomeHost` 由当前 pinned
+`InvocationScope` 绑定 Agent、`ChatSpec.id`、correlation、Invocation ID 和 registry
+generation；provider 请求不包含这些字段，不能跨会话或冒充其他 producer。system 与
+显式获准的 plugin 使用同一 Host 类型和 Broker，未注册 plugin 得到 `None`。准入在
+Invocation 打开时形成 lease；热卸载只影响后续 Invocation，不打断已固定旧 generation
+的执行。
+
 Approval、Ask User、Suggestion、Steer 和 Interrupt 均是执行链中的一等事件。
 Interaction 或资源等待必须保存 durable `WaitCondition` 并释放计算资源；满足条件后
 由 outbox 创建新的 continuation Submission，而不是恢复旧 Python 调用栈。

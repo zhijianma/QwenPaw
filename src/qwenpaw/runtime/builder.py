@@ -369,6 +369,16 @@ class AgentBuilder:
                 provider_config,
                 descriptor.config_schema if descriptor is not None else None,
             )
+            outcomes = None
+            if workspace is not None and descriptor is not None:
+                from .outcome_hosts import provider_outcome_host
+
+                outcomes = provider_outcome_host(
+                    workspace,
+                    invocation,
+                    producer_id=provider_id,
+                    provider_kind=descriptor.provider_kind,
+                )
             credential_refs = dict(
                 capability_credential_refs.get(provider_id, {}) or {},
             )
@@ -382,6 +392,7 @@ class AgentBuilder:
                     provider_config=provider_config,
                     credential_manager=credential_manager,
                     credential_refs=credential_refs,
+                    outcomes=outcomes,
                 )
             else:
                 host = ProviderToolHost(
@@ -390,6 +401,7 @@ class AgentBuilder:
                     credential_manager,
                     credential_refs,
                     broker,
+                    outcomes,
                 )
             provided = await provider.list_tools(
                 invocation,
@@ -1673,6 +1685,16 @@ class AgentBuilder:
             provider_config,
             descriptor.config_schema,
         )
+        outcomes = None
+        if workspace is not None:
+            from .outcome_hosts import provider_outcome_host
+
+            outcomes = provider_outcome_host(
+                workspace,
+                invocation,
+                producer_id=provider_id,
+                provider_kind=descriptor.provider_kind,
+            )
         capability_credential_refs = (
             getattr(
                 profile,
@@ -1691,6 +1713,7 @@ class AgentBuilder:
                 provider_id,
                 provider_config,
                 credential_refs,
+                outcomes,
             )
         else:
             credentials = {}
@@ -1708,6 +1731,7 @@ class AgentBuilder:
                 provider_config=provider_config,
                 credentials=credentials,
                 approval_context=request_context,
+                outcomes=outcomes,
             )
         session = await open_session(invocation, host)
         try:

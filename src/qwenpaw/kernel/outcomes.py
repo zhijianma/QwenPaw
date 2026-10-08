@@ -46,6 +46,7 @@ class ConversationOutcomeDeclaration(KernelModel):
     producer_id: NamespacedId
     summary: str = Field(min_length=1, max_length=2000)
     invocation_id: UUID | None = None
+    registry_generation: int | None = Field(default=None, ge=1)
     task_id: UUID | None = None
     run_id: UUID | None = None
     artifact_ids: tuple[UUID, ...] = ()
@@ -71,6 +72,37 @@ class ConversationOutcomeDeclaration(KernelModel):
         return self
 
 
+class ConversationOutcomeRequest(KernelModel):
+    """Provider request whose ownership is bound by an Invocation Host."""
+
+    outcome_id: UUID = Field(default_factory=uuid4)
+    status: ConversationOutcomeStatus
+    summary: str = Field(min_length=1, max_length=2000)
+    task_id: UUID | None = None
+    run_id: UUID | None = None
+    artifact_ids: tuple[UUID, ...] = ()
+    evidence_ids: tuple[UUID, ...] = ()
+    verification_ids: tuple[UUID, ...] = ()
+    supersedes_outcome_id: UUID | None = None
+    declared_at: AwareDatetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def validate_request(self) -> Self:
+        """Apply the same reference invariants before Host admission."""
+        if (self.task_id is None) != (self.run_id is None):
+            raise ValueError("outcome task_id and run_id must be paired")
+        if self.supersedes_outcome_id == self.outcome_id:
+            raise ValueError("outcome cannot supersede itself")
+        for label, identifiers in (
+            ("artifact", self.artifact_ids),
+            ("evidence", self.evidence_ids),
+            ("verification", self.verification_ids),
+        ):
+            if len(identifiers) != len(set(identifiers)):
+                raise ValueError(f"outcome {label} IDs must be unique")
+        return self
+
+
 class ConversationOutcome(KernelModel):
     """Immutable, explicit outcome independent from Invocation completion."""
 
@@ -82,6 +114,7 @@ class ConversationOutcome(KernelModel):
     producer_id: NamespacedId
     summary: str = Field(min_length=1, max_length=2000)
     invocation_id: UUID | None = None
+    registry_generation: int | None = Field(default=None, ge=1)
     task_id: UUID | None = None
     run_id: UUID | None = None
     artifact_ids: tuple[UUID, ...] = ()
@@ -110,6 +143,7 @@ class ConversationOutcome(KernelModel):
 __all__ = [
     "ConversationOutcome",
     "ConversationOutcomeDeclaration",
+    "ConversationOutcomeRequest",
     "ConversationOutcomeStatus",
     "OutcomeProducerRegistration",
 ]

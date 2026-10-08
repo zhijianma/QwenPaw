@@ -16,6 +16,7 @@ from ..kernel.models import (
     DriverToolDefinition,
     PromptFragment,
 )
+from ..kernel.ports import OutcomeHost
 from .provider_credentials import (
     WorkspaceCredentialHandle,
     provider_credential_handle,
@@ -34,6 +35,7 @@ class ProviderDriverHost:
         "__credentials",
         "__provider_config",
         "__provider_id",
+        "__outcomes",
     )
 
     def __init__(
@@ -43,11 +45,13 @@ class ProviderDriverHost:
         provider_config: dict[str, Any] | None = None,
         credentials: Mapping[str, WorkspaceCredentialHandle] | None = None,
         approval_context: dict[str, Any] | None = None,
+        outcomes: OutcomeHost | None = None,
     ) -> None:
         self.__provider_id = provider_id
         self.__provider_config = deepcopy(provider_config or {})
         self.__credentials = dict(credentials or {})
         self.__approval_context = dict(approval_context or {})
+        self.__outcomes = outcomes
 
     def config_snapshot(self) -> dict[str, Any]:
         """Return a detached invocation configuration snapshot."""
@@ -71,6 +75,10 @@ class ProviderDriverHost:
             request,
         )
 
+    def outcome_host(self) -> OutcomeHost | None:
+        """Return only a Host-admitted invocation outcome service."""
+        return self.__outcomes
+
 
 @dataclass(frozen=True)
 class WorkspaceDriverHost:
@@ -81,6 +89,7 @@ class WorkspaceDriverHost:
     provider_id: str
     provider_config: dict[str, Any] | None = None
     credential_refs: dict[str, str] | None = None
+    outcomes: OutcomeHost | None = None
 
     def config_snapshot(self) -> dict[str, Any]:
         """Return a detached invocation configuration snapshot."""
@@ -97,6 +106,10 @@ class WorkspaceDriverHost:
             self.provider_id,
             alias,
         )
+
+    def outcome_host(self) -> OutcomeHost | None:
+        """Return the same admitted service exposed to plugin providers."""
+        return self.outcomes
 
     async def load(
         self,

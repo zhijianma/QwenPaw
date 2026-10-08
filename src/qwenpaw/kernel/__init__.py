@@ -299,6 +299,7 @@ from .observations import (
 from .outcomes import (
     ConversationOutcome,
     ConversationOutcomeDeclaration,
+    ConversationOutcomeRequest,
     ConversationOutcomeStatus,
     OutcomeProducerRegistration,
 )
@@ -321,6 +322,8 @@ from .ports import (
     InteractionHistoryPort,
     ConversationContinuationPort,
     ConversationOutcomeStore,
+    OutcomeHost,
+    OutcomeHostAccess,
     WaitConditionProjectionPort,
     ControlHistoryPort,
     CompactionStore,
@@ -534,8 +537,11 @@ __all__ = [
     "ConversationRuntimeProjection",
     "ConversationOutcome",
     "ConversationOutcomeDeclaration",
+    "ConversationOutcomeRequest",
     "ConversationOutcomeStatus",
     "ConversationOutcomeStore",
+    "OutcomeHost",
+    "OutcomeHostAccess",
     "OutcomeProducerRegistration",
     "ConversationArtifactHistoryPort",
     "ConversationArtifactRecord",

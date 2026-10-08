@@ -491,6 +491,12 @@ ChatSpec，Task achieved 则复用已有 Execution Contract、Verification Polic
 Package 完成门禁。模型文本仍不能自动生成 Outcome。这使 Console、插件和未来 Task
 Workbench 无需从最后一条 assistant message 猜测任务状态。
 
+该 Broker 已进入真实 Workspace/Invocation 装配，而非停留在独立 Store：Outcome-aware
+Tool/Driver Host 通过可选 `OutcomeHostAccess` 暴露服务，旧 Provider Host 合同不变；
+Host 从 pinned `InvocationScope` 写入 ChatSpec、correlation、Invocation 和 generation，
+producer 不能自行填写身份字段。插件只有经 Host 显式注册后，新 Invocation 才能取得
+该服务，注册本身不要求 Runtime 重启。
+
 模型资源等待进一步验证了这一点：一次调用因限流或额度耗尽停止时，恢复由 Runtime
 自身的等待事实和 continuation 驱动，不制造“是否继续？”对话。只有资源恢复需要
 用户授权或高影响选择时，才正交地创建 Interaction；资源等待本身不是人机问答。

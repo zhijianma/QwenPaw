@@ -994,8 +994,15 @@ Cron 不形成独立审批或产物事实源。
       Task-owned 声明校验 Agent、ChatSpec、Task、Run 与 correlation，只有既有
       Completion Gate 同时满足 Execution Contract、Verification Policy 和 Result
       Package 时才允许 achieved。Producer 不直接访问 Store。
-    - [ ] 接入可回放 Trajectory，并把 Broker 装配到实际 Runtime producer 生命周期；
-      在此之前不增加公开 HTTP 写入口，也不允许模型文本声明 Outcome。
+    - [x] Broker 已装配到实际 Workspace/Invocation 生命周期：Tool/Driver 的内置与
+      插件 Host 都实现可选 `OutcomeHostAccess`，旧 `ToolHost/DriverHost` Protocol 不
+      增加必选方法；Invocation Host 固定 Agent、ChatSpec、correlation、Invocation、
+      generation 和 producer。system capability 自动受信，plugin 必须由 Host 显式
+      注册；热注册后新 Invocation 立即可用，无需重启。Producer admission 在
+      Invocation 创建时冻结，卸载只阻止新 Invocation，已固定旧 generation 的执行可
+      继续完成。
+    - [ ] 接入可回放 Trajectory；在此之前不增加公开 HTTP 写入口，也不允许模型文本
+      声明 Outcome。
   - [ ] `BudgetLease` 与现有 `ExecutionBudget`、Usage Scope、Capability lease
     明确区分；Lite 只冻结接口，Workstation / Hub 再实现可派生和级联撤销。
 

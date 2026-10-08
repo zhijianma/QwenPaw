@@ -98,7 +98,7 @@ from .delivery import DeliveryAttempt, DeliveryReceipt, DeliveryRequest
 from .inbox import InboxItem
 from .operational import OperationalEvent
 from .observations import ObservationPage, RuntimeObservation
-from .outcomes import ConversationOutcome
+from .outcomes import ConversationOutcome, ConversationOutcomeRequest
 from .waits import ConversationContinuation, WaitCondition
 from .artifacts import (
     ConversationArtifactRecord,
@@ -1461,6 +1461,25 @@ class ConversationOutcomeStore(Protocol):
         correlation_ids: Sequence[UUID],
     ) -> Sequence[ConversationOutcome]:
         """Return at most one latest outcome for each requested intent."""
+
+
+@runtime_checkable
+class OutcomeHost(Protocol):
+    """Invocation-scoped service for admitted business outcome requests."""
+
+    async def declare(
+        self,
+        request: ConversationOutcomeRequest,
+    ) -> ConversationOutcome:
+        """Bind trusted invocation identity and submit through Host policy."""
+
+
+@runtime_checkable
+class OutcomeHostAccess(Protocol):
+    """Optional extension implemented by outcome-aware Provider Hosts."""
+
+    def outcome_host(self) -> OutcomeHost | None:
+        """Return an admitted outcome service or None for this provider."""
 
 
 @runtime_checkable
