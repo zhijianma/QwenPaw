@@ -155,6 +155,20 @@ async def test_workspace_dispatcher_repairs_action_retry_outbox(
     await dispatcher.start()
     [continuation] = await outbox.list_pending(agent_id="default")
     assert continuation.checkpoint == checkpoint
+    stopped = await control.stop_and_clear(
+        agent_id="default",
+        conversation_id=request.conversation_id,
+        idempotency_key="stop-retry-repair",
+        expected_revision=0,
+    )
+    assert stopped.status.value == "applied"
+    # The worker admission rechecks the durable ledger after repair.
+    # pylint: disable=protected-access
+    await dispatcher._cancel_superseded_action_retries()
+    # pylint: enable=protected-access
+    cancelled = await outbox.get(continuation.continuation_id)
+    assert cancelled is not None
+    assert cancelled.status.value == "cancelled"
     await dispatcher.stop()
     await control.close()
 

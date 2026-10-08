@@ -19,6 +19,7 @@ from ...invocation_control import (
 from ...kernel import (
     TERMINAL_SUBMISSION_STATUSES,
     ActionRecord,
+    ActionRetryContinuation,
     BackgroundActionContextCheckpoint,
     BackgroundActionContinuation,
     BackgroundActionContinuationStatus,
@@ -147,6 +148,7 @@ class WorkspaceChatSubmissionDispatcher:
                 input_store=self._action_retry_inputs,
                 action_store=self._actions,
             )
+            await self._cancel_superseded_action_retries()
         if self._resource_waits is not None:
             await self._dispatch_ready_resource_waits()
             await self._dispatch_ready_model_steps()
@@ -195,6 +197,45 @@ class WorkspaceChatSubmissionDispatcher:
         self._recovery_event.set()
         if self._resource_waits is not None:
             self._resource_waits.notify_change()
+
+    async def _cancel_superseded_action_retries(self) -> None:
+        """Fence pending Action retries against durable Chat controls."""
+        if self._action_retries is None:
+            return
+        pending = await self._action_retries.list_pending(
+            agent_id=self._workspace.agent_id,
+        )
+        for continuation in pending:
+            if await self._action_retry_is_superseded(continuation):
+                await self._action_retries.cancel(
+                    continuation.continuation_id,
+                )
+
+    async def _action_retry_is_superseded(
+        self,
+        continuation: ActionRetryContinuation,
+    ) -> bool:
+        checkpoint = continuation.checkpoint
+        conversation_id = checkpoint.conversation_id
+        if conversation_id is None:
+            return False
+        controls = await self._control.scan_for_conversation(
+            agent_id=checkpoint.agent_id,
+            conversation_id=conversation_id,
+        )
+        return any(
+            (
+                record.command.kind
+                is ControlCommandKind.INTERRUPT_CURRENT
+                and record.command.target_invocation_id
+                == checkpoint.invocation_id
+            )
+            or (
+                record.command.kind is ControlCommandKind.STOP_AND_CLEAR
+                and record.command.requested_at >= checkpoint.created_at
+            )
+            for record in controls
+        )
 
     async def _run_resource_waits(self) -> None:
         """Dispatch matured waits without depending on an HTTP request."""
