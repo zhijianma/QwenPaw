@@ -1047,6 +1047,18 @@ async def stop_and_clear_chat(
             agent_id=workspace.agent_id,
             conversation_id=chat_id,
         )
+    workspace_dir = getattr(workspace, "workspace_dir", None)
+    if workspace_dir is not None:
+        from ...runtime.action_retries import (
+            lite_action_retry_continuation_store,
+        )
+
+        await lite_action_retry_continuation_store(
+            Path(workspace_dir),
+        ).cancel_for_conversation(
+            agent_id=workspace.agent_id,
+            conversation_id=chat_id,
+        )
     return receipt
 
 

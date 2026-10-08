@@ -348,6 +348,29 @@ async def test_retry_outbox_rejects_mismatch_and_cancels(
 
 
 @pytest.mark.asyncio
+async def test_retry_outbox_cancels_one_conversation(
+    tmp_path: Path,
+) -> None:
+    result, checkpoint = await _admitted_retry(tmp_path)
+    store = lite_action_retry_continuation_store(tmp_path)
+    ready = await store.defer(checkpoint, result)
+    conversation_id = checkpoint.conversation_id
+    assert conversation_id is not None
+
+    assert await store.cancel_for_conversation(
+        agent_id=checkpoint.agent_id,
+        conversation_id="another-chat",
+    ) == ()
+    [cancelled] = await store.cancel_for_conversation(
+        agent_id=checkpoint.agent_id,
+        conversation_id=conversation_id,
+    )
+
+    assert cancelled.continuation_id == ready.continuation_id
+    assert cancelled.status is ActionRetryContinuationStatus.CANCELLED
+
+
+@pytest.mark.asyncio
 async def test_result_remains_committed_when_outbox_publish_fails(
     tmp_path: Path,
 ) -> None:

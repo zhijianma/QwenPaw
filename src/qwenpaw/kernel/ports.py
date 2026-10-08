@@ -1736,6 +1736,14 @@ class ActionRetryContinuationStore(Protocol):
     ) -> ActionRetryContinuation:
         """Cancel one undispatched retry entry idempotently."""
 
+    async def cancel_for_conversation(
+        self,
+        *,
+        agent_id: str,
+        conversation_id: str,
+    ) -> Sequence[ActionRetryContinuation]:
+        """Cancel all pending retry work for one ChatSpec identity."""
+
     async def dispatch(
         self,
         continuation_id: UUID,

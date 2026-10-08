@@ -428,6 +428,22 @@ class FilesystemActionRetryContinuationStore:
             await self._write(updated)
         return updated
 
+    async def cancel_for_conversation(
+        self,
+        *,
+        agent_id: str,
+        conversation_id: str,
+    ) -> tuple[ActionRetryContinuation, ...]:
+        """Cancel all pending retry work for one ChatSpec identity."""
+        pending = await self.list_pending(agent_id=agent_id)
+        cancelled = []
+        for continuation in pending:
+            if continuation.checkpoint.conversation_id == conversation_id:
+                cancelled.append(
+                    await self.cancel(continuation.continuation_id),
+                )
+        return tuple(cancelled)
+
     async def dispatch(
         self,
         continuation_id: UUID,

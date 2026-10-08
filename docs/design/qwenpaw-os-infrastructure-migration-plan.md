@@ -523,6 +523,8 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     原始参数；发布失败不篡改已提交 Result。Chat dispatcher 启动时按 Agent 枚举私有
     checkpoint，并用 Action、Invocation、ChatSpec、correlation、generation、capability
     与参数摘要精确反查已提交 Result，只补建缺失 outbox，不执行工具；重复启动幂等。
+  - [x] `stop-and-clear` 在权威 Control Command 提交后取消同一 ChatSpec 下所有
+    `waiting_delay / ready` Action retry；取消状态持久且幂等，不依赖前端 Queue。
   - [ ] 在上述单一身份上接入自动 retry dispatcher：必须同时具备 attempt budget、
     Stop/Interrupt fencing、无流式输出边界，以及 Runtime Orchestrator 内的执行入口；
     不能仅凭 `retryable=true` 或绕过 Orchestrator 直接重新调用工具。
