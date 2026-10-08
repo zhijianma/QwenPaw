@@ -145,6 +145,41 @@ async def test_admission_check_owns_context_before_execution() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pending_admission_is_interruptible() -> None:
+    coordinator = ToolCoordinator()
+    tool_call = _ToolCall(id="call-admission-stop", name="governed_tool")
+    started = asyncio.Event()
+
+    async def pending(_context: ToolCallContext) -> None:
+        started.set()
+        await asyncio.Event().wait()
+
+    async def next_handler(
+        tool_call: _ToolCall,
+    ) -> AsyncGenerator[Any, None]:
+        yield _text_response(tool_call.id, "must not execute")
+
+    execution = asyncio.create_task(
+        _collect(
+            coordinator.execute(
+                tool_call=tool_call,
+                next_handler=next_handler,
+                session_id="chat-admission-stop",
+                agent_id="default",
+                root_session_id="chat-admission-stop",
+                admission_check=pending,
+            ),
+        ),
+    )
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    assert await coordinator.cancel(tool_call.id) is True
+    with pytest.raises(asyncio.CancelledError):
+        await execution
+    assert coordinator.get(tool_call.id) is None
+
+
+@pytest.mark.asyncio
 async def test_parent_cancel_cooperatively_stops_background_tool():
     coordinator = ToolCoordinator(cancel_grace_period_secs=0.2)
     tool_call = _ToolCall(id="call-parent-stop", name="chat_with_agent")

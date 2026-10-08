@@ -558,7 +558,9 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
   - [x] ToolCoordinator 增加受监督的 execution admission gate：permission check 在
     ToolCallContext 建立、call id 可见之后且工具执行之前运行；拒绝时移除 in-flight
     entry，不调用工具、不运行 Action result processor。Action retry 的审批、拒绝和
-    pending 关联因此复用现有治理与 Interaction 身份，不再发生无 call id 的游离审批。
+    pending 关联因此复用现有治理与 Interaction 身份，不再发生无 call id 的游离审批；
+    admission 等待同时监听 ToolCall cancel event，Stop/Interrupt 可在审批期间及时
+    取消且不会留下后台 permission task。
   - [ ] 在上述单一身份上接入自动 retry dispatcher：必须同时具备 attempt budget、
     Stop/Interrupt fencing、无流式输出边界，以及 Runtime Orchestrator 内的执行入口；
     不能仅凭 `retryable=true` 或绕过 Orchestrator 直接重新调用工具。

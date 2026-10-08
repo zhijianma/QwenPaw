@@ -138,7 +138,7 @@ class ToolCoordinator:
         if admission_check is not None:
             token = set_call_context(ctx)
             try:
-                await admission_check(ctx)
+                await self._run_admission_check(admission_check, ctx)
             except BaseException:
                 self._entries.pop(ctx.tool_call_id, None)
                 raise
@@ -223,6 +223,36 @@ class ToolCoordinator:
             raise
         finally:
             entry.stream.remove_subscriber(chunk_queue)
+
+    @staticmethod
+    async def _run_admission_check(
+        admission_check: ToolAdmissionCheck,
+        context: ToolCallContext,
+    ) -> None:
+        """Keep a pending permission decision interruptible."""
+        admission = asyncio.ensure_future(admission_check(context))
+        cancelled = asyncio.create_task(context.cancel_event.wait())
+        try:
+            done, _ = await asyncio.wait(
+                (admission, cancelled),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        except BaseException:
+            admission.cancel()
+            cancelled.cancel()
+            await asyncio.gather(
+                admission,
+                cancelled,
+                return_exceptions=True,
+            )
+            raise
+        if cancelled in done and context.cancel_event.is_set():
+            admission.cancel()
+            await asyncio.gather(admission, return_exceptions=True)
+            raise asyncio.CancelledError
+        cancelled.cancel()
+        await asyncio.gather(cancelled, return_exceptions=True)
+        await admission
 
     @staticmethod
     def _handle_deadline_reached(ctx: ToolCallContext) -> None:
