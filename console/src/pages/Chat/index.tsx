@@ -93,6 +93,7 @@ import { wrapReplayFastForward } from "./replayFastForward";
 import { useTurnUsageStore } from "./turnUsageStore";
 import ChatHeaderTitle from "./components/ChatHeaderTitle";
 import RuntimeInteractionCards from "./components/RuntimeInteractionCards";
+import RuntimeActivityPanel from "./components/RuntimeActivityPanel";
 import ServerRuntimeQueue from "./components/ServerRuntimeQueue";
 import {
   buildFallbackSystemMessage,
@@ -4499,6 +4500,11 @@ export default function ChatPage() {
                 message={t("chat.queue.otherTabOwner")}
               />
             )}
+            <RuntimeActivityPanel
+              active={hasServerQueueSurface}
+              agentId={selectedAgent}
+              chatId={backendChatId}
+            />
             <ServerRuntimeQueue
               active={hasServerQueueSurface}
               agentId={selectedAgent}

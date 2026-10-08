@@ -195,6 +195,13 @@ registry。两种投影都只公开 ID、类型、媒体、大小、哈希和 pr
 必须与当前 source 集合 reconciliation，版本变化后的旧指针只能失效，不能反过来
 阻断权威事实读取。
 
+Console 已按上述边界接入只读 Activity：它只订阅既有 Chat Runtime 投影，按当前
+执行链显示语义事件和 `ObservationSource`，不在前端重建生命周期。普通 model
+路由/结果以及 Submission accepted/terminal 事件不会触发 Activity 面板，因此短问答
+仍保持一问一答的轻量外观；只有 Action、HITL、控制、资源恢复、Artifact、Evidence、
+Verification 或 Outcome 等跨边界工作才展开。这里替换的是“一条助手消息结束一次
+运行”的内核假设，不是强迫所有对话采用复杂工作台。
+
 ## 5. 类型化恢复模型
 
 Kernel 已新增 `ModelFailureClass` 与 `ModelRecoveryDisposition`，并将它们作为可选兼容

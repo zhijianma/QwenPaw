@@ -3626,6 +3626,41 @@
       "queueFull": "Queue is full (max {{max}} items), please send or remove some messages first",
       "otherTabOwner": "This tab queues only; sending is handled by another tab"
     },
+    "activity": {
+      "title": "Execution activity",
+      "states": {
+        "queued": "Queued",
+        "running": "Running",
+        "waiting_user": "Waiting for you",
+        "inactive": "Inactive",
+        "failed": "Failed",
+        "interrupted": "Interrupted",
+        "cancelled": "Cancelled",
+        "achieved": "Achieved",
+        "partial": "Partially achieved",
+        "not_achieved": "Not achieved",
+        "abandoned": "Abandoned"
+      },
+      "statuses": {
+        "recorded": "Recorded",
+        "started": "Started",
+        "pending": "Pending",
+        "running": "Running",
+        "succeeded": "Succeeded",
+        "failed": "Failed",
+        "partial": "Partial",
+        "unknown": "Unknown",
+        "cancelled": "Cancelled",
+        "denied": "Denied",
+        "accepted": "Accepted",
+        "applied": "Applied",
+        "rejected": "Rejected",
+        "conflict": "Conflict",
+        "resolved": "Resolved",
+        "expired": "Expired",
+        "blocked": "Blocked"
+      }
+    },
     "group": {
       "pinned": "Pinned",
       "today": "Today",

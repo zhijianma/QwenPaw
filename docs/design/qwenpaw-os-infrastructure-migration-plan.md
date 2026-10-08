@@ -364,7 +364,7 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     Submission `succeeded` 后仅进入 `inactive`，绝不伪装业务 `completed`；阻塞
     Interaction 显式投影为 `waiting_user`，续行后恢复 running。SSE 使用有界历史窗口，
     `execution_window_truncated` 明示窗口是否截断，不在每次轮询中全表重建。
-- [ ] 完成 Conversation Activity 只读投影；它从 Submission、Invocation、
+- [x] 完成 Conversation Activity 只读投影；它从 Submission、Invocation、
   ModelCall、Action、Interaction、Artifact、Evidence 与 Verification 权威事实
   派生，不复制第二套状态，也不把恢复状态伪装成 Queue 项。
   - [x] Chat Runtime snapshot/SSE 已嵌入有界 `ObservationPage`，复用既有
@@ -391,8 +391,13 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
   - [x] Model Recovery 通过只读 `ModelRecoveryHistoryPort` 接入 Activity；Resource
     Wait 与部分流 Model Step 分别从权威恢复事实派生状态，不复制 Provider payload、
     Prompt、异常正文或 partial output，也不把等待伪装为 Queue 项。
-  - [ ] Console 增加薄 Activity 投影；只显示语义状态和来源引用，不暴露隐藏推理，
-    不复制 Task Workbench 状态机。
+  - [x] Console 已增加薄 Activity 投影；它订阅现有 Chat Runtime snapshot/SSE，按
+    最新 `correlation_id` 展示 Action、Interaction、控制、恢复、Artifact、Evidence、
+    Verification 与 Outcome 的语义状态和来源引用，不暴露隐藏推理或事实 payload，
+    也不复制 Task Workbench 状态机。普通 model 路由/结果与
+    `qwenpaw.control.submission` 生命周期被过滤，短问答仍只显示消息；展开/收起仅是
+    本地展示状态，不参与 Runtime 判定。固定真实 Chat 浏览器验收已确认普通问答的
+    Activity 计数为 0。
 - [x] 完成 Chat Ask User durable continuation：响应决定与 continuation outbox
   可原子提交或幂等恢复；新 Submission 继承原 correlation 并创建新 Invocation，
   不恢复旧协程。Lite worker 启动即扫描未派发项，HTTP 只负责唤醒；Queue envelope

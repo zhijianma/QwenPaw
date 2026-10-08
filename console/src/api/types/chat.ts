@@ -167,7 +167,8 @@ export type RuntimeObservationCategory =
   | "interrupt"
   | "verification"
   | "artifact"
-  | "evidence";
+  | "evidence"
+  | "outcome";
 
 export interface RuntimeObservation {
   schema?: "qwenpaw.runtime-observation.v1";
@@ -193,6 +194,60 @@ export interface ObservationPage {
   next_cursor?: string | null;
 }
 
+export type ConversationOutcomeStatus =
+  | "achieved"
+  | "partial"
+  | "not_achieved"
+  | "abandoned";
+
+export interface ConversationOutcome {
+  outcome_id: string;
+  agent_id: string;
+  conversation_id: string;
+  correlation_id: string;
+  status: ConversationOutcomeStatus;
+  producer_id: string;
+  summary: string;
+  invocation_id?: string | null;
+  registry_generation?: number | null;
+  task_id?: string | null;
+  run_id?: string | null;
+  artifact_ids: string[];
+  evidence_ids: string[];
+  verification_ids: string[];
+  supersedes_outcome_id?: string | null;
+  created_at: string;
+}
+
+export type ConversationExecutionState =
+  | "queued"
+  | "running"
+  | "waiting_user"
+  | "inactive"
+  | "failed"
+  | "interrupted"
+  | "cancelled"
+  | "achieved"
+  | "partial"
+  | "not_achieved"
+  | "abandoned";
+
+export interface ConversationExecutionChain {
+  schema?: "qwenpaw.conversation-execution-chain.v1";
+  conversation_id: string;
+  correlation_id: string;
+  state: ConversationExecutionState;
+  submission_ids: string[];
+  invocation_ids: string[];
+  head_submission_id: string;
+  head_invocation_id?: string | null;
+  latest_submission_status: SubmissionStatus;
+  open_interaction_ids: string[];
+  outcome?: ConversationOutcome | null;
+  accepted_at: string;
+  latest_submission_at: string;
+}
+
 export type CommunicationDeliveryMode =
   | "request_response"
   | "request_stream"
@@ -212,11 +267,7 @@ export interface CommunicationCapability {
   idempotency: "not_applicable" | "optional" | "required";
   cursor_semantics: "none" | "snapshot_change" | "replay_offset";
   retention: "ephemeral" | "latest_state" | "durable";
-  backpressure:
-    | "none"
-    | "coalesce_latest"
-    | "server_queue"
-    | "acknowledged";
+  backpressure: "none" | "coalesce_latest" | "server_queue" | "acknowledged";
   disconnect_policy:
     | "cancel"
     | "continue"
@@ -236,6 +287,8 @@ export interface ConversationRuntimeProjection {
   conversation_id: string;
   queue: QueueProjection;
   interactions: ChatInteraction[];
+  execution_chains?: ConversationExecutionChain[];
+  execution_window_truncated?: boolean;
   activity?: ObservationPage;
   communication_contract?: CommunicationContract;
   cursor: string;

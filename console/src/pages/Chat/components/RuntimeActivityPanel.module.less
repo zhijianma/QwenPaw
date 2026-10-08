@@ -1,0 +1,162 @@
+.panel {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--ant-color-border) 76%, transparent);
+  border-radius: 14px;
+  margin-bottom: 8px;
+  background: color-mix(
+    in srgb,
+    var(--ant-color-bg-container) 94%,
+    var(--ant-color-fill-tertiary)
+  );
+  box-shadow: 0 8px 24px rgb(27 39 31 / 7%);
+}
+
+.header {
+  display: flex;
+  width: 100%;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  border: 0;
+  padding: 8px 12px;
+  background: transparent;
+  color: var(--ant-color-text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.header:focus-visible {
+  outline: 2px solid var(--ant-color-primary);
+  outline-offset: -2px;
+}
+
+.heading,
+.state,
+.itemHeader {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.heading {
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.count {
+  min-width: 20px;
+  border-radius: 999px;
+  padding: 1px 6px;
+  background: var(--ant-color-fill-secondary);
+  color: var(--ant-color-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.state {
+  flex: 0 0 auto;
+  gap: 5px;
+  color: var(--ant-color-text-secondary);
+  font-size: 12px;
+}
+
+.list {
+  display: flex;
+  max-height: 184px;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0 8px 8px;
+  list-style: none;
+}
+
+.item {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 9px;
+  border-radius: 10px;
+  padding: 7px 8px;
+  background: color-mix(
+    in srgb,
+    var(--ant-color-bg-container) 78%,
+    transparent
+  );
+}
+
+.icon {
+  display: inline-flex;
+  flex: 0 0 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--ant-color-fill-secondary);
+  color: var(--ant-color-text-secondary);
+}
+
+.icon[data-status="succeeded"],
+.icon[data-status="resolved"],
+.icon[data-status="applied"] {
+  background: color-mix(in srgb, var(--ant-color-success) 13%, transparent);
+  color: var(--ant-color-success);
+}
+
+.icon[data-status="failed"],
+.icon[data-status="denied"],
+.icon[data-status="rejected"],
+.icon[data-status="blocked"] {
+  background: color-mix(in srgb, var(--ant-color-error) 11%, transparent);
+  color: var(--ant-color-error);
+}
+
+.content {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.itemHeader {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.itemTitle {
+  overflow: hidden;
+  color: var(--ant-color-text);
+  font-size: 12px;
+  font-weight: 560;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status {
+  flex: 0 0 auto;
+  color: var(--ant-color-text-secondary);
+  font-size: 11px;
+}
+
+.source {
+  overflow: hidden;
+  color: var(--ant-color-text-tertiary);
+  font-family: var(--ant-font-family-code);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .panel {
+    border-radius: 12px;
+  }
+
+  .source {
+    display: none;
+  }
+}

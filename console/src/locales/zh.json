@@ -3483,6 +3483,41 @@
       "queueFull": "队列已满（最多 {{max}} 条），请先发送或删除部分消息",
       "otherTabOwner": "当前标签页仅入队，发送由其他标签页完成"
     },
+    "activity": {
+      "title": "执行活动",
+      "states": {
+        "queued": "等待执行",
+        "running": "执行中",
+        "waiting_user": "等待你的决定",
+        "inactive": "当前无运行",
+        "failed": "执行失败",
+        "interrupted": "已中断",
+        "cancelled": "已取消",
+        "achieved": "目标已达成",
+        "partial": "部分达成",
+        "not_achieved": "目标未达成",
+        "abandoned": "已放弃"
+      },
+      "statuses": {
+        "recorded": "已记录",
+        "started": "已开始",
+        "pending": "等待中",
+        "running": "进行中",
+        "succeeded": "已成功",
+        "failed": "已失败",
+        "partial": "部分完成",
+        "unknown": "待确认",
+        "cancelled": "已取消",
+        "denied": "已拒绝",
+        "accepted": "已接受",
+        "applied": "已生效",
+        "rejected": "未采纳",
+        "conflict": "存在冲突",
+        "resolved": "已解决",
+        "expired": "已过期",
+        "blocked": "已阻塞"
+      }
+    },
     "group": {
       "pinned": "置顶",
       "today": "今天",

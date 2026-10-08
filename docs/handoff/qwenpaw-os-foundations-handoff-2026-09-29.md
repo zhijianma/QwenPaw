@@ -734,6 +734,25 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   `correlation_id` 下的 Submission、Invocation、Action、typed wait、continuation、
   Artifact/Evidence/Verification 与 Outcome 持续推进。Task 页面继续后置。
 
+### 2026-10-08 Chat Continuous Execution Activity Projection
+
+- Console Chat 已增加只读 Activity 面板，直接复用
+  `ConversationRuntimeProjection.execution_chains/activity`，按最新
+  `correlation_id` 展示最多 5 条语义事件；折叠状态仅属于展示层，前端没有新增 Queue
+  或执行状态机。
+- 面板只展示 Action、HITL、控制、恢复、Artifact、Evidence、Verification 与 Outcome
+  的标题、状态和内容安全来源引用，不渲染 facts、隐藏 reasoning 或 Provider payload。
+  普通 model 路由/结果及 `qwenpaw.control.submission` 接收/终态被过滤，因此短 Chat
+  仍保持一问一答的轻量外观。
+- 一问一答只保留为短任务快速路径和 UI 投影，不能再作为长程 Runtime 生命周期。
+  长程意图由同一 `ChatSpec.id + correlation_id` 下的 Submission、Invocation、Action、
+  typed wait、continuation、Artifact/Evidence/Verification 与 Outcome 自主推进；只有
+  Human Interaction Policy 允许的必要事实、实质偏好、范围授权或高影响裁决才阻塞
+  等待用户。
+- 新组件及 Runtime Store/Queue/Chat 页面 97 项定点测试通过；固定真实简单 Chat 在
+  浏览器重载后的 Activity 元素计数为 0。历史“这是 Action”会话没有后端语义 Action
+  observation，因此也不会仅凭标题或消息文案伪造活动。未运行全仓测试。
+
 ### 本阶段此前已执行的定点验证
 
 - 后端核心路径定点测试：70 项通过。

@@ -420,6 +420,10 @@ vi.mock("./components/ServerRuntimeQueue", () => ({
   default: () => null,
 }));
 
+vi.mock("./components/RuntimeActivityPanel", () => ({
+  default: () => null,
+}));
+
 vi.mock("./components/ApprovalLevelToggle", () => ({
   default: () => <div data-testid="approval-toggle" />,
 }));
