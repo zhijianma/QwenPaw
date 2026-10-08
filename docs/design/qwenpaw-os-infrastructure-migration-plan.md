@@ -493,6 +493,15 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     “肯定未执行”。裁决随 `ActionResult` 持久化并进入统一 Observation；原 Action
     保持不可变。自动 dispatcher 仍须等待 executor 级幂等能力声明和 attempt lineage，
     因此本阶段不把 `retryable` 误报成“已自动重试”。
+  - [x] Executor 幂等和 retry lineage 已进入稳定 Action 契约：
+    `undeclared`、`host_guarded`、`executor_enforced` 明确区分 key 的真实执行边界；
+    `ToolDefinition`、`DriverToolDefinition`、插件 SDK 和 Legacy Driver metadata 共用
+    同一枚举。执行器通过 `current_action_execution()` 或 Driver request context 取得
+    Action ID、稳定 key、attempt 与 lineage。重试创建新的 Action，记录 root/previous
+    Action，并同时用显式 `executor_item_id` 维持模型上下文绑定，不再从幂等 key 猜
+    Tool call ID。Host 会校验参数摘要、correlation、固定 generation 和当前环境契约；
+    只有 executor 持久防重承诺可以让 effectful uncertain failure 进入安全 retry
+    admission。自动 dispatcher 尚未接入，不能把 admission 当作已执行。
 - [ ] 把 WebSocket 增量续传、sticky route 和 HTTP fallback 保持为 Provider
   Adapter capability；严格验证 response identity/prefix，失败时回退持久上下文重建，
   Kernel 不感知具体传输。

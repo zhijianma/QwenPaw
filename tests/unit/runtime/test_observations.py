@@ -879,6 +879,10 @@ async def test_action_uses_the_same_observation_contract(tmp_path) -> None:
         item for item in observations if item.category.value == "guardrail"
     )
     assert intent.facts["capability_id"] == "example.export"
+    assert intent.facts["idempotency_mode"] == "undeclared"
+    assert intent.facts["attempt"] == 1
+    assert intent.facts["retry_root_action_id"] is None
+    assert intent.facts["retry_of_action_id"] is None
     assert intent.status is ObservationStatus.RECORDED
     assert guardrail.facts["policy_decision"] == "allow"
     assert "redacted_arguments" not in intent.facts

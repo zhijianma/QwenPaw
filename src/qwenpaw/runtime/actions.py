@@ -16,6 +16,8 @@ from ..kernel import (
     ACTION_RETRY_DECISION_METADATA_KEY,
     ACTION_RETRY_HINT_METADATA_KEY,
     ActionApprovalLink,
+    ActionExecutionContext,
+    ActionIdempotencyMode,
     ActionKind,
     ActionRecord,
     ActionRequest,
@@ -84,6 +86,31 @@ class ActionRequestPersistenceError(RuntimeError):
 
 class ActionResultPersistenceError(RuntimeError):
     """Raised after execution when its terminal evidence cannot be stored."""
+
+
+def current_action_execution() -> ActionExecutionContext | None:
+    """Return the active, content-safe executor identity if available."""
+    from ..tool_calls._ctxvars import get_call_context
+
+    context = get_call_context()
+    if context is None:
+        return None
+    request = context.extra.get(ACTION_REQUEST_CONTEXT_KEY)
+    if not isinstance(request, ActionRequest):
+        return None
+    return ActionExecutionContext(
+        action_id=request.action_id,
+        invocation_id=request.invocation_id,
+        correlation_id=request.correlation_id,
+        conversation_id=request.conversation_id,
+        capability_id=request.capability_id,
+        idempotency_mode=request.idempotency_mode,
+        idempotency_key=request.idempotency_key,
+        executor_item_id=request.executor_item_id or context.tool_call_id,
+        retry_root_action_id=request.retry_root_action_id,
+        retry_of_action_id=request.retry_of_action_id,
+        attempt=request.attempt,
+    )
 
 
 def assess_model_step_reconciliation(
@@ -188,10 +215,7 @@ def model_step_action_call_ids(
         request = record.request
         if request.invocation_id != invocation_id:
             continue
-        prefix = f"{request.kind.value}:{invocation_id}:"
-        if not request.idempotency_key.startswith(prefix):
-            return None
-        call_id = request.idempotency_key[len(prefix) :]
+        call_id = _executor_item_id(request, invocation_id)
         if not call_id:
             return None
         call_ids.append(call_id)
@@ -213,8 +237,9 @@ def model_step_action_context_bindings(
         request = record.request
         if request.invocation_id != invocation_id:
             continue
-        prefix = f"{request.kind.value}:{invocation_id}:"
-        call_id = request.idempotency_key[len(prefix) :]
+        call_id = _executor_item_id(request, invocation_id)
+        if call_id is None:
+            return None
         bindings.append((call_id, str(request.action_id)))
     bindings.sort()
     return tuple(bindings)
@@ -235,10 +260,7 @@ def model_step_committed_action_items(
             continue
         if result is None:
             return None
-        prefix = f"{request.kind.value}:{invocation_id}:"
-        if not request.idempotency_key.startswith(prefix):
-            return None
-        executor_item_id = request.idempotency_key[len(prefix) :]
+        executor_item_id = _executor_item_id(request, invocation_id)
         if not executor_item_id:
             return None
         items.append(
@@ -264,6 +286,19 @@ def _json_value(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_json_value(item) for item in value]
     return str(value)
+
+
+def _executor_item_id(
+    request: ActionRequest,
+    invocation_id: UUID,
+) -> str | None:
+    """Read explicit item identity with legacy key parsing fallback."""
+    if request.executor_item_id is not None:
+        return request.executor_item_id
+    prefix = f"{request.kind.value}:{invocation_id}:"
+    if not request.idempotency_key.startswith(prefix):
+        return None
+    return request.idempotency_key[len(prefix) :] or None
 
 
 def _canonical_json(value: Any) -> str:
@@ -346,6 +381,20 @@ def _action_retry_decision(
             reason=ActionRetryReason.STATUS_NOT_FAILED,
             provider_retryable=provider_retryable,
         )
+    executor_enforced = (
+        request.idempotency_mode
+        is ActionIdempotencyMode.EXECUTOR_ENFORCED
+    )
+    if (
+        side_effect_status is SideEffectStatus.UNCERTAIN
+        and provider_retryable
+        and executor_enforced
+    ):
+        return ActionRetryDecision(
+            disposition=ActionRetryDisposition.RETRY_FROM_NEW_ACTION,
+            reason=ActionRetryReason.EXECUTOR_IDEMPOTENT_FAILURE,
+            provider_retryable=True,
+        )
     if side_effect_status is SideEffectStatus.UNCERTAIN:
         return ActionRetryDecision(
             disposition=ActionRetryDisposition.RECONCILE_REQUIRED,
@@ -357,7 +406,10 @@ def _action_retry_decision(
             disposition=ActionRetryDisposition.FORBIDDEN,
             reason=ActionRetryReason.PROVIDER_NOT_RETRYABLE,
         )
-    if request.effect is not ToolEffect.NONE:
+    if (
+        request.effect is not ToolEffect.NONE
+        and not executor_enforced
+    ):
         return ActionRetryDecision(
             disposition=ActionRetryDisposition.FORBIDDEN,
             reason=ActionRetryReason.EFFECTFUL_RETRY_UNSUPPORTED,
@@ -593,6 +645,10 @@ class RuntimeActionRecorder:
         policy_decision: str,
         approval_id: UUID | None,
         environment_ref: EnvironmentRef | None = None,
+        idempotency_mode: ActionIdempotencyMode = (
+            ActionIdempotencyMode.UNDECLARED
+        ),
+        retry_of: ActionRequest | None = None,
     ) -> ActionRequest:
         raw_input = context.extra.get("tool_input")
         arguments = _json_value(
@@ -602,6 +658,19 @@ class RuntimeActionRecorder:
             redact_payload(arguments),
         )
         action_id = self.action_id(context, kind=kind)
+        retry_root_action_id = None
+        retry_of_action_id = None
+        attempt = 1
+        if retry_of is not None:
+            retry_root_action_id = (
+                retry_of.retry_root_action_id or retry_of.action_id
+            )
+            retry_of_action_id = retry_of.action_id
+            attempt = retry_of.attempt + 1
+        generated_idempotency_key = (
+            f"{kind.value}:{self._scope.invocation_id}:"
+            f"{context.tool_call_id}"
+        )
         return ActionRequest(
             action_id=action_id,
             invocation_id=self._scope.invocation_id,
@@ -638,10 +707,18 @@ class RuntimeActionRecorder:
             effect=effect,
             risk=risk,
             reversible=reversible,
+            idempotency_mode=idempotency_mode,
             idempotency_key=(
-                f"{kind.value}:{self._scope.invocation_id}:"
-                f"{context.tool_call_id}"
+                retry_of.idempotency_key
+                if retry_of is not None
+                and idempotency_mode
+                is ActionIdempotencyMode.EXECUTOR_ENFORCED
+                else generated_idempotency_key
             ),
+            executor_item_id=context.tool_call_id,
+            retry_root_action_id=retry_root_action_id,
+            retry_of_action_id=retry_of_action_id,
+            attempt=attempt,
             approval_id=approval_id,
             policy_decision=policy_decision or "unknown",
         )
@@ -667,6 +744,9 @@ class RuntimeActionRecorder:
         approval_id: UUID | None = None,
         environment_ref: EnvironmentRef | None = None,
         kind: ActionKind | None = None,
+        idempotency_mode: ActionIdempotencyMode = (
+            ActionIdempotencyMode.UNDECLARED
+        ),
     ) -> ActionRequest:
         """Persist and bind a request before the executor is called."""
         existing = context.extra.get(ACTION_REQUEST_CONTEXT_KEY)
@@ -693,6 +773,7 @@ class RuntimeActionRecorder:
             policy_decision=policy_decision,
             approval_id=approval_id,
             environment_ref=environment_ref,
+            idempotency_mode=idempotency_mode,
         )
         try:
             await self._store.begin(request)
@@ -726,6 +807,7 @@ class RuntimeActionRecorder:
             effect=definition.effect,
             risk=definition.risk,
             reversible=definition.reversible,
+            idempotency_mode=definition.idempotency_mode,
         )
 
     async def begin_driver_capability(
@@ -737,6 +819,9 @@ class RuntimeActionRecorder:
         effect: ToolEffect = ToolEffect.EXTERNAL_WRITE,
         risk: RiskLevel = RiskLevel.HIGH,
         reversible: bool = False,
+        idempotency_mode: ActionIdempotencyMode = (
+            ActionIdempotencyMode.UNDECLARED
+        ),
     ) -> ActionRequest:
         """Persist a Driver capability across provider and legacy paths."""
         existing = context.extra.get(ACTION_REQUEST_CONTEXT_KEY)
@@ -752,6 +837,7 @@ class RuntimeActionRecorder:
             reversible=reversible,
             policy_decision="driver_policy",
             approval_id=None,
+            idempotency_mode=idempotency_mode,
         )
         try:
             await self._store.begin(request)
@@ -760,6 +846,86 @@ class RuntimeActionRecorder:
             raise ActionRequestPersistenceError(
                 "driver was not executed because action intent could not be "
                 "recorded",
+            ) from exc
+        context.extra[ACTION_REQUEST_CONTEXT_KEY] = request
+        context.governance_metadata[ACTION_REQUEST_STATE_KEY] = "recorded"
+        context.governance_metadata["action_id"] = str(request.action_id)
+        return request
+
+    async def begin_retry(
+        self,
+        context: ToolCallContext,
+        previous: ActionRecord,
+    ) -> ActionRequest:
+        """Persist a new Action attempt after exact Host admission."""
+        previous_result = previous.result
+        previous_request = previous.request
+        if (
+            previous_result is None
+            or previous_result.retry_decision is None
+            or previous_result.retry_decision.disposition
+            is not ActionRetryDisposition.RETRY_FROM_NEW_ACTION
+        ):
+            raise ActionConflictError(
+                "previous action is not admitted for retry",
+            )
+        if previous_request.conversation_id != self._scope.conversation_id:
+            raise ActionConflictError("retry action conversation mismatch")
+        expected_correlation = (
+            self._scope.correlation_id or self._scope.invocation_id
+        )
+        if previous_request.correlation_id != expected_correlation:
+            raise ActionConflictError("retry action correlation mismatch")
+        if (
+            previous_request.registry_generation
+            != self._scope.registry_generation
+        ):
+            raise ActionConflictError("retry action generation mismatch")
+        previous_environment = previous_request.environment_ref
+        current_resolution = self._scope.environment_resolution
+        if (previous_environment is None) != (current_resolution is None):
+            raise ActionConflictError("retry action environment mismatch")
+        if (
+            previous_environment is not None
+            and current_resolution is not None
+        ):
+            previous_contract = (
+                previous_environment.contract_id,
+                previous_environment.contract_version,
+                previous_environment.resolver_id,
+            )
+            current_contract = (
+                current_resolution.contract_id,
+                current_resolution.contract_version,
+                current_resolution.resolver_id,
+            )
+            if previous_contract != current_contract:
+                raise ActionConflictError(
+                    "retry action environment contract changed",
+                )
+        request = self._request(
+            context,
+            capability_id=previous_request.capability_id,
+            kind=previous_request.kind,
+            action_name=previous_request.action_name,
+            effect=previous_request.effect,
+            risk=previous_request.risk,
+            reversible=previous_request.reversible,
+            policy_decision="retry_policy",
+            approval_id=None,
+            environment_ref=None,
+            idempotency_mode=previous_request.idempotency_mode,
+            retry_of=previous_request,
+        )
+        if request.arguments_hash != previous_request.arguments_hash:
+            raise ActionConflictError("retry action arguments changed")
+        try:
+            await self._store.begin(request)
+        except Exception as exc:
+            context.governance_metadata[ACTION_REQUEST_STATE_KEY] = "failed"
+            raise ActionRequestPersistenceError(
+                "retry was not executed because its Action intent could "
+                "not be recorded",
             ) from exc
         context.extra[ACTION_REQUEST_CONTEXT_KEY] = request
         context.governance_metadata[ACTION_REQUEST_STATE_KEY] = "recorded"
@@ -1101,6 +1267,7 @@ __all__ = [
     "ActionResultPersistenceError",
     "FilesystemActionStore",
     "RuntimeActionRecorder",
+    "current_action_execution",
     "assess_model_step_reconciliation",
     "link_active_action_approval",
     "lite_action_store",

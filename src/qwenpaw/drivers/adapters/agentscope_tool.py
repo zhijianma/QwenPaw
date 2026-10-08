@@ -25,6 +25,8 @@ from agentscope.tool import ToolBase, ToolChunk
 from ...kernel.invocation import DEFAULT_DRIVER_PROVIDER_ID
 from ...kernel.driver import DriverApprovalRejectedError
 from ...kernel.models import (
+    ActionIdempotencyMode,
+    ActionRequest,
     DriverToolDefinition,
     PromptFragment,
     RiskLevel,
@@ -48,6 +50,45 @@ def _action_classification(
     if capability.metadata.get("read_only") is True:
         return ToolEffect.NONE, RiskLevel.LOW, True
     return ToolEffect.EXTERNAL_WRITE, RiskLevel.HIGH, False
+
+
+def _action_idempotency(
+    capability: DriverCapability,
+) -> ActionIdempotencyMode:
+    """Read an explicit Driver promise without inferring from names."""
+    value = capability.metadata.get("action_idempotency")
+    if value is None:
+        return ActionIdempotencyMode.UNDECLARED
+    return ActionIdempotencyMode(str(value))
+
+
+def _driver_request_context(
+    base: dict[str, Any],
+) -> dict[str, Any]:
+    """Attach the active Action identity at the Driver boundary."""
+    from ...tool_calls._ctxvars import get_call_context
+
+    values = dict(base)
+    context = get_call_context()
+    if context is None:
+        return values
+    request = context.extra.get("qwenpaw_action_request")
+    if not isinstance(request, ActionRequest):
+        return values
+    values.update(
+        {
+            "qwenpaw_action_id": str(request.action_id),
+            "qwenpaw_action_attempt": str(request.attempt),
+            "qwenpaw_action_idempotency_mode": (
+                request.idempotency_mode.value
+            ),
+            "qwenpaw_action_idempotency_key": request.idempotency_key,
+            "qwenpaw_action_executor_item_id": (
+                request.executor_item_id or context.tool_call_id
+            ),
+        },
+    )
+    return values
 
 
 def _text_block(text: str) -> Any:
@@ -213,12 +254,15 @@ class DriverCapabilityTool(ToolBase):
                 effect=effect,
                 risk=risk,
                 reversible=reversible,
+                idempotency_mode=_action_idempotency(self._capability),
             )
         result = await self._invoker(
             DriverInvocation(
                 capability_id=self._capability.capability_id,
                 payload=dict(kwargs or {}),
-                request_context=self._request_context,
+                request_context=_driver_request_context(
+                    self._request_context,
+                ),
             ),
         )
         return _tool_chunk_from_driver_result(result)
@@ -342,11 +386,12 @@ async def build_driver_definitions(
                 DriverInvocation(
                     capability_id=capability_id,
                     payload=payload,
-                    request_context=dict(request_context),
+                    request_context=_driver_request_context(request_context),
                 ),
             )
 
         effect, risk, reversible = _action_classification(capability)
+        idempotency_mode = _action_idempotency(capability)
         definitions.append(
             DriverToolDefinition(
                 provider_id=DEFAULT_DRIVER_PROVIDER_ID,
@@ -357,6 +402,7 @@ async def build_driver_definitions(
                 effect=effect,
                 risk=risk,
                 reversible=reversible,
+                idempotency_mode=idempotency_mode,
                 invoke=invoke,
             ),
         )

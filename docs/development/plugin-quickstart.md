@@ -148,14 +148,21 @@ For a Chat tool, declare the `tool.provider` slot and return typed
 
 ```python
 from qwenpaw.plugins.sdk import (
+    ActionIdempotencyMode,
     InvocationScope,
     ToolDefinition,
     ToolHost,
     ToolSelection,
+    current_action_execution,
 )
 
 
 async def project_summary() -> str:
+    execution = current_action_execution()
+    if execution is None:
+        raise RuntimeError("project_summary requires the Action Host")
+    # Forward execution.idempotency_key only when the real executor stores
+    # and deduplicates it durably across retries.
     return "Project summary"
 
 
@@ -176,6 +183,7 @@ class ProjectTools:
                 function=project_summary,
                 name="project_summary",
                 tool_type="internal",
+                idempotency_mode=ActionIdempotencyMode.HOST_GUARDED,
             ),
         )
 
@@ -201,6 +209,16 @@ to future executor families exposed by the SDK. Never use `action_kind` merely
 to change approval behavior, and never infer it from a tool or policy name.
 The host still owns Policy, Approval, Action Request/Result, and environment
 evidence for both system and plugin providers.
+
+`idempotency_mode` is an execution guarantee, not a retry preference. Keep
+the default `UNDECLARED` when the executor ignores Host keys. Use
+`HOST_GUARDED` when only QwenPaw prevents duplicate admission. Declare
+`EXECUTOR_ENFORCED` only when the real external executor receives
+`current_action_execution().idempotency_key`, persists it, and returns the
+same logical outcome without repeating the side effect. On an admitted retry,
+`current_action_execution()` exposes a new `action_id`, the stable executor
+key, the incremented attempt, and root/previous Action IDs. Falsely declaring
+executor enforcement can duplicate external writes and is a contract defect.
 
 The process-wide governance registry is used for discovery, conflict checks,
 and deferred unload cleanup. Each guarded invocation tool also captures its
@@ -1035,9 +1053,11 @@ never returns AgentScope `ToolBase`, FastAPI objects, or arbitrary callables:
 
 ```python
 from qwenpaw.plugins.sdk import (
+    ActionIdempotencyMode,
     DriverApprovalRequest,
     DriverToolDefinition,
     PromptFragment,
+    current_action_execution,
 )
 
 
@@ -1048,6 +1068,9 @@ class ProjectDriverSession:
         self.host = host
 
     async def invoke_echo(self, payload):
+        execution = current_action_execution()
+        if execution is None:
+            raise RuntimeError("driver_echo requires the Action Host")
         await self.host.require_approval(
             DriverApprovalRequest(
                 provider_id=self.provider_id,
@@ -1068,6 +1091,7 @@ class ProjectDriverSession:
                 effect="external_write",
                 risk="high",
                 reversible=False,
+                idempotency_mode=ActionIdempotencyMode.UNDECLARED,
                 input_schema={
                     "type": "object",
                     "properties": {"text": {"type": "string"}},

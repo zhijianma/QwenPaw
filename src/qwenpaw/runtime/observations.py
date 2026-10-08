@@ -428,6 +428,14 @@ def _action_observations(
             "effect": request.effect.value,
             "risk": request.risk.value,
             "reversible": request.reversible,
+            "idempotency_mode": request.idempotency_mode.value,
+            "attempt": request.attempt,
+            "retry_root_action_id": _optional_uuid(
+                request.retry_root_action_id,
+            ),
+            "retry_of_action_id": _optional_uuid(
+                request.retry_of_action_id,
+            ),
             "policy_decision": request.policy_decision,
             "environment_resolution_id": (
                 str(request.environment_ref.resolution_id)

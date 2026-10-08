@@ -32,6 +32,7 @@ from qwenpaw.kernel import (
     ACTION_RETRY_DECISION_METADATA_KEY,
     ACTION_RETRY_HINT_METADATA_KEY,
     COMMITTED_ACTION_ITEM_METADATA_KEY,
+    ActionIdempotencyMode,
     ActionKind,
     ActionRecord,
     ActionRequest,
@@ -66,6 +67,7 @@ from qwenpaw.runtime.actions import (
     model_step_reconciliation_evidence_digest,
     model_step_committed_action_items,
 )
+from qwenpaw.plugins.sdk import current_action_execution
 from qwenpaw.runtime.environments import (
     LiteEnvironmentResolver,
     default_lite_environment_contract,
@@ -643,6 +645,218 @@ async def test_read_failure_requires_provider_hint_for_new_action_retry(
 
 
 @pytest.mark.asyncio
+async def test_executor_idempotency_admits_new_attempt_with_lineage(
+    tmp_path: Path,
+) -> None:
+    conversation_id = "chat-retry-write"
+    correlation_id = uuid4()
+    first_scope = _scope(
+        tmp_path,
+        conversation_id=conversation_id,
+    ).model_copy(update={"correlation_id": correlation_id})
+    store = FilesystemActionStore(tmp_path)
+    first_recorder = RuntimeActionRecorder(first_scope, store)
+    first_context = _context("write_file", "call-write-1")
+    await first_recorder.begin(
+        first_context,
+        effect=ToolEffect.LOCAL_WRITE,
+        policy_decision="allow",
+        idempotency_mode=ActionIdempotencyMode.EXECUTOR_ENFORCED,
+    )
+    first_response = ToolResponse(
+        content=[TextBlock(type="text", text="temporary failure")],
+        id=first_context.tool_call_id,
+        state=ToolResultState.ERROR,
+        metadata={ACTION_RETRY_HINT_METADATA_KEY: True},
+    )
+    await first_recorder.complete(first_response, first_context)
+    [previous] = await store.list_for_conversation(conversation_id)
+    assert previous.result is not None
+    assert previous.result.retry_decision is not None
+    assert previous.result.retry_decision.reason is (
+        ActionRetryReason.EXECUTOR_IDEMPOTENT_FAILURE
+    )
+
+    retry_scope = _scope(
+        tmp_path,
+        conversation_id=conversation_id,
+    ).model_copy(update={"correlation_id": correlation_id})
+    retry_recorder = RuntimeActionRecorder(retry_scope, store)
+    retry_context = _context("write_file", "call-write-2")
+    retry = await retry_recorder.begin_retry(retry_context, previous)
+
+    assert retry.action_id != previous.request.action_id
+    assert retry.retry_root_action_id == previous.request.action_id
+    assert retry.retry_of_action_id == previous.request.action_id
+    assert retry.attempt == 2
+    assert retry.idempotency_key == previous.request.idempotency_key
+    assert retry.idempotency_mode is (
+        ActionIdempotencyMode.EXECUTOR_ENFORCED
+    )
+    retry_response = ToolResponse(
+        content=[TextBlock(type="text", text="written")],
+        id=retry_context.tool_call_id,
+        state=ToolResultState.SUCCESS,
+    )
+    await retry_recorder.complete(retry_response, retry_context)
+    records = await store.scan_for_conversation(conversation_id)
+    assert model_step_action_call_ids(
+        records,
+        retry_scope.invocation_id,
+    ) == (retry_context.tool_call_id,)
+
+    changed = _context("write_file", "call-write-3")
+    changed.extra["tool_input"]["output_path"] = "other.md"
+    with pytest.raises(ActionConflictError, match="arguments changed"):
+        await retry_recorder.begin_retry(changed, previous)
+
+
+@pytest.mark.asyncio
+async def test_action_retry_uses_current_matching_environment_resolution(
+    tmp_path: Path,
+) -> None:
+    conversation_id = "chat-retry-environment"
+    correlation_id = uuid4()
+    contract = default_lite_environment_contract(tmp_path)
+    resolver = LiteEnvironmentResolver()
+    first_invocation_id = uuid4()
+    first_resolution = await resolver.resolve(
+        contract,
+        invocation_id=first_invocation_id,
+        workspace_dir=str(tmp_path),
+    )
+    first_scope = InvocationScope(
+        invocation_id=first_invocation_id,
+        correlation_id=correlation_id,
+        agent_id="default",
+        conversation_id=conversation_id,
+        session_id="transport-session",
+        root_agent_id="default",
+        root_session_id="transport-session",
+        workspace_dir=str(tmp_path),
+        registry_generation=7,
+        selection=CapabilitySelection(),
+        environment_contract=contract,
+        environment_resolution=first_resolution,
+    )
+    store = FilesystemActionStore(tmp_path)
+    first_recorder = RuntimeActionRecorder(first_scope, store)
+    first_context = _context("write_file", "call-environment-1")
+    await first_recorder.begin(
+        first_context,
+        effect=ToolEffect.LOCAL_WRITE,
+        policy_decision="allow",
+        idempotency_mode=ActionIdempotencyMode.EXECUTOR_ENFORCED,
+    )
+    await first_recorder.complete(
+        ToolResponse(
+            content=[TextBlock(type="text", text="temporary failure")],
+            id=first_context.tool_call_id,
+            state=ToolResultState.ERROR,
+            metadata={ACTION_RETRY_HINT_METADATA_KEY: True},
+        ),
+        first_context,
+    )
+    [previous] = await store.list_for_conversation(conversation_id)
+
+    retry_invocation_id = uuid4()
+    retry_resolution = await resolver.resolve(
+        contract,
+        invocation_id=retry_invocation_id,
+        workspace_dir=str(tmp_path),
+    )
+    retry_scope = first_scope.model_copy(
+        update={
+            "invocation_id": retry_invocation_id,
+            "environment_resolution": retry_resolution,
+        },
+    )
+    retry = await RuntimeActionRecorder(
+        retry_scope,
+        store,
+    ).begin_retry(
+        _context("write_file", "call-environment-2"),
+        previous,
+    )
+
+    assert retry.environment_ref is not None
+    assert retry.environment_ref.resolution_id == (
+        retry_resolution.resolution_id
+    )
+    assert retry.environment_ref.resolution_id != (
+        first_resolution.resolution_id
+    )
+
+
+@pytest.mark.asyncio
+async def test_plugin_executor_reads_only_active_action_identity(
+    tmp_path: Path,
+) -> None:
+    scope = _scope(tmp_path, conversation_id="chat-plugin-execution")
+    store = FilesystemActionStore(tmp_path)
+    recorder = RuntimeActionRecorder(scope, store)
+    observed = []
+
+    async def idempotent_probe(value: str):
+        observed.append(current_action_execution())
+        return ToolResponse(
+            content=[TextBlock(type="text", text=value)],
+            id="call-idempotent-plugin",
+            state=ToolResultState.SUCCESS,
+        )
+
+    owner = "test.action-pipeline.idempotent-plugin"
+    register_tool_governance(
+        DEFAULT_REGISTRY,
+        python_name="idempotent_probe",
+        tool_type="internal",
+        effect="none",
+        owner=owner,
+    )
+    tool = PolicyGuardedTool(
+        idempotent_probe,
+        request_context={"_action_recorder": recorder},
+        action_idempotency=ActionIdempotencyMode.HOST_GUARDED,
+    )
+    coordinator = ToolCoordinator()
+    tool_call = type(
+        "ToolCall",
+        (),
+        {
+            "id": "call-idempotent-plugin",
+            "name": "idempotent_probe",
+            "input": {"value": "ok"},
+        },
+    )()
+
+    async def next_handler(tool_call):
+        yield await tool(  # pylint: disable=not-callable
+            value=tool_call.input["value"],
+        )
+
+    try:
+        async for _event in coordinator.execute(
+            tool_call=tool_call,
+            next_handler=next_handler,
+            session_id=scope.session_id,
+            agent_id=scope.agent_id,
+            root_session_id=scope.root_session_id,
+            result_processor=recorder.complete,
+        ):
+            pass
+    finally:
+        DEFAULT_REGISTRY.unregister_owner(owner)
+
+    assert len(observed) == 1
+    execution = observed[0]
+    assert execution is not None
+    assert execution.invocation_id == scope.invocation_id
+    assert execution.idempotency_mode is ActionIdempotencyMode.HOST_GUARDED
+    assert execution.attempt == 1
+    assert current_action_execution() is None
+
+
+@pytest.mark.asyncio
 async def test_result_without_request_is_rejected(tmp_path: Path) -> None:
     store = FilesystemActionStore(tmp_path)
     invocation_id = uuid4()
@@ -865,19 +1079,22 @@ async def test_driver_definition_uses_real_provider_and_capability_identity(
     store = FilesystemActionStore(tmp_path)
     recorder = RuntimeActionRecorder(scope, store)
     observed_request_before_execution = False
+    observed_execution = None
 
     async def invoke(payload):
-        nonlocal observed_request_before_execution
+        nonlocal observed_execution, observed_request_before_execution
         records = await store.list_for_conversation("chat-driver-action")
         observed_request_before_execution = (
             len(records) == 1 and records[0].result is None
         )
+        observed_execution = current_action_execution()
         return {"echo": payload["value"]}
 
     definition = DriverToolDefinition(
         provider_id="example.driver-provider",
         capability_id="driver://example/tools/write#invoke",
         name="driver_write",
+        idempotency_mode=ActionIdempotencyMode.EXECUTOR_ENFORCED,
         invoke=invoke,
     )
     [tool] = adapt_driver_definitions(
@@ -920,6 +1137,14 @@ async def test_driver_definition_uses_real_provider_and_capability_identity(
     assert record.request.effect is ToolEffect.EXTERNAL_WRITE
     assert record.request.risk is RiskLevel.HIGH
     assert record.request.reversible is False
+    assert record.request.idempotency_mode is (
+        ActionIdempotencyMode.EXECUTOR_ENFORCED
+    )
+    assert observed_execution is not None
+    assert observed_execution.action_id == record.request.action_id
+    assert observed_execution.idempotency_key == (
+        record.request.idempotency_key
+    )
     assert record.result is not None
     assert record.result.status is ActionStatus.SUCCEEDED
 
@@ -939,9 +1164,12 @@ async def test_legacy_driver_capability_uses_action_plane(
         action="invoke",
         name="read",
         exposure=CapabilityExposure(as_tool=True, tool_name="legacy_read"),
+        metadata={"action_idempotency": "executor_enforced"},
     )
+    observed_request_context = {}
 
-    async def invoke(_invocation):
+    async def invoke(invocation):
+        observed_request_context.update(invocation.request_context)
         return DriverInvocationResult(ok=True, value="done")
 
     tool = DriverCapabilityTool(
@@ -974,6 +1202,15 @@ async def test_legacy_driver_capability_uses_action_plane(
     assert record.request.kind is ActionKind.DRIVER
     assert record.request.capability_id == DEFAULT_DRIVER_PROVIDER_ID
     assert record.request.action_name == capability.capability_id
+    assert record.request.idempotency_mode is (
+        ActionIdempotencyMode.EXECUTOR_ENFORCED
+    )
+    assert observed_request_context["qwenpaw_action_id"] == str(
+        record.request.action_id,
+    )
+    assert observed_request_context["qwenpaw_action_idempotency_key"] == (
+        record.request.idempotency_key
+    )
     assert record.result is not None
     assert record.result.status is ActionStatus.SUCCEEDED
 

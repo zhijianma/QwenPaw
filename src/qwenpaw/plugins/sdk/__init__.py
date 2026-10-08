@@ -82,6 +82,8 @@ from ...kernel.models import (
     ACTION_RETRY_DECISION_METADATA_KEY,
     ACTION_RETRY_HINT_METADATA_KEY,
     ActionApprovalLink,
+    ActionExecutionContext,
+    ActionIdempotencyMode,
     ActionKind,
     ActionRecord,
     ActionRequest,
@@ -234,11 +236,21 @@ from ...tasks.runner import LocalAgentRunner
 
 SDK_VERSION = "1.0"
 
+
+def current_action_execution() -> ActionExecutionContext | None:
+    """Return the Host-bound identity for the currently executing Action."""
+    from ...runtime.actions import current_action_execution as current
+
+    return current()
+
+
 __all__ = [
     "ACTION_RETRY_DECISION_METADATA_KEY",
     "ACTION_RETRY_HINT_METADATA_KEY",
     "SDK_VERSION",
     "ActionApprovalLink",
+    "ActionExecutionContext",
+    "ActionIdempotencyMode",
     "ActionKind",
     "ActionRecord",
     "ActionRequest",
@@ -247,6 +259,7 @@ __all__ = [
     "ActionRetryDisposition",
     "ActionRetryReason",
     "ActionStatus",
+    "current_action_execution",
     "ArtifactEmitter",
     "ArtifactPreviewDescriptor",
     "ArtifactRenderDisposition",

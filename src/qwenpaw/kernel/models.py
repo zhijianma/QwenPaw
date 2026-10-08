@@ -127,6 +127,14 @@ class ActionKind(str, Enum):
     HARNESS_REMOTE = "harness_remote"
 
 
+class ActionIdempotencyMode(str, Enum):
+    """Where an Action idempotency key is durably enforced."""
+
+    UNDECLARED = "undeclared"
+    HOST_GUARDED = "host_guarded"
+    EXECUTOR_ENFORCED = "executor_enforced"
+
+
 class ActionStatus(str, Enum):
     """Terminal outcome of an action at the verification boundary."""
 
@@ -154,6 +162,7 @@ class ActionRetryReason(str, Enum):
     PROVIDER_NOT_RETRYABLE = "provider_not_retryable"
     SIDE_EFFECT_UNCERTAIN = "side_effect_uncertain"
     EFFECTFUL_RETRY_UNSUPPORTED = "effectful_retry_unsupported"
+    EXECUTOR_IDEMPOTENT_FAILURE = "executor_idempotent_failure"
     TRANSIENT_FAILURE = "transient_failure"
 
 
@@ -512,10 +521,50 @@ class ActionRequest(KernelModel):
     effect: ToolEffect = ToolEffect.NONE
     risk: RiskLevel = RiskLevel.LOW
     reversible: bool = True
+    idempotency_mode: ActionIdempotencyMode = (
+        ActionIdempotencyMode.UNDECLARED
+    )
     idempotency_key: NonEmptyStr
+    executor_item_id: NonEmptyStr | None = None
+    retry_root_action_id: UUID | None = None
+    retry_of_action_id: UUID | None = None
+    attempt: int = Field(default=1, ge=1)
     approval_id: UUID | None = None
     policy_decision: NonEmptyStr = "allow"
     requested_at: AwareDatetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def validate_retry_lineage(self) -> Self:
+        """Require complete, acyclic lineage only after the first attempt."""
+        lineage = (
+            self.retry_root_action_id,
+            self.retry_of_action_id,
+        )
+        if self.attempt == 1:
+            if any(value is not None for value in lineage):
+                raise ValueError("initial action cannot declare retry lineage")
+            return self
+        if any(value is None for value in lineage):
+            raise ValueError("retried action requires complete lineage")
+        if self.action_id in lineage:
+            raise ValueError("action retry lineage cannot reference itself")
+        return self
+
+
+class ActionExecutionContext(KernelModel):
+    """Content-safe Action identity visible to the active executor."""
+
+    action_id: UUID
+    invocation_id: UUID
+    correlation_id: UUID
+    conversation_id: NonEmptyStr | None = None
+    capability_id: NamespacedId
+    idempotency_mode: ActionIdempotencyMode
+    idempotency_key: NonEmptyStr
+    executor_item_id: NonEmptyStr
+    retry_root_action_id: UUID | None = None
+    retry_of_action_id: UUID | None = None
+    attempt: int = Field(ge=1)
 
 
 class ActionRetryDecision(KernelModel):
@@ -573,11 +622,19 @@ class ActionResult(KernelModel):
             raise ValueError("retryable must match retry_decision")
         if self.retryable and self.status is not ActionStatus.FAILED:
             raise ValueError("only failed actions may be retryable")
-        if self.retryable and self.side_effect_status in {
-            SideEffectStatus.PREPARED,
-            SideEffectStatus.SUCCEEDED,
-            SideEffectStatus.UNCERTAIN,
-        }:
+        uncertain_is_executor_safe = (
+            self.side_effect_status is SideEffectStatus.UNCERTAIN
+            and self.retry_decision.reason
+            is ActionRetryReason.EXECUTOR_IDEMPOTENT_FAILURE
+        )
+        if self.retryable and (
+            self.side_effect_status
+            in {SideEffectStatus.PREPARED, SideEffectStatus.SUCCEEDED}
+            or (
+                self.side_effect_status is SideEffectStatus.UNCERTAIN
+                and not uncertain_is_executor_safe
+            )
+        ):
             raise ValueError("unsafe side effects cannot be retryable")
         return self
 
@@ -639,6 +696,26 @@ class ActionRecord(KernelModel):
         if self.result.conversation_id != self.request.conversation_id:
             raise ValueError(
                 "action result conversation does not match request",
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_executor_retry_contract(self) -> Self:
+        """Require a recorded executor promise for idempotent retries."""
+        decision = (
+            self.result.retry_decision
+            if self.result is not None
+            else None
+        )
+        if (
+            decision is not None
+            and decision.reason
+            is ActionRetryReason.EXECUTOR_IDEMPOTENT_FAILURE
+            and self.request.idempotency_mode
+            is not ActionIdempotencyMode.EXECUTOR_ENFORCED
+        ):
+            raise ValueError(
+                "executor-idempotent retry requires an executor promise",
             )
         return self
 
@@ -2016,6 +2093,9 @@ class ToolDefinition(KernelModel):
     policy_name: str = ""
     sandbox_required: bool = False
     effect: ToolEffect = ToolEffect.NONE
+    idempotency_mode: ActionIdempotencyMode = (
+        ActionIdempotencyMode.UNDECLARED
+    )
 
     @model_validator(mode="after")
     def validate_function_name(self) -> Self:
@@ -2036,6 +2116,9 @@ class DriverToolDefinition(KernelModel):
     effect: ToolEffect = ToolEffect.EXTERNAL_WRITE
     risk: RiskLevel = RiskLevel.HIGH
     reversible: bool = False
+    idempotency_mode: ActionIdempotencyMode = (
+        ActionIdempotencyMode.UNDECLARED
+    )
     invoke: SkipJsonSchema[Callable[[JsonObject], Awaitable[object]]] = Field(
         exclude=True,
     )

@@ -232,6 +232,16 @@ Action failure 也不再由各执行器自行解释布尔值。Host 使用
 声明自动 dispatcher，因为还缺少 executor 级幂等能力证明和跨 Action attempt lineage；
 这避免把“允许安全重试”混同成“系统已经自动重试”。
 
+该缺口现已进一步收敛为可执行契约。Action 明确声明 `undeclared`、`host_guarded`
+或 `executor_enforced`；只有最后一种表示执行器会跨 attempt 持久执行同一幂等 key。
+重试不复活或改写旧 Action，而是创建带 root、previous 和递增 attempt 的新 Action。
+Host 同时校验参数摘要、correlation、固定 capability generation 和当前环境契约；
+新 Invocation 使用自己的 Environment Resolution，不能复用旧证据。模型上下文身份已
+从幂等 key 中拆出为 `executor_item_id`，因此稳定 key 可以跨 Invocation 复用而不破坏
+committed Action binding。插件通过 `current_action_execution()` 读取内容安全执行身份，
+Driver 则在 request context 收到相同字段。后台 dispatcher 仍保持关闭，直到 retry
+budget、延迟策略和 crash fencing 接入同一 lineage。
+
 ### 5.1 故障分类
 
 建议在现有 `ModelCallResult` 和 Runtime policy 上冻结以下稳定语义，而不是依赖

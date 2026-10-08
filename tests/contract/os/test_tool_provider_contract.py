@@ -15,6 +15,7 @@ from qwenpaw.kernel.invocation import InvocationScope
 from qwenpaw.plugins.architecture import PluginManifest
 from qwenpaw.plugins.generations import GenerationRegistry
 from qwenpaw.plugins.sdk import (
+    ActionIdempotencyMode,
     ToolDefinition,
     ToolHost,
     ToolProvider,
@@ -198,6 +199,10 @@ async def test_plugin_tool_flows_through_pinned_governed_builder(
         by_name = {tool.name: tool for tool in tools}
         assert "_system_contract_tool" in by_name
         assert "describe_qwenpaw_invocation" in by_name
+        assert getattr(
+            by_name["describe_qwenpaw_invocation"],
+            "_qp_action_idempotency",
+        ) is ActionIdempotencyMode.HOST_GUARDED
         assert all(
             callable(getattr(tool, "check_permissions", None))
             for tool in tools

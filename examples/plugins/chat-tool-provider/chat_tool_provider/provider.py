@@ -4,6 +4,7 @@
 from collections.abc import Sequence
 
 from qwenpaw.plugins.sdk import (
+    ActionIdempotencyMode,
     InteractionOption,
     InvocationScope,
     RuntimeInteractionProducer,
@@ -32,6 +33,7 @@ def _description_tool(
         function=describe_qwenpaw_invocation,
         name="describe_qwenpaw_invocation",
         tool_type="internal",
+        idempotency_mode=ActionIdempotencyMode.HOST_GUARDED,
     )
 
 

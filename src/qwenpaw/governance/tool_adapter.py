@@ -23,6 +23,7 @@ from agentscope.tool import ToolChunk
 from ..app.approvals.interaction_bridge import attach_pending_to_interaction
 from ..app.approvals.task_bridge import attach_pending_to_durable_task
 from ..kernel.models import (
+    ActionIdempotencyMode,
     ActionKind,
     ApprovalDisplay,
     ApprovalSource,
@@ -165,6 +166,7 @@ def _policy_tool_init(
     request_context: dict[str, str] | None = None,
     governance_registry: Any = None,
     action_kind: ActionKind | str | None = None,
+    action_idempotency: ActionIdempotencyMode | str | None = None,
     **kwargs: Any,
 ) -> None:
     from agentscope.tool import FunctionTool
@@ -174,6 +176,11 @@ def _policy_tool_init(
     self._qp_request_context = request_context or {}
     self._qp_governance_registry = governance_registry or DEFAULT_REGISTRY
     self._qp_action_kind = ActionKind(action_kind) if action_kind else None
+    self._qp_action_idempotency = (
+        ActionIdempotencyMode(action_idempotency)
+        if action_idempotency
+        else ActionIdempotencyMode.UNDECLARED
+    )
     # A plugin backend can retain a stable public tool name while selecting a
     # more precise governance identity. Remote searches can therefore opt into
     # a network policy while local backends keep the internal policy identity.
@@ -523,6 +530,11 @@ async def _begin_tool_action(tool: Any) -> None:
         approval_id=_optional_uuid(getattr(tool, "_qp_approval_id", "")),
         environment_ref=environment_ref,
         kind=kind,
+        idempotency_mode=getattr(
+            tool,
+            "_qp_action_idempotency",
+            ActionIdempotencyMode.UNDECLARED,
+        ),
     )
     if (
         environment_resolution is not None
