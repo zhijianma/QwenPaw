@@ -648,7 +648,8 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - 原 `scheduler` Contribution 已迁移为无状态 `scheduler.provider`。Kernel 与 Plugin
   SDK 暴露最小 `SchedulerHost`/`SchedulerProvider`；Provider 只能取得宿主注入的
   `SchedulerPort`，不再决定 SQLite 路径、读取存储环境变量或拥有用户数据生命周期。
-  旧 `scheduler` Slot 仅保留 Dispatcher 与激活契约兼容，不再属于正式公共 Slot。
+  具体 `SQLiteSchedulerStore` 已从公共 SDK 移除，只保留在 Lite Host Adapter；旧
+  `scheduler` Slot 仅保留 Dispatcher 与激活契约兼容，不再属于正式公共 Slot。
 - 内置 local durable Scheduler 与示例插件均使用同一 Provider 合同。Cron Runtime
   在应用组合边界创建 `SQLiteSchedulerStore` 并通过 `SchedulerStoreHost` 注入，保持原
   durable path 和 Fire 幂等语义；Plugin 安装/热替换不触碰真实 Store。

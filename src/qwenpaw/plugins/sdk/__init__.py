@@ -223,7 +223,6 @@ from ...kernel.ports import (
     ToolProvider,
 )
 from ...tasks.runner import LocalAgentRunner
-from ...scheduling import SQLiteSchedulerStore
 
 SDK_VERSION = "1.0"
 
@@ -416,7 +415,6 @@ __all__ = [
     "SchedulerPort",
     "SchedulerHost",
     "SchedulerProvider",
-    "SQLiteSchedulerStore",
     "TaskOrder",
     "TaskPlanner",
     "TaskRunner",

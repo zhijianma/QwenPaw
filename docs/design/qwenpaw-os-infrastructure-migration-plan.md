@@ -1086,7 +1086,8 @@ Cron 不形成独立审批或产物事实源。
     `SchedulerHost` 取得宿主管理的 `SchedulerPort`，不再拥有数据库路径、环境变量或
     用户状态。Promotion 使用独立的进程内只读 Store 执行 `list_definitions()`，验证
     catalog 类型、Agent 所有权、唯一 ID、128 项与 64 KiB 上限；所有写方法失败关闭，
-    不创建或读取真实 SQLite。旧 `scheduler` Slot 仅作为迁移兼容入口保留。
+    不创建或读取真实 SQLite。公共 Plugin SDK 不再导出具体
+    `SQLiteSchedulerStore`；旧 `scheduler` Slot 仅作为迁移兼容入口保留。
   - [ ] 为 runner 等剩余高风险 Slot 实现
     无副作用或可隔离的真实 Scenario，并补齐 Evidence Artifact、人工授权策略与卸载
     授权门禁。关键词发现索引与 Workstation/Hub Release Registry 仍待实现。

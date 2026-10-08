@@ -228,7 +228,9 @@ def test_public_sdk_exports_runtime_interaction_contract() -> None:
     assert sdk.ScheduleLeaseStatus is not None
     assert sdk.ScheduleTrigger is not None
     assert sdk.SchedulerPort is not None
-    assert sdk.SQLiteSchedulerStore is not None
+    assert sdk.SchedulerHost is not None
+    assert sdk.SchedulerProvider is not None
+    assert not hasattr(sdk, "SQLiteSchedulerStore")
     assert sdk.ConversationForkBoundary is not None
     assert sdk.ConversationForkCommand is not None
     assert sdk.ConversationForkOrigin is not None
@@ -275,6 +277,7 @@ async def test_scheduler_provider_activates_and_persists_definition(
     from qwenpaw.capabilities.promotions import (
         LiteCapabilityPromotionScenarioRunner,
     )
+    from qwenpaw.scheduling import SQLiteSchedulerStore, SchedulerStoreHost
 
     root = (
         Path(__file__).parents[3]
@@ -298,10 +301,8 @@ async def test_scheduler_provider_activates_and_persists_definition(
     assert not database_path.exists()
     lease = await registry.pin(snapshot.generation)
     provider = lease.implementation("scheduler-provider.local-durable")
-    from qwenpaw.scheduling import SchedulerStoreHost
-
     scheduler = await provider.open(
-        SchedulerStoreHost(sdk.SQLiteSchedulerStore(database_path)),
+        SchedulerStoreHost(SQLiteSchedulerStore(database_path)),
     )
     definition = sdk.ScheduleDefinition(
         agent_id="default",

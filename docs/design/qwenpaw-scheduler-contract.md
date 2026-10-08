@@ -152,7 +152,8 @@ Channel 的上传/展示等价验收尚未完成，所以
 
 ## 6. Lite SQLite Store
 
-`SQLiteSchedulerStore` 使用独立 WAL 数据库实现公开 `SchedulerPort`：
+`SQLiteSchedulerStore` 使用独立 WAL 数据库实现 Kernel `SchedulerPort`。它是
+Lite 宿主 Adapter，不从公共 Plugin SDK 导出：
 
 - Schedule Definition 可更新或移除，但移除不会删除既有 Fire/Lease 历史。
 - `(agent_id, schedule_id, idempotency_key)` 唯一；不同 Agent 可以使用相同
@@ -169,12 +170,14 @@ Channel 的上传/展示等价验收尚未完成，所以
 
 ## 7. System Contribution
 
-`qwenpaw.system.tasks` bundle 以 `1.4.0` 发布
-`local-durable-scheduler`。默认实现使用应用级
-`WORKING_DIR/scheduler.db`，因此 Capability Registry 的 process 生命周期与 Store
-所有权一致；Agent 隔离完全由 Kernel 复合身份和数据库约束保证。测试可注入
-`scheduler_store_factory`，无需写入用户目录。
+`qwenpaw.system.tasks` bundle 发布 `local-durable-scheduler` 的
+`scheduler.provider` Contribution。应用组合边界创建
+`WORKING_DIR/scheduler.db` 对应的 `SQLiteSchedulerStore`，再通过
+`SchedulerStoreHost` 注入 Provider；Capability Registry 不构造或持有数据库路径。
+Agent 隔离完全由 Kernel 复合身份和数据库约束保证。测试在 Host 侧注入临时 Store，
+无需插件写入用户目录。
 
-系统实现与插件实现通过同一个 `SchedulerPort` 激活门禁。声明 `scheduler` Slot 却未
-实现完整 Port 的插件，会在 generation 发布前 fail closed；不会进入“描述符已生效、
-运行时才缺方法”的半激活状态。
+系统实现与插件实现通过同一个 `SchedulerProvider` 激活门禁。Provider 只能从
+`SchedulerHost.scheduler_store()` 获得已准入的 `SchedulerPort`，公共 SDK 不导出
+SQLite Adapter。声明 `scheduler.provider` 却未实现完整 Provider，或返回无效 Port
+的插件，会在 generation 发布前 fail closed；旧 `scheduler` Slot 只保留迁移兼容。
