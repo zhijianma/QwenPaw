@@ -15,6 +15,12 @@ from .events import (
     ExecutionEvent,
     TaskProjectionSnapshot,
 )
+from .releases import (
+    CapabilityPromotionCandidate,
+    CapabilityPromotionEvaluation,
+    CapabilityPromotionEvent,
+    CapabilityReleaseTag,
+)
 from .models import (
     ActionApprovalLink,
     ActionRecord,
@@ -1367,6 +1373,34 @@ class CapabilityLockStore(Protocol):
         limit: int = 100,
     ) -> Sequence[CapabilityLockManifest]:
         """Return newest locks for one ChatSpec identity."""
+
+
+@runtime_checkable
+class CapabilityPromotionJournal(Protocol):
+    """Append-only evidence boundary for registry promotion phases."""
+
+    async def append(self, event: CapabilityPromotionEvent) -> None:
+        """Persist one immutable operation phase exactly once."""
+
+    async def list_events(
+        self,
+        *,
+        provider_id: str | None = None,
+        limit: int = 100,
+    ) -> Sequence[CapabilityPromotionEvent]:
+        """Return newest promotion phases with optional provider filter."""
+
+
+@runtime_checkable
+class CapabilityPromotionGate(Protocol):
+    """Host policy boundary that decides candidate publication."""
+
+    async def evaluate(
+        self,
+        candidate: CapabilityPromotionCandidate,
+        release: CapabilityReleaseTag,
+    ) -> CapabilityPromotionEvaluation:
+        """Return a structured allow, deny, or indeterminate decision."""
 
 
 @runtime_checkable
