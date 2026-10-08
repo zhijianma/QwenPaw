@@ -12,6 +12,8 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
+from ...kernel import ConversationOutcomeStatus
+
 if TYPE_CHECKING:
     from .goal_mode import GoalMode
 
@@ -52,7 +54,7 @@ def make_get_goal(owner: "GoalMode") -> Any:
 def make_update_goal(owner: "GoalMode") -> Any:
     """Build the ``update_goal`` tool function."""
 
-    def update_goal(status: str) -> str:
+    async def update_goal(status: str) -> str:
         """Update the existing goal.
 
         Args:
@@ -73,9 +75,19 @@ def make_update_goal(owner: "GoalMode") -> Any:
             return "No active goal to update."
 
         if status == "complete":
-            session.active = False
-            session.last_verdict = "satisfied"
-            owner.deactivate()
+            finished = await owner.finish_current(
+                status=ConversationOutcomeStatus.ACHIEVED,
+                verdict="satisfied",
+                summary=(
+                    "The active long-running goal was explicitly marked "
+                    "complete."
+                ),
+            )
+            if not finished:
+                return (
+                    "Goal remains active because its business outcome "
+                    "could not be persisted."
+                )
             logger.info(
                 "Goal marked complete by agent: %s",
                 session.goal[:80],
@@ -86,8 +98,19 @@ def make_update_goal(owner: "GoalMode") -> Any:
             )
 
         # status == "blocked"
-        session.active = False
-        session.last_verdict = "blocked"
+        finished = await owner.finish_current(
+            status=ConversationOutcomeStatus.NOT_ACHIEVED,
+            verdict="blocked",
+            summary=(
+                "The active long-running goal stopped at a confirmed "
+                "blocking boundary."
+            ),
+        )
+        if not finished:
+            return (
+                "Goal remains active because its business outcome "
+                "could not be persisted."
+            )
         logger.info(
             "Goal marked blocked by agent: %s",
             session.goal[:80],
@@ -122,18 +145,15 @@ def make_create_goal(owner: "GoalMode") -> Any:
         if existing is not None:
             return "A goal is already active. " "Cancel it first with /cancel."
 
-        from ...app.agent_context import (
-            set_current_session_id,
-        )
-
-        key = f"__tool__{int(time.time())}"
+        key = owner.current_execution_key()
+        if key is None:
+            return "A stable Chat or compatibility session is required."
         budget = token_budget if token_budget > 0 else owner.default_max_tokens
         session = GoalSession(
             goal=objective.strip(),
             max_tokens=budget,
         )
         owner.sessions[key] = session
-        set_current_session_id(key)
         logger.info(
             "Goal created via tool: %s",
             objective.strip()[:80],

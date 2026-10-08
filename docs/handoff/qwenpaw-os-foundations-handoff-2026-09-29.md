@@ -813,6 +813,21 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   通过。测试收集保留 1 条既有 Pydantic `TestProviderRequest` 命名 warning；未运行
   全仓测试。
 
+### 2026-10-08 Goal Outcome 与 Chat 长程身份
+
+- Goal Mode 不再优先使用 transport `session_id`：有 Chat 时以 `ChatSpec.id` 作为
+  active goal identity，因此页面重连或 transport session 变化不会创建竞争目标；无
+  Chat 的兼容 Channel 才使用旧 session fallback。
+- Runtime 为当前 Invocation 绑定 `qwenpaw.system.goal-mode` Outcome producer。
+  `update_goal(complete)` 通过统一 Host Broker 声明 `ACHIEVED`，`blocked` 声明
+  `NOT_ACHIEVED`；Producer 不接触 Store，也不能伪造 Agent、Chat、correlation、
+  Invocation 或 generation。
+- Outcome declaration 失败时 Goal 保持 active，并向 Agent 返回持久化失败；不会因
+  Tool 返回、Assistant final message 或 SSE 结束而投影业务完成。预算和迭代上限仍仅
+  是技术终态，不自动写无证据的 `PARTIAL`。
+- Goal lifecycle 与 Outcome Host 共 20 项定点测试通过；新增/变更 Python 文件的
+  AST、mypy、Black、flake8、pylint 与凭据扫描均通过。未运行全仓测试。
+
 ### 本阶段此前已执行的定点验证
 
 - 后端核心路径定点测试：70 项通过。

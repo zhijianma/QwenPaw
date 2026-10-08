@@ -1116,6 +1116,12 @@ Cron 不形成独立审批或产物事实源。
       注册；热注册后新 Invocation 立即可用，无需重启。Producer admission 在
       Invocation 创建时冻结，卸载只阻止新 Invocation，已固定旧 generation 的执行可
       继续完成。
+    - [x] 内置 Goal Mode 已从 transport `session_id` 主键迁到优先使用
+      `ChatSpec.id`；只有没有稳定 Chat identity 的兼容 Channel 才回退 session。
+      `update_goal(complete)` 与 `update_goal(blocked)` 必须先经 Invocation-bound Host
+      Outcome Broker 分别落 `ACHIEVED` 与 `NOT_ACHIEVED`，再结束 Goal。Outcome
+      持久化失败时 Goal 保持 active，Assistant Message、Tool 返回或 SSE 完成均不能
+      冒充业务完成。迭代与预算上限仍只是技术终态，不凭空声明完成或部分完成。
     - [x] 接入 correlation-scoped 可回放 Trajectory：复用现有 Model、Action、
       Submission、Steer/Interrupt、Interaction、Artifact、Evidence、Verification、
       Wait/Recovery 与 Compaction Observation，并把完整 Outcome supersession 链投影为

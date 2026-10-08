@@ -579,6 +579,10 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
     或预算/恢复终态；Assistant Message、HTTP response 和 SSE 断开不结束执行链。
   - [x] Ask User admission 已限制为必要事实、关键偏好、范围授权和高影响裁决，禁止
     用“是否继续”代替 Runtime 调度。
+  - [x] Goal Mode 的 active state 已按 `ChatSpec.id` 归属，传输 session 变化不再切断
+    长程意图；模型调用 `update_goal` 只是 Outcome 请求，必须由当前 Invocation 的 Host
+    Broker 持久化后才生效。无 Chat 的 Channel 保留 session fallback，短问答无需进入
+    Goal Mode。
 - [ ] 冻结 Model Recovery Contract：区分连接前失败、部分流中断、Provider 限流、
   quota/budget/auth/policy、用户 Interrupt 与 unknown；transport retry 不消耗业务
   retry，超过短等待预算后持久化 Resource Wait 并释放运行槽。

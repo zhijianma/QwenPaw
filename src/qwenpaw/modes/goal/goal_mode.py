@@ -22,6 +22,10 @@ from ..base import AgentMode, find_active_explicit_mode
 from ...app.agent_context import (
     get_current_session_id,
 )
+from ...kernel import (
+    ConversationOutcomeRequest,
+    ConversationOutcomeStatus,
+)
 from ...loop.gates import (
     GoalStatusRubric,
     StopHandler,
@@ -106,13 +110,12 @@ class GoalMode(AgentMode):
     def active_session(
         self,
     ) -> GoalSession | None:
-        """Return active session for current context.
+        """Return the active goal for the current execution identity.
 
-        Uses get_current_session_id() ContextVar to
-        look up session. Returns None if no session or
-        session is inactive.
+        Chat invocations use ``ChatSpec.id``. Adapters without a stable Chat
+        retain the transport-session compatibility fallback.
         """
-        key = get_current_session_id()
+        key = self.current_execution_key()
         if key is None:
             return None
         s = self._sessions.get(key)
@@ -123,24 +126,23 @@ class GoalMode(AgentMode):
     def session_by_ctx_var(
         self,
     ) -> Optional[GoalSession]:
-        """Return session by ContextVar (any status).
+        """Return goal state by current execution identity (any status).
 
-        Uses agent_context.get_current_session_id().
-        Returns session even when active=False so
-        that gates can detect completed goals.
+        Inactive state remains visible so gates can distinguish a declared
+        outcome from an active continuation.
         """
-        key = get_current_session_id()
+        key = self.current_execution_key()
         if key is None:
             return None
         return self._sessions.get(key)
 
     def deactivate(self) -> None:
-        """Remove current session from _sessions.
+        """Remove the current goal from the execution identity.
 
         Called after goal completion to prevent stale
         sessions from blocking subsequent messages.
         """
-        key = get_current_session_id()
+        key = self.current_execution_key()
         if key is not None:
             self._sessions.pop(key, None)
 
@@ -148,8 +150,8 @@ class GoalMode(AgentMode):
         self,
         ctx: HookContext,
     ) -> None:
-        """Clear the current goal session on /new or /clear."""
-        self._sessions.pop(ctx.session_id, None)
+        """Clear the current Chat-owned goal on /new or /clear."""
+        self._sessions.pop(self._context_execution_key(ctx), None)
         if self._handler is not None:
             self._handler.reset_session()
 
@@ -369,7 +371,11 @@ class GoalMode(AgentMode):
     def _current_session_key(
         ctx: Any,
     ) -> str:
-        """Derive session key from context."""
+        """Prefer ChatSpec.id and retain session fallback for adapters."""
+        invocation = getattr(ctx, "invocation_scope", None)
+        conversation_id = getattr(invocation, "conversation_id", None)
+        if conversation_id:
+            return str(conversation_id)
         if isinstance(ctx, dict):
             return ctx.get(
                 "session_id",
@@ -380,6 +386,53 @@ class GoalMode(AgentMode):
             "session_id",
             "default",
         )
+
+    @staticmethod
+    def _context_execution_key(ctx: Any) -> str:
+        """Resolve a Hook context without consulting ambient state."""
+        return GoalMode._current_session_key(ctx)
+
+    @staticmethod
+    def current_execution_key() -> str | None:
+        """Use the current Chat identity before legacy session identity."""
+        from ...runtime.outcome_context import current_outcome_context
+
+        conversation_id = current_outcome_context().conversation_id
+        return conversation_id or get_current_session_id()
+
+    async def finish_current(
+        self,
+        *,
+        status: ConversationOutcomeStatus,
+        verdict: str,
+        summary: str,
+    ) -> bool:
+        """Persist business disposition before ending a Chat goal."""
+        from ...runtime.outcome_context import current_outcome_context
+
+        session = self.active_session()
+        if session is None:
+            return False
+        outcome_context = current_outcome_context()
+        if outcome_context.conversation_id is not None:
+            if outcome_context.host is None:
+                logger.error("Goal outcome host is unavailable")
+                return False
+            try:
+                await outcome_context.host.declare(
+                    ConversationOutcomeRequest(
+                        status=status,
+                        summary=summary,
+                    ),
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("Goal outcome declaration failed")
+                return False
+        session.active = False
+        session.last_verdict = verdict
+        if status is ConversationOutcomeStatus.ACHIEVED:
+            self.deactivate()
+        return True
 
     def get_session(
         self,

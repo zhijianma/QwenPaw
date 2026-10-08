@@ -92,6 +92,23 @@ class ContextVarsSetupHook(LifecycleHook):
         set_current_user_id(ctx.request.user_id)
         set_current_channel(getattr(ctx.request, "channel", None))
         request_context = getattr(ctx.request, "request_context", None)
+        from ...kernel import CapabilityProviderKind
+        from ...runtime.outcome_context import set_current_outcome_context
+        from ...runtime.outcome_hosts import provider_outcome_host
+
+        invocation = ctx.invocation_scope
+        conversation_id = (
+            invocation.conversation_id if invocation is not None else None
+        )
+        outcome_host = None
+        if invocation is not None and conversation_id is not None:
+            outcome_host = provider_outcome_host(
+                ctx.workspace,
+                invocation,
+                producer_id="qwenpaw.system.goal-mode",
+                provider_kind=CapabilityProviderKind.SYSTEM,
+            )
+        set_current_outcome_context(conversation_id, outcome_host)
         usage_context = (
             request_context if isinstance(request_context, dict) else {}
         )

@@ -144,6 +144,13 @@ WaitCondition，或恢复与预算策略到达终态时才结束这条执行链�
 而是内核用“用户再说一句话”作为调度器的隐含假设；短问答仍自然退化为一条仅含一个
 Invocation 的执行链。
 
+Goal Mode 是当前长程快速路径，而不是另一套 Task 状态机。它优先以
+`ChatSpec.id` 保存 active state；同一 Chat 更换 transport session 后仍继续同一目标。
+`update_goal(complete/blocked)` 先通过 Invocation-bound Host Outcome Broker 写入显式
+`ACHIEVED/NOT_ACHIEVED`，成功后才结束 Goal。Outcome Store 或 admission 失败时保持
+active，避免把 Tool 调用成功、最终文本或连接关闭误判为业务完成。预算与迭代上限只
+结束本次技术运行，不自动制造缺少证据的业务 Outcome。
+
 当前 Console 兼容 Adapter 会从 typed envelope 装配固定、内容最小化的 runtime
 recovery input。Resource Wait 与 Model Step Continuation 都只传递权威事实引用；这是
 旧消息执行入口的桥接，不是把恢复重新定义为用户消息。后续 Runtime 原生输入应直接
