@@ -27,7 +27,10 @@ from ..runtime.actions import (
     model_step_action_evidence_digest,
     model_step_committed_action_items,
 )
-from ..runtime.action_retries import lite_action_retry_input_store
+from ..runtime.action_retries import (
+    lite_action_retry_continuation_store,
+    lite_action_retry_input_store,
+)
 from ..runtime.harness_recovery import (
     build_harness_recovery_checkpoint,
     lite_harness_recovery_context_store,
@@ -400,6 +403,11 @@ class HarnessRuntime:
                 lite_action_store(self._workspace_dir),
                 retry_input_store=lite_action_retry_input_store(
                     self._workspace_dir,
+                ),
+                retry_continuation_store=(
+                    lite_action_retry_continuation_store(
+                        self._workspace_dir,
+                    )
                 ),
             )
             request_context[HARNESS_ACTION_TRACKER_KEY] = HarnessActionTracker(

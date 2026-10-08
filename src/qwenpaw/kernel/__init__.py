@@ -227,6 +227,8 @@ from .interactions import (
     validate_interaction_admission,
 )
 from .waits import (
+    ActionRetryContinuation,
+    ActionRetryContinuationStatus,
     BackgroundActionContextCheckpoint,
     BackgroundActionContinuation,
     BackgroundActionContinuationStatus,
@@ -358,6 +360,7 @@ from .releases import (
     CapabilityReleaseTag,
 )
 from .ports import (
+    ActionRetryContinuationStore,
     ActionRetryInputStore,
     ActionStore,
     AgentFactory,
@@ -448,6 +451,9 @@ __all__ = [
     "ActionResult",
     "ActionRetryDecision",
     "ActionRetryDisposition",
+    "ActionRetryContinuation",
+    "ActionRetryContinuationStatus",
+    "ActionRetryContinuationStore",
     "ActionRetryInputCheckpoint",
     "ActionRetryPolicy",
     "ActionRetryReason",

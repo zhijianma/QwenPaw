@@ -1,29 +1,47 @@
 # -*- coding: utf-8 -*-
-"""Private execution input for durable Action retry admission."""
+"""Private input and content-safe outbox for durable Action retries."""
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid5
 
 from ..kernel import (
     ActionRequest,
+    ActionResult,
+    ActionRetryContinuation,
+    ActionRetryContinuationStatus,
     ActionRetryDecision,
     ActionRetryDisposition,
     ActionRetryInputCheckpoint,
 )
 from ..kernel.models import JsonObject
+from ..kernel.models import utc_now
 from ..utils.io_utils import (
     get_path_lock,
     read_json_async,
+    run_sync_io,
     write_json_atomic_async,
 )
 
 ACTION_RETRY_INPUT_SCHEMA = "qwenpaw.action-retry-input.v1"
+ACTION_RETRY_CONTINUATION_SCHEMA = (
+    "qwenpaw.action-retry-continuation.v1"
+)
+ActionRetryDispatcher = Callable[
+    [ActionRetryContinuation],
+    Awaitable[UUID | None],
+]
 
 
 class ActionRetryInputConflictError(RuntimeError):
     """Raised when private retry input conflicts with durable identity."""
+
+
+class ActionRetryContinuationConflictError(RuntimeError):
+    """Raised when retry outbox state conflicts with immutable evidence."""
 
 
 class FilesystemActionRetryInputStore:
@@ -76,6 +94,8 @@ class FilesystemActionRetryInputStore:
             raise ValueError("retry input requires an admitted next attempt")
         if decision.max_attempts != request.retry_policy.max_attempts:
             raise ValueError("retry input policy does not match Action")
+        if request.agent_id is None:
+            raise ValueError("retry input requires an Action agent identity")
         checkpoint = ActionRetryInputCheckpoint(
             checkpoint_id=uuid5(
                 request.action_id,
@@ -86,6 +106,7 @@ class FilesystemActionRetryInputStore:
                 request.retry_root_action_id or request.action_id
             ),
             invocation_id=request.invocation_id,
+            agent_id=request.agent_id,
             conversation_id=request.conversation_id,
             correlation_id=request.correlation_id,
             registry_generation=request.registry_generation,
@@ -139,6 +160,254 @@ class FilesystemActionRetryInputStore:
         return checkpoint, arguments
 
 
+class FilesystemActionRetryContinuationStore:
+    """Content-safe durable outbox for Host-admitted Action retries."""
+
+    def __init__(
+        self,
+        workspace_dir: Path,
+        *,
+        clock: Callable[[], datetime] = utc_now,
+    ) -> None:
+        self._root = (
+            Path(workspace_dir)
+            / ".qwenpaw"
+            / "lite"
+            / "action-retry-continuations"
+        )
+        self._clock = clock
+
+    def _path(self, continuation_id: UUID) -> Path:
+        return self._root / f"{continuation_id}.json"
+
+    @staticmethod
+    def _parse(payload: object) -> ActionRetryContinuation:
+        if not isinstance(payload, dict):
+            raise ActionRetryContinuationConflictError(
+                "Action retry continuation must be an object",
+            )
+        if payload.get("schema") != ACTION_RETRY_CONTINUATION_SCHEMA:
+            raise ActionRetryContinuationConflictError(
+                "unsupported Action retry continuation schema",
+            )
+        return ActionRetryContinuation.model_validate(
+            payload.get("continuation"),
+        )
+
+    async def _write(
+        self,
+        continuation: ActionRetryContinuation,
+    ) -> None:
+        await write_json_atomic_async(
+            self._path(continuation.continuation_id),
+            {
+                "schema": ACTION_RETRY_CONTINUATION_SCHEMA,
+                "continuation": continuation.model_dump(mode="json"),
+            },
+            sort_keys=True,
+        )
+
+    @staticmethod
+    def _validate_binding(
+        checkpoint: ActionRetryInputCheckpoint,
+        result: ActionResult,
+    ) -> ActionRetryDecision:
+        decision = result.retry_decision
+        if (
+            result.action_id != checkpoint.action_id
+            or result.invocation_id != checkpoint.invocation_id
+            or result.conversation_id != checkpoint.conversation_id
+        ):
+            raise ActionRetryContinuationConflictError(
+                "Action retry result identity does not match checkpoint",
+            )
+        if (
+            not result.retryable
+            or decision is None
+            or decision.disposition
+            is not ActionRetryDisposition.RETRY_FROM_NEW_ACTION
+            or decision.input_checkpoint_id != checkpoint.checkpoint_id
+            or decision.next_attempt != checkpoint.next_attempt
+        ):
+            raise ActionRetryContinuationConflictError(
+                "Action retry result does not admit this checkpoint",
+            )
+        return decision
+
+    async def defer(
+        self,
+        checkpoint: ActionRetryInputCheckpoint,
+        result: ActionResult,
+    ) -> ActionRetryContinuation:
+        """Publish one idempotent entry after ActionResult persistence."""
+        decision = self._validate_binding(checkpoint, result)
+        retry_delay = decision.retry_after_seconds or 0
+        ready_at = result.completed_at + timedelta(seconds=retry_delay)
+        continuation = ActionRetryContinuation(
+            continuation_id=uuid5(
+                checkpoint.checkpoint_id,
+                "action-retry-continuation",
+            ),
+            checkpoint=checkpoint,
+            source_observation_digest=result.observation_digest,
+            ready_at=ready_at,
+            status=(
+                ActionRetryContinuationStatus.READY
+                if retry_delay == 0
+                else ActionRetryContinuationStatus.WAITING_DELAY
+            ),
+            created_at=result.completed_at,
+            updated_at=result.completed_at,
+        )
+        path = self._path(continuation.continuation_id)
+        async with get_path_lock(path):
+            try:
+                payload = await read_json_async(path)
+            except FileNotFoundError:
+                payload = None
+            if payload is not None:
+                existing = self._parse(payload)
+                if (
+                    existing.checkpoint != checkpoint
+                    or existing.source_observation_digest
+                    != result.observation_digest
+                    or existing.ready_at != ready_at
+                ):
+                    raise ActionRetryContinuationConflictError(
+                        "Action retry continuation already conflicts",
+                    )
+                return existing
+            await self._write(continuation)
+        return continuation
+
+    async def get(
+        self,
+        continuation_id: UUID,
+    ) -> ActionRetryContinuation | None:
+        """Read one retry continuation, returning None when absent."""
+        try:
+            payload = await read_json_async(self._path(continuation_id))
+        except FileNotFoundError:
+            return None
+        return self._parse(payload)
+
+    async def _promote_if_ready(
+        self,
+        continuation_id: UUID,
+        now: datetime,
+    ) -> ActionRetryContinuation:
+        path = self._path(continuation_id)
+        async with get_path_lock(path):
+            current = await self.get(continuation_id)
+            if current is None:
+                raise ActionRetryContinuationConflictError(
+                    "Action retry continuation is unavailable",
+                )
+            if (
+                current.status
+                is not ActionRetryContinuationStatus.WAITING_DELAY
+                or current.ready_at > now
+            ):
+                return current
+            updated = current.model_copy(
+                update={
+                    "status": ActionRetryContinuationStatus.READY,
+                    "revision": current.revision + 1,
+                    "updated_at": now,
+                },
+            )
+            await self._write(updated)
+        return updated
+
+    async def list_pending(
+        self,
+        *,
+        agent_id: str,
+        now: datetime | None = None,
+    ) -> tuple[ActionRetryContinuation, ...]:
+        """List owned waiting work and promote every matured delay."""
+        effective_now = now or self._clock()
+        paths = await run_sync_io(
+            lambda: tuple(sorted(self._root.glob("*.json"))),
+        )
+        pending = []
+        for path in paths:
+            continuation = self._parse(await read_json_async(path))
+            if continuation.checkpoint.agent_id != agent_id:
+                continue
+            continuation = await self._promote_if_ready(
+                continuation.continuation_id,
+                effective_now,
+            )
+            if continuation.status in {
+                ActionRetryContinuationStatus.WAITING_DELAY,
+                ActionRetryContinuationStatus.READY,
+            }:
+                pending.append(continuation)
+        pending.sort(
+            key=lambda item: (item.ready_at, item.continuation_id),
+        )
+        return tuple(pending)
+
+    async def cancel(
+        self,
+        continuation_id: UUID,
+    ) -> ActionRetryContinuation:
+        """Cancel undispatched retry work without touching its evidence."""
+        path = self._path(continuation_id)
+        async with get_path_lock(path):
+            current = await self.get(continuation_id)
+            if current is None:
+                raise ActionRetryContinuationConflictError(
+                    "Action retry continuation is unavailable",
+                )
+            if current.status in {
+                ActionRetryContinuationStatus.CANCELLED,
+                ActionRetryContinuationStatus.DISPATCHED,
+            }:
+                return current
+            updated = current.model_copy(
+                update={
+                    "status": ActionRetryContinuationStatus.CANCELLED,
+                    "revision": current.revision + 1,
+                    "updated_at": self._clock(),
+                },
+            )
+            await self._write(updated)
+        return updated
+
+    async def dispatch(
+        self,
+        continuation_id: UUID,
+        dispatcher: ActionRetryDispatcher,
+    ) -> ActionRetryContinuation:
+        """Idempotently bind one ready entry to durable dispatch work."""
+        path = self._path(continuation_id)
+        async with get_path_lock(path):
+            current = await self.get(continuation_id)
+            if current is None:
+                raise ActionRetryContinuationConflictError(
+                    "Action retry continuation is unavailable",
+                )
+            if current.status is not ActionRetryContinuationStatus.READY:
+                return current
+            dispatch_id = await dispatcher(current)
+            updated = current.model_copy(
+                update={
+                    "status": (
+                        ActionRetryContinuationStatus.DISPATCHED
+                        if dispatch_id is not None
+                        else ActionRetryContinuationStatus.CANCELLED
+                    ),
+                    "dispatch_id": dispatch_id,
+                    "revision": current.revision + 1,
+                    "updated_at": self._clock(),
+                },
+            )
+            await self._write(updated)
+        return updated
+
+
 def lite_action_retry_input_store(
     workspace_dir: Path,
 ) -> FilesystemActionRetryInputStore:
@@ -146,9 +415,26 @@ def lite_action_retry_input_store(
     return FilesystemActionRetryInputStore(workspace_dir)
 
 
+def lite_action_retry_continuation_store(
+    workspace_dir: Path,
+    *,
+    clock: Callable[[], datetime] = utc_now,
+) -> FilesystemActionRetryContinuationStore:
+    """Return the Lite Action retry continuation outbox."""
+    return FilesystemActionRetryContinuationStore(
+        workspace_dir,
+        clock=clock,
+    )
+
+
 __all__ = [
     "ACTION_RETRY_INPUT_SCHEMA",
+    "ACTION_RETRY_CONTINUATION_SCHEMA",
+    "ActionRetryContinuationConflictError",
+    "ActionRetryDispatcher",
     "ActionRetryInputConflictError",
+    "FilesystemActionRetryContinuationStore",
     "FilesystemActionRetryInputStore",
+    "lite_action_retry_continuation_store",
     "lite_action_retry_input_store",
 ]

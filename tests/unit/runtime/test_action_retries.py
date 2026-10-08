@@ -3,6 +3,7 @@
 
 import asyncio
 import stat
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -14,15 +15,21 @@ from qwenpaw.kernel import (
     ACTION_RETRY_HINT_METADATA_KEY,
     ActionKind,
     ActionRequest,
+    ActionResult,
+    ActionRetryContinuationStatus,
     ActionRetryDecision,
     ActionRetryDisposition,
+    ActionRetryInputCheckpoint,
     ActionRetryReason,
+    ActionStatus,
     CapabilitySelection,
     InvocationScope,
     ToolEffect,
 )
 from qwenpaw.runtime.action_retries import (
+    ActionRetryContinuationConflictError,
     ActionRetryInputConflictError,
+    lite_action_retry_continuation_store,
     lite_action_retry_input_store,
 )
 from qwenpaw.runtime.actions import (
@@ -36,6 +43,7 @@ def _request() -> ActionRequest:
     return ActionRequest(
         invocation_id=uuid4(),
         correlation_id=uuid4(),
+        agent_id="default",
         conversation_id="chat-retry-input",
         registry_generation=4,
         capability_id="example.private-tool",
@@ -61,6 +69,34 @@ def _decision() -> ActionRetryDecision:
         next_attempt=2,
         retry_after_seconds=0,
     )
+
+
+async def _admitted_retry(
+    tmp_path: Path,
+    *,
+    delay: float = 0,
+) -> tuple[ActionResult, ActionRetryInputCheckpoint]:
+    request = _request()
+    input_store = lite_action_retry_input_store(tmp_path)
+    decision = _decision().model_copy(
+        update={"retry_after_seconds": delay},
+    )
+    checkpoint = await input_store.save(request, decision)
+    bound = decision.model_copy(
+        update={"input_checkpoint_id": checkpoint.checkpoint_id},
+    )
+    result = ActionResult(
+        action_id=request.action_id,
+        invocation_id=request.invocation_id,
+        conversation_id=request.conversation_id,
+        status=ActionStatus.FAILED,
+        observation_digest=f"sha256:{'b' * 64}",
+        error_code="temporary_failure",
+        retryable=True,
+        retry_decision=bound,
+        completed_at=datetime(2026, 10, 8, tzinfo=timezone.utc),
+    )
+    return result, checkpoint
 
 
 @pytest.mark.asyncio
@@ -107,10 +143,12 @@ async def test_runtime_binds_private_input_before_retryable_result(
     )
     action_store = FilesystemActionStore(tmp_path)
     input_store = lite_action_retry_input_store(tmp_path)
+    continuation_store = lite_action_retry_continuation_store(tmp_path)
     recorder = RuntimeActionRecorder(
         scope,
         action_store,
         retry_input_store=input_store,
+        retry_continuation_store=continuation_store,
     )
     context = ToolCallContext(
         tool_call_id="call-private-retry",
@@ -157,6 +195,23 @@ async def test_runtime_binds_private_input_before_retryable_result(
         tmp_path.glob(".qwenpaw/lite/actions/*/*/*/result.json"),
     )
     assert "private runtime retry body" not in result_path.read_text(
+        encoding="utf-8",
+    )
+    [continuation] = await continuation_store.list_pending(
+        agent_id=scope.agent_id,
+    )
+    assert continuation.checkpoint == checkpoint
+    assert continuation.source_observation_digest == (
+        record.result.observation_digest
+    )
+    assert continuation.status is ActionRetryContinuationStatus.READY
+    outbox_path = next(
+        tmp_path.glob(
+            ".qwenpaw/lite/action-retry-continuations/*.json",
+        ),
+    )
+    assert stat.S_IMODE(outbox_path.stat().st_mode) == 0o600
+    assert "private runtime retry body" not in outbox_path.read_text(
         encoding="utf-8",
     )
 
@@ -227,3 +282,130 @@ async def test_retry_input_failure_downgrades_automatic_admission(
     assert response.metadata["qwenpaw_action_retry_decision"] == (
         record.result.retry_decision.model_dump(mode="json")
     )
+
+
+@pytest.mark.asyncio
+async def test_retry_outbox_promotes_delay_and_dispatches_once(
+    tmp_path: Path,
+) -> None:
+    result, checkpoint = await _admitted_retry(tmp_path, delay=30)
+    now = [result.completed_at]
+    store = lite_action_retry_continuation_store(
+        tmp_path,
+        clock=lambda: now[0],
+    )
+
+    waiting = await store.defer(checkpoint, result)
+    assert waiting.status is ActionRetryContinuationStatus.WAITING_DELAY
+    [not_ready] = await store.list_pending(
+        agent_id=checkpoint.agent_id,
+    )
+    assert not_ready.status is ActionRetryContinuationStatus.WAITING_DELAY
+
+    now[0] += timedelta(seconds=30)
+    [ready] = await store.list_pending(agent_id=checkpoint.agent_id)
+    assert ready.status is ActionRetryContinuationStatus.READY
+    dispatch_id = uuid4()
+    calls = []
+
+    async def dispatch(continuation):
+        calls.append(continuation.continuation_id)
+        return dispatch_id
+
+    dispatched = await store.dispatch(ready.continuation_id, dispatch)
+    repeated = await store.dispatch(ready.continuation_id, dispatch)
+
+    assert dispatched.status is ActionRetryContinuationStatus.DISPATCHED
+    assert dispatched.dispatch_id == dispatch_id
+    assert repeated == dispatched
+    assert calls == [ready.continuation_id]
+    assert await store.list_pending(agent_id=checkpoint.agent_id) == ()
+
+
+@pytest.mark.asyncio
+async def test_retry_outbox_rejects_mismatch_and_cancels(
+    tmp_path: Path,
+) -> None:
+    result, checkpoint = await _admitted_retry(tmp_path)
+    store = lite_action_retry_continuation_store(tmp_path)
+
+    with pytest.raises(
+        ActionRetryContinuationConflictError,
+        match="identity",
+    ):
+        await store.defer(
+            checkpoint,
+            result.model_copy(update={"action_id": uuid4()}),
+        )
+
+    ready = await store.defer(checkpoint, result)
+    cancelled = await store.cancel(ready.continuation_id)
+    repeated = await store.cancel(ready.continuation_id)
+
+    assert cancelled.status is ActionRetryContinuationStatus.CANCELLED
+    assert repeated == cancelled
+    assert await store.list_pending(agent_id=checkpoint.agent_id) == ()
+
+
+@pytest.mark.asyncio
+async def test_result_remains_committed_when_outbox_publish_fails(
+    tmp_path: Path,
+) -> None:
+    scope = InvocationScope(
+        agent_id="default",
+        conversation_id="chat-retry-outbox-failure",
+        session_id="transport-session",
+        root_agent_id="default",
+        root_session_id="transport-session",
+        workspace_dir=str(tmp_path),
+        registry_generation=4,
+        selection=CapabilitySelection(),
+    )
+    action_store = FilesystemActionStore(tmp_path)
+
+    class FailingContinuationStore:
+        async def defer(self, _checkpoint, result):
+            records = await action_store.list_for_conversation(
+                scope.conversation_id,
+            )
+            assert records[0].result == result
+            raise OSError("outbox unavailable")
+
+    recorder = RuntimeActionRecorder(
+        scope,
+        action_store,
+        retry_input_store=lite_action_retry_input_store(tmp_path),
+        retry_continuation_store=FailingContinuationStore(),
+    )
+    context = ToolCallContext(
+        tool_call_id="call-retry-outbox-failure",
+        tool_name="read_private",
+        session_id=scope.session_id,
+        agent_id=scope.agent_id,
+        root_session_id=scope.root_session_id,
+        root_agent_id=scope.root_agent_id,
+        started_at=0,
+        offload_deadline=None,
+        cancel_event=asyncio.Event(),
+    )
+    context.extra["tool_input"] = {"path": "report.md"}
+    await recorder.begin(
+        context,
+        effect=ToolEffect.NONE,
+        policy_decision="allow",
+    )
+    await recorder.complete(
+        ToolResponse(
+            content=[TextBlock(type="text", text="temporary failure")],
+            id=context.tool_call_id,
+            state=ToolResultState.ERROR,
+            metadata={ACTION_RETRY_HINT_METADATA_KEY: True},
+        ),
+        context,
+    )
+
+    [record] = await action_store.list_for_conversation(
+        scope.conversation_id,
+    )
+    assert record.result is not None
+    assert record.result.retryable is True

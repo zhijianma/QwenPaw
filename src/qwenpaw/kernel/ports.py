@@ -3,7 +3,13 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Mapping,
+    Sequence,
+)
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
@@ -96,7 +102,11 @@ from .interactions import (
     UserInputReason,
 )
 from .memory import MemoryStateScope, MemoryStateSnapshot
-from .waits import ModelResourceWait, ModelStepContinuation
+from .waits import (
+    ActionRetryContinuation,
+    ModelResourceWait,
+    ModelStepContinuation,
+)
 from .scheduling import (
     ScheduleDefinition,
     ScheduleFire,
@@ -1677,6 +1687,48 @@ class ActionRetryInputStore(Protocol):
         checkpoint_id: UUID,
     ) -> tuple[ActionRetryInputCheckpoint, JsonObject]:
         """Load exact input for one verified retry dispatcher."""
+
+
+@runtime_checkable
+class ActionRetryContinuationStore(Protocol):
+    """Durable outbox for one Host-admitted Action retry."""
+
+    async def defer(
+        self,
+        checkpoint: ActionRetryInputCheckpoint,
+        result: ActionResult,
+    ) -> ActionRetryContinuation:
+        """Publish retry work only after its terminal result commits."""
+
+    async def get(
+        self,
+        continuation_id: UUID,
+    ) -> ActionRetryContinuation | None:
+        """Read one retry entry without changing its lifecycle."""
+
+    async def list_pending(
+        self,
+        *,
+        agent_id: str,
+        now: datetime | None = None,
+    ) -> Sequence[ActionRetryContinuation]:
+        """List owned waiting work and promote matured delays."""
+
+    async def cancel(
+        self,
+        continuation_id: UUID,
+    ) -> ActionRetryContinuation:
+        """Cancel one undispatched retry entry idempotently."""
+
+    async def dispatch(
+        self,
+        continuation_id: UUID,
+        dispatcher: Callable[
+            [ActionRetryContinuation],
+            Awaitable[UUID | None],
+        ],
+    ) -> ActionRetryContinuation:
+        """Bind one ready entry to an idempotent dispatcher."""
 
 
 @runtime_checkable

@@ -11,6 +11,7 @@ from uuid import UUID
 from pydantic import AwareDatetime, Field, StringConstraints, model_validator
 
 from .models import (
+    ActionRetryInputCheckpoint,
     CommittedActionItem,
     KernelModel,
     ModelFailureClass,
@@ -105,6 +106,15 @@ class BackgroundActionContinuationStatus(str, Enum):
     DISPATCHED = "dispatched"
     CANCELLED = "cancelled"
     RECOVERY_EXHAUSTED = "recovery_exhausted"
+
+
+class ActionRetryContinuationStatus(str, Enum):
+    """Lifecycle of one Host-admitted Action retry outbox entry."""
+
+    WAITING_DELAY = "waiting_delay"
+    READY = "ready"
+    DISPATCHED = "dispatched"
+    CANCELLED = "cancelled"
 
 
 class ModelStepReconciliationReason(str, Enum):
@@ -319,6 +329,40 @@ class BackgroundActionContinuation(KernelModel):
             )
         if self.continuation_id != self.checkpoint.continuation_id:
             raise ValueError("background continuation checkpoint mismatch")
+        if self.updated_at < self.created_at:
+            raise ValueError("updated_at cannot precede created_at")
+        return self
+
+
+class ActionRetryContinuation(KernelModel):
+    """Content-safe durable work item for one exact Action retry."""
+
+    continuation_id: UUID
+    checkpoint: ActionRetryInputCheckpoint
+    source_observation_digest: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True,
+            pattern=r"^sha256:[0-9a-f]{64}$",
+        ),
+    ]
+    ready_at: AwareDatetime
+    status: ActionRetryContinuationStatus
+    dispatch_id: UUID | None = None
+    revision: int = Field(default=1, ge=1)
+    created_at: AwareDatetime = Field(default_factory=utc_now)
+    updated_at: AwareDatetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def validate_action_retry_continuation(self) -> Self:
+        """Require coherent dispatch binding and durable timestamps."""
+        dispatched = self.status is ActionRetryContinuationStatus.DISPATCHED
+        if dispatched != (self.dispatch_id is not None):
+            raise ValueError(
+                "dispatched Action retry requires dispatch_id",
+            )
+        if self.ready_at < self.created_at:
+            raise ValueError("Action retry ready_at precedes creation")
         if self.updated_at < self.created_at:
             raise ValueError("updated_at cannot precede created_at")
         return self
@@ -576,6 +620,8 @@ class WaitCondition(KernelModel):
 
 
 __all__ = [
+    "ActionRetryContinuation",
+    "ActionRetryContinuationStatus",
     "BackgroundActionContextCheckpoint",
     "BackgroundActionContinuation",
     "BackgroundActionContinuationStatus",

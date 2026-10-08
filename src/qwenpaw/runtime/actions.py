@@ -27,6 +27,7 @@ from ..kernel import (
     ActionResult,
     ActionRetryDecision,
     ActionRetryDisposition,
+    ActionRetryContinuationStore,
     ActionRetryInputStore,
     ActionRetryPolicy,
     ActionRetryReason,
@@ -120,6 +121,7 @@ def current_action_execution() -> ActionExecutionContext | None:
         action_id=request.action_id,
         invocation_id=request.invocation_id,
         correlation_id=request.correlation_id,
+        agent_id=request.agent_id,
         conversation_id=request.conversation_id,
         capability_id=request.capability_id,
         idempotency_mode=request.idempotency_mode,
@@ -670,6 +672,9 @@ class RuntimeActionRecorder:
         tool_owners: dict[str, str] | None = None,
         retry_policy: ActionRetryPolicy | None = None,
         retry_input_store: ActionRetryInputStore | None = None,
+        retry_continuation_store: (
+            ActionRetryContinuationStore | None
+        ) = None,
         clock: Callable[[], datetime] = utc_now,
     ) -> None:
         self._scope = scope
@@ -677,6 +682,7 @@ class RuntimeActionRecorder:
         self._tool_owners = dict(tool_owners or {})
         self._retry_policy = retry_policy or ActionRetryPolicy()
         self._retry_input_store = retry_input_store
+        self._retry_continuation_store = retry_continuation_store
         self._clock = clock
 
     def bind_tool_owners(self, tool_owners: dict[str, str] | None) -> None:
@@ -736,6 +742,7 @@ class RuntimeActionRecorder:
             correlation_id=(
                 self._scope.correlation_id or self._scope.invocation_id
             ),
+            agent_id=self._scope.agent_id,
             conversation_id=self._scope.conversation_id,
             registry_generation=self._scope.registry_generation,
             environment_ref=environment_ref
@@ -1168,6 +1175,37 @@ class RuntimeActionRecorder:
             update={"input_checkpoint_id": checkpoint.checkpoint_id},
         )
 
+    async def _publish_retry_continuation(
+        self,
+        result: ActionResult,
+    ) -> None:
+        """Publish retry work only after immutable result persistence."""
+        decision = result.retry_decision
+        checkpoint_id = (
+            decision.input_checkpoint_id
+            if decision is not None
+            else None
+        )
+        if (
+            checkpoint_id is None
+            or self._retry_input_store is None
+            or self._retry_continuation_store is None
+        ):
+            return
+        try:
+            checkpoint, _ = await self._retry_input_store.load(
+                checkpoint_id,
+            )
+            await self._retry_continuation_store.defer(
+                checkpoint,
+                result,
+            )
+        except Exception:
+            logger.exception(
+                "Action retry continuation could not be published for %s",
+                result.action_id,
+            )
+
     async def complete(
         self,
         response: ToolResponse,
@@ -1284,6 +1322,7 @@ class RuntimeActionRecorder:
             raise ActionResultPersistenceError(
                 "tool executed but its result could not be durably verified",
             ) from exc
+        await self._publish_retry_continuation(result)
         return response
 
     async def complete_harness_remote(
@@ -1350,6 +1389,7 @@ class RuntimeActionRecorder:
                 "Harness action completed but its result could not be "
                 "durably verified",
             ) from exc
+        await self._publish_retry_continuation(result)
         return CommittedActionItem(
             action_id=request.action_id,
             invocation_id=request.invocation_id,

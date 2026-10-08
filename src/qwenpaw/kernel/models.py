@@ -525,6 +525,7 @@ class ActionRequest(KernelModel):
     action_id: UUID = Field(default_factory=uuid4)
     invocation_id: UUID
     correlation_id: UUID
+    agent_id: NonEmptyStr | None = None
     conversation_id: NonEmptyStr | None = None
     registry_generation: int = Field(ge=1)
     environment_ref: EnvironmentRef | None = None
@@ -590,6 +591,7 @@ class ActionExecutionContext(KernelModel):
     action_id: UUID
     invocation_id: UUID
     correlation_id: UUID
+    agent_id: NonEmptyStr | None = None
     conversation_id: NonEmptyStr | None = None
     capability_id: NamespacedId
     idempotency_mode: ActionIdempotencyMode
@@ -644,6 +646,7 @@ class ActionRetryInputCheckpoint(KernelModel):
     action_id: UUID
     retry_root_action_id: UUID
     invocation_id: UUID
+    agent_id: NonEmptyStr
     conversation_id: NonEmptyStr | None = None
     correlation_id: UUID
     registry_generation: int = Field(ge=1)

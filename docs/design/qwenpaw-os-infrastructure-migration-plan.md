@@ -517,9 +517,13 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     原始参数。相同 Action/attempt 重放幂等，内容冲突失败关闭；写入失败会把裁决降级
     为 `retry_input_unavailable`，不会留下一个无法执行却声称可重试的公开结果。系统
     Tool、插件 Tool、Driver 与 Harness Recorder 共用该 Store Port 和 Lite Adapter。
+  - [x] retryable ActionResult 成功提交后发布独立、内容安全的 durable outbox；状态
+    明确区分 `waiting_delay / ready / dispatched / cancelled`，延迟成熟、取消和
+    dispatch binding 均幂等。outbox 只保存 checkpoint 与 observation digest，不复制
+    原始参数；发布失败不篡改已提交 Result，并为后续启动修复保留精确绑定。
   - [ ] 在上述单一身份上接入自动 retry dispatcher：必须同时具备 attempt budget、
-    可取消延迟、Stop/Interrupt fencing、无流式输出边界，以及重启后可判定的私有执行
-    输入；不能仅凭 `retryable=true` 重新调用工具。
+    Stop/Interrupt fencing、无流式输出边界，以及 Runtime Orchestrator 内的执行入口；
+    不能仅凭 `retryable=true` 或绕过 Orchestrator 直接重新调用工具。
 - [ ] 把 WebSocket 增量续传、sticky route 和 HTTP fallback 保持为 Provider
   Adapter capability；严格验证 response identity/prefix，失败时回退持久上下文重建，
   Kernel 不感知具体传输。

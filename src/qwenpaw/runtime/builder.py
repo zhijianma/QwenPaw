@@ -668,7 +668,10 @@ class AgentBuilder:
         invocation = getattr(ctx, "invocation_scope", None)
         if invocation is not None and workspace_dir is not None:
             from .actions import RuntimeActionRecorder, lite_action_store
-            from .action_retries import lite_action_retry_input_store
+            from .action_retries import (
+                lite_action_retry_continuation_store,
+                lite_action_retry_input_store,
+            )
             from .environments import FilesystemEnvironmentStore
             from .sandbox_environments import (
                 RuntimeSandboxEnvironmentManager,
@@ -679,6 +682,11 @@ class AgentBuilder:
                 lite_action_store(Path(workspace_dir)),
                 retry_input_store=lite_action_retry_input_store(
                     Path(workspace_dir),
+                ),
+                retry_continuation_store=(
+                    lite_action_retry_continuation_store(
+                        Path(workspace_dir),
+                    )
                 ),
             )
             request_context[
