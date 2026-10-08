@@ -131,6 +131,7 @@ _SLOT_CONTRACTS = {
         ("AsyncIterator[RunnerSignal]",),
         "task",
         promotion_risk="high",
+        promotion_scenarios=("runner.preflight",),
     ),
     "harness.runner": _contract(
         "harness.runner",
@@ -138,6 +139,7 @@ _SLOT_CONTRACTS = {
         ("AsyncIterator[RunnerSignal]",),
         "task",
         promotion_risk="high",
+        promotion_scenarios=("runner.preflight",),
     ),
     "driver.provider": _contract(
         "driver.provider",

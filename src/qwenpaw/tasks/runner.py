@@ -16,6 +16,8 @@ from ..kernel.models import (
     ExitCondition,
     JsonObject,
     Run,
+    RunnerPreflightRequest,
+    RunnerPreflightResult,
     RunnerSignal,
     RuntimeContext,
     RuntimeStrategyDirective,
@@ -118,6 +120,21 @@ class LocalAgentRunner:
     def cost_accounting(self) -> CostAccountingMode:
         """Declare whether this Runner can enforce monetary ceilings."""
         return self._cost_accounting
+
+    async def preflight(
+        self,
+        request: RunnerPreflightRequest,
+    ) -> RunnerPreflightResult:
+        """Describe the local adapter without invoking its callback."""
+        if request.runner_id != self.runner_id:
+            raise ValueError("runner preflight identity mismatch")
+        return RunnerPreflightResult(
+            runner_id=self.runner_id,
+            slot=request.slot,
+            registry_generation=request.registry_generation,
+            contextual=True,
+            cost_accounting=self.cost_accounting,
+        )
 
     async def execute(
         self,
@@ -359,6 +376,8 @@ class TaskExecutionCoordinator:
                 idempotency_key=idempotency_key,
             )
             run = outcome.run
+            if run is None:
+                raise RuntimeError("resumed task has no active run")
             if run.runner_id != runner.runner_id:
                 raise RunnerCapabilityUnavailableError(
                     runner.runner_id,

@@ -12,6 +12,8 @@ from ..harnesses.events import HarnessEvent, HarnessEventKind
 from ..kernel.models import (
     CostAccountingMode,
     Run,
+    RunnerPreflightRequest,
+    RunnerPreflightResult,
     RunnerSignal,
     RuntimeContext,
     TaskOrder,
@@ -182,6 +184,21 @@ class HarnessTaskRunner:
     async def health_check(self) -> bool:
         """Validate the stateless adapter without starting a provider."""
         return True
+
+    async def preflight(
+        self,
+        request: RunnerPreflightRequest,
+    ) -> RunnerPreflightResult:
+        """Describe Harness execution without opening its backend."""
+        if request.runner_id != self.runner_id:
+            raise ValueError("runner preflight identity mismatch")
+        return RunnerPreflightResult(
+            runner_id=self.runner_id,
+            slot=request.slot,
+            registry_generation=request.registry_generation,
+            contextual=True,
+            cost_accounting=self.cost_accounting,
+        )
 
     async def execute(
         self,

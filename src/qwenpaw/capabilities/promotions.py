@@ -34,6 +34,7 @@ from ..kernel import (
     CapabilityReleaseTag,
     CapabilitySelection,
     CapabilityDescriptor,
+    CostAccountingMode,
     DriverApprovalRejectedError,
     DriverApprovalRequest,
     DeliveryDestination,
@@ -44,6 +45,8 @@ from ..kernel import (
     MemoryStateConflictError,
     MemoryStateScope,
     MemoryStateSnapshot,
+    RunnerPreflightRequest,
+    RunnerPreflightResult,
     ScheduleDefinition,
     ScheduleFire,
     ScheduleLease,
@@ -53,13 +56,17 @@ from ..kernel import (
 )
 from ..kernel.ports import (
     ArtifactRenderer,
+    ContextualTaskRunner,
+    CostAwareTaskRunner,
     DeliveryAdapter,
     DriverProvider,
     DriverSession,
     MemoryProvider,
     MemorySession,
+    PreflightTaskRunner,
     SchedulerProvider,
     SchedulerPort,
+    TaskRunner,
     ToolProvider,
 )
 from ..kernel.slots import slot_contract
@@ -691,6 +698,51 @@ class LiteCapabilityPromotionScenarioRunner:
             return CapabilityCheckOutcome.FAILED
         return CapabilityCheckOutcome.PASSED
 
+    async def _run_runner_preflight(
+        self,
+        implementation: object,
+        capability_id: str,
+        slot: str,
+        generation: int,
+    ) -> CapabilityCheckOutcome:
+        if not isinstance(implementation, TaskRunner):
+            return CapabilityCheckOutcome.FAILED
+        if not isinstance(implementation, PreflightTaskRunner):
+            return CapabilityCheckOutcome.NOT_APPLICABLE
+        if slot not in {"runner", "harness.runner"}:
+            return CapabilityCheckOutcome.FAILED
+        request = RunnerPreflightRequest(
+            runner_id=capability_id,
+            slot=slot,
+            registry_generation=generation,
+        )
+        try:
+            result = await asyncio.wait_for(
+                implementation.preflight(request),
+                timeout=self._TIMEOUT_SECONDS,
+            )
+            if not isinstance(result, RunnerPreflightResult):
+                raise ValueError("runner returned invalid preflight result")
+            if (
+                result.runner_id != capability_id
+                or result.slot != slot
+                or result.registry_generation != generation
+            ):
+                raise ValueError("runner preflight identity mismatch")
+            contextual = isinstance(implementation, ContextualTaskRunner)
+            if result.contextual is not contextual:
+                raise ValueError("runner contextual claim mismatch")
+            accounting = (
+                implementation.cost_accounting
+                if isinstance(implementation, CostAwareTaskRunner)
+                else CostAccountingMode.UNKNOWN
+            )
+            if result.cost_accounting is not accounting:
+                raise ValueError("runner accounting claim mismatch")
+        except Exception:  # pylint: disable=broad-except
+            return CapabilityCheckOutcome.FAILED
+        return CapabilityCheckOutcome.PASSED
+
     async def run(
         self,
         candidate: CapabilityPromotionCandidate,
@@ -742,6 +794,13 @@ class LiteCapabilityPromotionScenarioRunner:
                     outcome = await self._run_scheduler_provider(
                         implementations.get(item.capability_id),
                         descriptor,
+                    )
+                elif scenario_id == "runner.preflight":
+                    outcome = await self._run_runner_preflight(
+                        implementations.get(item.capability_id),
+                        item.capability_id,
+                        item.slot,
+                        release.promoted_generation,
                     )
                 else:
                     outcome = CapabilityCheckOutcome.FAILED

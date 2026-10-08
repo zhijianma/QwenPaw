@@ -64,6 +64,8 @@ from .models import (
     RouteDecision,
     SensorContext,
     Run,
+    RunnerPreflightRequest,
+    RunnerPreflightResult,
     SideEffectRecord,
     RunnerSignal,
     RuntimeContext,
@@ -799,6 +801,17 @@ class ContextualTaskRunner(TaskRunner, Protocol):
         context: RuntimeContext,
     ) -> AsyncIterator[RunnerSignal]:
         """Yield signals with one immutable runtime context."""
+
+
+@runtime_checkable
+class PreflightTaskRunner(TaskRunner, Protocol):
+    """Runner exposing a side-effect-free staged contract probe."""
+
+    async def preflight(
+        self,
+        request: RunnerPreflightRequest,
+    ) -> RunnerPreflightResult:
+        """Describe execution claims without starting task execution."""
 
 
 @runtime_checkable

@@ -2185,6 +2185,25 @@ class TaskOrder(KernelModel):
         return self
 
 
+class RunnerPreflightRequest(KernelModel):
+    """Side-effect-free contract probe for one staged Runner."""
+
+    runner_id: NamespacedId
+    slot: Literal["runner", "harness.runner"]
+    registry_generation: int = Field(ge=1)
+    external_io_allowed: Literal[False] = False
+
+
+class RunnerPreflightResult(KernelModel):
+    """Static Runner claims verified against its staged implementation."""
+
+    runner_id: NamespacedId
+    slot: Literal["runner", "harness.runner"]
+    registry_generation: int = Field(ge=1)
+    contextual: bool
+    cost_accounting: CostAccountingMode
+
+
 class ExecutionCheckpoint(KernelModel):
     """Safe task boundary from which a new run may resume."""
 

@@ -667,6 +667,29 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   pylint 门禁通过。真实 8004 最新 committed Candidate 发布
   `scheduler.provider`，其 `scheduler-provider.catalog` 为 passed；未执行全仓测试。
 
+### 2026-10-08 Runner Preflight Scenario
+
+- Kernel 与 Plugin SDK 新增 `RunnerPreflightRequest`、`RunnerPreflightResult` 和可选
+  `PreflightTaskRunner`。请求固定 `external_io_allowed=False`；结果只描述 capability
+  identity、Slot、candidate generation、Contextual 支持和 Cost Accounting，不承载
+  Credential、Workspace、Task 内容或执行句柄。
+- `runner` 与 `harness.runner` 共用 `runner.preflight` Promotion Scenario。Host 在 5 秒
+  内调用预检并与 staged `TaskRunner` / `ContextualTaskRunner` /
+  `CostAwareTaskRunner` 的真实属性交叉校验，绝不调用 `execute()`、
+  `execute_context()` 或解析 Workspace。畸形、超时、身份或计费声明漂移均阻止发布。
+- `LocalAgentRunner` 自动实现该合同；内置 Console/Codex/Qoder 与 task-insights、
+  runtime-provider-kit 示例因此共用同一门禁。旧 Runner 缺少预检时明确记录
+  `not_applicable`，不能冒充 passed，也不会因迁移期兼容被误杀。
+- 预检属于 capability isolation，不是 OS sandbox。任意本地 Python 仍可能绕过 SDK；
+  真正执行必须继续经过 Environment Resolution、Sandbox、Policy、Approval、Budget、
+  Cancellation、Artifact/Evidence 和 generation lease。
+- 长程任务方向保持事件驱动：Runner 在无逐轮用户应答时也可持续执行、Checkpoint、
+  typed wait 和恢复；ask/approval 只用于缺失必要事实或授权，不成为任务推进时钟。
+- 本切片 124 项 Promotion、Registry、Runner、Harness、system/plugin contract、热激活
+  与 Plugin SDK 定点测试通过；文件级 AST、mypy、flake8、pylint 门禁通过。真实
+  8004 最新 committed Candidate 的 Console、Codex、Qoder 三个 Runner preflight
+  均为 passed；未执行全仓测试。
+
 ### 本阶段此前已执行的定点验证
 
 - 后端核心路径定点测试：70 项通过。

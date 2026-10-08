@@ -109,6 +109,23 @@ implementation cannot incur provider or external-service charges. Use
 before an unknown runner starts, so L3 never treats missing price telemetry as
 free execution. Legacy runners without the declaration are also unknown.
 
+`LocalAgentRunner` also implements the optional `PreflightTaskRunner`
+contract. Before publishing either `runner` or `harness.runner`, Lite sends a
+`RunnerPreflightRequest` with `external_io_allowed=False`. The result must echo
+the exact capability ID, Slot, candidate generation, contextual support, and
+cost-accounting mode. The Host compares those claims with the staged Runner
+object under a five-second deadline; it never calls `execute()` or
+`execute_context()`. A legacy Runner without preflight records
+`not_applicable`, while a malformed or inconsistent result blocks publication.
+
+Custom Runner classes may implement the same protocol, but preflight must be a
+pure contract probe: do not resolve a Workspace, open a provider session,
+spawn a process, access the network, read credentials, or inspect user data.
+This is a Plugin SDK capability boundary, not an OS sandbox; arbitrary local
+Python can bypass it. Runtime Environment resolution, Sandbox, Policy,
+Approval, cancellation, and budget enforcement remain the security boundary
+for real execution.
+
 `RuntimeContext.execution_contract` is also executable. If a Task declares a
 `max_iterations` Exit Condition, an iteration-aware runner must emit
 `RunnerSignal(event_type="runner.iteration", payload={"iteration": n})` before

@@ -1088,9 +1088,14 @@ Cron 不形成独立审批或产物事实源。
     catalog 类型、Agent 所有权、唯一 ID、128 项与 64 KiB 上限；所有写方法失败关闭，
     不创建或读取真实 SQLite。公共 Plugin SDK 不再导出具体
     `SQLiteSchedulerStore`；旧 `scheduler` Slot 仅作为迁移兼容入口保留。
-  - [ ] 为 runner 等剩余高风险 Slot 实现
-    无副作用或可隔离的真实 Scenario，并补齐 Evidence Artifact、人工授权策略与卸载
-    授权门禁。关键词发现索引与 Workstation/Hub Release Registry 仍待实现。
+  - [x] `runner` / `harness.runner` 已接入 `runner.preflight` Scenario：使用明确
+    `external_io_allowed=False` 的请求验证 capability identity、Slot、candidate
+    generation、Contextual 支持与 Cost Accounting 声明，5 秒超时，绝不调用
+    `execute()` / `execute_context()` 或解析 Workspace。旧 Runner 记录
+    `not_applicable`；畸形或不一致结果失败关闭。该门禁是 SDK capability isolation，
+    不是本地 Python 的 OS sandbox，真实执行仍由 Environment/Policy/Approval 管理。
+  - [ ] 补齐 Evidence Artifact、人工授权策略与卸载授权门禁。关键词发现索引与
+    Workstation/Hub Release Registry 仍待实现。
 
 - [x] 每个公开扩展模块均有 system/plugin contract tests；system-only 模块具有
   核心激活、固定 generation、失败关闭和代际排空合同。

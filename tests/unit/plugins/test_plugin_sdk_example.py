@@ -199,6 +199,9 @@ def test_public_sdk_exports_runtime_interaction_contract() -> None:
     assert sdk.CapabilityCredentialUnavailableError is not None
     assert sdk.CostAccountingMode is not None
     assert sdk.CostAwareTaskRunner is not None
+    assert sdk.PreflightTaskRunner is not None
+    assert sdk.RunnerPreflightRequest is not None
+    assert sdk.RunnerPreflightResult is not None
     assert sdk.InteractionOption is not None
     assert sdk.InteractionResolution is not None
     assert sdk.MemoryStateConflictError is not None

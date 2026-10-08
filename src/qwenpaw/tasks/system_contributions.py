@@ -28,6 +28,8 @@ from ..kernel.models import (
     Run,
     RunnerSignal,
     RuntimeContext,
+    RunnerPreflightRequest,
+    RunnerPreflightResult,
     SensorContext,
     TaskOrder,
 )
@@ -332,6 +334,21 @@ class ConsoleAgentRunner:
     async def health_check(self) -> bool:
         """Validate construction without starting an Agent session."""
         return True
+
+    async def preflight(
+        self,
+        request: RunnerPreflightRequest,
+    ) -> RunnerPreflightResult:
+        """Describe Console execution without resolving a Workspace."""
+        if request.runner_id != self.runner_id:
+            raise ValueError("runner preflight identity mismatch")
+        return RunnerPreflightResult(
+            runner_id=self.runner_id,
+            slot=request.slot,
+            registry_generation=request.registry_generation,
+            contextual=True,
+            cost_accounting=self.cost_accounting,
+        )
 
     async def execute(
         self,

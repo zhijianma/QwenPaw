@@ -91,6 +91,12 @@ def test_promotion_risk_and_scenarios_are_machine_readable() -> None:
         "scheduler-provider.catalog",
     )
     assert slot_contract("runner").promotion_risk == "high"
+    assert slot_contract("runner").promotion_scenarios == (
+        "runner.preflight",
+    )
+    assert slot_contract("harness.runner").promotion_scenarios == (
+        "runner.preflight",
+    )
     assert slot_contract("ui.settings").promotion_risk == "low"
     assert slot_contract("artifact.renderer").promotion_scenarios == (
         "artifact-renderer.roundtrip",

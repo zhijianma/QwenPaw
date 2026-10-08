@@ -24,6 +24,11 @@ from qwenpaw.capabilities.promotions import (
     LiteCapabilityPromotionScenarioRunner,
 )
 from qwenpaw.scheduling import HostSchedulerProvider
+from qwenpaw.tasks.runner import LocalAgentRunner
+from qwenpaw.tasks.system_contributions import (
+    SYSTEM_CAPABILITY_BUNDLE,
+    system_contribution_factory,
+)
 from qwenpaw.kernel import (
     ArtifactRenderDisposition,
     ArtifactRenderResult,
@@ -34,11 +39,14 @@ from qwenpaw.kernel import (
     CapabilityPromotionCandidate,
     CapabilityProviderKind,
     CapabilityPromotionAssessment,
+    CostAccountingMode,
     DriverApprovalRequest,
     DriverToolDefinition,
     DeliveryMode,
     MemoryStateScope,
     PromptFragment,
+    RunnerPreflightResult,
+    RunnerSignal,
     ToolDefinition,
 )
 
@@ -300,6 +308,37 @@ class _InvalidSchedulerProvider:
         return object()
 
 
+async def _runner_execution(order, run, context):
+    del order, run, context
+    yield RunnerSignal(event_type="example.runner.completed")
+
+
+class _MismatchedPreflightRunner:
+    runner_id = "example.runner.adapter"
+    cost_accounting = CostAccountingMode.ZERO
+
+    async def preflight(self, request):
+        return RunnerPreflightResult(
+            runner_id="example.runner.foreign",
+            slot=request.slot,
+            registry_generation=request.registry_generation,
+            contextual=False,
+            cost_accounting=self.cost_accounting,
+        )
+
+    async def execute(self, order, run):
+        del order, run
+        yield RunnerSignal(event_type="example.runner.unreachable")
+
+
+class _LegacyRunner:
+    runner_id = "example.runner.adapter"
+
+    async def execute(self, order, run):
+        del order, run
+        yield RunnerSignal(event_type="example.runner.unreachable")
+
+
 def _bundle(
     provider_kind: CapabilityProviderKind,
 ) -> CapabilityBundle:
@@ -407,6 +446,21 @@ def _scheduler_bundle() -> CapabilityBundle:
                 contribution_id="provider",
                 slot="scheduler.provider",
                 entrypoint="example:scheduler",
+            ),
+        ),
+    )
+
+
+def _runner_bundle(slot: str = "runner") -> CapabilityBundle:
+    return CapabilityBundle(
+        provider_id="example.runner",
+        provider_kind=CapabilityProviderKind.PLUGIN,
+        version="1.0.0",
+        contributions=(
+            CapabilityContribution(
+                contribution_id="adapter",
+                slot=slot,
+                entrypoint="example:runner",
             ),
         ),
     )
@@ -943,3 +997,105 @@ async def test_scheduler_provider_returning_foreign_store_is_rejected(
         )
 
     assert registry.generation == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("slot", ["runner", "harness.runner"])
+async def test_runner_preflight_scenario_passes(slot: str) -> None:
+    bundle = _runner_bundle(slot)
+    registry = GenerationRegistry(
+        promotion_scenario_runner=LiteCapabilityPromotionScenarioRunner(),
+    )
+
+    await registry.activate_bundle(
+        bundle,
+        lambda _declaration: LocalAgentRunner(
+            "example.runner.adapter",
+            execute_context=_runner_execution,
+            cost_accounting=CostAccountingMode.ZERO,
+        ),
+    )
+    [evidence_bundle] = await registry.promotion_evidence(
+        _candidate(bundle).candidate_id,
+    )
+    scenario = next(
+        item
+        for item in evidence_bundle.evidence
+        if item.check_id.startswith("scenario.runner.preflight")
+    )
+
+    assert scenario.outcome is CapabilityCheckOutcome.PASSED
+
+
+@pytest.mark.asyncio
+async def test_runner_preflight_with_mismatched_identity_is_rejected() -> None:
+    bundle = _runner_bundle()
+    registry = GenerationRegistry(
+        promotion_scenario_runner=LiteCapabilityPromotionScenarioRunner(),
+    )
+
+    with pytest.raises(ActivationError, match="did not allow"):
+        await registry.activate_bundle(
+            bundle,
+            lambda _declaration: _MismatchedPreflightRunner(),
+        )
+
+    assert registry.generation == 1
+
+
+@pytest.mark.asyncio
+async def test_legacy_runner_preflight_is_not_applicable() -> None:
+    bundle = _runner_bundle()
+    registry = GenerationRegistry(
+        promotion_scenario_runner=LiteCapabilityPromotionScenarioRunner(),
+    )
+
+    await registry.activate_bundle(
+        bundle,
+        lambda _declaration: _LegacyRunner(),
+    )
+    [evidence_bundle] = await registry.promotion_evidence(
+        _candidate(bundle).candidate_id,
+    )
+    scenario = next(
+        item
+        for item in evidence_bundle.evidence
+        if item.check_id.startswith("scenario.runner.preflight")
+    )
+
+    assert scenario.outcome is CapabilityCheckOutcome.NOT_APPLICABLE
+
+
+@pytest.mark.asyncio
+async def test_system_runners_pass_preflight_without_resolving_workspace(
+) -> None:
+    workspace_resolved = False
+
+    async def resolve_workspace(_agent_id):
+        nonlocal workspace_resolved
+        workspace_resolved = True
+        raise AssertionError("preflight must not resolve a Workspace")
+
+    registry = GenerationRegistry(
+        promotion_scenario_runner=LiteCapabilityPromotionScenarioRunner(),
+    )
+
+    await registry.activate_bundle(
+        SYSTEM_CAPABILITY_BUNDLE,
+        system_contribution_factory(resolve_workspace),
+    )
+    [evidence_bundle] = await registry.promotion_evidence(
+        _candidate(SYSTEM_CAPABILITY_BUNDLE).candidate_id,
+    )
+    runner_scenarios = tuple(
+        item
+        for item in evidence_bundle.evidence
+        if item.check_id.startswith("scenario.runner.preflight")
+    )
+
+    assert len(runner_scenarios) == 3
+    assert all(
+        item.outcome is CapabilityCheckOutcome.PASSED
+        for item in runner_scenarios
+    )
+    assert workspace_resolved is False
