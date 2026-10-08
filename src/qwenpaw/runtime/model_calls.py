@@ -8,7 +8,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, TypeVar
-from uuid import uuid5
+from uuid import UUID, uuid5
 
 from ..kernel import (
     ContextManifest,
@@ -20,8 +20,11 @@ from ..kernel import (
     ModelFailureClass,
     ModelOutputBoundary,
     ModelRecoveryDisposition,
+    ModelResourceWait,
     ModelCallStore,
     ModelRouteReason,
+    ModelStepContinuation,
+    ModelStepContinuationStatus,
     RouteDecision,
 )
 from ..utils.io_utils import (
@@ -44,6 +47,21 @@ class ModelCallConflictError(RuntimeError):
 
 class ModelCallPersistenceError(RuntimeError):
     """Raised when model-call evidence cannot be durably recorded."""
+
+
+class ModelStepRecoveryError(RuntimeError):
+    """Signal that a partial model step reached a durable boundary."""
+
+    def __init__(
+        self,
+        continuation_id: UUID,
+        status: ModelStepContinuationStatus,
+    ) -> None:
+        self.continuation_id = continuation_id
+        self.status = status
+        super().__init__(
+            f"model step recovery persisted as {status.value}",
+        )
 
 
 class FilesystemModelCallStore:
@@ -364,7 +382,9 @@ class ModelCallSession:
             ) from exc
         self._last_result = result
 
-    async def defer_terminal_resource_wait(self) -> None:
+    async def defer_terminal_resource_wait(
+        self,
+    ) -> ModelResourceWait | ModelStepContinuation | None:
         """Persist recovery only after the logical model call has failed."""
         result = self._last_result
         attempt = self._previous_attempt
@@ -373,18 +393,18 @@ class ModelCallSession:
             or result is None
             or attempt is None
         ):
-            return
+            return None
         try:
             if result.recovery_disposition in {
                 ModelRecoveryDisposition.RETRY_TRANSPORT,
                 ModelRecoveryDisposition.WAIT_RESOURCE,
             }:
-                await self._resource_waits.defer(attempt, result)
+                return await self._resource_waits.defer(attempt, result)
             elif (
                 result.recovery_disposition
                 is ModelRecoveryDisposition.CONTINUE_MODEL_STEP
             ):
-                await self._resource_waits.defer_model_step(
+                return await self._resource_waits.defer_model_step(
                     attempt,
                     result,
                 )
@@ -393,6 +413,20 @@ class ModelCallSession:
                 "model result was recorded but its recovery could not "
                 "be persisted",
             ) from exc
+        return None
+
+
+async def _defer_recovery_or_raise(
+    session: ModelCallSession,
+    error: BaseException,
+) -> None:
+    """Replace a partial-stream failure after its boundary is durable."""
+    recovery = await session.defer_terminal_resource_wait()
+    if isinstance(recovery, ModelStepContinuation):
+        raise ModelStepRecoveryError(
+            recovery.continuation_id,
+            recovery.status,
+        ) from error
 
 
 async def begin_current_model_attempt(
@@ -464,8 +498,8 @@ async def call_with_model_session(
     try:
         try:
             result = await invoke()
-        except BaseException:
-            await session.defer_terminal_resource_wait()
+        except BaseException as error:
+            await _defer_recovery_or_raise(session, error)
             raise
     finally:
         _CURRENT_MODEL_CALL.reset(token)
@@ -481,8 +515,8 @@ async def call_with_model_session(
                     item = await anext(iterator)
                 except StopAsyncIteration:
                     return
-                except BaseException:
-                    await session.defer_terminal_resource_wait()
+                except BaseException as error:
+                    await _defer_recovery_or_raise(session, error)
                     raise
                 finally:
                     _CURRENT_MODEL_CALL.reset(stream_token)
@@ -507,6 +541,7 @@ __all__ = [
     "ModelCallConflictError",
     "ModelCallPersistenceError",
     "ModelCallSession",
+    "ModelStepRecoveryError",
     "begin_current_model_attempt",
     "call_with_model_session",
     "complete_current_model_attempt",

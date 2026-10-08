@@ -28,6 +28,7 @@ from qwenpaw.kernel import (
 )
 from qwenpaw.runtime.model_calls import (
     ModelCallSession,
+    ModelStepRecoveryError,
     call_with_model_session,
     lite_model_call_store,
 )
@@ -623,7 +624,7 @@ async def test_partial_stream_records_continue_model_step(
     )
 
     assert (await anext(stream)).content[0].text == "partial"
-    with pytest.raises(ConnectionError):
+    with pytest.raises(ModelStepRecoveryError) as captured:
         await anext(stream)
     [record] = await store.list_for_conversation("chat-1")
 
@@ -636,6 +637,8 @@ async def test_partial_stream_records_continue_model_step(
         ModelOutputBoundary.PARTIAL_STREAM
     )
     [continuation] = await recovery.list_ready_model_steps()
+    assert captured.value.continuation_id == continuation.continuation_id
+    assert isinstance(captured.value.__cause__, ConnectionError)
     assert continuation.attempt_id == record.attempt.attempt_id
     assert continuation.correlation_id == scope.invocation_id
     assert not hasattr(continuation, "content")

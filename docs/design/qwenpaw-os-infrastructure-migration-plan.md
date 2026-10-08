@@ -432,6 +432,9 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
   重建。内容安全 continuation 使用稳定 outbox、新 Submission / Invocation、原
   correlation 与 2-cycle budget；Stop / Interrupt、crash-after-enqueue 和启动恢复均
   已建立 fencing / 幂等边界，状态进入现有 Chat Runtime Activity。
+  - [x] Model Call 在恢复边界落库后产生 typed Runtime signal；错误保存不注入
+    Envelope partial blocks，下一 Invocation 从最后一个完整 session 边界重建。用户
+    主动取消仍保存已展示 partial，两种终态不再共用错误保存语义。
 - [ ] 以 Action Plane 完成副作用恢复：已成功 Action 不重做，failed 服从重试
   policy，uncertain 必须先对账或取得显式授权。只有具备 provider-neutral committed
   action identity 的 Adapter 才能开启流内工具执行。

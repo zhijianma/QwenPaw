@@ -279,6 +279,9 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   稳定幂等键覆盖 crash-after-enqueue，默认最多自动恢复 2 个 cycle。
 - 后续模型输入从 durable context 重建；partial stream 不提交为最终 Assistant
   Message，也不作为已提交上下文重放。
+- 已修复旧 Runtime 对所有异常统一注入 Envelope partial 的冲突：Model Call 在
+  continuation 落库后抛出 typed `ModelStepRecoveryError`，Runtime 保存失败 Turn 时
+  跳过 partial 注入；用户主动取消仍保存已展示 partial，不改变现有交互预期。
 - Stop / Interrupt、Queue revision 和执行前反向绑定共同阻止迟到恢复；工作目录缺失
   时 action reconciliation 失败关闭。
 - dispatcher 扫描来源 Invocation 的 `ActionRequest`；发现任何 Action 即进入

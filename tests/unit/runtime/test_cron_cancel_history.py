@@ -12,6 +12,7 @@ from agentscope.message import Msg, TextBlock
 from agentscope.state import AgentState
 
 from qwenpaw.app.chats.session import SafeJSONSession
+from qwenpaw.capabilities import GenerationRegistry
 from qwenpaw.hooks.cron.cron_hook import (
     CronContextHook,
     CronMemoryIsolateHook,
@@ -71,6 +72,7 @@ async def test_runtime_keeps_old_history_on_disk(
         hooks.register(hook)
     workspace = SimpleNamespace(
         session=session,
+        capability_registry=GenerationRegistry(),
         plugins=SimpleNamespace(
             hook_registry=hooks,
             modes=[],

@@ -212,6 +212,11 @@ Submission / Invocation。部分正文不进入持久上下文或最终 Assistan
 Invocation 只要存在 Action 就失败关闭等待对账。尚未实现 Provider token 级原地续传
 或基于 `ActionResult` / Checkpoint 的自动副作用对账，不能把新步骤误报成原流复活。
 
+Runtime 已显式分开两种 partial 终止：用户 Stop/取消继续保存已经展示的 partial，便于
+用户查看；自动 Model Step recovery 则在 outbox 持久化后用 typed error 穿过 Agent
+执行层，错误保存不再把 Envelope partial 注入 session。因此下一 Invocation 只读取
+最后一个完整提交边界，不会把半截 Assistant 消息当作事实或再次参与模型输入。
+
 ### 5.1 故障分类
 
 建议在现有 `ModelCallResult` 和 Runtime policy 上冻结以下稳定语义，而不是依赖
@@ -316,6 +321,8 @@ Codex 的“边收流边执行工具”建立在其 Provider 事件协议、工�
 - [x] 保存内容安全的 bounded partial stream boundary，而非把增量正文作为事实源；
 - [x] 用稳定 outbox 创建同 correlation 的新 Model Step，crash-after-enqueue 恢复时
   不重复创建 Submission，Stop / Interrupt 可持久化 fencing；
+- [x] Model Step recovery 与用户取消使用不同的 session-save policy；自动恢复不
+  提交 partial Assistant blocks，用户取消仍保留可见 partial；
 - [x] 来源 Invocation 存在 Action 时进入 `action_reconciliation_required`，不重做；
 - [ ] 根据 succeeded / failed / uncertain `ActionResult` 与 Checkpoint 自动对账；
 - [ ] 只有具备 committed action protocol 的 Adapter 才能启用流内执行。

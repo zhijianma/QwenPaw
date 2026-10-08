@@ -86,6 +86,9 @@ ModelCallResult(continue_model_step, partial boundary)
 - 后续执行重新检查副作用；未知或不确定的 Action 不能因模型恢复而盲目重放。
 - 部分流续行以稳定幂等键创建新的 Submission / Invocation，沿用原 correlation，
   默认最多自动续行 2 个 cycle；进程在 enqueue 后崩溃也只会绑定同一 Submission。
+- Model Call 在 continuation 已落库后抛出 typed `ModelStepRecoveryError`，Runtime
+  将它与用户取消和普通失败分开处理：保存失败 Turn，但不把 Envelope partial blocks
+  注入 session。用户主动取消仍保留既有“保存已展示 partial”语义。
 - 当前 AgentScope 只在完整响应后进入 Action 阶段；dispatcher 仍扫描来源 Invocation
   的持久化 `ActionRequest`。一旦存在任何 Action，恢复失败关闭为
   `action_reconciliation_required`，等待后续 Action 对账能力，不自动重做。
@@ -142,6 +145,8 @@ Adapter 声明；Kernel 不假设任意模型流可以原地续传。
   Invocation timer cycle budget 也覆盖 rate limit，防止长期故障形成无限恢复循环。
 - [x] 从部分流边界创建内容安全、可跨重启、可验证的新 Model Step continuation；
   使用独立 Submission / Invocation、原 correlation 和 2-cycle 自动恢复预算。
+- [x] Runtime error-save 区分用户取消与 Model Step recovery；自动恢复时 partial
+  output 不进入 session 或下一次模型上下文，用户取消路径保持兼容。
 - [x] 来源 Invocation 存在任何持久化 Action 时失败关闭，进入
   `action_reconciliation_required`，不自动重放副作用。
 - [ ] 根据 `ActionResult` / uncertain side-effect 与 Checkpoint 自动完成恢复对账。

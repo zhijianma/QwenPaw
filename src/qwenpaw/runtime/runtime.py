@@ -28,13 +28,18 @@ from .envelope import Envelope
 from .executor import AgentExecutor
 from .hooks import HookContext
 from .message_convert import _get_last_user_text, _request_input_to_msgs
+from .model_calls import ModelStepRecoveryError
 from ..kernel.models import (
     CommandDisposition,
     HookDisposition,
     HookOutcome,
     LifecyclePhase,
 )
-from ..kernel import SubmissionStatus, TurnSubmissionRequest
+from ..kernel import (
+    ModelStepContinuationStatus,
+    SubmissionStatus,
+    TurnSubmissionRequest,
+)
 from .phases import Phase
 
 logger = logging.getLogger(__name__)
@@ -298,6 +303,36 @@ class Runtime:
             async for ev in envelope.error_envelope(
                 e.message or str(e),
                 e.error_code or "CONFIGURATION_REQUIRED",
+            ):
+                yield ev
+            raise
+        except ModelStepRecoveryError as e:
+            ctx.error = e
+            await self._try_save_on_cancel(ctx, include_partial=False)
+            logger.warning(
+                "runtime: partial model step reached recovery boundary "
+                "session=%s continuation=%s status=%s",
+                getattr(ctx, "session_id", ""),
+                e.continuation_id,
+                e.status.value,
+            )
+            await self._run_hook_phase(ctx, Phase.ON_ERROR)
+            exhausted = (
+                e.status
+                is ModelStepContinuationStatus.RECOVERY_EXHAUSTED
+            )
+            async for ev in envelope.error_envelope(
+                (
+                    "Automatic model-step recovery is exhausted."
+                    if exhausted
+                    else "The interrupted model step will continue "
+                    "automatically."
+                ),
+                (
+                    "MODEL_STEP_RECOVERY_EXHAUSTED"
+                    if exhausted
+                    else "MODEL_STEP_RECOVERY_SCHEDULED"
+                ),
             ):
                 yield ev
             raise
@@ -884,8 +919,13 @@ class Runtime:
                     exc_info=True,
                 )
 
-    async def _try_save_on_cancel(self, ctx: HookContext) -> None:
-        """Best-effort session save on cancellation.
+    async def _try_save_on_cancel(
+        self,
+        ctx: HookContext,
+        *,
+        include_partial: bool = True,
+    ) -> None:
+        """Best-effort session save after cancellation or failure.
 
         Before snapshotting, any partial streaming content accumulated in
         the ``Envelope`` is injected into the agent's context so the
@@ -936,7 +976,7 @@ class Runtime:
             return
         try:
             envelope = getattr(ctx, "_envelope", None)
-            if envelope is not None:
+            if envelope is not None and include_partial:
                 self._inject_partial_response(agent, envelope)
 
             from ..hooks.cron.cron_hook import restore_cron_context
