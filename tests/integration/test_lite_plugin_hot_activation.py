@@ -158,10 +158,24 @@ async def test_contextual_slots_load_and_unload_without_restart(
 
 
 @pytest.mark.asyncio
-async def test_delivery_adapter_loads_and_unloads_without_restart() -> None:
+async def test_delivery_adapter_loads_and_unloads_without_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     root = Path(__file__).parents[2]
     source = root / "examples" / "plugins" / "delivery-provider"
-    loader = PluginLoader([source.parent])
+    output_path = tmp_path / "promotion-must-not-deliver.jsonl"
+    monkeypatch.setenv(
+        "QWENPAW_EXAMPLE_DELIVERY_LOG",
+        str(output_path),
+    )
+    registry = GenerationRegistry(
+        promotion_scenario_runner=LiteCapabilityPromotionScenarioRunner(),
+    )
+    loader = PluginLoader(
+        [source.parent],
+        capability_registry=registry,
+    )
     manifest = PluginManifest.from_dict(
         json.loads((source / "plugin.json").read_text(encoding="utf-8")),
     )
@@ -177,6 +191,7 @@ async def test_delivery_adapter_loads_and_unloads_without_restart() -> None:
         lease.implementation(contribution_id),
         DeliveryAdapter,
     )
+    assert not output_path.exists()
 
     await loader.unload_plugin("delivery-provider")
     current = await loader.capability_registry.pin()

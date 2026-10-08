@@ -622,6 +622,27 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   Assembly、Plugin SDK、system contribution、Workspace Registry 与管理 API 定点测试
   通过；文件级 AST、mypy、flake8、pylint 门禁通过，未执行全仓测试。
 
+### 2026-10-08 Delivery Adapter Promotion Scenario
+
+- `delivery.adapter` 新增 `delivery-adapter.routing` Scenario。Contribution 使用
+  `metadata.delivery_addresses` 声明最多 8 个、每个不超过 200 bytes 的可验证地址；
+  system channel/inbox 与示例 local-jsonl Adapter 已补齐声明。
+- Promotion 只调用 deterministic `supports()`：每个正确 adapter/address 的 final text
+  fixture 必须返回严格 `True`，foreign adapter identity 必须返回严格 `False`。场景绝不
+  调用 `deliver()`，真实示例插件测试同时断言 JSONL 输出文件没有产生。
+- 未声明 route hint 记录 `not_applicable`，不冒充 pass；空、重复、超界、错误类型或与
+  实现不一致的 hints 均记录 failed 并阻止 generation。Evidence 不保存地址或 payload。
+- 场景审查发现并修复了 system channel 的真实前置条件漂移：旧 `supports()` 不验证
+  opaque address，可能先接受、到 `deliver()` 才解码失败；现在路由阶段即拒绝畸形
+  address，Promotion 使用可真实解码但不含用户信息的固定 fixture。
+- Scheduler 同期审查发现尚不能安全加行为场景：当前 Contribution 直接构造绑定真实
+  路径的有状态 `SchedulerPort`，只读查询也可能创建 SQLite。后续先迁移到 Host-owned
+  storage 的 `scheduler.provider`，不能用真实状态访问换取虚假验收。
+- 本切片 178 项 Promotion、Delivery/Driver 合同、Channel、Tool/Memory/Driver Provider、
+  system contribution、Plugin SDK、热激活、Workspace Registry 与管理 API 定点测试
+  通过；文件级 AST、mypy、flake8、pylint 门禁通过。真实 8004 generation 2 的
+  channel/inbox routing 与 renderer round-trip 均为 passed；未执行全仓测试。
+
 ### 本阶段此前已执行的定点验证
 
 - 后端核心路径定点测试：70 项通过。

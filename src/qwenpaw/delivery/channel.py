@@ -87,11 +87,18 @@ class SystemChannelDeliveryAdapter:
 
     def supports(self, request: DeliveryRequest) -> bool:
         """Accept text projections explicitly addressed to this adapter."""
-        return (
+        matches = (
             request.destination.adapter_id == self.adapter_id
             and request.mode in {DeliveryMode.FINAL, DeliveryMode.STREAM}
             and isinstance(request.payload.get("text"), str)
         )
+        if not matches:
+            return False
+        try:
+            _decode_channel_address(request.destination.address)
+        except ValueError:
+            return False
+        return True
 
     async def deliver(
         self,

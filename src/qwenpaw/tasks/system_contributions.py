@@ -62,6 +62,10 @@ SYSTEM_SAFE_ARTIFACT_RENDERER_ID = (
 SYSTEM_LOCAL_SCHEDULER_ID = f"{SYSTEM_PROVIDER_ID}.local-durable-scheduler"
 SYSTEM_CHANNEL_DELIVERY_ID = _SYSTEM_CHANNEL_DELIVERY_ID
 SYSTEM_INBOX_DELIVERY_ID = _SYSTEM_INBOX_DELIVERY_ID
+# Encodes [1, "promotion", "promotion", "promotion"] without secrets.
+_PROMOTION_CHANNEL_ADDRESS = (
+    "WzEsInByb21vdGlvbiIsInByb21vdGlvbiIsInByb21vdGlvbiJd"
+)
 
 
 class WorkspaceLike(Protocol):
@@ -527,13 +531,19 @@ SYSTEM_CAPABILITY_BUNDLE = CapabilityBundle(
             entrypoint=(
                 "qwenpaw.delivery.channel:SystemChannelDeliveryAdapter"
             ),
-            metadata={"label": "QwenPaw channel delivery"},
+            metadata={
+                "label": "QwenPaw channel delivery",
+                "delivery_addresses": [_PROMOTION_CHANNEL_ADDRESS],
+            },
         ),
         CapabilityContribution(
             contribution_id="inbox-delivery",
             slot="delivery.adapter",
             entrypoint=("qwenpaw.delivery.inbox:SystemInboxDeliveryAdapter"),
-            metadata={"label": "QwenPaw local Inbox delivery"},
+            metadata={
+                "label": "QwenPaw local Inbox delivery",
+                "delivery_addresses": ["local"],
+            },
         ),
     ),
 )

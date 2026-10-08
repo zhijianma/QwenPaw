@@ -8,7 +8,10 @@
     {
       "id": "local-jsonl",
       "slot": "delivery.adapter",
-      "entrypoint": "delivery_provider.provider:create_adapter"
+      "entrypoint": "delivery_provider.provider:create_adapter",
+      "metadata": {
+        "delivery_addresses": ["local-jsonl"]
+      }
     }
   ]
 }

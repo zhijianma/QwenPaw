@@ -1077,7 +1077,15 @@ Cron 不形成独立审批或产物事实源。
     Kernel `validate_driver_session`，验证 provider ownership、唯一 capability/name、
     128 tools、64 KiB catalog、16 fragments、32 KiB prompt 与 close timeout，绝不调用
     `invoke()`。Runtime 继续兼容导出同一验证函数，不再维护第二份规则。
-  - [ ] 为 runner、scheduler、delivery 等高风险 Slot 分别实现
+  - [x] `delivery.adapter` 已接入 routing-only Scenario：Contribution 通过有界
+    `metadata.delivery_addresses` 提供最多 8 个地址样例；宿主只调用 `supports()`，验证
+    正确 adapter/address 被接受且 foreign adapter identity 被拒绝，绝不调用
+    `deliver()`。缺少 hints 记录 `not_applicable`，错误 hints 或路由不一致失败关闭；
+    system channel/inbox 与真实 local-jsonl plugin 共用门禁。
+  - [ ] `scheduler` 仍是工厂阶段自行绑定数据库的有状态 `SchedulerPort`；即使调用
+    `list_definitions()` 也可能创建/访问真实 SQLite，当前不能安全执行 Promotion
+    Scenario。先迁移为 Host-owned storage 的 `scheduler.provider`，再验证只读 catalog。
+  - [ ] 为 runner、scheduler 等剩余高风险 Slot 实现
     无副作用或可隔离的真实 Scenario，并补齐 Evidence Artifact、人工授权策略与卸载
     授权门禁。关键词发现索引与 Workstation/Hub Release Registry 仍待实现。
 

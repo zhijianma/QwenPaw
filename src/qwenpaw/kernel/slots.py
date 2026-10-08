@@ -190,6 +190,7 @@ _SLOT_CONTRACTS = {
         "process",
         failure_mode="fail_closed",
         promotion_risk="high",
+        promotion_scenarios=("delivery-adapter.routing",),
     ),
     "artifact.renderer": _contract(
         "artifact.renderer",

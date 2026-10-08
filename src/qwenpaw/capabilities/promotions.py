@@ -35,6 +35,10 @@ from ..kernel import (
     CapabilityDescriptor,
     DriverApprovalRejectedError,
     DriverApprovalRequest,
+    DeliveryDestination,
+    DeliveryKind,
+    DeliveryMode,
+    DeliveryRequest,
     InvocationScope,
     MemoryStateConflictError,
     MemoryStateScope,
@@ -45,6 +49,7 @@ from ..kernel import (
 )
 from ..kernel.ports import (
     ArtifactRenderer,
+    DeliveryAdapter,
     DriverProvider,
     DriverSession,
     MemoryProvider,
@@ -551,6 +556,90 @@ class LiteCapabilityPromotionScenarioRunner:
             else CapabilityCheckOutcome.PASSED
         )
 
+    @staticmethod
+    def _delivery_addresses(
+        descriptor: CapabilityDescriptor | None,
+    ) -> tuple[str, ...] | None:
+        if descriptor is None:
+            raise ValueError("delivery scenario descriptor is missing")
+        raw_addresses = descriptor.metadata.get("delivery_addresses")
+        if raw_addresses is None:
+            return None
+        if not isinstance(raw_addresses, list):
+            raise ValueError("delivery_addresses must be a JSON array")
+        addresses = tuple(raw_addresses)
+        if not addresses or len(addresses) > 8:
+            raise ValueError("delivery_addresses count is invalid")
+        if any(
+            not isinstance(address, str)
+            or not address.strip()
+            or len(address.encode("utf-8")) > 200
+            for address in addresses
+        ):
+            raise ValueError("delivery address is empty or exceeds budget")
+        if len(addresses) != len(set(addresses)):
+            raise ValueError("delivery_addresses must be unique")
+        return addresses
+
+    @staticmethod
+    def _delivery_request(
+        adapter_id: str,
+        address: str,
+        generation: int,
+    ) -> DeliveryRequest:
+        route_digest = hashlib.sha256(
+            f"{adapter_id}:{address}".encode("utf-8"),
+        ).hexdigest()
+        return DeliveryRequest(
+            source_event_id=UUID(int=0),
+            idempotency_key=f"promotion:{route_digest}",
+            agent_id="promotion-scenario",
+            registry_generation=generation,
+            kind=DeliveryKind.RESULT,
+            mode=DeliveryMode.FINAL,
+            destination=DeliveryDestination(
+                adapter_id=adapter_id,
+                address=address,
+                conversation_id="promotion-scenario",
+            ),
+            conversation_id="promotion-scenario",
+            payload={"text": "Promotion scenario delivery projection."},
+        )
+
+    def _run_delivery_adapter(
+        self,
+        implementation: object,
+        capability_id: str,
+        generation: int,
+        descriptor: CapabilityDescriptor | None,
+    ) -> CapabilityCheckOutcome:
+        if not isinstance(implementation, DeliveryAdapter):
+            return CapabilityCheckOutcome.FAILED
+        try:
+            addresses = self._delivery_addresses(descriptor)
+            foreign_request = self._delivery_request(
+                "qwenpaw.promotion.foreign-adapter",
+                "promotion-scenario",
+                generation,
+            )
+            if implementation.supports(foreign_request) is not False:
+                raise ValueError("delivery adapter accepted foreign identity")
+            if addresses is None:
+                return CapabilityCheckOutcome.NOT_APPLICABLE
+            for address in addresses:
+                request = self._delivery_request(
+                    capability_id,
+                    address,
+                    generation,
+                )
+                if implementation.supports(request) is not True:
+                    raise ValueError(
+                        "delivery adapter rejected declared route",
+                    )
+        except Exception:  # pylint: disable=broad-except
+            return CapabilityCheckOutcome.FAILED
+        return CapabilityCheckOutcome.PASSED
+
     async def run(
         self,
         candidate: CapabilityPromotionCandidate,
@@ -586,6 +675,13 @@ class LiteCapabilityPromotionScenarioRunner:
                     )
                 elif scenario_id == "driver-provider.catalog":
                     outcome = await self._run_driver_provider(
+                        implementations.get(item.capability_id),
+                        item.capability_id,
+                        release.promoted_generation,
+                        descriptor,
+                    )
+                elif scenario_id == "delivery-adapter.routing":
+                    outcome = self._run_delivery_adapter(
                         implementations.get(item.capability_id),
                         item.capability_id,
                         release.promoted_generation,

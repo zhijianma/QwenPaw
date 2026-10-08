@@ -83,6 +83,9 @@ def test_promotion_risk_and_scenarios_are_machine_readable() -> None:
     assert slot_contract("driver.provider").promotion_scenarios == (
         "driver-provider.catalog",
     )
+    assert slot_contract("delivery.adapter").promotion_scenarios == (
+        "delivery-adapter.routing",
+    )
     assert slot_contract("runner").promotion_risk == "high"
     assert slot_contract("ui.settings").promotion_risk == "low"
     assert slot_contract("artifact.renderer").promotion_scenarios == (

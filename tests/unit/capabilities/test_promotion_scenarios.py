@@ -35,6 +35,7 @@ from qwenpaw.kernel import (
     CapabilityPromotionAssessment,
     DriverApprovalRequest,
     DriverToolDefinition,
+    DeliveryMode,
     MemoryStateScope,
     PromptFragment,
     ToolDefinition,
@@ -262,6 +263,31 @@ class _DriverProvider:
         return self.session
 
 
+class _DeliveryAdapter:
+    adapter_id = "example.delivery.adapter"
+
+    def __init__(self, *, accept_foreign: bool = False) -> None:
+        self._accept_foreign = accept_foreign
+        self.deliver_called = False
+
+    async def health_check(self) -> bool:
+        return True
+
+    def supports(self, request) -> bool:
+        if self._accept_foreign:
+            return True
+        return (
+            request.destination.adapter_id == self.adapter_id
+            and request.destination.address == "local"
+            and request.mode is DeliveryMode.FINAL
+        )
+
+    async def deliver(self, request, *, attempt):
+        del request, attempt
+        self.deliver_called = True
+        raise AssertionError("promotion scenario must not call deliver")
+
+
 def _bundle(
     provider_kind: CapabilityProviderKind,
 ) -> CapabilityBundle:
@@ -331,6 +357,29 @@ def _driver_bundle() -> CapabilityBundle:
                 contribution_id="provider",
                 slot="driver.provider",
                 entrypoint="example:driver",
+            ),
+        ),
+    )
+
+
+def _delivery_bundle(
+    addresses: list[str] | None = None,
+) -> CapabilityBundle:
+    metadata = (
+        {"delivery_addresses": addresses}
+        if addresses is not None
+        else {}
+    )
+    return CapabilityBundle(
+        provider_id="example.delivery",
+        provider_kind=CapabilityProviderKind.PLUGIN,
+        version="1.0.0",
+        contributions=(
+            CapabilityContribution(
+                contribution_id="adapter",
+                slot="delivery.adapter",
+                entrypoint="example:delivery",
+                metadata=metadata,
             ),
         ),
     )
@@ -756,3 +805,72 @@ async def test_system_driver_provider_uses_same_catalog_scenario() -> None:
     lease = await registry.pin()
     assert lease.resolve("qwenpaw.system.drivers.workspace-driver") is not None
     await lease.close()
+
+
+@pytest.mark.asyncio
+async def test_delivery_adapter_routing_scenario_passes_without_delivery(
+) -> None:
+    bundle = _delivery_bundle(["local"])
+    adapter = _DeliveryAdapter()
+    registry = GenerationRegistry(
+        promotion_scenario_runner=LiteCapabilityPromotionScenarioRunner(),
+    )
+
+    await registry.activate_bundle(
+        bundle,
+        lambda _declaration: adapter,
+    )
+    [evidence_bundle] = await registry.promotion_evidence(
+        _candidate(bundle).candidate_id,
+    )
+    scenario = next(
+        item
+        for item in evidence_bundle.evidence
+        if item.check_id.startswith("scenario.delivery-adapter.routing")
+    )
+
+    assert scenario.outcome is CapabilityCheckOutcome.PASSED
+    assert not adapter.deliver_called
+
+
+@pytest.mark.asyncio
+async def test_delivery_adapter_accepting_foreign_identity_is_rejected(
+) -> None:
+    bundle = _delivery_bundle(["local"])
+    registry = GenerationRegistry(
+        promotion_scenario_runner=LiteCapabilityPromotionScenarioRunner(),
+    )
+
+    with pytest.raises(ActivationError, match="did not allow"):
+        await registry.activate_bundle(
+            bundle,
+            lambda _declaration: _DeliveryAdapter(
+                accept_foreign=True,
+            ),
+        )
+
+    assert registry.generation == 1
+
+
+@pytest.mark.asyncio
+async def test_delivery_adapter_without_route_hints_is_not_applicable(
+) -> None:
+    bundle = _delivery_bundle()
+    registry = GenerationRegistry(
+        promotion_scenario_runner=LiteCapabilityPromotionScenarioRunner(),
+    )
+
+    await registry.activate_bundle(
+        bundle,
+        lambda _declaration: _DeliveryAdapter(),
+    )
+    [evidence_bundle] = await registry.promotion_evidence(
+        _candidate(bundle).candidate_id,
+    )
+    scenario = next(
+        item
+        for item in evidence_bundle.evidence
+        if item.check_id.startswith("scenario.delivery-adapter.routing")
+    )
+
+    assert scenario.outcome is CapabilityCheckOutcome.NOT_APPLICABLE

@@ -443,6 +443,25 @@ inherently ambiguous, so pass `delivery_id` to the external system as its
 idempotency key whenever that system supports one. Never silently claim an
 unsupported destination.
 
+Declare up to eight bounded route examples in Contribution metadata so the
+install-time gate can verify routing without producing an external effect:
+
+```json
+{
+  "id": "local-jsonl",
+  "slot": "delivery.adapter",
+  "entrypoint": "delivery_provider.provider:create_adapter",
+  "metadata": {"delivery_addresses": ["local-jsonl"]}
+}
+```
+
+Promotion calls only `supports()`: every declared address must accept a final
+text projection owned by this adapter, and a request carrying a foreign
+`adapter_id` must be rejected. It never calls `deliver()`. Missing route hints
+produce `not_applicable`, while malformed hints or inconsistent routing block
+publication. Evidence records only outcome and capability identity, not the
+address or payload. Keep `supports()` deterministic and side-effect free.
+
 See `examples/plugins/delivery-provider`. Its JSONL adapter intentionally uses
 only `qwenpaw.plugins.sdk`, records the stable `delivery_id`, and can be
 installed or removed without restarting the service. The system Inbox adapter

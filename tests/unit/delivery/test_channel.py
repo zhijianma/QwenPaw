@@ -456,3 +456,9 @@ def test_channel_address_rejects_empty_coordinates() -> None:
             user_id="",
             transport_context="transport",
         )
+
+
+def test_channel_adapter_rejects_malformed_address_during_routing() -> None:
+    adapter = SystemChannelDeliveryAdapter(AsyncMock())
+
+    assert adapter.supports(_request("not-an-encoded-address")) is False
