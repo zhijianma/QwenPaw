@@ -163,7 +163,36 @@ class ActionRetryReason(str, Enum):
     SIDE_EFFECT_UNCERTAIN = "side_effect_uncertain"
     EFFECTFUL_RETRY_UNSUPPORTED = "effectful_retry_unsupported"
     EXECUTOR_IDEMPOTENT_FAILURE = "executor_idempotent_failure"
+    ATTEMPT_BUDGET_EXHAUSTED = "attempt_budget_exhausted"
     TRANSIENT_FAILURE = "transient_failure"
+
+
+class ActionRetryPolicy(KernelModel):
+    """Host-owned bounded retry policy for immutable Action attempts."""
+
+    policy_id: Literal["qwenpaw.action-retry-policy.v1"] = (
+        "qwenpaw.action-retry-policy.v1"
+    )
+    max_attempts: int = Field(default=2, ge=1, le=10)
+    initial_delay_seconds: float = Field(default=0, ge=0, le=300)
+    backoff_multiplier: float = Field(default=2, ge=1, le=10)
+    max_delay_seconds: float = Field(default=30, ge=0, le=3600)
+
+    @model_validator(mode="after")
+    def validate_delay_bounds(self) -> Self:
+        """Keep the first delay inside the configured ceiling."""
+        if self.initial_delay_seconds > self.max_delay_seconds:
+            raise ValueError("initial retry delay exceeds its maximum")
+        return self
+
+    def delay_before_attempt(self, attempt: int) -> float:
+        """Return the bounded delay before a one-based retry attempt."""
+        if attempt < 2:
+            raise ValueError("retry delay requires attempt 2 or later")
+        delay = self.initial_delay_seconds * (
+            self.backoff_multiplier ** (attempt - 2)
+        )
+        return min(delay, self.max_delay_seconds)
 
 
 class ModelRouteReason(str, Enum):
@@ -524,6 +553,9 @@ class ActionRequest(KernelModel):
     idempotency_mode: ActionIdempotencyMode = (
         ActionIdempotencyMode.UNDECLARED
     )
+    retry_policy: ActionRetryPolicy = Field(
+        default_factory=ActionRetryPolicy,
+    )
     idempotency_key: NonEmptyStr
     executor_item_id: NonEmptyStr | None = None
     retry_root_action_id: UUID | None = None
@@ -576,6 +608,29 @@ class ActionRetryDecision(KernelModel):
     disposition: ActionRetryDisposition
     reason: ActionRetryReason
     provider_retryable: bool = False
+    max_attempts: int = Field(default=2, ge=1, le=10)
+    next_attempt: int | None = Field(default=None, ge=2)
+    retry_after_seconds: float | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_schedule(self) -> Self:
+        """Reject retry scheduling fields on a non-retry decision."""
+        admitted = (
+            self.disposition
+            is ActionRetryDisposition.RETRY_FROM_NEW_ACTION
+        )
+        if not admitted and self.next_attempt is not None:
+            raise ValueError("non-retry decision cannot schedule an attempt")
+        if self.retry_after_seconds is not None and (
+            self.next_attempt is None
+        ):
+            raise ValueError("retry delay requires a scheduled attempt")
+        if (
+            self.next_attempt is not None
+            and self.next_attempt > self.max_attempts
+        ):
+            raise ValueError("scheduled attempt exceeds retry budget")
+        return self
 
 
 class ActionResult(KernelModel):
@@ -717,6 +772,17 @@ class ActionRecord(KernelModel):
             raise ValueError(
                 "executor-idempotent retry requires an executor promise",
             )
+        if decision is not None and decision.max_attempts != (
+            self.request.retry_policy.max_attempts
+        ):
+            raise ValueError(
+                "retry decision policy does not match request",
+            )
+        if decision is not None and decision.next_attempt is not None:
+            if decision.next_attempt != self.request.attempt + 1:
+                raise ValueError(
+                    "retry decision does not follow the Action attempt",
+                )
         return self
 
 

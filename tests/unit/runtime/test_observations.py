@@ -869,6 +869,9 @@ async def test_action_uses_the_same_observation_contract(tmp_path) -> None:
     assert observations[0].facts["retry_policy_id"] == (
         "qwenpaw.action-retry.v1"
     )
+    assert observations[0].facts["retry_max_attempts"] == 2
+    assert observations[0].facts["retry_next_attempt"] is None
+    assert observations[0].facts["retry_after_seconds"] is None
     intent = next(
         item
         for item in observations
@@ -881,6 +884,7 @@ async def test_action_uses_the_same_observation_contract(tmp_path) -> None:
     assert intent.facts["capability_id"] == "example.export"
     assert intent.facts["idempotency_mode"] == "undeclared"
     assert intent.facts["attempt"] == 1
+    assert intent.facts["retry_max_attempts"] == 2
     assert intent.facts["retry_root_action_id"] is None
     assert intent.facts["retry_of_action_id"] is None
     assert intent.status is ObservationStatus.RECORDED

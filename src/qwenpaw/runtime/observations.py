@@ -430,6 +430,7 @@ def _action_observations(
             "reversible": request.reversible,
             "idempotency_mode": request.idempotency_mode.value,
             "attempt": request.attempt,
+            "retry_max_attempts": request.retry_policy.max_attempts,
             "retry_root_action_id": _optional_uuid(
                 request.retry_root_action_id,
             ),
@@ -524,6 +525,21 @@ def _action_observations(
             ),
             "retry_policy_id": (
                 result.retry_decision.policy_id
+                if result.retry_decision is not None
+                else None
+            ),
+            "retry_max_attempts": (
+                result.retry_decision.max_attempts
+                if result.retry_decision is not None
+                else None
+            ),
+            "retry_next_attempt": (
+                result.retry_decision.next_attempt
+                if result.retry_decision is not None
+                else None
+            ),
+            "retry_after_seconds": (
+                result.retry_decision.retry_after_seconds
                 if result.retry_decision is not None
                 else None
             ),

@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Sequence
 from uuid import UUID, uuid5
@@ -24,6 +26,7 @@ from ..kernel import (
     ActionResult,
     ActionRetryDecision,
     ActionRetryDisposition,
+    ActionRetryPolicy,
     ActionRetryReason,
     ActionStore,
     ActionStatus,
@@ -41,6 +44,7 @@ from ..kernel import (
     SideEffectStatus,
     ToolEffect,
 )
+from ..kernel.models import utc_now
 from ..tasks.redaction import redact_payload
 from ..tool_calls._context import ToolCallContext
 from ..utils.io_utils import (
@@ -86,6 +90,16 @@ class ActionRequestPersistenceError(RuntimeError):
 
 class ActionResultPersistenceError(RuntimeError):
     """Raised after execution when its terminal evidence cannot be stored."""
+
+
+class ActionRetryNotReadyError(RuntimeError):
+    """Raised when an admitted retry has not reached its durable deadline."""
+
+    def __init__(self, retry_at: datetime) -> None:
+        super().__init__(
+            f"action retry is not ready before {retry_at.isoformat()}",
+        )
+        self.retry_at = retry_at
 
 
 def current_action_execution() -> ActionExecutionContext | None:
@@ -375,11 +389,13 @@ def _action_retry_decision(
     provider_retryable: bool,
 ) -> ActionRetryDecision:
     """Apply the host retry policy without replaying an Action."""
+    policy = request.retry_policy
     if status is not ActionStatus.FAILED:
         return ActionRetryDecision(
             disposition=ActionRetryDisposition.NOT_APPLICABLE,
             reason=ActionRetryReason.STATUS_NOT_FAILED,
             provider_retryable=provider_retryable,
+            max_attempts=policy.max_attempts,
         )
     executor_enforced = (
         request.idempotency_mode
@@ -390,21 +406,22 @@ def _action_retry_decision(
         and provider_retryable
         and executor_enforced
     ):
-        return ActionRetryDecision(
-            disposition=ActionRetryDisposition.RETRY_FROM_NEW_ACTION,
-            reason=ActionRetryReason.EXECUTOR_IDEMPOTENT_FAILURE,
-            provider_retryable=True,
+        return _admit_action_retry(
+            request,
+            ActionRetryReason.EXECUTOR_IDEMPOTENT_FAILURE,
         )
     if side_effect_status is SideEffectStatus.UNCERTAIN:
         return ActionRetryDecision(
             disposition=ActionRetryDisposition.RECONCILE_REQUIRED,
             reason=ActionRetryReason.SIDE_EFFECT_UNCERTAIN,
             provider_retryable=provider_retryable,
+            max_attempts=policy.max_attempts,
         )
     if not provider_retryable:
         return ActionRetryDecision(
             disposition=ActionRetryDisposition.FORBIDDEN,
             reason=ActionRetryReason.PROVIDER_NOT_RETRYABLE,
+            max_attempts=policy.max_attempts,
         )
     if (
         request.effect is not ToolEffect.NONE
@@ -414,11 +431,35 @@ def _action_retry_decision(
             disposition=ActionRetryDisposition.FORBIDDEN,
             reason=ActionRetryReason.EFFECTFUL_RETRY_UNSUPPORTED,
             provider_retryable=True,
+            max_attempts=policy.max_attempts,
         )
+    return _admit_action_retry(
+        request,
+        ActionRetryReason.TRANSIENT_FAILURE,
+    )
+
+
+def _admit_action_retry(
+    request: ActionRequest,
+    reason: ActionRetryReason,
+) -> ActionRetryDecision:
+    """Apply the immutable Action attempt budget and backoff schedule."""
+    policy = request.retry_policy
+    if request.attempt >= policy.max_attempts:
+        return ActionRetryDecision(
+            disposition=ActionRetryDisposition.FORBIDDEN,
+            reason=ActionRetryReason.ATTEMPT_BUDGET_EXHAUSTED,
+            provider_retryable=True,
+            max_attempts=policy.max_attempts,
+        )
+    next_attempt = request.attempt + 1
     return ActionRetryDecision(
         disposition=ActionRetryDisposition.RETRY_FROM_NEW_ACTION,
-        reason=ActionRetryReason.TRANSIENT_FAILURE,
+        reason=reason,
         provider_retryable=True,
+        max_attempts=policy.max_attempts,
+        next_attempt=next_attempt,
+        retry_after_seconds=policy.delay_before_attempt(next_attempt),
     )
 
 
@@ -623,10 +664,14 @@ class RuntimeActionRecorder:
         store: ActionStore,
         *,
         tool_owners: dict[str, str] | None = None,
+        retry_policy: ActionRetryPolicy | None = None,
+        clock: Callable[[], datetime] = utc_now,
     ) -> None:
         self._scope = scope
         self._store = store
         self._tool_owners = dict(tool_owners or {})
+        self._retry_policy = retry_policy or ActionRetryPolicy()
+        self._clock = clock
 
     def bind_tool_owners(self, tool_owners: dict[str, str] | None) -> None:
         """Bind the final provider catalog before any tool can execute."""
@@ -716,6 +761,11 @@ class RuntimeActionRecorder:
             risk=risk,
             reversible=reversible,
             idempotency_mode=idempotency_mode,
+            retry_policy=(
+                retry_of.retry_policy
+                if retry_of is not None
+                else self._retry_policy
+            ),
             idempotency_key=(
                 retry_of.idempotency_key
                 if retry_of is not None
@@ -729,6 +779,7 @@ class RuntimeActionRecorder:
             attempt=attempt,
             approval_id=approval_id,
             policy_decision=policy_decision or "unknown",
+            requested_at=self._clock(),
         )
 
     def action_id(
@@ -868,15 +919,34 @@ class RuntimeActionRecorder:
         """Persist a new Action attempt after exact Host admission."""
         previous_result = previous.result
         previous_request = previous.request
+        retry_decision = (
+            previous_result.retry_decision
+            if previous_result is not None
+            else None
+        )
         if (
             previous_result is None
-            or previous_result.retry_decision is None
-            or previous_result.retry_decision.disposition
+            or retry_decision is None
+            or retry_decision.disposition
             is not ActionRetryDisposition.RETRY_FROM_NEW_ACTION
         ):
             raise ActionConflictError(
                 "previous action is not admitted for retry",
             )
+        next_attempt = previous_request.attempt + 1
+        if (
+            retry_decision.next_attempt is not None
+            and retry_decision.next_attempt != next_attempt
+        ):
+            raise ActionConflictError("retry action attempt mismatch")
+        if next_attempt > retry_decision.max_attempts:
+            raise ActionConflictError("retry action budget exhausted")
+        retry_after_seconds = retry_decision.retry_after_seconds or 0
+        retry_at = previous_result.completed_at + timedelta(
+            seconds=retry_after_seconds,
+        )
+        if self._clock() < retry_at:
+            raise ActionRetryNotReadyError(retry_at)
         if previous_request.conversation_id != self._scope.conversation_id:
             raise ActionConflictError("retry action conversation mismatch")
         expected_correlation = (
@@ -1145,6 +1215,7 @@ class RuntimeActionRecorder:
             ),
             retry_decision=retry_decision,
             side_effect_status=side_effect_status,
+            completed_at=self._clock(),
         )
         committed_item = CommittedActionItem(
             action_id=request.action_id,
@@ -1224,6 +1295,7 @@ class RuntimeActionRecorder:
             ),
             retry_decision=retry_decision,
             side_effect_status=side_effect_status,
+            completed_at=self._clock(),
         )
         try:
             await self._store.complete(result)
@@ -1271,6 +1343,7 @@ __all__ = [
     "ACTION_RESULT_CONTEXT_KEY",
     "COMMITTED_ACTION_ITEM_METADATA_KEY",
     "ActionConflictError",
+    "ActionRetryNotReadyError",
     "ActionRequestPersistenceError",
     "ActionResultPersistenceError",
     "FilesystemActionStore",

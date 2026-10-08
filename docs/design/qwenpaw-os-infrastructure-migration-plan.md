@@ -508,6 +508,10 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     tool-call ID 与原始参数另算一套竞争性幂等事实。没有 Action Recorder 的旧 Task
     Runner 继续走原兼容路径。由此每个 retry attempt 都有独立本地记录，而真正跨
     attempt 的 executor key 仍只由 Action 契约持有。
+  - [x] Host-owned `ActionRetryPolicy` 已把最大 attempt、初始延迟、指数退避和延迟
+    上限固定到每个 ActionRequest；ActionResult 的裁决持久记录下一 attempt、预算和
+    `retry_after_seconds`。后续 attempt 继承原策略，预算耗尽转为明确 forbidden，
+    延迟未到抛出可调度的 typed error。Activity 只公开上述内容安全调度事实。
   - [ ] 在上述单一身份上接入自动 retry dispatcher：必须同时具备 attempt budget、
     可取消延迟、Stop/Interrupt fencing、无流式输出边界，以及重启后可判定的私有执行
     输入；不能仅凭 `retryable=true` 重新调用工具。

@@ -219,6 +219,9 @@ same logical outcome without repeating the side effect. On an admitted retry,
 `current_action_execution()` exposes a new `action_id`, the stable executor
 key, the incremented attempt, and root/previous Action IDs. Falsely declaring
 executor enforcement can duplicate external writes and is a contract defect.
+The Host pins a bounded retry policy to the first Action and carries it across
+attempts. A retry decision includes the next attempt and durable backoff, but
+it is not proof that a dispatcher has executed the retry.
 
 The process-wide governance registry is used for discovery, conflict checks,
 and deferred unload cleanup. Each guarded invocation tool also captures its

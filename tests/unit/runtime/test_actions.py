@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import json
 import stat
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -38,6 +39,7 @@ from qwenpaw.kernel import (
     ActionRequest,
     ActionResult,
     ActionRetryDisposition,
+    ActionRetryPolicy,
     ActionRetryReason,
     ActionStatus,
     ArtifactRef,
@@ -57,6 +59,7 @@ from qwenpaw.kernel.invocation import DEFAULT_DRIVER_PROVIDER_ID
 from qwenpaw.runtime.actions import (
     ACTION_RESULT_CONTEXT_KEY,
     ActionConflictError,
+    ActionRetryNotReadyError,
     ActionRequestPersistenceError,
     FilesystemActionStore,
     RuntimeActionRecorder,
@@ -117,6 +120,26 @@ def _context(
         "nested": {"password": "also-secret"},
     }
     return context
+
+
+def test_action_retry_policy_bounds_exponential_backoff() -> None:
+    policy = ActionRetryPolicy(
+        max_attempts=4,
+        initial_delay_seconds=2,
+        backoff_multiplier=3,
+        max_delay_seconds=5,
+    )
+
+    assert policy.delay_before_attempt(2) == 2
+    assert policy.delay_before_attempt(3) == 5
+    assert policy.delay_before_attempt(4) == 5
+    with pytest.raises(ValueError, match="attempt 2"):
+        policy.delay_before_attempt(1)
+    with pytest.raises(ValueError, match="exceeds"):
+        ActionRetryPolicy(
+            initial_delay_seconds=2,
+            max_delay_seconds=1,
+        )
 
 
 def _action_record(
@@ -693,6 +716,9 @@ async def test_executor_idempotency_admits_new_attempt_with_lineage(
     assert retry.idempotency_mode is (
         ActionIdempotencyMode.EXECUTOR_ENFORCED
     )
+    assert previous.result.retry_decision.max_attempts == 2
+    assert previous.result.retry_decision.next_attempt == 2
+    assert previous.result.retry_decision.retry_after_seconds == 0
     retry_response = ToolResponse(
         content=[TextBlock(type="text", text="written")],
         id=retry_context.tool_call_id,
@@ -786,6 +812,138 @@ async def test_action_retry_uses_current_matching_environment_resolution(
     assert retry.environment_ref.resolution_id != (
         first_resolution.resolution_id
     )
+
+
+@pytest.mark.asyncio
+async def test_action_retry_budget_is_persisted_and_exhausted(
+    tmp_path: Path,
+) -> None:
+    conversation_id = "chat-retry-budget"
+    correlation_id = uuid4()
+    store = FilesystemActionStore(tmp_path)
+    first_scope = _scope(
+        tmp_path,
+        conversation_id=conversation_id,
+    ).model_copy(update={"correlation_id": correlation_id})
+    first_recorder = RuntimeActionRecorder(
+        first_scope,
+        store,
+        retry_policy=ActionRetryPolicy(max_attempts=2),
+    )
+    first_context = _context("read_file", "call-budget-1")
+    await first_recorder.begin(
+        first_context,
+        effect=ToolEffect.NONE,
+        policy_decision="allow",
+    )
+    failure = ToolResponse(
+        content=[TextBlock(type="text", text="temporary failure")],
+        id=first_context.tool_call_id,
+        state=ToolResultState.ERROR,
+        metadata={ACTION_RETRY_HINT_METADATA_KEY: True},
+    )
+    await first_recorder.complete(failure, first_context)
+    [previous] = await store.list_for_conversation(conversation_id)
+
+    retry_scope = _scope(
+        tmp_path,
+        conversation_id=conversation_id,
+    ).model_copy(update={"correlation_id": correlation_id})
+    retry_recorder = RuntimeActionRecorder(retry_scope, store)
+    retry_context = _context("read_file", "call-budget-2")
+    retry = await retry_recorder.begin_retry(retry_context, previous)
+    await retry_recorder.complete(
+        ToolResponse(
+            content=[TextBlock(type="text", text="still unavailable")],
+            id=retry_context.tool_call_id,
+            state=ToolResultState.ERROR,
+            metadata={ACTION_RETRY_HINT_METADATA_KEY: True},
+        ),
+        retry_context,
+    )
+    records = await store.scan_for_conversation(conversation_id)
+    exhausted = next(
+        record for record in records
+        if record.request.action_id == retry.action_id
+    )
+
+    assert exhausted.request.retry_policy.max_attempts == 2
+    assert exhausted.result is not None
+    assert exhausted.result.retryable is False
+    assert exhausted.result.retry_decision is not None
+    assert exhausted.result.retry_decision.reason is (
+        ActionRetryReason.ATTEMPT_BUDGET_EXHAUSTED
+    )
+    assert exhausted.result.retry_decision.next_attempt is None
+    with pytest.raises(ActionConflictError, match="not admitted"):
+        await retry_recorder.begin_retry(
+            _context("read_file", "call-budget-3"),
+            exhausted,
+        )
+
+
+@pytest.mark.asyncio
+async def test_action_retry_waits_for_the_persisted_backoff_deadline(
+    tmp_path: Path,
+) -> None:
+    conversation_id = "chat-retry-backoff"
+    correlation_id = uuid4()
+    clock_value = [datetime(2026, 10, 8, tzinfo=timezone.utc)]
+    store = FilesystemActionStore(tmp_path)
+    first_scope = _scope(
+        tmp_path,
+        conversation_id=conversation_id,
+    ).model_copy(update={"correlation_id": correlation_id})
+    first_recorder = RuntimeActionRecorder(
+        first_scope,
+        store,
+        retry_policy=ActionRetryPolicy(
+            max_attempts=3,
+            initial_delay_seconds=5,
+        ),
+        clock=lambda: clock_value[0],
+    )
+    first_context = _context("read_file", "call-backoff-1")
+    await first_recorder.begin(
+        first_context,
+        effect=ToolEffect.NONE,
+        policy_decision="allow",
+    )
+    await first_recorder.complete(
+        ToolResponse(
+            content=[TextBlock(type="text", text="temporary failure")],
+            id=first_context.tool_call_id,
+            state=ToolResultState.ERROR,
+            metadata={ACTION_RETRY_HINT_METADATA_KEY: True},
+        ),
+        first_context,
+    )
+    [previous] = await store.list_for_conversation(conversation_id)
+    assert previous.result is not None
+    assert previous.result.retry_decision is not None
+    assert previous.result.retry_decision.retry_after_seconds == 5
+
+    retry_scope = _scope(
+        tmp_path,
+        conversation_id=conversation_id,
+    ).model_copy(update={"correlation_id": correlation_id})
+    retry_recorder = RuntimeActionRecorder(
+        retry_scope,
+        store,
+        clock=lambda: clock_value[0],
+    )
+    retry_context = _context("read_file", "call-backoff-2")
+    clock_value[0] += timedelta(seconds=4)
+    with pytest.raises(ActionRetryNotReadyError) as error:
+        await retry_recorder.begin_retry(retry_context, previous)
+    assert error.value.retry_at == (
+        previous.result.completed_at + timedelta(seconds=5)
+    )
+
+    clock_value[0] += timedelta(seconds=1)
+    retry = await retry_recorder.begin_retry(retry_context, previous)
+    assert retry.attempt == 2
+    assert retry.retry_policy == previous.request.retry_policy
 
 
 @pytest.mark.asyncio
