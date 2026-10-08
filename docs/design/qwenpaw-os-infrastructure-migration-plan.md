@@ -1034,6 +1034,9 @@ Cron 不形成独立审批或产物事实源。
     release tag；tag 展开 descriptor hash。替换版本可使用 expected release hash
     fencing 做 provider 级一次性回滚，回滚发布新的单调 generation、保留无关 provider
     的并发晋升，旧 lease 不漂移。可执行回滚点仅在进程内；重启由 manifest 重新装配。
+    OS/插件管理面通过 `GET /api/plugins/capability-releases` 只读公开当前 generation
+    和 stable tags；启动期从 Workspace Registry 读取同一事实源，不依赖 Task route，
+    也不暴露实现、配置或 Secret。
     关键词发现索引、持久 Promotion/Evaluation Journal、授权晋升门禁与
     Workstation/Hub Release Registry 仍待实现。
 

@@ -154,6 +154,15 @@ class GenerationRegistry:
         """Return the current content-addressed stable provider tag."""
         return self._stable_releases.get(provider_id)
 
+    def stable_releases(self) -> tuple[CapabilityReleaseTag, ...]:
+        """List stable provider tags in deterministic identity order."""
+        return tuple(
+            sorted(
+                self._stable_releases.values(),
+                key=lambda item: item.provider_id,
+            ),
+        )
+
     async def pin(
         self,
         generation: int | None = None,

@@ -26,10 +26,17 @@ from qwenpaw.app.routers.plugins import (
     _list_plugins_from_disk,
     _safe_extract_zip,
     install_plugin,
+    list_capability_releases,
     list_plugins,
     router as plugins_router,
 )
 from qwenpaw.app.routers.frontend_plugin import list_frontend_plugins
+from qwenpaw.capabilities import GenerationRegistry
+from qwenpaw.kernel.models import (
+    CapabilityBundle,
+    CapabilityContribution,
+    CapabilityProviderKind,
+)
 from qwenpaw.plugins.architecture import (
     PluginManifest,
     PluginMigrationDiagnostic,
@@ -47,6 +54,14 @@ def _zip_bytes(entries: dict[str, str]) -> bytes:
         for name, content in entries.items():
             zf.writestr(name, content)
     return buffer.getvalue()
+
+
+class _ReleaseFactory:
+    def __init__(self, factory_id: str) -> None:
+        self.factory_id = factory_id
+
+    async def build(self, context, app_services):
+        return context, app_services
 
 
 # ---------------------------------------------------------------------------
@@ -446,3 +461,86 @@ async def test_frontend_plugin_list_exposes_ui_contribution_contract(
             "entrypoint": "frontend/inspector.js",
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_list_capability_releases_is_stable_and_content_safe():
+    registry = GenerationRegistry()
+    for provider_id in ("provider.zeta", "provider.alpha"):
+        await registry.activate_bundle(
+            CapabilityBundle(
+                provider_id=provider_id,
+                provider_kind=CapabilityProviderKind.SYSTEM,
+                version="1.0.0",
+                contributions=(
+                    CapabilityContribution(
+                        contribution_id="factory",
+                        slot="agent.factory",
+                        entrypoint="tests:factory",
+                    ),
+                ),
+            ),
+            lambda _declaration, owner=provider_id: _ReleaseFactory(
+                f"{owner}.factory",
+            ),
+        )
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                plugin_loader=SimpleNamespace(
+                    capability_registry=registry,
+                ),
+            ),
+        ),
+    )
+
+    result = await list_capability_releases(request)
+
+    assert result["registry_generation"] == 3
+    assert result["channel"] == "stable"
+    assert [item["provider_id"] for item in result["items"]] == [
+        "provider.alpha",
+        "provider.zeta",
+    ]
+    assert all("implementation" not in item for item in result["items"])
+    assert all(
+        item["release_hash"].startswith("sha256:")
+        for item in result["items"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_capability_releases_waits_for_registry():
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(plugin_loader=None),
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await list_capability_releases(request)
+
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_list_capability_releases_uses_os_registry_during_startup():
+    registry = GenerationRegistry()
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                plugin_loader=None,
+                workspace_registry=SimpleNamespace(
+                    capability_registry=registry,
+                ),
+            ),
+        ),
+    )
+
+    result = await list_capability_releases(request)
+
+    assert result == {
+        "registry_generation": 1,
+        "channel": "stable",
+        "items": [],
+    }

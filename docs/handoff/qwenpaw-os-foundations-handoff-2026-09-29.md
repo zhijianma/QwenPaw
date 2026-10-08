@@ -457,6 +457,12 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   后续基础设施切片，不应被当前 stable tag 冒充。
 - 本切片定点验证 39 项通过，覆盖 Registry、system/plugin 同合同、Task Runtime
   相邻路径与 Lite 插件热激活；未执行全仓测试。
+- OS/插件管理面新增 `GET /api/plugins/capability-releases`，只读返回当前 generation
+  与按 provider 排序的 stable tags。启动期间优先使用 Plugin Loader Registry，未就绪
+  时回退到同一 Workspace Registry，不扩展已暂停的 Task route。
+- 真实 8004 服务 ready 后返回 generation 2、`qwenpaw.system.tasks` v1.7.0 的 13 个
+  Capability release；响应不含 implementation、Secret 或 credential。该接口不提供
+  远程回滚写操作，避免未经授权扩大管理面。
 
 ### 本阶段此前已执行的定点验证
 

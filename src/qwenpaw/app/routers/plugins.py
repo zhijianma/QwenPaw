@@ -684,6 +684,44 @@ async def list_plugins(request: Request):
 
 
 @router.get(
+    "/capability-releases",
+    summary="List stable capability releases",
+    description=(
+        "Return content-addressed stable releases published by the local "
+        "OS capability registry."
+    ),
+)
+async def list_capability_releases(request: Request) -> dict:
+    """Return content-safe stable tags for system and plugin providers."""
+    loader = getattr(request.app.state, "plugin_loader", None)
+    registry = getattr(loader, "capability_registry", None)
+    if registry is None:
+        workspace_registry = getattr(
+            request.app.state,
+            "workspace_registry",
+            None,
+        )
+        registry = getattr(
+            workspace_registry,
+            "capability_registry",
+            None,
+        )
+    if registry is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Capability registry is not ready yet. Try again shortly.",
+        )
+    return {
+        "registry_generation": registry.generation,
+        "channel": "stable",
+        "items": [
+            release.model_dump(mode="json")
+            for release in registry.stable_releases()
+        ],
+    }
+
+
+@router.get(
     "/catalog",
     summary="Official plugin catalog",
     description=(
