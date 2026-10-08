@@ -440,6 +440,11 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
   action identity 的 Adapter 才能开启流内工具执行。
   - [x] 过渡安全门：来源 Invocation 只要存在持久化 `ActionRequest`，Model Step
     continuation 即进入 `action_reconciliation_required`，不自动重放任何 Action。
+  - [x] dispatcher 已按真实 `ActionRecord` 生成并持久化内容安全的 reconciliation
+    assessment：区分 pending result、uncertain side effect 和 durable context
+    required；Activity 只公开原因与计数，旧 SQLite 数据库原位迁移。
+  - [ ] 为 terminal Action 提供可恢复 Tool Result / Checkpoint 后，才能从
+    `durable_context_required` 自动创建后续 Model Step。
 - [ ] 把 WebSocket 增量续传、sticky route 和 HTTP fallback 保持为 Provider
   Adapter capability；严格验证 response identity/prefix，失败时回退持久上下文重建，
   Kernel 不感知具体传输。

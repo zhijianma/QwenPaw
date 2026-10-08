@@ -90,8 +90,11 @@ ModelCallResult(continue_model_step, partial boundary)
   将它与用户取消和普通失败分开处理：保存失败 Turn，但不把 Envelope partial blocks
   注入 session。用户主动取消仍保留既有“保存已展示 partial”语义。
 - 当前 AgentScope 只在完整响应后进入 Action 阶段；dispatcher 仍扫描来源 Invocation
-  的持久化 `ActionRequest`。一旦存在任何 Action，恢复失败关闭为
-  `action_reconciliation_required`，等待后续 Action 对账能力，不自动重做。
+  的持久化 `ActionRequest`。一旦存在 Action，dispatcher 会生成内容安全的
+  `ModelStepReconciliation`，将阻塞原因区分为结果未落库、副作用不确定，以及所有
+  Action 已终态但下一步缺少可重建的 durable tool context。三种情况都进入
+  `action_reconciliation_required`，不自动重做；assessment 与 continuation 一同
+  持久化并投影到 Activity，旧记录没有 assessment 时仍可读取。
 - Model Step 状态通过现有 Chat Runtime Observation 投影为 pending、accepted、
   cancelled、blocked 或 failed；它不是 Queue 假状态，也不包含半截正文。
 - Resource Wait 与 Model Step 共用只读 `ModelRecoveryHistoryPort`；Resource Wait
@@ -108,6 +111,12 @@ ModelCallResult(continue_model_step, partial boundary)
 3. 审批继续使用 Approval，不伪装成自然语言问题；
 4. Suggestion 是非阻塞建议，不改变执行所有权；
 5. 等待结束后由 durable continuation 主动创建新 Invocation，不要求用户发送“继续”。
+
+运行时只有在 Outcome 已形成、发生显式 Stop / Interrupt、命中不可自动化的 typed
+WaitCondition，或恢复与预算策略到达终态时才结束这条执行链。Assistant Message、SSE
+连接关闭和一次 HTTP response 都不是生命周期边界。这样替换的不是 Chat 的问答外观，
+而是内核用“用户再说一句话”作为调度器的隐含假设；短问答仍自然退化为一条仅含一个
+Invocation 的执行链。
 
 当前 Console 兼容 Adapter 会从 typed envelope 装配固定、内容最小化的 runtime
 recovery input。Resource Wait 与 Model Step Continuation 都只传递权威事实引用；这是
@@ -149,6 +158,8 @@ Adapter 声明；Kernel 不假设任意模型流可以原地续传。
   output 不进入 session 或下一次模型上下文，用户取消路径保持兼容。
 - [x] 来源 Invocation 存在任何持久化 Action 时失败关闭，进入
   `action_reconciliation_required`，不自动重放副作用。
-- [ ] 根据 `ActionResult` / uncertain side-effect 与 Checkpoint 自动完成恢复对账。
+- [x] 根据真实 `ActionRecord` 将阻塞原因分类为 pending result、uncertain side
+  effect 或 durable context required，并跨重启持久化内容安全计数。
+- [ ] 用可恢复 Tool Result / Checkpoint 自动完成对账并安全创建后续 Model Step。
 - [ ] Provider resource health 事件自动释放 quota wait。
 - [ ] 真实限流故障和进程重启的浏览器端到端演练。

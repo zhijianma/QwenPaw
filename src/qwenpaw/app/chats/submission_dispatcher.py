@@ -182,18 +182,23 @@ class WorkspaceChatSubmissionDispatcher:
             raise RuntimeError(
                 "workspace path is required for action reconciliation",
             )
-        from ...runtime.actions import lite_action_store
+        from ...runtime.actions import (
+            assess_model_step_reconciliation,
+            lite_action_store,
+        )
 
         action_store = lite_action_store(Path(workspace_dir))
         actions = await action_store.scan_for_conversation(
             continuation.conversation_id,
         )
-        if any(
-            record.request.invocation_id == continuation.invocation_id
-            for record in actions
-        ):
+        reconciliation = assess_model_step_reconciliation(
+            actions,
+            continuation.invocation_id,
+        )
+        if reconciliation is not None:
             await self._resource_waits.require_action_reconciliation(
                 continuation.continuation_id,
+                reconciliation,
             )
             return
         dispatched = await self._resource_waits.dispatch_model_step(

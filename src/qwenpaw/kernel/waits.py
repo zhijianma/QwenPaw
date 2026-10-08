@@ -87,6 +87,71 @@ class ModelStepContinuationStatus(str, Enum):
     RECOVERY_EXHAUSTED = "recovery_exhausted"
 
 
+class ModelStepReconciliationReason(str, Enum):
+    """Why a partial model step cannot continue automatically."""
+
+    PENDING_ACTION_RESULT = "pending_action_result"
+    UNCERTAIN_SIDE_EFFECT = "uncertain_side_effect"
+    DURABLE_CONTEXT_REQUIRED = "durable_context_required"
+
+
+class ModelStepReconciliation(KernelModel):
+    """Content-free assessment of Actions owned by a failed model step."""
+
+    reason: ModelStepReconciliationReason
+    action_count: int = Field(ge=1)
+    pending_result_count: int = Field(ge=0)
+    uncertain_side_effect_count: int = Field(ge=0)
+    terminal_result_count: int = Field(ge=0)
+    assessed_at: AwareDatetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def validate_counts(self) -> Self:
+        """Require every Action to be pending or terminal exactly once."""
+        if (
+            self.pending_result_count + self.terminal_result_count
+            != self.action_count
+        ):
+            raise ValueError(
+                "pending and terminal action counts must equal action_count",
+            )
+        if self.uncertain_side_effect_count > self.terminal_result_count:
+            raise ValueError(
+                "uncertain side effects cannot exceed terminal actions",
+            )
+        if (
+            self.reason
+            is ModelStepReconciliationReason.UNCERTAIN_SIDE_EFFECT
+            and self.uncertain_side_effect_count == 0
+        ):
+            raise ValueError(
+                "uncertain reason requires an uncertain side effect",
+            )
+        if (
+            self.reason
+            is ModelStepReconciliationReason.PENDING_ACTION_RESULT
+            and (
+                self.pending_result_count == 0
+                or self.uncertain_side_effect_count != 0
+            )
+        ):
+            raise ValueError(
+                "pending reason requires pending results and no uncertainty",
+            )
+        if (
+            self.reason
+            is ModelStepReconciliationReason.DURABLE_CONTEXT_REQUIRED
+            and (
+                self.pending_result_count != 0
+                or self.uncertain_side_effect_count != 0
+            )
+        ):
+            raise ValueError(
+                "durable context reason requires terminal certain actions",
+            )
+        return self
+
+
 class ModelStepContinuation(KernelModel):
     """Content-free continuation after a partial model stream fails."""
 
@@ -100,6 +165,7 @@ class ModelStepContinuation(KernelModel):
     status: ModelStepContinuationStatus = (
         ModelStepContinuationStatus.READY
     )
+    reconciliation: ModelStepReconciliation | None = None
     submission_id: UUID | None = None
     revision: int = Field(default=1, ge=1)
     created_at: AwareDatetime = Field(default_factory=utc_now)
@@ -121,6 +187,14 @@ class ModelStepContinuation(KernelModel):
         if dispatched != (self.submission_id is not None):
             raise ValueError(
                 "dispatched model-step continuation requires submission_id",
+            )
+        if (
+            self.reconciliation is not None
+            and self.status
+            is not ModelStepContinuationStatus.ACTION_RECONCILIATION_REQUIRED
+        ):
+            raise ValueError(
+                "model-step reconciliation requires blocked status",
             )
         if self.updated_at < self.created_at:
             raise ValueError("updated_at cannot precede created_at")
@@ -308,6 +382,8 @@ __all__ = [
     "ConversationContinuation",
     "ModelStepContinuation",
     "ModelStepContinuationStatus",
+    "ModelStepReconciliation",
+    "ModelStepReconciliationReason",
     "ModelResourceWait",
     "ResourceWaitStatus",
     "ResourceWaitTrigger",

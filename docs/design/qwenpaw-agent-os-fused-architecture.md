@@ -541,14 +541,21 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
 - [ ] 将 Chat 运行模型从隐含的一问一答升级为 Conversation Execution Chain：
   `Submission` 是输入，`Invocation` 是一次运行尝试，`correlation_id` 贯穿同一意图
   的多次等待与恢复；短问答继续使用单 Invocation 快速路径。
+  - [x] 已冻结退出边界：Outcome、显式 Stop / Interrupt、不可自动化的 typed Wait，
+    或预算/恢复终态；Assistant Message、HTTP response 和 SSE 断开不结束执行链。
+  - [x] Ask User admission 已限制为必要事实、关键偏好、范围授权和高影响裁决，禁止
+    用“是否继续”代替 Runtime 调度。
 - [ ] 冻结 Model Recovery Contract：区分连接前失败、部分流中断、Provider 限流、
   quota/budget/auth/policy、用户 Interrupt 与 unknown；transport retry 不消耗业务
   retry，超过短等待预算后持久化 Resource Wait 并释放运行槽。
 - [ ] 完成长程恢复闭环：
   - [x] Interaction conversation turn 已通过 durable outbox 创建后续 Submission，
     继承 correlation 并创建新 Invocation；重启与 enqueue/mark 崩溃窗口保持幂等。
-  - [ ] Resource Wait、模型流恢复和进程级自动 continuation 仍待实现；成功 Action
-    不重做，uncertain Action 必须先对账或取得显式授权。
+  - [x] Resource Wait 与 bounded Model Step continuation 已跨进程恢复；partial output
+    不进入下一次上下文，Stop / Interrupt、崩溃窗口与恢复预算均有持久化边界。
+  - [ ] 成功 Action 不重做，uncertain Action 必须先对账或取得显式授权；当前已经
+    持久化 pending / uncertain / durable-context 三类 assessment，仍缺完整 Tool
+    Result / Checkpoint 重建。
 - [ ] Workstation / Hub 再实现按能力、健康、成本和数据边界的动态路由；Lite 当前
   继续使用确定性主模型与显式 fallback 顺序，不冒充智能路由器。
 - 区分 Run Completion、Verification 与业务 Outcome，并预留 Trajectory 投影。

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sqlite3
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
@@ -22,6 +23,7 @@ from ..kernel import (
     ModelResourceWait,
     ModelStepContinuation,
     ModelStepContinuationStatus,
+    ModelStepReconciliation,
     ResourceWaitStatus,
     ResourceWaitTrigger,
     WaitCondition,
@@ -51,6 +53,18 @@ ModelStepDispatcher = Callable[
     [ModelStepContinuation],
     Awaitable[UUID | None],
 ]
+
+
+def _same_reconciliation(
+    left: ModelStepReconciliation | None,
+    right: ModelStepReconciliation | None,
+) -> bool:
+    """Compare reconciliation facts without their audit timestamp."""
+    if left is None or right is None:
+        return left is right
+    return left.model_dump(exclude={"assessed_at"}) == right.model_dump(
+        exclude={"assessed_at"},
+    )
 
 
 class ModelResourceWaitService:
@@ -147,6 +161,7 @@ class ModelResourceWaitService:
                     conversation_id TEXT NOT NULL,
                     output_boundary TEXT NOT NULL,
                     status TEXT NOT NULL,
+                    reconciliation_json TEXT,
                     submission_id TEXT,
                     revision INTEGER NOT NULL,
                     created_at TEXT NOT NULL,
@@ -163,9 +178,20 @@ class ModelResourceWaitService:
                         agent_id,
                         correlation_id,
                         created_at
-                    );
+                );
                 """,
             )
+            step_columns = {
+                row["name"]
+                for row in connection.execute(
+                    "PRAGMA table_info(model_step_continuations)",
+                ).fetchall()
+            }
+            if "reconciliation_json" not in step_columns:
+                connection.execute(
+                    "ALTER TABLE model_step_continuations "
+                    "ADD COLUMN reconciliation_json TEXT",
+                )
 
     async def start(self) -> None:
         """Initialize the durable store once."""
@@ -345,8 +371,12 @@ class ModelResourceWaitService:
                     },
                 )
             connection.execute(
-                "INSERT INTO model_step_continuations VALUES "
-                "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO model_step_continuations "
+                "(continuation_id, attempt_id, invocation_id, "
+                "correlation_id, agent_id, conversation_id, "
+                "output_boundary, status, reconciliation_json, "
+                "submission_id, revision, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 self._step_to_values(continuation),
             )
         return continuation
@@ -604,6 +634,7 @@ class ModelResourceWaitService:
     async def require_action_reconciliation(
         self,
         continuation_id: UUID,
+        reconciliation: ModelStepReconciliation,
     ) -> ModelStepContinuation:
         """Fail closed when an originating Invocation owns an Action."""
         await self.start()
@@ -616,6 +647,7 @@ class ModelResourceWaitService:
                     .ACTION_RECONCILIATION_REQUIRED
                 ),
                 None,
+                reconciliation,
             )
 
     async def get_model_step(
@@ -646,6 +678,7 @@ class ModelResourceWaitService:
         continuation_id: UUID,
         status: ModelStepContinuationStatus,
         submission_id: UUID | None,
+        reconciliation: ModelStepReconciliation | None = None,
     ) -> ModelStepContinuation:
         connection = self._connect()
         try:
@@ -659,7 +692,13 @@ class ModelResourceWaitService:
                 raise ModelResourceWaitNotFoundError(str(continuation_id))
             current = self._step_from_row(row)
             if current.status is status:
-                if current.submission_id != submission_id:
+                if (
+                    current.submission_id != submission_id
+                    or not _same_reconciliation(
+                        current.reconciliation,
+                        reconciliation,
+                    )
+                ):
                     raise ModelResourceWaitConflictError(
                         "model-step continuation submission conflict",
                     )
@@ -673,6 +712,7 @@ class ModelResourceWaitService:
                 update={
                     "status": status,
                     "submission_id": submission_id,
+                    "reconciliation": reconciliation,
                     "revision": current.revision + 1,
                     "updated_at": utc_now(),
                 },
@@ -980,7 +1020,14 @@ class ModelResourceWaitService:
 
     @staticmethod
     def _step_from_row(row: sqlite3.Row) -> ModelStepContinuation:
-        return ModelStepContinuation.model_validate(dict(row))
+        values = dict(row)
+        raw_reconciliation = values.pop("reconciliation_json", None)
+        values["reconciliation"] = (
+            json.loads(raw_reconciliation)
+            if raw_reconciliation is not None
+            else None
+        )
+        return ModelStepContinuation.model_validate(values)
 
     @staticmethod
     def _step_to_values(
@@ -995,6 +1042,11 @@ class ModelResourceWaitService:
             continuation.conversation_id,
             continuation.output_boundary.value,
             continuation.status.value,
+            (
+                continuation.reconciliation.model_dump_json()
+                if continuation.reconciliation is not None
+                else None
+            ),
             (
                 str(continuation.submission_id)
                 if continuation.submission_id
@@ -1013,10 +1065,16 @@ class ModelResourceWaitService:
     ) -> None:
         connection.execute(
             "UPDATE model_step_continuations SET status = ?, "
-            "submission_id = ?, revision = ?, updated_at = ? "
+            "reconciliation_json = ?, submission_id = ?, revision = ?, "
+            "updated_at = ? "
             "WHERE continuation_id = ?",
             (
                 continuation.status.value,
+                (
+                    continuation.reconciliation.model_dump_json()
+                    if continuation.reconciliation is not None
+                    else None
+                ),
                 (
                     str(continuation.submission_id)
                     if continuation.submission_id
@@ -1077,10 +1135,22 @@ class ModelRecoveryHistory:
                 "ORDER BY created_at, continuation_id",
                 (self._agent_id, conversation_id),
             ).fetchall()
-        return tuple(
-            ModelStepContinuation.model_validate(dict(row))
-            for row in rows
-        )
+        continuations = []
+        for row in rows:
+            values = dict(row)
+            raw_reconciliation = values.pop(
+                "reconciliation_json",
+                None,
+            )
+            values["reconciliation"] = (
+                json.loads(raw_reconciliation)
+                if raw_reconciliation is not None
+                else None
+            )
+            continuations.append(
+                ModelStepContinuation.model_validate(values),
+            )
+        return tuple(continuations)
 
     def _scan_model_resource_waits_for_conversation_sync(
         self,

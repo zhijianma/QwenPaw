@@ -472,6 +472,13 @@ Submission、Invocation、Model Step、Action、Interaction 和恢复周期。As
 message 只负责对人表达，不负责划定 Runtime 生命周期；等待和恢复也不要求用户再发
 一句话来“推动下一轮”。
 
+因此本项裁决不是继续优化问答轮次，而是用 **intent-driven continuous execution**
+替换 Runtime 的 turn-driven 假设：一次用户意图在同一 correlation 下自主经过模型、
+Action、验证、等待和恢复；只有 Outcome、显式 Stop / Interrupt、不可自动化的 typed
+WaitCondition，或预算/恢复终态才结束执行链。Assistant Message 是可多次产生的用户
+投影，HTTP response 与 SSE 断开只是传输事件。该模型仍兼容短问答，因为最简单的
+执行链自然只有一个 Submission、一个 Invocation 和一个最终 Message。
+
 模型资源等待进一步验证了这一点：一次调用因限流或额度耗尽停止时，恢复由 Runtime
 自身的等待事实和 continuation 驱动，不制造“是否继续？”对话。只有资源恢复需要
 用户授权或高影响选择时，才正交地创建 Interaction；资源等待本身不是人机问答。

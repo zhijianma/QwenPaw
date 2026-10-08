@@ -304,6 +304,31 @@ def _model_step_observation(
             "attempt_id": str(continuation.attempt_id),
             "output_boundary": continuation.output_boundary.value,
             "recovery_status": continuation.status.value,
+            "reconciliation_reason": (
+                continuation.reconciliation.reason.value
+                if continuation.reconciliation is not None
+                else None
+            ),
+            "reconciliation_action_count": (
+                continuation.reconciliation.action_count
+                if continuation.reconciliation is not None
+                else 0
+            ),
+            "reconciliation_pending_result_count": (
+                continuation.reconciliation.pending_result_count
+                if continuation.reconciliation is not None
+                else 0
+            ),
+            "reconciliation_uncertain_side_effect_count": (
+                continuation.reconciliation.uncertain_side_effect_count
+                if continuation.reconciliation is not None
+                else 0
+            ),
+            "reconciliation_terminal_result_count": (
+                continuation.reconciliation.terminal_result_count
+                if continuation.reconciliation is not None
+                else 0
+            ),
             "submission_id": _optional_uuid(continuation.submission_id),
             "revision": continuation.revision,
         },

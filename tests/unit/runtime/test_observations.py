@@ -39,6 +39,8 @@ from qwenpaw.kernel import (
     ModelFailureClass,
     ModelOutputBoundary,
     ModelRecoveryDisposition,
+    ModelStepReconciliation,
+    ModelStepReconciliationReason,
     ModelRouteReason,
     ObservationCategory,
     ObservationSource,
@@ -207,6 +209,15 @@ async def test_model_step_recovery_projects_content_safe_blocker(
     assert continuation is not None
     await recovery.require_action_reconciliation(
         continuation.continuation_id,
+        ModelStepReconciliation(
+            reason=(
+                ModelStepReconciliationReason.UNCERTAIN_SIDE_EFFECT
+            ),
+            action_count=2,
+            pending_result_count=0,
+            uncertain_side_effect_count=1,
+            terminal_result_count=2,
+        ),
     )
 
     observations = await lite_observation_projection(
@@ -223,6 +234,12 @@ async def test_model_step_recovery_projects_content_safe_blocker(
         "action_reconciliation_required"
     )
     assert observation.facts["output_boundary"] == "partial_stream"
+    assert observation.facts["reconciliation_reason"] == (
+        "uncertain_side_effect"
+    )
+    assert observation.facts[
+        "reconciliation_uncertain_side_effect_count"
+    ] == 1
     serialized = observation.model_dump_json()
     assert "partial output text" not in serialized
     assert "messages" not in serialized

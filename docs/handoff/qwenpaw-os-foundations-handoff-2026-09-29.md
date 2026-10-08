@@ -285,7 +285,9 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - Stop / Interrupt、Queue revision 和执行前反向绑定共同阻止迟到恢复；工作目录缺失
   时 action reconciliation 失败关闭。
 - dispatcher 扫描来源 Invocation 的 `ActionRequest`；发现任何 Action 即进入
-  `action_reconciliation_required`，当前不会自动重做或猜测副作用结果。
+  `action_reconciliation_required`。现在会从真实 `ActionRecord` 生成并持久化内容安全
+  assessment，区分 pending result、uncertain side effect 和 durable context
+  required；仍不会自动重做或猜测副作用结果。
 - 状态经现有 Chat Runtime Observation 展示为 pending / accepted / cancelled /
   blocked / failed，不伪造 Queue 项，不依赖 Task 页面或前端私有状态。
 - Kernel/SDK 新增只读 `ModelRecoveryHistoryPort`；独立查询 Adapter 从同一恢复事实
@@ -293,7 +295,10 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - Resource Wait 的 waiting / ready / dispatched / cancelled / exhausted 现在也进入
   Activity；投影只含失败类别、触发方式、`not_before`、状态和因果 ID，不含 Provider
   payload、Prompt、异常正文或凭据。
-- 尚未完成：按 `ActionResult` / uncertain side-effect 与 Checkpoint 自动对账、
+- “一问一答”只保留为 Chat 快速路径和 UI 投影；长程执行链只在 Outcome、显式
+  Stop / Interrupt、不可自动化的 typed Wait 或预算/恢复终态结束，不依赖用户发送
+  “继续”。
+- 尚未完成：用可恢复 Tool Result / Checkpoint 自动完成 Action 对账、
   Provider token 级原地续传、真实断流与进程重启的浏览器端到端演练。
 
 ### 本阶段此前已执行的定点验证

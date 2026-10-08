@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Tests for durable model-resource waits and restart recovery."""
 
+import sqlite3
+from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -13,6 +15,8 @@ from qwenpaw.kernel import (
     ModelFailureClass,
     ModelOutputBoundary,
     ModelRecoveryDisposition,
+    ModelStepReconciliation,
+    ModelStepReconciliationReason,
     ModelStepContinuationStatus,
     ResourceWaitStatus,
     ResourceWaitTrigger,
@@ -431,3 +435,91 @@ async def test_partial_model_step_outbox_is_bounded_and_dispatches_once(
         ModelStepContinuationStatus.RECOVERY_EXHAUSTED
     )
     assert not await service.list_ready_model_steps()
+
+
+@pytest.mark.asyncio
+async def test_model_step_reconciliation_survives_restart(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "resource-waits.sqlite3"
+    service = ModelResourceWaitService(database, agent_id="default")
+    attempt = _attempt()
+    result = ModelCallResult(
+        attempt_id=attempt.attempt_id,
+        invocation_id=attempt.invocation_id,
+        conversation_id=attempt.conversation_id,
+        status=ModelCallStatus.FAILED,
+        emitted_content=True,
+        output_boundary=ModelOutputBoundary.PARTIAL_STREAM,
+        failure_class=ModelFailureClass.STREAM_INTERRUPTED,
+        recovery_disposition=ModelRecoveryDisposition.CONTINUE_MODEL_STEP,
+    )
+    continuation = await service.defer_model_step(attempt, result)
+    assert continuation is not None
+    assessment = ModelStepReconciliation(
+        reason=ModelStepReconciliationReason.DURABLE_CONTEXT_REQUIRED,
+        action_count=1,
+        pending_result_count=0,
+        uncertain_side_effect_count=0,
+        terminal_result_count=1,
+    )
+
+    blocked = await service.require_action_reconciliation(
+        continuation.continuation_id,
+        assessment,
+    )
+    restarted = ModelResourceWaitService(database, agent_id="default")
+    restored = await restarted.get_model_step(
+        continuation.continuation_id,
+    )
+    replayed = await restarted.require_action_reconciliation(
+        continuation.continuation_id,
+        assessment.model_copy(
+            update={
+                "assessed_at": assessment.assessed_at
+                + timedelta(seconds=1),
+            },
+        ),
+    )
+
+    assert blocked.reconciliation == assessment
+    assert restored == blocked
+    assert replayed == blocked
+
+
+@pytest.mark.asyncio
+async def test_model_step_reconciliation_migrates_existing_database(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "resource-waits.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            CREATE TABLE model_step_continuations (
+                continuation_id TEXT PRIMARY KEY,
+                attempt_id TEXT NOT NULL UNIQUE,
+                invocation_id TEXT NOT NULL,
+                correlation_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                output_boundary TEXT NOT NULL,
+                status TEXT NOT NULL,
+                submission_id TEXT,
+                revision INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """,
+        )
+
+    service = ModelResourceWaitService(database, agent_id="default")
+    await service.start()
+
+    with sqlite3.connect(database) as connection:
+        columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(model_step_continuations)",
+            ).fetchall()
+        }
+    assert "reconciliation_json" in columns

@@ -26,6 +26,8 @@ from ..kernel import (
     EnvironmentRef,
     DriverToolDefinition,
     InvocationScope,
+    ModelStepReconciliation,
+    ModelStepReconciliationReason,
     RiskLevel,
     SideEffectStatus,
     ToolEffect,
@@ -74,6 +76,47 @@ class ActionRequestPersistenceError(RuntimeError):
 
 class ActionResultPersistenceError(RuntimeError):
     """Raised after execution when its terminal evidence cannot be stored."""
+
+
+def assess_model_step_reconciliation(
+    records: Sequence[ActionRecord],
+    invocation_id: UUID,
+) -> ModelStepReconciliation | None:
+    """Classify why Actions prevent automatic model-step continuation."""
+    owned = [
+        record
+        for record in records
+        if record.request.invocation_id == invocation_id
+    ]
+    if not owned:
+        return None
+
+    pending_result_count = sum(
+        record.result is None for record in owned
+    )
+    terminal_results = [
+        record.result
+        for record in owned
+        if record.result is not None
+    ]
+    uncertain_side_effect_count = sum(
+        result.status in {ActionStatus.PARTIAL, ActionStatus.UNKNOWN}
+        or result.side_effect_status is SideEffectStatus.UNCERTAIN
+        for result in terminal_results
+    )
+    if uncertain_side_effect_count:
+        reason = ModelStepReconciliationReason.UNCERTAIN_SIDE_EFFECT
+    elif pending_result_count:
+        reason = ModelStepReconciliationReason.PENDING_ACTION_RESULT
+    else:
+        reason = ModelStepReconciliationReason.DURABLE_CONTEXT_REQUIRED
+    return ModelStepReconciliation(
+        reason=reason,
+        action_count=len(owned),
+        pending_result_count=pending_result_count,
+        uncertain_side_effect_count=uncertain_side_effect_count,
+        terminal_result_count=len(terminal_results),
+    )
 
 
 def _json_value(value: Any) -> Any:
@@ -817,6 +860,7 @@ __all__ = [
     "ActionResultPersistenceError",
     "FilesystemActionStore",
     "RuntimeActionRecorder",
+    "assess_model_step_reconciliation",
     "link_active_action_approval",
     "lite_action_store",
     "public_action_record",

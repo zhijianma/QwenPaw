@@ -30,6 +30,7 @@ from qwenpaw.drivers.capabilities import (
 )
 from qwenpaw.kernel import (
     ActionKind,
+    ActionRecord,
     ActionRequest,
     ActionResult,
     ActionStatus,
@@ -39,7 +40,9 @@ from qwenpaw.kernel import (
     EvidenceRef,
     EnvironmentRef,
     InvocationScope,
+    ModelStepReconciliationReason,
     RiskLevel,
+    SideEffectStatus,
     ToolEffect,
 )
 from qwenpaw.kernel.driver import DriverApprovalRejectedError
@@ -49,6 +52,7 @@ from qwenpaw.runtime.actions import (
     ActionRequestPersistenceError,
     FilesystemActionStore,
     RuntimeActionRecorder,
+    assess_model_step_reconciliation,
 )
 from qwenpaw.runtime.environments import (
     LiteEnvironmentResolver,
@@ -99,6 +103,93 @@ def _context(
         "nested": {"password": "also-secret"},
     }
     return context
+
+
+def _action_record(
+    invocation_id,
+    *,
+    suffix: str,
+    status: ActionStatus | None = None,
+    side_effect_status: SideEffectStatus | None = None,
+) -> ActionRecord:
+    request = ActionRequest(
+        invocation_id=invocation_id,
+        correlation_id=uuid4(),
+        conversation_id="chat-recovery",
+        registry_generation=1,
+        capability_id="qwenpaw.system.test-tool",
+        kind=ActionKind.TOOL,
+        action_name=f"test_{suffix}",
+        redacted_arguments={},
+        arguments_hash=f"sha256:{'a' * 64}",
+        idempotency_key=f"action-{suffix}",
+    )
+    result = None
+    if status is not None:
+        result = ActionResult(
+            action_id=request.action_id,
+            invocation_id=invocation_id,
+            conversation_id=request.conversation_id,
+            status=status,
+            observation_digest=f"sha256:{'b' * 64}",
+            side_effect_status=side_effect_status,
+        )
+    return ActionRecord(request=request, result=result)
+
+
+def test_model_step_reconciliation_classifies_action_evidence() -> None:
+    invocation_id = uuid4()
+    unrelated = _action_record(uuid4(), suffix="unrelated")
+    assert assess_model_step_reconciliation(
+        [unrelated],
+        invocation_id,
+    ) is None
+
+    pending = _action_record(invocation_id, suffix="pending")
+    assessment = assess_model_step_reconciliation(
+        [unrelated, pending],
+        invocation_id,
+    )
+    assert assessment is not None
+    assert assessment.reason is (
+        ModelStepReconciliationReason.PENDING_ACTION_RESULT
+    )
+    assert assessment.pending_result_count == 1
+    assert assessment.terminal_result_count == 0
+
+    uncertain = _action_record(
+        invocation_id,
+        suffix="uncertain",
+        status=ActionStatus.UNKNOWN,
+        side_effect_status=SideEffectStatus.UNCERTAIN,
+    )
+    assessment = assess_model_step_reconciliation(
+        [pending, uncertain],
+        invocation_id,
+    )
+    assert assessment is not None
+    assert assessment.reason is (
+        ModelStepReconciliationReason.UNCERTAIN_SIDE_EFFECT
+    )
+    assert assessment.action_count == 2
+    assert assessment.pending_result_count == 1
+    assert assessment.uncertain_side_effect_count == 1
+    assert assessment.terminal_result_count == 1
+
+    succeeded = _action_record(
+        invocation_id,
+        suffix="succeeded",
+        status=ActionStatus.SUCCEEDED,
+        side_effect_status=SideEffectStatus.SUCCEEDED,
+    )
+    assessment = assess_model_step_reconciliation(
+        [succeeded],
+        invocation_id,
+    )
+    assert assessment is not None
+    assert assessment.reason is (
+        ModelStepReconciliationReason.DURABLE_CONTEXT_REQUIRED
+    )
 
 
 @pytest.mark.asyncio

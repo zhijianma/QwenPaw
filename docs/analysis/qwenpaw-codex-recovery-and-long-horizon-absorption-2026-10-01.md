@@ -324,7 +324,10 @@ Codex 的“边收流边执行工具”建立在其 Provider 事件协议、工�
 - [x] Model Step recovery 与用户取消使用不同的 session-save policy；自动恢复不
   提交 partial Assistant blocks，用户取消仍保留可见 partial；
 - [x] 来源 Invocation 存在 Action 时进入 `action_reconciliation_required`，不重做；
-- [ ] 根据 succeeded / failed / uncertain `ActionResult` 与 Checkpoint 自动对账；
+- [x] 读取真实 `ActionRecord`，将阻塞原因和计数持久化为 pending result、uncertain
+  side effect 或 durable context required；不把“Action 已成功”误等同于“模型上下文
+  已可恢复”；
+- [ ] 通过可恢复 Tool Result / Checkpoint 为终态 Action 重建完整上下文并自动续行；
 - [ ] 只有具备 committed action protocol 的 Adapter 才能启用流内执行。
 
 ### R4：可选 Provider 增量续传

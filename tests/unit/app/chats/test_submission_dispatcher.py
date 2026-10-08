@@ -45,6 +45,7 @@ from qwenpaw.kernel import (
     ModelFailureClass,
     ModelOutputBoundary,
     ModelRecoveryDisposition,
+    ModelStepReconciliationReason,
     ModelStepContinuationStatus,
     ResourceWaitStatus,
     SubmissionInputEnvelope,
@@ -715,6 +716,12 @@ async def test_partial_model_step_stops_for_action_reconciliation(
     assert blocked.status is (
         ModelStepContinuationStatus.ACTION_RECONCILIATION_REQUIRED
     )
+    assert blocked.reconciliation is not None
+    assert blocked.reconciliation.reason is (
+        ModelStepReconciliationReason.PENDING_ACTION_RESULT
+    )
+    assert blocked.reconciliation.action_count == 1
+    assert blocked.reconciliation.pending_result_count == 1
     queue = await control.read_queue(
         agent_id="default",
         conversation_id=chat.id,
