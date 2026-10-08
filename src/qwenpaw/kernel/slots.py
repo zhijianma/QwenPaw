@@ -160,6 +160,7 @@ _SLOT_CONTRACTS = {
         ("MemorySession",),
         "invocation",
         promotion_risk="high",
+        promotion_scenarios=("memory-provider.session",),
     ),
     "prompt.provider": _contract(
         "prompt.provider",

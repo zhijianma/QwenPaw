@@ -12,6 +12,10 @@ from qwenpaw.capabilities.system_tools import (
     SYSTEM_TOOL_CAPABILITY_BUNDLE,
     system_tool_contribution_factory,
 )
+from qwenpaw.capabilities.system_memory import (
+    SYSTEM_MEMORY_CAPABILITY_BUNDLE,
+    system_memory_contribution_factory,
+)
 from qwenpaw.capabilities.promotions import (
     LiteCapabilityPromotionScenarioRunner,
 )
@@ -25,6 +29,7 @@ from qwenpaw.kernel import (
     CapabilityPromotionCandidate,
     CapabilityProviderKind,
     CapabilityPromotionAssessment,
+    MemoryStateScope,
     ToolDefinition,
 )
 
@@ -125,6 +130,54 @@ class _SlowToolProvider(_ToolProvider):
         return await super().list_tools(scope, selection, host)
 
 
+class _MemorySession:
+    def __init__(self, prompt: str) -> None:
+        self._prompt = prompt
+        self.closed = False
+
+    def get_prompt(self) -> str:
+        return self._prompt
+
+    def list_tools(self):
+        return (
+            ToolDefinition(
+                function=_catalog_tool,
+                name="_catalog_tool",
+                tool_type="internal",
+            ),
+        )
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class _MemoryProvider:
+    provider_id = "example.memory.provider"
+
+    def __init__(self, prompt: str = "Remember the stable fixture.") -> None:
+        self._prompt = prompt
+        self.session: _MemorySession | None = None
+
+    async def health_check(self) -> bool:
+        return True
+
+    async def open(self, scope, host):
+        assert scope.selection.memory_provider_id == self.provider_id
+        assert host.config_snapshot() == {}
+        assert not hasattr(host, "compatibility_backend")
+        state = host.state(MemoryStateScope.AGENT)
+        assert await state.read("probe") is None
+        snapshot = await state.write(
+            "probe",
+            "isolated",
+            expected_revision=0,
+        )
+        assert snapshot.revision == 1
+        await state.delete("probe", expected_revision=1)
+        self.session = _MemorySession(self._prompt)
+        return self.session
+
+
 def _bundle(
     provider_kind: CapabilityProviderKind,
 ) -> CapabilityBundle:
@@ -164,6 +217,21 @@ def _tool_bundle(
                 slot="tool.provider",
                 entrypoint="example:tools",
                 config_schema=config_schema,
+            ),
+        ),
+    )
+
+
+def _memory_bundle() -> CapabilityBundle:
+    return CapabilityBundle(
+        provider_id="example.memory",
+        provider_kind=CapabilityProviderKind.PLUGIN,
+        version="1.0.0",
+        contributions=(
+            CapabilityContribution(
+                contribution_id="provider",
+                slot="memory.provider",
+                entrypoint="example:memory",
             ),
         ),
     )
@@ -449,3 +517,64 @@ async def test_tool_catalog_timeout_blocks_publication() -> None:
         )
 
     assert registry.generation == 1
+
+
+@pytest.mark.asyncio
+async def test_plugin_memory_provider_session_scenario_passes() -> None:
+    bundle = _memory_bundle()
+    provider = _MemoryProvider()
+    registry = GenerationRegistry(
+        promotion_scenario_runner=LiteCapabilityPromotionScenarioRunner(),
+    )
+
+    await registry.activate_bundle(
+        bundle,
+        lambda _declaration: provider,
+    )
+    [evidence_bundle] = await registry.promotion_evidence(
+        _candidate(bundle).candidate_id,
+    )
+    scenario = next(
+        item
+        for item in evidence_bundle.evidence
+        if item.check_id.startswith("scenario.memory-provider.session")
+    )
+
+    assert scenario.outcome is CapabilityCheckOutcome.PASSED
+    assert provider.session is not None
+    assert provider.session.closed
+
+
+@pytest.mark.asyncio
+async def test_oversized_memory_prompt_blocks_publication_and_closes() -> None:
+    bundle = _memory_bundle()
+    provider = _MemoryProvider("x" * (32 * 1024 + 1))
+    registry = GenerationRegistry(
+        promotion_scenario_runner=LiteCapabilityPromotionScenarioRunner(),
+    )
+
+    with pytest.raises(ActivationError, match="did not allow"):
+        await registry.activate_bundle(
+            bundle,
+            lambda _declaration: provider,
+        )
+
+    assert registry.generation == 1
+    assert provider.session is not None
+    assert provider.session.closed
+
+
+@pytest.mark.asyncio
+async def test_system_memory_provider_uses_same_session_scenario() -> None:
+    registry = GenerationRegistry(
+        promotion_scenario_runner=LiteCapabilityPromotionScenarioRunner(),
+    )
+
+    await registry.activate_bundle(
+        SYSTEM_MEMORY_CAPABILITY_BUNDLE,
+        system_memory_contribution_factory,
+    )
+
+    lease = await registry.pin()
+    assert lease.resolve("qwenpaw.system.memory.workspace-memory") is not None
+    await lease.close()

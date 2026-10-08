@@ -475,6 +475,10 @@ async def test_runtime_provider_kit_activates_runtime_contributions(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from qwenpaw.capabilities.promotions import (
+        LiteCapabilityPromotionScenarioRunner,
+    )
+
     root = (
         Path(__file__).parents[3]
         / "examples"
@@ -504,7 +508,9 @@ async def test_runtime_provider_kit_activates_runtime_contributions(
         ).create_provider,
         "review-mode": mode_module.create_provider,
     }
-    registry = GenerationRegistry()
+    registry = GenerationRegistry(
+        promotion_scenario_runner=LiteCapabilityPromotionScenarioRunner(),
+    )
     snapshot = await registry.activate(
         manifest,
         lambda declaration: factories[declaration.contribution_id](),

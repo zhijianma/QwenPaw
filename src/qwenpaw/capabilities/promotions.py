@@ -13,6 +13,7 @@ from uuid import UUID
 
 from jsonschema.exceptions import SchemaError, best_match
 from jsonschema.validators import validator_for
+from pydantic import JsonValue
 
 from ..kernel import (
     ArtifactRef,
@@ -28,14 +29,23 @@ from ..kernel import (
     CapabilityPromotionEvidenceBundle,
     CapabilityPromotionEvaluation,
     CapabilityPromotionEvent,
+    CapabilityProviderKind,
     CapabilityReleaseTag,
     CapabilitySelection,
     CapabilityDescriptor,
     InvocationScope,
+    MemoryStateConflictError,
+    MemoryStateScope,
+    MemoryStateSnapshot,
     ToolDefinition,
     ToolSelection,
 )
-from ..kernel.ports import ArtifactRenderer, ToolProvider
+from ..kernel.ports import (
+    ArtifactRenderer,
+    MemoryProvider,
+    MemorySession,
+    ToolProvider,
+)
 from ..kernel.slots import slot_contract
 from ..utils.io_utils import (
     get_path_lock,
@@ -212,6 +222,7 @@ class LiteCapabilityPromotionScenarioRunner:
     """Run bounded, side-effect-free host scenarios for supported Slots."""
 
     _MAX_OUTPUT_BYTES = 64 * 1024
+    _MAX_MEMORY_PROMPT_BYTES = 32 * 1024
     _MAX_TOOL_CATALOG_BYTES = 64 * 1024
     _MAX_TOOLS = 128
     _TIMEOUT_SECONDS = 5.0
@@ -371,6 +382,27 @@ class LiteCapabilityPromotionScenarioRunner:
         if len(encoded) > cls._MAX_TOOL_CATALOG_BYTES:
             raise ValueError("tool provider catalog exceeds byte budget")
 
+    @staticmethod
+    def _empty_config_outcome(
+        descriptor: CapabilityDescriptor | None,
+    ) -> CapabilityCheckOutcome | None:
+        if descriptor is None:
+            return CapabilityCheckOutcome.FAILED
+        schema = descriptor.config_schema
+        if schema is None:
+            return None
+        try:
+            validator_class = validator_for(schema)
+            validator_class.check_schema(schema)
+            validation_error = best_match(
+                validator_class(schema).iter_errors({}),
+            )
+        except SchemaError:
+            return CapabilityCheckOutcome.FAILED
+        if validation_error is not None:
+            return CapabilityCheckOutcome.NOT_APPLICABLE
+        return None
+
     async def _run_tool_provider(
         self,
         implementation: object,
@@ -380,20 +412,9 @@ class LiteCapabilityPromotionScenarioRunner:
     ) -> CapabilityCheckOutcome:
         if not isinstance(implementation, ToolProvider):
             return CapabilityCheckOutcome.FAILED
-        if descriptor is None:
-            return CapabilityCheckOutcome.FAILED
-        schema = descriptor.config_schema
-        if schema is not None:
-            try:
-                validator_class = validator_for(schema)
-                validator_class.check_schema(schema)
-                validation_error = best_match(
-                    validator_class(schema).iter_errors({}),
-                )
-            except SchemaError:
-                return CapabilityCheckOutcome.FAILED
-            if validation_error is not None:
-                return CapabilityCheckOutcome.NOT_APPLICABLE
+        config_outcome = self._empty_config_outcome(descriptor)
+        if config_outcome is not None:
+            return config_outcome
         scope = InvocationScope(
             agent_id="promotion-scenario",
             conversation_id="promotion-scenario",
@@ -419,6 +440,61 @@ class LiteCapabilityPromotionScenarioRunner:
         except Exception:  # pylint: disable=broad-except
             return CapabilityCheckOutcome.FAILED
         return CapabilityCheckOutcome.PASSED
+
+    async def _run_memory_provider(
+        self,
+        implementation: object,
+        capability_id: str,
+        generation: int,
+        descriptor: CapabilityDescriptor | None,
+    ) -> CapabilityCheckOutcome:
+        if not isinstance(implementation, MemoryProvider):
+            return CapabilityCheckOutcome.FAILED
+        config_outcome = self._empty_config_outcome(descriptor)
+        if config_outcome is not None:
+            return config_outcome
+        session: MemorySession | None = None
+        failed = False
+        host_type = (
+            _PromotionScenarioWorkspaceMemoryHost
+            if descriptor.provider_kind is CapabilityProviderKind.SYSTEM
+            else _PromotionScenarioMemoryHost
+        )
+        try:
+            session = await asyncio.wait_for(
+                implementation.open(
+                    _promotion_invocation_scope(
+                        capability_id,
+                        generation,
+                    ),
+                    host_type(capability_id),
+                ),
+                timeout=self._TIMEOUT_SECONDS,
+            )
+            if not isinstance(session, MemorySession):
+                raise ValueError("memory provider returned an invalid session")
+            prompt = session.get_prompt()
+            if not isinstance(prompt, str):
+                raise ValueError("memory session returned a non-string prompt")
+            if len(prompt.encode("utf-8")) > self._MAX_MEMORY_PROMPT_BYTES:
+                raise ValueError("memory prompt exceeds scenario budget")
+            self._validate_tool_catalog(session.list_tools())
+        except Exception:  # pylint: disable=broad-except
+            failed = True
+        finally:
+            if session is not None:
+                try:
+                    await asyncio.wait_for(
+                        session.close(),
+                        timeout=self._TIMEOUT_SECONDS,
+                    )
+                except Exception:  # pylint: disable=broad-except
+                    failed = True
+        return (
+            CapabilityCheckOutcome.FAILED
+            if failed
+            else CapabilityCheckOutcome.PASSED
+        )
 
     async def run(
         self,
@@ -446,6 +522,13 @@ class LiteCapabilityPromotionScenarioRunner:
                         release.promoted_generation,
                         descriptor,
                     )
+                elif scenario_id == "memory-provider.session":
+                    outcome = await self._run_memory_provider(
+                        implementations.get(item.capability_id),
+                        item.capability_id,
+                        release.promoted_generation,
+                        descriptor,
+                    )
                 else:
                     outcome = CapabilityCheckOutcome.FAILED
                 evidence.append(
@@ -465,6 +548,25 @@ class LiteCapabilityPromotionScenarioRunner:
 
 async def _promotion_scenario_tool() -> None:
     """Represent one inert host tool during catalog discovery."""
+
+
+def _promotion_invocation_scope(
+    capability_id: str,
+    generation: int,
+) -> InvocationScope:
+    """Create one deterministic, non-production invocation fixture."""
+    return InvocationScope(
+        agent_id="promotion-scenario",
+        conversation_id="promotion-scenario",
+        session_id="promotion-scenario",
+        root_agent_id="promotion-scenario",
+        root_session_id="promotion-scenario",
+        workspace_dir=".",
+        registry_generation=generation,
+        selection=CapabilitySelection(
+            memory_provider_id=capability_id,
+        ),
+    )
 
 
 class _PromotionScenarioToolHost:
@@ -495,6 +597,89 @@ class _PromotionScenarioToolHost:
                 tool_type="internal",
             ),
         )
+
+
+class _PromotionScenarioMemoryStateStore:
+    """Keep promotion-only Memory state detached from filesystem state."""
+
+    def __init__(
+        self,
+        provider_id: str,
+        scope: MemoryStateScope,
+    ) -> None:
+        self._provider_id = provider_id
+        self._scope = scope
+        self._values: dict[str, MemoryStateSnapshot] = {}
+
+    async def read(self, key: str) -> MemoryStateSnapshot | None:
+        """Read one promotion-only value."""
+        return self._values.get(key)
+
+    async def write(
+        self,
+        key: str,
+        value: JsonValue,
+        *,
+        expected_revision: int,
+    ) -> MemoryStateSnapshot:
+        """Apply optimistic revision checks without persistent I/O."""
+        current = self._values.get(key)
+        current_revision = current.revision if current is not None else 0
+        if expected_revision != current_revision:
+            raise MemoryStateConflictError("memory revision mismatch")
+        snapshot = MemoryStateSnapshot(
+            provider_id=self._provider_id,
+            scope=self._scope,
+            owner_id="promotion-scenario",
+            key=key,
+            value=value,
+            revision=current_revision + 1,
+        )
+        self._values[key] = snapshot
+        return snapshot
+
+    async def delete(
+        self,
+        key: str,
+        *,
+        expected_revision: int,
+    ) -> None:
+        """Delete only the observed promotion-only revision."""
+        current = self._values.get(key)
+        if current is None or current.revision != expected_revision:
+            raise MemoryStateConflictError("memory revision mismatch")
+        self._values.pop(key)
+
+
+class _PromotionScenarioMemoryHost:
+    """Expose only detached config and in-memory state to a Provider."""
+
+    def __init__(self, provider_id: str) -> None:
+        self._stores = {
+            scope: _PromotionScenarioMemoryStateStore(provider_id, scope)
+            for scope in MemoryStateScope
+        }
+
+    def config_snapshot(self) -> dict:
+        """Return empty non-secret config for the scenario fixture."""
+        return {}
+
+    def state(
+        self,
+        scope: MemoryStateScope,
+    ) -> _PromotionScenarioMemoryStateStore:
+        """Return a provider-owned process-local state namespace."""
+        return self._stores[scope]
+
+
+class _PromotionScenarioWorkspaceMemoryHost(
+    _PromotionScenarioMemoryHost,
+):
+    """Add only the built-in provider's compatibility surface."""
+
+    def compatibility_backend(self) -> None:
+        """Let the built-in adapter bind an inert empty backend."""
+        return None
 
 
 class FilesystemCapabilityPromotionEvidenceStore:

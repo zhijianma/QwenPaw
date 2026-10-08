@@ -581,6 +581,27 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   contribution、Workspace Registry 和管理 API 定点测试通过；文件级 AST、mypy、
   flake8、pylint 门禁通过，未执行全仓测试。
 
+### 2026-10-08 Memory Provider Promotion Scenario
+
+- `memory.provider` 新增 `memory-provider.session` Scenario。宿主直接打开 staged
+  Provider，不新增由插件自证的 Probe 接口；固定 Invocation 使用 `ChatSpec.id`，仅因
+  兼容模型仍同时填写同值 `session_id`。
+- Promotion `MemoryHost` 只暴露空配置和进程内 revisioned State Store；Agent 与
+  Conversation scope 相互隔离，不连接用户 SQLite、Credential、Interaction、真实
+  Workspace 或 legacy memory backend。内置 Provider 通过私有兼容方法取得 `None`。
+- 场景验证 Session Protocol、32 KiB prompt、共享 Tool catalog 合同，并以 5 秒预算
+  约束 async open/close；验证失败后仍尝试关闭 Session。Evidence 仅保存 outcome 和
+  capability identity，不保存 prompt、state key/value 或实现对象。
+- 真实 `runtime-provider-kit.project-memory` 与内置 Workspace Memory Provider 走同一
+  门禁；场景已验证临时 State Store 的 revision/write/delete，超长 prompt 在发布前
+  被拒绝且 Session 正常关闭。
+- 该边界是 Host capability isolation，不是 OS sandbox。恶意本地 Python 插件仍可绕过
+  SDK 直接访问系统资源；sync `get_prompt()` / `list_tools()` 也还没有可强制终止的
+  进程隔离。Driver、Runner、Delivery 不能在缺少 sandbox/Action Plane 时直接试跑。
+- 本切片 148 项 Promotion、Slot、Tool/Memory Provider、Memory State、Assembly、
+  Plugin SDK、system contribution、Workspace Registry 与管理 API 定点测试通过；
+  文件级 AST、mypy、flake8、pylint 门禁通过，未执行全仓测试。
+
 ### 本阶段此前已执行的定点验证
 
 - 后端核心路径定点测试：70 项通过。

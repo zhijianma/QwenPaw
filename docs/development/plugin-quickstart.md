@@ -342,6 +342,18 @@ providers receive a distinct minimal Host object, not merely a broader object
 typed as `MemoryHost`. Runtime attribute probing therefore cannot recover the
 legacy Workspace memory manager.
 
+Lite also opens the staged `MemoryProvider` once before publishing its
+generation. The promotion Host uses empty non-secret configuration and a
+process-local revisioned State Store; it never points at the user's durable
+memory database. The host validates a 32 KiB prompt budget, applies the same
+bounded tool-catalog rules as `tool.provider`, and requires the Session to
+close within five seconds. A valid schema requiring Agent Profile configuration
+is recorded as `not_applicable`; malformed schema, invalid Session output, or
+failed cleanup blocks publication. The scenario stores only the outcome, never
+prompt text or state values. This is SDK capability isolation, not an OS sandbox:
+locally installed Python remains trusted code and can bypass the Host if it
+imports filesystem or network libraries directly.
+
 Workspace-scoped memory backend plugins registered through the compatibility
 `register_memory_backend` API receive a `MemoryBackendContext`. When a durable
 background job must notify the user, use

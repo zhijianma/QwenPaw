@@ -1067,7 +1067,12 @@ Cron 不形成独立审批或产物事实源。
     callable、治理 target/pattern 参数、64 KiB 序列化预算和 5 秒超时。空配置不满足
     合法 schema 时记录 `not_applicable`，schema 非法或目录违规时失败关闭；真实
     `chat-tool-provider` 与内置 Workspace Tool Provider 共用该门禁。
-  - [ ] 为 runner、driver、memory、scheduler、delivery 等高风险 Slot 分别实现
+  - [x] `memory.provider` 已接入受限 Session Scenario：Host 只提供空配置与进程内
+    revisioned State Store，不连接用户 SQLite 或 legacy backend；验证 Session Protocol、
+    32 KiB prompt、共享 Tool catalog 规则与 5 秒 open/close timeout，并保证失败路径
+    仍关闭 Session。真实 `runtime-provider-kit.project-memory` 与内置 Workspace Memory
+    Provider 共用门禁；Evidence 不保存 prompt 或 state value。
+  - [ ] 为 runner、driver、scheduler、delivery 等高风险 Slot 分别实现
     无副作用或可隔离的真实 Scenario，并补齐 Evidence Artifact、人工授权策略与卸载
     授权门禁。关键词发现索引与 Workstation/Hub Release Registry 仍待实现。
 
