@@ -561,6 +561,10 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     pending 关联因此复用现有治理与 Interaction 身份，不再发生无 call id 的游离审批；
     admission 等待同时监听 ToolCall cancel event，Stop/Interrupt 可在审批期间及时
     取消且不会留下后台 permission task。
+  - [x] 增加执行侧 `ActionRetryExecutionAdmission`：每次真正执行前重新加载私有输入
+    checkpoint 与源 Action，要求 ToolSelection/Provider digest 完整、checkpoint 全量
+    相等、源 observation digest 未漂移且 retry decision 仍指向同一 next attempt；旧版
+    或损坏证据均 fail closed，dispatcher 不直接信任 outbox 中的参数引用。
   - [ ] 在上述单一身份上接入自动 retry dispatcher：必须同时具备 attempt budget、
     Stop/Interrupt fencing、无流式输出边界，以及 Runtime Orchestrator 内的执行入口；
     不能仅凭 `retryable=true` 或绕过 Orchestrator 直接重新调用工具。

@@ -15,10 +15,17 @@ from qwenpaw.kernel import (
     CapabilitySelection,
     InvocationScope,
     ToolEffect,
+    ToolSelection,
 )
 from qwenpaw.runtime.action_execution import (
+    ActionRetryAdmissionError,
+    ActionRetryExecutionAdmission,
     GovernedActionDeniedError,
     GovernedActionExecutor,
+)
+from qwenpaw.runtime.action_retries import (
+    lite_action_retry_continuation_store,
+    lite_action_retry_input_store,
 )
 from qwenpaw.runtime.actions import (
     FilesystemActionStore,
@@ -210,3 +217,71 @@ async def test_governed_executor_rejects_foreign_recorder(
         )
 
     assert not await store.list_for_conversation(scope.conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_retry_execution_admission_rebuilds_durable_authority(
+    tmp_path: Path,
+) -> None:
+    store = FilesystemActionStore(tmp_path)
+    scope = _scope(tmp_path)
+    inputs = lite_action_retry_input_store(tmp_path)
+    outbox = lite_action_retry_continuation_store(tmp_path)
+    recorder = RuntimeActionRecorder(
+        scope,
+        store,
+        retry_input_store=inputs,
+        retry_continuation_store=outbox,
+        tool_selection=ToolSelection(active_modes=("coding",)),
+        provider_execution_digests={
+            "qwenpaw.system.workspace-tools": f"sha256:{'a' * 64}",
+        },
+    )
+    context = ToolCallContext(
+        tool_call_id="call-admission-source",
+        tool_name="stable_tool",
+        session_id=scope.session_id,
+        agent_id=scope.agent_id,
+        root_session_id=scope.root_session_id,
+        root_agent_id=scope.root_agent_id,
+        started_at=0,
+        offload_deadline=None,
+        cancel_event=asyncio.Event(),
+    )
+    context.extra["tool_input"] = {"value": "private"}
+    await recorder.begin(
+        context,
+        effect=ToolEffect.NONE,
+        policy_decision="allow",
+    )
+    await recorder.complete(
+        ToolResponse(
+            content=[TextBlock(type="text", text="temporary failure")],
+            id=context.tool_call_id,
+            state=ToolResultState.ERROR,
+            metadata={ACTION_RETRY_HINT_METADATA_KEY: True},
+        ),
+        context,
+    )
+    [continuation] = await outbox.list_pending(agent_id=scope.agent_id)
+    admission = ActionRetryExecutionAdmission(
+        input_store=inputs,
+        action_store=store,
+    )
+
+    prepared = await admission.prepare(continuation)
+
+    assert prepared.arguments == {"value": "private"}
+    assert prepared.previous.request.action_id == (
+        continuation.checkpoint.action_id
+    )
+    drifted = continuation.model_copy(
+        update={
+            "source_observation_digest": f"sha256:{'b' * 64}",
+        },
+    )
+    with pytest.raises(
+        ActionRetryAdmissionError,
+        match="no longer authorizes",
+    ):
+        await admission.prepare(drifted)

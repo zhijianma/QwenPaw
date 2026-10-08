@@ -5,13 +5,21 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
 
 from agentscope.permission import PermissionBehavior
 from agentscope.tool import ToolResponse
 
-from ..kernel import InvocationScope
+from ..kernel import (
+    ActionRecord,
+    ActionRetryContinuation,
+    ActionRetryDisposition,
+    ActionRetryInputStore,
+    ActionStore,
+    InvocationScope,
+)
 from ..kernel.models import JsonObject
 from ..tool_calls import ToolCoordinator
 from .actions import RuntimeActionRecorder
@@ -19,6 +27,86 @@ from .actions import RuntimeActionRecorder
 
 class GovernedActionDeniedError(RuntimeError):
     """Raised when current policy denies a scheduled Action."""
+
+
+class ActionRetryAdmissionError(RuntimeError):
+    """Raised when durable retry evidence cannot authorize execution."""
+
+
+@dataclass(frozen=True)
+class PreparedActionRetry:
+    """Verified private input and immutable source Action evidence."""
+
+    continuation: ActionRetryContinuation
+    previous: ActionRecord
+    arguments: JsonObject
+
+
+class ActionRetryExecutionAdmission:
+    """Rebuild exact retry authority immediately before execution."""
+
+    def __init__(
+        self,
+        *,
+        input_store: ActionRetryInputStore,
+        action_store: ActionStore,
+    ) -> None:
+        self._inputs = input_store
+        self._actions = action_store
+
+    async def prepare(
+        self,
+        continuation: ActionRetryContinuation,
+    ) -> PreparedActionRetry:
+        """Fail closed unless every durable identity still agrees."""
+        checkpoint = continuation.checkpoint
+        if (
+            checkpoint.tool_selection is None
+            or checkpoint.provider_execution_digest is None
+        ):
+            raise ActionRetryAdmissionError(
+                "Action retry lacks a reproducible execution snapshot",
+            )
+        stored, arguments = await self._inputs.load(
+            checkpoint.checkpoint_id,
+        )
+        if stored != checkpoint:
+            raise ActionRetryAdmissionError(
+                "Action retry input checkpoint identity mismatch",
+            )
+        previous = await self._actions.get(
+            checkpoint.action_id,
+            invocation_id=checkpoint.invocation_id,
+            conversation_id=checkpoint.conversation_id,
+        )
+        if previous is None or previous.result is None:
+            raise ActionRetryAdmissionError(
+                "Action retry source evidence is unavailable",
+            )
+        result = previous.result
+        decision = result.retry_decision
+        source_drifted = (
+            result.observation_digest
+            != continuation.source_observation_digest
+        )
+        retry_invalid = decision is None or not result.retryable
+        if decision is not None:
+            retry_invalid = retry_invalid or (
+                decision.disposition
+                is not ActionRetryDisposition.RETRY_FROM_NEW_ACTION
+                or decision.input_checkpoint_id
+                != checkpoint.checkpoint_id
+                or decision.next_attempt != checkpoint.next_attempt
+            )
+        if source_drifted or retry_invalid:
+            raise ActionRetryAdmissionError(
+                "Action retry source result no longer authorizes execution",
+            )
+        return PreparedActionRetry(
+            continuation=continuation,
+            previous=previous,
+            arguments=arguments,
+        )
 
 
 class GovernedActionExecutor:
@@ -106,6 +194,9 @@ class GovernedActionExecutor:
 
 
 __all__ = [
+    "ActionRetryAdmissionError",
+    "ActionRetryExecutionAdmission",
     "GovernedActionDeniedError",
     "GovernedActionExecutor",
+    "PreparedActionRetry",
 ]
