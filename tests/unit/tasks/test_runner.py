@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from qwenpaw.kernel import BudgetLease, BudgetLeaseStatus
 from qwenpaw.kernel.models import (
     ArtifactRef,
     ArtifactRequirement,
@@ -662,6 +663,50 @@ async def test_plugin_checkpoint_survives_failed_runner_for_resume(
     assert resumed.status is TaskStatus.RUNNING
     assert next_run.attempt == 2
     assert next_run.checkpoint_id == snapshot.checkpoint.checkpoint_id
+
+
+@pytest.mark.asyncio
+async def test_contextual_runner_receives_released_budget_lease(
+    tmp_path: Path,
+) -> None:
+    captured: BudgetLease | None = None
+
+    async def inspect_context(
+        _order: TaskOrder,
+        _run: Run,
+        context: RuntimeContext,
+    ) -> AsyncIterator[RunnerSignal]:
+        nonlocal captured
+        assert isinstance(context.usage_meter, BudgetLease)
+        captured = context.usage_meter
+        yield RunnerSignal(event_type="runner.progress")
+
+    service = TaskService(
+        store=SQLiteExecutionLedger(tmp_path / "ledger.db"),
+        registry_generation=1,
+    )
+    task = await service.create_task(
+        objective="Inspect budget authorization",
+        agent_id="default",
+    )
+    await service.plan_task(
+        task.task_id,
+        steps=(PlanStep(title="Run", objective=task.objective),),
+    )
+
+    await TaskExecutionCoordinator(
+        service,
+        GenerationRegistry(),
+    ).execute(
+        TaskOrder(task_id=task.task_id, objective=task.objective),
+        LocalAgentRunner(
+            "runner.budget-lease",
+            execute_context=inspect_context,
+        ),
+    )
+
+    assert captured is not None
+    assert captured.lease_snapshot().status is BudgetLeaseStatus.RELEASED
 
 
 @pytest.mark.asyncio

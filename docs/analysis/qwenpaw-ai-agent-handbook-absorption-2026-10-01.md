@@ -70,7 +70,7 @@ Handbook 的 2026 调研与 QwenPaw 的产品机会高度一致：
 | Action Plane | `ToolDefinition`、Driver Tool、Tool Guard、Approval、Side Effect 各自表达部分语义 | `ActionRequest` / `ActionResult` / `ActionStatus`，覆盖 Tool、Shell、Browser、Driver、MCP 与 Remote Agent |
 | Context 可解释性 | `PromptFragment` 只有 ID、文本、优先级 | `ContextPolicy` + `ContextManifest`，记录来源、版本、信任级、选择原因、变换、哈希与 Token |
 | Environment | project dir、Sandbox policy、Harness environment 分散 | `EnvironmentContract`，声明挂载、网络、凭据引用、依赖、配额、快照、审计和清理 |
-| Budget 与授权联动 | `ExecutionBudget`、Usage Scope 和权限是独立对象 | Workstation / Hub 引入可派生、可撤销的 `BudgetLease`；Lite 先冻结接口，不建设分布式服务 |
+| Budget 与授权联动 | `ExecutionBudget`、Usage Scope 和权限原为独立对象 | Lite 已实现进程内可派生、可撤销的 `BudgetLease` 并复用持久 Usage Ledger；Workstation / Hub 再增加分布式租约与 fencing |
 | 业务 Outcome | `run.completed` 与 Verification 证明执行完成 | 增加 `Outcome` 投影，区分执行成功、业务验收和后续动作 |
 | 资产发布 | Capability generation 解决运行版本，Plugin lifecycle 解决安装 | 增加 Release / Lock Manifest，区分逻辑资源、发布版本、运行引用和派生索引 |
 | 轨迹评估 | 已有 causal event，但没有稳定 Trajectory 数据产品 | 从 Event / Context Manifest / Action / Evidence 派生 Trajectory，后续用于 Badcase 与回归 |
@@ -281,7 +281,7 @@ Workstation/Hub 对隔离、网络、资源、快照和清理约束的真实兑�
 
 ### A5. Budget Lease
 
-优先级：P1；Lite 冻结、Workstation / Hub 实现。
+优先级：P1；Lite 进程内实现已接入，Workstation / Hub 分布式实现待办。
 
 当前 `ExecutionBudget` 是额度合同，Usage Meter 是计量器，Capability lease 是版本
 租约，三者都不是 Handbook 所说的可派生授权租约。新对象应绑定：
@@ -292,8 +292,14 @@ Workstation/Hub 对隔离、网络、资源、快照和清理约束的真实兑�
 - Task / Run / Agent identity；
 - 子任务终止时的级联收回。
 
-不要把它实现为另一个前端 Queue，也不要把 Lite 的进程内 Usage Scope 宣称为
-分布式 Budget Lease。
+Lite 现已把这三个角色分开：Execution Contract 保存静态额度，Task Ledger 保存不可
+回滚的实际用量，`BudgetLease` 决定一次运行及其后代是否仍获准消费。子 Agent 经
+Usage Scope 获得独立 Lease identity，可预留本地额度、释放未用额度并接受根级联撤销；
+超额用量仍先落 Ledger，再把 Lease 标记为 exhausted。进程重启只从累计
+`UsageSnapshot` 重建根准入，不恢复旧 Lease identity。
+
+不要把它实现为另一个前端 Queue，也不要把 Lite 的进程内实现宣称为跨主机 Lease。
+Workstation / Hub 仍需补 TTL、fencing token、权威租约存储和跨节点级联撤销。
 
 ### A6. Release / Lock Manifest 与渐进式能力披露
 

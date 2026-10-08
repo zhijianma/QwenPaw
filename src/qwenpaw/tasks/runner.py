@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator, Callable
 
 from pydantic import TypeAdapter
 
+from ..kernel import BudgetAllocation
 from ..kernel.models import (
     CostAccountingMode,
     ExecutionBudget,
@@ -44,6 +45,11 @@ from .usage import (
     TaskUsageMeter,
     UsageAccountingUnavailableError,
     UsageBudgetExceededError,
+)
+from .budget_leases import (
+    BudgetAllocationExceededError,
+    BudgetLeaseUnavailableError,
+    open_root_budget_lease,
 )
 
 LocalExecution = Callable[
@@ -487,7 +493,7 @@ class TaskExecutionCoordinator:
             if order.execution_contract is not None
             else ExecutionBudget()
         )
-        usage_meter = TaskUsageMeter(
+        durable_usage_meter = TaskUsageMeter(
             self._service,
             order.task_id,
             run.run_id,
@@ -514,18 +520,6 @@ class TaskExecutionCoordinator:
         )
         observed_iteration = 0
         iteration_events = 0
-        if (
-            budget.max_cost_micros is not None
-            and self._cost_accounting_mode(runner)
-            is CostAccountingMode.UNKNOWN
-        ):
-            try:
-                await usage_meter.record(
-                    UsageDelta(cost_unknown=True),
-                    source=runner.runner_id,
-                )
-            except UsageAccountingUnavailableError as exc:
-                raise TaskExecutionBudgetExceededError(str(exc)) from exc
         context = runtime_context_from_order(
             order,
             run,
@@ -540,35 +534,55 @@ class TaskExecutionCoordinator:
                 run_id=run.run_id,
             ),
             cancellation=cancellation,
-            usage_meter=usage_meter,
+            usage_meter=durable_usage_meter,
             strategy_id=(strategy.strategy_id if strategy else None),
         )
-        if strategy is not None:
-            raw_parameters = await strategy.prepare(context, order)
-            parameters = _STRATEGY_PARAMETERS_ADAPTER.validate_python(
-                raw_parameters,
-            )
-            encoded_parameters = json.dumps(
-                parameters,
-                ensure_ascii=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            ).encode("utf-8")
-            if len(encoded_parameters) > _MAX_STRATEGY_PARAMETERS_BYTES:
-                raise ValueError("strategy parameters exceed 32 KiB")
-            context = context.model_copy(
-                update={
-                    "strategy": RuntimeStrategyDirective(
-                        strategy_id=strategy.strategy_id,
-                        parameters=parameters,
-                    ),
-                },
-            )
-        if isinstance(runner, ContextualTaskRunner):
-            signals = runner.execute_context(order, run, context)
-        else:
-            signals = runner.execute(order, run)
+        budget_lease = await open_root_budget_lease(
+            durable_usage_meter,
+            BudgetAllocation.from_execution_budget(budget),
+            owner_id=context.agent_id,
+            task_id=order.task_id,
+            run_id=run.run_id,
+        )
+        usage_meter = budget_lease
+        context = context.model_copy(update={"usage_meter": usage_meter})
         try:
+            if (
+                budget.max_cost_micros is not None
+                and self._cost_accounting_mode(runner)
+                is CostAccountingMode.UNKNOWN
+            ):
+                await usage_meter.record(
+                    UsageDelta(cost_unknown=True),
+                    source=runner.runner_id,
+                )
+            if strategy is not None:
+                raw_parameters = await strategy.prepare(context, order)
+                parameters = _STRATEGY_PARAMETERS_ADAPTER.validate_python(
+                    raw_parameters,
+                )
+                encoded_parameters = json.dumps(
+                    parameters,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ).encode("utf-8")
+                if len(encoded_parameters) > _MAX_STRATEGY_PARAMETERS_BYTES:
+                    raise ValueError(
+                        "strategy parameters exceed 32 KiB",
+                    )
+                context = context.model_copy(
+                    update={
+                        "strategy": RuntimeStrategyDirective(
+                            strategy_id=strategy.strategy_id,
+                            parameters=parameters,
+                        ),
+                    },
+                )
+            if isinstance(runner, ContextualTaskRunner):
+                signals = runner.execute_context(order, run, context)
+            else:
+                signals = runner.execute(order, run)
             async for signal in signals:
                 if signal.event_type == "runner.iteration":
                     iteration_events += 1
@@ -650,10 +664,14 @@ class TaskExecutionCoordinator:
             # while the root Task is still marked completed.
             await usage_meter.assert_within_budget()
         except (
+            BudgetAllocationExceededError,
+            BudgetLeaseUnavailableError,
             UsageAccountingUnavailableError,
             UsageBudgetExceededError,
         ) as exc:
             raise TaskExecutionBudgetExceededError(str(exc)) from exc
+        finally:
+            budget_lease.release()
 
     @staticmethod
     def _changes_result_projection(signal: RunnerSignal) -> bool:

@@ -7,6 +7,7 @@ import secrets
 import threading
 from dataclasses import dataclass
 
+from ..kernel import BudgetAllocation, BudgetLease
 from ..kernel.models import UsageMeter
 
 USAGE_SCOPE_CONTEXT_KEY = "os_usage_scope_id"
@@ -28,17 +29,26 @@ class _UsageScopeEntry:
 class UsageScopeLease:
     """Keep one shared usage scope alive until this execution finishes."""
 
-    __slots__ = ("_registry", "scope_id", "meter", "_closed")
+    __slots__ = (
+        "_closed",
+        "_derived_budget_lease",
+        "_registry",
+        "meter",
+        "scope_id",
+    )
 
     def __init__(
         self,
         registry: "UsageScopeRegistry",
         scope_id: str,
         meter: UsageMeter,
+        *,
+        derived_budget_lease: BudgetLease | None = None,
     ) -> None:
         self._registry = registry
         self.scope_id = scope_id
         self.meter = meter
+        self._derived_budget_lease = derived_budget_lease
         self._closed = False
 
     def close(self) -> None:
@@ -46,6 +56,8 @@ class UsageScopeLease:
         if self._closed:
             return
         self._closed = True
+        if self._derived_budget_lease is not None:
+            self._derived_budget_lease.release()
         self._registry.release(self.scope_id)
 
 
@@ -77,14 +89,28 @@ class UsageScopeRegistry:
         scope_id: str,
         *,
         agent_id: str,
+        allocation: BudgetAllocation | None = None,
     ) -> UsageScopeLease:
-        """Acquire a child lease only for the scope's bound agent."""
+        """Acquire an isolated child authorization for the bound agent."""
         with self._lock:
             entry = self._entries.get(scope_id)
             if entry is None or entry.agent_id != agent_id:
                 raise UsageScopeUnavailableError(scope_id)
+            child_budget_lease: BudgetLease | None = None
+            meter = entry.meter
+            if isinstance(meter, BudgetLease):
+                child_budget_lease = meter.derive(
+                    allocation or BudgetAllocation(),
+                    owner_id=agent_id,
+                )
+                meter = child_budget_lease
             entry.references += 1
-            return UsageScopeLease(self, scope_id, entry.meter)
+            return UsageScopeLease(
+                self,
+                scope_id,
+                meter,
+                derived_budget_lease=child_budget_lease,
+            )
 
     def release(self, scope_id: str) -> None:
         """Release one reference and erase an unused scope."""

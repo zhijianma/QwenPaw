@@ -1012,8 +1012,13 @@ Cron 不形成独立审批或产物事实源。
       correlation `b19d5f7f-2045-4607-b36c-2ba70c45e41a` 返回 v1 Trajectory：10 个
       正序事实覆盖 Model、Action、Guardrail、HITL 与 Submission，全部 correlation
       一致；该链没有显式 Outcome，因此响应未伪造 Outcome 节点。
-  - [ ] `BudgetLease` 与现有 `ExecutionBudget`、Usage Scope、Capability lease
-    明确区分；Lite 只冻结接口，Workstation / Hub 再实现可派生和级联撤销。
+  - [x] `BudgetLease` 与现有 `ExecutionBudget`、Usage Scope、Capability lease
+    明确区分：`ExecutionBudget` 是静态额度合同，Task Ledger 是持久用量事实，
+    `BudgetLease` 是可派生、可撤销的运行授权。Lite 已将根 Lease 接入真实
+    `TaskExecutionCoordinator`，HTTP 子 Agent 从 Usage Scope 派生独立 Lease；兄弟
+    配额不能超额预留，释放归还未用配额，根撤销级联后代，实际超额仍先写 Ledger。
+    Lite 的 Lease identity / 状态仅进程内存在，重启后从持久 `UsageSnapshot` 重建根
+    准入；Workstation / Hub 的跨主机租约、TTL、fencing 与分布式级联仍待实现。
 
 - [x] 每个公开扩展模块均有 system/plugin contract tests；system-only 模块具有
   核心激活、固定 generation、失败关闭和代际排空合同。

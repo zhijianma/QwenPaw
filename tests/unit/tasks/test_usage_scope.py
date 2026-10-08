@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Tests for root Task usage scope inheritance."""
 
+# pylint: disable=protected-access
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -14,7 +16,9 @@ from qwenpaw.app.routers.console import (
     _bind_inherited_usage_scope,
     _release_bound_usage_scope,
 )
+from qwenpaw.kernel import BudgetAllocation, BudgetLease
 from qwenpaw.kernel.models import UsageDelta, UsageSnapshot
+from qwenpaw.tasks.budget_leases import open_root_budget_lease
 from qwenpaw.tasks.usage_scope import (
     RECORD_MODEL_USAGE_CONTEXT_KEY,
     USAGE_SCOPE_CONTEXT_KEY,
@@ -75,6 +79,30 @@ def test_scope_is_bound_to_agent_identity() -> None:
     with pytest.raises(LookupError):
         registry.acquire(root.scope_id, agent_id="agent-b")
 
+    root.close()
+
+
+@pytest.mark.asyncio
+async def test_scope_derives_independent_budget_lease() -> None:
+    registry = UsageScopeRegistry()
+    budget = await open_root_budget_lease(
+        _Meter(),
+        BudgetAllocation(max_tokens=100),
+        owner_id="default",
+    )
+    root = registry.open_root(budget, agent_id="default")
+
+    child = registry.acquire(
+        root.scope_id,
+        agent_id="default",
+        allocation=BudgetAllocation(max_tokens=25),
+    )
+
+    assert isinstance(child.meter, BudgetLease)
+    assert child.meter is not budget
+    assert child.meter.lease_snapshot().allocation.max_tokens == 25
+    child.close()
+    assert child.meter.lease_snapshot().status.value == "released"
     root.close()
 
 

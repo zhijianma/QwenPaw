@@ -406,6 +406,19 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   `b19d5f7f-2045-4607-b36c-2ba70c45e41a` 得到 10 个正序节点，覆盖 Model、Action、
   Guardrail、HITL 和 Submission，全部归属一致且未虚构不存在的 Outcome。
 
+### 2026-10-08 Lite Budget Lease
+
+- Kernel 冻结 `BudgetAllocation`、`BudgetLeaseSnapshot`、状态枚举与 `BudgetLease`
+  Protocol；它是运行授权，不替代 `ExecutionBudget` 或持久 Usage Ledger。
+- `TaskExecutionCoordinator` 为每次 Run 打开根 Lease，Contextual Runner、Console
+  模型与 Tool 继续通过原 `UsageMeter` 兼容面使用，但实际对象已具备派生和撤销语义。
+- 子 Agent 的 opaque Usage Scope 现在派生独立 Lease；兄弟配额不能超额预留，释放
+  会归还未用额度，根撤销级联后代，子级超额仍先写入权威 Ledger 再 exhausted。
+- Lite 只承诺进程内 Lease identity；重启后以跨 attempt 累计 `UsageSnapshot` 重建根
+  准入。跨主机 TTL、fencing 和分布式级联仍属于 Workstation / Hub。
+- 本切片定点验证：32 项通过，覆盖 Lease 单元、Usage Scope 和完整 Runner 相邻路径；
+  未执行全仓测试。
+
 ### 本阶段此前已执行的定点验证
 
 - 后端核心路径定点测试：70 项通过。

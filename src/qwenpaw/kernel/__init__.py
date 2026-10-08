@@ -308,6 +308,12 @@ from .artifacts import (
     ConversationArtifactRecord,
     ConversationTaskResultRecords,
 )
+from .budgets import (
+    BudgetAllocation,
+    BudgetLease,
+    BudgetLeaseSnapshot,
+    BudgetLeaseStatus,
+)
 from .ports import (
     ActionStore,
     AgentFactory,
@@ -345,6 +351,10 @@ from .ports import (
 )
 
 __all__ = [
+    "BudgetAllocation",
+    "BudgetLease",
+    "BudgetLeaseSnapshot",
+    "BudgetLeaseStatus",
     "ActionApprovalLink",
     "ActionKind",
     "ActionRecord",

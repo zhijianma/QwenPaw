@@ -181,6 +181,10 @@ Rules:
 - `UsageDelta`, `UsageSnapshot`, and the run-scoped `UsageMeter` form the
   canonical accounting contract. `usage.recorded` events are the durable fact
   source, and recovery folds usage across all attempts.
+- `BudgetLease` is the runtime admission capability layered over that ledger;
+  it never replaces durable accounting. Lite root leases are reconstructed
+  from the cumulative `UsageSnapshot`, and derived child leases reserve local
+  ceilings, release unused reservations, and reject work after cascade revoke.
 - Console `turn_usage` and function-call boundaries feed the same meter used
   by plugin runners. Token, reported cost, tool-call and retry ceilings fail
   the Run with `TaskExecutionBudgetExceededError` after actual usage is
@@ -196,11 +200,11 @@ Rules:
   accounting failure prevents the handler from starting. Console timeline
   events mark already-accounted calls to prevent double counting.
 - Lite subagent and git-fork HTTP dispatch carries only a host-issued opaque
-  usage-scope ID. The receiving adapter binds it to the same root meter after
-  checking the Agent identity; reference-counted leases keep background child
-  and grandchild runs alive after the parent exits. Descendant model and tool
-  usage is recorded in the root Ledger, and the root Run rechecks the shared
-  snapshot before completion.
+  usage-scope ID. After checking Agent identity, the receiving adapter derives
+  an independent child `BudgetLease`; reference-counted scopes keep its
+  accounting path alive while the root request closes. Descendant model and
+  tool usage is recorded in the root Ledger, and the root Run rechecks the
+  shared snapshot before completion.
 - Scope IDs are transport capabilities, not budget values. Public requests
   cannot supply a meter, limits, counters, or Agent identity. Workstation/Hub
   must replace the Lite in-process scope registry with a signed or durable
