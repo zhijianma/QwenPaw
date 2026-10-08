@@ -53,6 +53,12 @@ class HarnessAdapter(ABC):
         del session_id
         return []
 
+    # pylint: disable-next=useless-return
+    def recovery_context_id(self, session_id: str) -> str | None:
+        """Return the opaque provider context currently bound to a session."""
+        del session_id
+        return None
+
     async def discover_mcp(
         self,
         cwd: Path,

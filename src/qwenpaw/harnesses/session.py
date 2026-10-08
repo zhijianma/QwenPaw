@@ -43,6 +43,56 @@ class HarnessSessionBridge:
         state = (persisted.get("agent") or {}).get("state") or {}
         return bool(state.get("context"))
 
+    async def committed_items(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        channel: str,
+    ) -> tuple[CommittedActionItem, ...]:
+        """Read exact Action bindings from the durable Chat context."""
+        persisted = await self._session.get_session_state_dict(
+            session_id,
+            user_id,
+            channel,
+        )
+        state = (persisted.get("agent") or {}).get("state") or {}
+        context = state.get("context")
+        if not isinstance(context, list):
+            return ()
+        found: dict[tuple[str, str], CommittedActionItem] = {}
+        for message in context:
+            if not isinstance(message, dict):
+                continue
+            candidates = [message.get("metadata")]
+            content = message.get("content")
+            if isinstance(content, list):
+                candidates.extend(
+                    block.get("metadata")
+                    for block in content
+                    if isinstance(block, dict)
+                )
+            for metadata in candidates:
+                if not isinstance(metadata, dict):
+                    continue
+                payload = metadata.get(
+                    COMMITTED_ACTION_ITEM_METADATA_KEY,
+                )
+                try:
+                    item = CommittedActionItem.model_validate(payload)
+                except (TypeError, ValueError):
+                    continue
+                found[(str(item.action_id), item.executor_item_id)] = item
+        return tuple(
+            sorted(
+                found.values(),
+                key=lambda item: (
+                    str(item.invocation_id),
+                    item.executor_item_id,
+                ),
+            ),
+        )
+
     async def hydrate(
         self,
         *,

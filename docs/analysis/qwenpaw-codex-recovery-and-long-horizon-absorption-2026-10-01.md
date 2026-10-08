@@ -336,8 +336,11 @@ Codex 的“边收流边执行工具”建立在其 Provider 事件协议、工�
 - [x] 受控 Harness Adapter 已把远端 ActionResult 与 Session Bridge 写入的规范化 tool
   output 绑定为 `CommittedActionItem`；单独的 provider completion event 和 history
   hydrate 不满足该协议。
-- [ ] Harness 断流恢复仍需同时验证 provider thread 与 QwenPaw session，再以 durable
-  continuation 启动后续 Invocation。
+- [x] `HarnessRecoveryContextCheckpoint` 已同时验证 provider context identity、history
+  tool item、QwenPaw session binding 与 ActionStore digest；checkpoint 不保存 provider
+  thread/session ID、工具输出或异常正文。
+- [ ] 将已通过 admission 的 checkpoint 接入共享 Submission dispatcher，以 fenced
+  durable continuation 启动后续 Invocation。
 
 ### R4：可选 Provider 增量续传
 

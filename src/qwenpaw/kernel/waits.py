@@ -171,6 +171,39 @@ class ModelStepContextCheckpoint(KernelModel):
     created_at: AwareDatetime = Field(default_factory=utc_now)
 
 
+class HarnessRecoveryContextCheckpoint(KernelModel):
+    """Content-safe proof that a Harness context can continue safely."""
+
+    checkpoint_id: UUID
+    invocation_id: UUID
+    conversation_id: NonEmptyStr
+    source_submission_id: UUID
+    backend: NonEmptyStr
+    provider_context_digest: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True,
+            pattern=r"^sha256:[0-9a-f]{64}$",
+        ),
+    ]
+    provider_item_digest: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True,
+            pattern=r"^sha256:[0-9a-f]{64}$",
+        ),
+    ]
+    action_evidence_digest: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True,
+            pattern=r"^sha256:[0-9a-f]{64}$",
+        ),
+    ]
+    action_count: int = Field(ge=1)
+    created_at: AwareDatetime = Field(default_factory=utc_now)
+
+
 class ModelStepContinuation(KernelModel):
     """Content-free continuation after a partial model stream fails."""
 
@@ -409,6 +442,7 @@ __all__ = [
     "ContinuationMode",
     "ContinuationRef",
     "ConversationContinuation",
+    "HarnessRecoveryContextCheckpoint",
     "ModelStepContextCheckpoint",
     "ModelStepContinuation",
     "ModelStepContinuationStatus",

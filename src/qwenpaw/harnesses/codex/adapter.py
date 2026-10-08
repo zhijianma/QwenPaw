@@ -381,6 +381,10 @@ class CodexAdapter(HarnessAdapter):
                 history.extend(self._history_item(item))
         return history
 
+    def recovery_context_id(self, session_id: str) -> str | None:
+        """Return the persisted Codex thread bound to QwenPaw Chat."""
+        return self._threads.get(session_id)
+
     # pylint: disable-next=invalid-overridden-method,too-many-branches
     async def run_turn(
         self,

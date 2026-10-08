@@ -125,6 +125,12 @@ async def test_bridge_persists_refreshable_reasoning_and_tools(
     assert state.context[3].content[0].metadata[
         COMMITTED_ACTION_ITEM_METADATA_KEY
     ] == committed_item.model_dump(mode="json")
+    committed = await bridge.committed_items(
+        session_id="chat-1",
+        user_id="user-1",
+        channel="",
+    )
+    assert committed == (committed_item,)
 
 
 @pytest.mark.asyncio

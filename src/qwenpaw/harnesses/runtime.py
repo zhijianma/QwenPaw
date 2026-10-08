@@ -15,11 +15,21 @@ from typing import Any
 from ..kernel import (
     ActionStatus,
     EnvironmentResolution,
+    HarnessRecoveryContextCheckpoint,
     InvocationScope,
     SubmissionStatus,
     TurnSubmissionRequest,
 )
-from ..runtime.actions import RuntimeActionRecorder, lite_action_store
+from ..runtime.actions import (
+    RuntimeActionRecorder,
+    lite_action_store,
+    model_step_action_evidence_digest,
+    model_step_committed_action_items,
+)
+from ..runtime.harness_recovery import (
+    build_harness_recovery_checkpoint,
+    lite_harness_recovery_context_store,
+)
 from ..schemas import (
     AgentResponse,
     ContentType,
@@ -35,6 +45,7 @@ from .events import (
     HarnessAttachmentKind,
     HarnessEvent,
     HarnessEventKind,
+    HarnessHistoryKind,
     HarnessProvider,
 )
 from .registry import (
@@ -292,6 +303,12 @@ class HarnessRuntime:
         request_context.update(
             {
                 "os_invocation_id": str(invocation_id),
+                "os_submission_id": str(
+                    lease.submission.submission_id,
+                ),
+                "os_correlation_id": str(
+                    lease.submission.correlation_id,
+                ),
                 "_interaction_service": interaction_service,
             },
         )
@@ -354,7 +371,7 @@ class HarnessRuntime:
         invocation_id: uuid.UUID,
         conversation_id: str,
         session_id: str,
-    ) -> Any:
+    ) -> HarnessRecoveryContextCheckpoint | None:
         """Pin one generation and expose its Harness Action bridge."""
         registry = getattr(self._workspace, "capability_registry", None)
         if registry is None or not hasattr(registry, "pin"):
@@ -480,6 +497,7 @@ class HarnessRuntime:
         error_text = ""
         cancelled = False
         task_cancelled = False
+        adapter: HarnessAdapter | None = None
 
         try:
             if command in {"new", "clear"}:
@@ -643,6 +661,27 @@ class HarnessRuntime:
                         else None
                     ),
                 )
+                if (
+                    error_text
+                    and not cancelled
+                    and action_tracker is not None
+                    and action_tracker.committed_items
+                    and adapter is not None
+                ):
+                    checkpoint = await self._checkpoint_recovery_context(
+                        backend=backend,
+                        adapter=adapter,
+                        action_tracker=action_tracker,
+                        request=request,
+                        request_context=request_context,
+                    )
+                    if checkpoint is not None:
+                        response.metadata = {
+                            **dict(response.metadata or {}),
+                            "harness_recovery_checkpoint_id": str(
+                                checkpoint.checkpoint_id,
+                            ),
+                        }
             except Exception:
                 logger.warning(
                     "Failed to persist third-party session %s",
@@ -664,6 +703,95 @@ class HarnessRuntime:
         if task_cancelled:
             raise asyncio.CancelledError
         yield tagged(response)
+
+    # pylint: disable-next=too-many-return-statements
+    async def _checkpoint_recovery_context(
+        self,
+        *,
+        backend: str,
+        adapter: HarnessAdapter,
+        action_tracker: HarnessActionTracker,
+        request: Any,
+        request_context: dict[str, Any],
+    ) -> Any:
+        """Persist admission only after all independent evidence agrees."""
+        if self._session_bridge is None:
+            return None
+        try:
+            invocation_id = uuid.UUID(
+                str(request_context["os_invocation_id"]),
+            )
+            conversation_id = str(
+                request_context["os_conversation_id"],
+            )
+            source_submission_id = uuid.UUID(
+                str(request_context["os_submission_id"]),
+            )
+            session_id = str(
+                getattr(request, "session_id", "") or "default",
+            )
+            user_id = str(
+                getattr(request, "user_id", "") or session_id,
+            )
+            channel = str(getattr(request, "channel", "") or "")
+            records = await lite_action_store(
+                self._workspace_dir,
+            ).scan_for_conversation(conversation_id)
+            expected_items = model_step_committed_action_items(
+                records,
+                invocation_id,
+            )
+            evidence_digest = model_step_action_evidence_digest(
+                records,
+                invocation_id,
+            )
+            if expected_items is None or evidence_digest is None:
+                return None
+            tracked = sorted(
+                item.model_dump_json()
+                for item in action_tracker.committed_items.values()
+            )
+            expected = sorted(
+                item.model_dump_json() for item in expected_items
+            )
+            if expected != tracked:
+                return None
+            provider_context_id = adapter.recovery_context_id(session_id)
+            if provider_context_id is None:
+                return None
+            history = await adapter.history(session_id)
+            provider_item_ids = {
+                item.item_id
+                for item in history
+                if item.kind is HarnessHistoryKind.TOOL_OUTPUT
+                and item.item_id
+            }
+            session_items = await self._session_bridge.committed_items(
+                session_id=session_id,
+                user_id=user_id,
+                channel=channel,
+            )
+            checkpoint = build_harness_recovery_checkpoint(
+                invocation_id=invocation_id,
+                conversation_id=conversation_id,
+                source_submission_id=source_submission_id,
+                backend=backend,
+                provider_context_id=provider_context_id,
+                provider_item_ids=provider_item_ids,
+                action_evidence_digest=evidence_digest,
+                expected_items=expected_items,
+                session_items=session_items,
+            )
+            if checkpoint is None:
+                return None
+            return await lite_harness_recovery_context_store(
+                self._workspace_dir,
+            ).save(checkpoint)
+        except Exception:  # pylint: disable=broad-except
+            logger.exception(
+                "Failed to checkpoint Harness recovery context",
+            )
+            return None
 
     async def _resolve_environment(
         self,

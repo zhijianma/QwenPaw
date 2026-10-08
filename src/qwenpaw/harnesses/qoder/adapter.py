@@ -218,6 +218,10 @@ class QoderAdapter(HarnessAdapter):
             history.extend(history_items(message))
         return history
 
+    def recovery_context_id(self, session_id: str) -> str | None:
+        """Return the persisted Qoder session bound to QwenPaw Chat."""
+        return self._sessions.get(session_id)
+
     async def discover_skills(
         self,
         cwd: Path,

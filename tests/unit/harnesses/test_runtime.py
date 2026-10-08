@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+from uuid import UUID
 
 import pytest
 
@@ -21,6 +22,8 @@ from qwenpaw.harnesses.events import (
     HarnessAttachmentKind,
     HarnessEvent,
     HarnessEventKind,
+    HarnessHistoryItem,
+    HarnessHistoryKind,
     HarnessProvider,
 )
 from qwenpaw.harnesses.runtime import HarnessRuntime
@@ -44,6 +47,9 @@ from qwenpaw.runtime.actions import lite_action_store
 from qwenpaw.runtime.environments import FilesystemEnvironmentStore
 from qwenpaw.runtime.harness_environments import (
     RuntimeHarnessEnvironmentManager,
+)
+from qwenpaw.runtime.harness_recovery import (
+    lite_harness_recovery_context_store,
 )
 from qwenpaw.schemas import (
     AgentRequest,
@@ -178,6 +184,48 @@ class IncompleteToolAdapter(FakeAdapter):
             kind=HarnessEventKind.ERROR,
             text="provider connection lost",
         )
+
+
+class RecoverableInterruptedToolAdapter(ToolAdapter):
+    """Expose matching provider history after an interrupted turn."""
+
+    async def run_turn(  # pylint: disable=invalid-overridden-method
+        self,
+        *,
+        session_id: str,
+        prompt: str,
+        cwd: Path,
+        settings: dict,
+        attachments: list[HarnessAttachment] | None = None,
+    ) -> AsyncIterator[HarnessEvent]:
+        async for event in super().run_turn(
+            session_id=session_id,
+            prompt=prompt,
+            cwd=cwd,
+            settings=settings,
+            attachments=attachments,
+        ):
+            if event.kind is not HarnessEventKind.COMPLETED:
+                yield event
+        yield HarnessEvent(
+            kind=HarnessEventKind.ERROR,
+            text="provider stream disconnected",
+        )
+
+    def recovery_context_id(self, session_id: str) -> str | None:
+        assert session_id == "chat-1"
+        return "provider-thread-private"
+
+    async def history(self, session_id: str) -> list[HarnessHistoryItem]:
+        assert session_id == "chat-1"
+        return [
+            HarnessHistoryItem(
+                kind=HarnessHistoryKind.TOOL_OUTPUT,
+                item_id="tool-1",
+                tool_name="shell",
+                text="1 passed",
+            ),
+        ]
 
 
 class FailingSession:
@@ -789,6 +837,56 @@ async def test_harness_action_fails_closed_when_context_commit_fails(
         conversation_id="chat-spec-1",
     )
     assert queue.active_submission_id is None
+
+
+@pytest.mark.asyncio
+async def test_interrupted_harness_persists_recovery_admission(
+    tmp_path: Path,
+) -> None:
+    control = InvocationControlService(
+        store=SQLiteInvocationControl(tmp_path / "control.sqlite3"),
+    )
+    workspace = SimpleNamespace(
+        workspace_dir=tmp_path,
+        invocation_control=control,
+        interaction_service=InteractionService(
+            tmp_path / "interactions.sqlite3",
+        ),
+        capability_registry=GenerationRegistry(),
+    )
+    session = SafeJSONSession(str(tmp_path / "sessions"))
+    runtime = HarnessRuntime(
+        tmp_path,
+        session=session,
+        workspace=workspace,
+        environment_manager=_environment_manager(tmp_path),
+    )
+    runtime._adapters["codex"] = RecoverableInterruptedToolAdapter()
+
+    output = [
+        item
+        async for item in runtime.stream(
+            backend="codex",
+            request=_os_request(),
+            cwd=tmp_path.resolve(),
+        )
+    ]
+    [record] = await lite_action_store(
+        tmp_path,
+    ).list_for_conversation("chat-spec-1")
+
+    assert output[-1].status == "failed"
+    checkpoint_id = output[-1].metadata[
+        "harness_recovery_checkpoint_id"
+    ]
+    checkpoint = await lite_harness_recovery_context_store(tmp_path).load(
+        UUID(checkpoint_id),
+    )
+    assert checkpoint.backend == "codex"
+    assert checkpoint.action_count == 1
+    assert checkpoint.action_evidence_digest
+    assert record.result is not None
+    assert "provider-thread-private" not in checkpoint.model_dump_json()
 
 
 @pytest.mark.asyncio

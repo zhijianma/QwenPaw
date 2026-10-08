@@ -303,6 +303,11 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   context 时附加 binding。provider completion event、未知终态和 history hydrate 不会
   被误当成 model-visible commit。若 Action 成功但 session 写入失败，Harness
   Invocation 失败关闭并保留成功 Action 证据，后续不得自动重做。
+- Harness 断流现在只有在 provider context identity、provider history tool item、Chat
+  session `CommittedActionItem` 与 ActionStore digest 四方一致时，才保存权限 `0600`
+  的 `HarnessRecoveryContextCheckpoint`。原始 provider thread/session ID、工具输出和
+  异常正文均不进入 checkpoint；受控 Harness 自建 Submission 也已回填统一的
+  submission/correlation identity。
 - 状态经现有 Chat Runtime Observation 展示为 pending / accepted / cancelled /
   blocked / failed，不伪造 Queue 项，不依赖 Task 页面或前端私有状态。
 - Kernel/SDK 新增只读 `ModelRecoveryHistoryPort`；独立查询 Adapter 从同一恢复事实
@@ -313,9 +318,9 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - “一问一答”只保留为 Chat 快速路径和 UI 投影；长程执行链只在 Outcome、显式
   Stop / Interrupt、不可自动化的 typed Wait 或预算/恢复终态结束，不依赖用户发送
   “继续”。
-- 尚未完成：Harness 断流后的 provider-thread/session 双重校验与 durable continuation、
-  后台 Action 跨 Invocation 的主动 continuation、Provider token 级原地续传，以及真实
-  断流与进程重启的浏览器端到端演练。
+- 尚未完成：共享 dispatcher 从 Harness checkpoint 创建 fenced continuation、后台
+  Action 跨 Invocation 的主动 continuation、Provider token 级原地续传，以及真实断流
+  与进程重启的浏览器端到端演练。
 
 ### 本阶段此前已执行的定点验证
 

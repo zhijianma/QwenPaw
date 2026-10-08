@@ -452,8 +452,12 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     tool output 与 `CommittedActionItem` 一起原子写入 Chat context；仅有远端完成事件
     或 provider history hydrate 时不生成 binding。若 Action 已成功但 context commit
     失败，Invocation 标记失败并保留成功 Action 证据，禁止自动重做。
-  - [ ] Harness 断流后的 provider-thread/session 双重校验与 durable continuation，及
-    后台 Action 跨 Invocation 的主动 continuation 仍待实现。
+  - [x] Harness 断流 admission 已冻结 `HarnessRecoveryContextCheckpoint`：provider
+    context identity、provider history、Chat session binding、ActionStore digest 四方
+    一致才以 `0600` 不可变文件落盘；provider context digest 绑定 Invocation 与来源
+    Submission，原始 ID 不持久化且不能跨任务关联。
+  - [ ] 共享 dispatcher 消费 Harness checkpoint 创建 fenced continuation，以及后台
+    Action 跨 Invocation 的主动 continuation 仍待实现。
 - [ ] 把 WebSocket 增量续传、sticky route 和 HTTP fallback 保持为 Provider
   Adapter capability；严格验证 response identity/prefix，失败时回退持久上下文重建，
   Kernel 不感知具体传输。
