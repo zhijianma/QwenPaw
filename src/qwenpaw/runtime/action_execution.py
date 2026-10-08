@@ -18,6 +18,7 @@ from ..kernel import (
     ActionRetryContinuation,
     ActionRetryDisposition,
     ActionRetryInputStore,
+    ActionRetryContinuationStore,
     ActionStore,
     CapabilitySelection,
     InvocationScope,
@@ -26,6 +27,8 @@ from ..kernel import (
 from ..kernel.models import JsonObject
 from ..tool_calls import ToolCoordinator
 from .actions import RuntimeActionRecorder
+from .assembly import RuntimeAssemblyFactory, capability_registry_for
+from .builder import AgentBuilder
 
 
 class GovernedActionDeniedError(RuntimeError):
@@ -250,6 +253,133 @@ class GovernedActionExecutor:
         return entry.final_response
 
 
+class RuntimeActionRetryRunner:
+    """Run one admitted retry through a pinned Runtime assembly."""
+
+    def __init__(
+        self,
+        *,
+        workspace: Any,
+        coordinator: ToolCoordinator,
+        action_store: ActionStore,
+        retry_input_store: ActionRetryInputStore,
+        retry_continuation_store: ActionRetryContinuationStore,
+        builder: Any | None = None,
+        executor: Any | None = None,
+        assembly_factory: Any | None = None,
+    ) -> None:
+        self._workspace = workspace
+        self._actions = action_store
+        self._retry_inputs = retry_input_store
+        self._retry_continuations = retry_continuation_store
+        self._builder = builder or AgentBuilder()
+        self._executor = executor or GovernedActionExecutor(coordinator)
+        self._assembly_factory = assembly_factory
+
+    async def run(
+        self,
+        *,
+        prepared: PreparedActionRetry,
+        plan: ActionRetryExecutionPlan,
+        agent_config: Any,
+        governor: Any,
+    ) -> ToolResponse:
+        """Resolve and execute without invoking model reasoning."""
+        checkpoint = prepared.continuation.checkpoint
+        factory = self._assembly_factory or RuntimeAssemblyFactory(
+            capability_registry_for(self._workspace),
+        )
+        assembly = await factory.open(
+            agent_id=checkpoint.agent_id,
+            conversation_id=plan.chat_id,
+            session_id=plan.chat_id,
+            root_agent_id=checkpoint.agent_id,
+            root_session_id=plan.chat_id,
+            workspace_dir=self._workspace.workspace_dir,
+            selection=plan.capability_selection,
+            registry_generation=plan.registry_generation,
+            invocation_id=plan.invocation_id,
+            correlation_id=plan.correlation_id,
+        )
+        try:
+            recorder = RuntimeActionRecorder(
+                assembly.scope,
+                self._actions,
+                retry_input_store=self._retry_inputs,
+                retry_continuation_store=self._retry_continuations,
+                retry_of=prepared.previous,
+                tool_selection=plan.tool_selection,
+                provider_execution_digests={
+                    checkpoint.capability_id: (
+                        plan.provider_execution_digest
+                    ),
+                },
+            )
+            request_context = self._request_context(
+                recorder=recorder,
+                plan=plan,
+            )
+            context = SimpleNamespace(
+                invocation_scope=assembly.scope,
+                extras={"runtime_assembly": assembly},
+                workspace=self._workspace,
+            )
+            tool = await self._builder.resolve_governed_action_tool(
+                ctx=context,
+                agent_config=agent_config,
+                request_context=request_context,
+                provider_id=checkpoint.capability_id,
+                tool_name=checkpoint.action_name,
+                tool_selection=plan.tool_selection,
+                governor=governor,
+            )
+            current_digest = request_context.get(
+                "_tool_provider_execution_digests",
+                {},
+            ).get(checkpoint.capability_id)
+            if current_digest != plan.provider_execution_digest:
+                raise ActionRetryAdmissionError(
+                    "Action retry provider configuration changed",
+                )
+            return await self._executor.execute(
+                tool=tool,
+                arguments=prepared.arguments,
+                tool_call_id=plan.tool_call_id,
+                scope=assembly.scope,
+                recorder=recorder,
+            )
+        finally:
+            await assembly.close()
+
+    def _request_context(
+        self,
+        *,
+        recorder: RuntimeActionRecorder,
+        plan: ActionRetryExecutionPlan,
+    ) -> dict[str, Any]:
+        service = getattr(self._workspace, "interaction_service", None)
+        context: dict[str, Any] = {
+            "agent_id": self._workspace.agent_id,
+            "session_id": plan.chat_id,
+            "root_agent_id": self._workspace.agent_id,
+            "root_session_id": plan.chat_id,
+            "channel": "console",
+            "os_invocation_id": str(plan.invocation_id),
+            "os_correlation_id": str(plan.correlation_id),
+            "os_conversation_id": plan.chat_id,
+            "os_registry_generation": plan.registry_generation,
+            "_action_recorder": recorder,
+            "_interaction_service": service,
+        }
+        if service is not None:
+            from ..interactions import runtime_interaction_broker_from_context
+
+            broker = runtime_interaction_broker_from_context(context)
+            if broker is not None:
+                context["_interaction_broker"] = broker
+        return context
+
+
 __all__ = [
     "ActionRetryAdmissionError",
     "ActionRetryExecutionAdmission",
@@ -257,4 +387,5 @@ __all__ = [
     "GovernedActionDeniedError",
     "GovernedActionExecutor",
     "PreparedActionRetry",
+    "RuntimeActionRetryRunner",
 ]

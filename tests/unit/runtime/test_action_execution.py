@@ -3,6 +3,7 @@
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -23,6 +24,7 @@ from qwenpaw.runtime.action_execution import (
     ActionRetryExecutionPlan,
     GovernedActionDeniedError,
     GovernedActionExecutor,
+    RuntimeActionRetryRunner,
 )
 from qwenpaw.runtime.action_retries import (
     lite_action_retry_continuation_store,
@@ -289,6 +291,83 @@ async def test_retry_execution_admission_rebuilds_durable_authority(
         continuation.checkpoint.provider_execution_digest
     )
     assert plan == ActionRetryExecutionPlan.from_prepared(prepared)
+
+    class Assembly:
+        def __init__(self, invocation_scope):
+            self.scope = invocation_scope
+            self.closed = False
+
+        async def close(self):
+            self.closed = True
+
+    assembly = Assembly(
+        scope.model_copy(
+            update={
+                "invocation_id": plan.invocation_id,
+                "correlation_id": plan.correlation_id,
+                "session_id": plan.chat_id,
+                "root_session_id": plan.chat_id,
+                "selection": plan.capability_selection,
+            },
+        ),
+    )
+
+    class Factory:
+        async def open(self, **kwargs):
+            assert kwargs["invocation_id"] == plan.invocation_id
+            assert kwargs["session_id"] == plan.chat_id
+            return assembly
+
+    class Builder:
+        async def resolve_governed_action_tool(
+            self,
+            *,
+            request_context,
+            provider_id,
+            **_kwargs,
+        ):
+            request_context["_tool_provider_execution_digests"] = {
+                provider_id: plan.provider_execution_digest,
+            }
+            return SimpleNamespace(name="stable_tool")
+
+    executed = {}
+
+    class Executor:
+        async def execute(self, **kwargs):
+            executed.update(kwargs)
+            return ToolResponse(
+                content=[TextBlock(type="text", text="retried")],
+                id=plan.tool_call_id,
+                state=ToolResultState.SUCCESS,
+            )
+
+    runner = RuntimeActionRetryRunner(
+        workspace=SimpleNamespace(
+            agent_id=scope.agent_id,
+            workspace_dir=tmp_path,
+            interaction_service=None,
+        ),
+        coordinator=ToolCoordinator(),
+        action_store=store,
+        retry_input_store=inputs,
+        retry_continuation_store=outbox,
+        builder=Builder(),
+        executor=Executor(),
+        assembly_factory=Factory(),
+    )
+
+    response = await runner.run(
+        prepared=prepared,
+        plan=plan,
+        agent_config=SimpleNamespace(),
+        governor=None,
+    )
+
+    assert response.state is ToolResultState.SUCCESS
+    assert executed["arguments"] == {"value": "private"}
+    assert executed["tool_call_id"] == plan.tool_call_id
+    assert assembly.closed is True
     drifted = continuation.model_copy(
         update={
             "source_observation_digest": f"sha256:{'b' * 64}",
