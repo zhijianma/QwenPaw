@@ -91,6 +91,9 @@ ModelCallResult(continue_model_step, partial boundary)
   `action_reconciliation_required`，等待后续 Action 对账能力，不自动重做。
 - Model Step 状态通过现有 Chat Runtime Observation 投影为 pending、accepted、
   cancelled、blocked 或 failed；它不是 Queue 假状态，也不包含半截正文。
+- Resource Wait 与 Model Step 共用只读 `ModelRecoveryHistoryPort`；Resource Wait
+  同样进入 Chat Runtime Observation，展示 waiting、ready、dispatched、cancelled 或
+  exhausted，而不是要求前端从 Queue 或错误字符串推测恢复状态。
 
 ## 4. 长程交互替代“一问一答”
 
@@ -124,6 +127,8 @@ Adapter 声明；Kernel 不假设任意模型流可以原地续传。
 - [x] 恢复 Submission 沿用 `ChatSpec.id` 与原 `correlation_id`。
 - [x] crash-after-enqueue 通过稳定 idempotency key 防止重复 Submission。
 - [x] `/wait-conditions` 可合并投影 Interaction 与 Resource blocker。
+- [x] `ModelRecoveryHistoryPort` 统一读取 Resource Wait 与 Model Step；两者进入同一
+  Chat Activity，且投影不包含 Prompt、Provider payload、异常正文或凭据。
 - [x] SDK 导出稳定 Resource Wait 领域类型。
 - [x] 模型结果记录 pre-output、完整响应、部分流、终态流或 incomplete EOF 边界，
   不保存输出正文和隐藏 reasoning。

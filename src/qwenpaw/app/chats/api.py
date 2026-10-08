@@ -91,6 +91,7 @@ from ...runtime.actions import lite_action_store, public_action_record
 from ...runtime.model_calls import lite_model_call_store
 from ...runtime.observation_index import ObservationCursorError
 from ...runtime.observations import lite_observation_projection
+from ...recovery import ModelRecoveryHistory
 from ...tasks.artifacts import (
     ArtifactIntegrityError,
     artifact_filename,
@@ -598,17 +599,19 @@ async def _chat_runtime_projection_context(
         task_results=lite_task_result_history(
             Path(workspace.workspace_dir),
         ),
-        model_steps=getattr(
-            workspace,
-            "model_resource_wait_service",
-            None,
-        ),
+        model_recovery=_model_recovery_history(workspace),
     )
     return ConversationRuntimeProjectionService(
         control,
         interactions,
         observations,
     )
+
+
+def _model_recovery_history(workspace) -> ModelRecoveryHistory | None:
+    """Return the read-only recovery adapter for one workspace."""
+    service = getattr(workspace, "model_resource_wait_service", None)
+    return ModelRecoveryHistory(service) if service is not None else None
 
 
 async def _apply_chat_control(
@@ -1576,11 +1579,7 @@ async def list_chat_observations(
         task_results=lite_task_result_history(
             Path(workspace.workspace_dir),
         ),
-        model_steps=getattr(
-            workspace,
-            "model_resource_wait_service",
-            None,
-        ),
+        model_recovery=_model_recovery_history(workspace),
     ).list_for_conversation(
         chat_id,
         limit=limit,
@@ -1618,11 +1617,7 @@ async def page_chat_observations(
         task_results=lite_task_result_history(
             Path(workspace.workspace_dir),
         ),
-        model_steps=getattr(
-            workspace,
-            "model_resource_wait_service",
-            None,
-        ),
+        model_recovery=_model_recovery_history(workspace),
     )
     try:
         return await projection.page_for_conversation(

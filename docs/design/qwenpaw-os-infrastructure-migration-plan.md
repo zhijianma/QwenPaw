@@ -383,6 +383,9 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     revision/notifier 前，不提高全量重建频率，也不以轮询冒充日志。
   - [x] Lite Observation index 会按 owner 与当前权威派生集做 reconciliation；版本
     演进后遗留的陈旧指针被删除，旧 cursor 明确失效，不再让 Activity GET/SSE 500。
+  - [x] Model Recovery 通过只读 `ModelRecoveryHistoryPort` 接入 Activity；Resource
+    Wait 与部分流 Model Step 分别从权威恢复事实派生状态，不复制 Provider payload、
+    Prompt、异常正文或 partial output，也不把等待伪装为 Queue 项。
   - [ ] Console 增加薄 Activity 投影；只显示语义状态和来源引用，不暴露隐藏推理，
     不复制 Task Workbench 状态机。
 - [x] 完成 Chat Ask User durable continuation：响应决定与 continuation outbox
@@ -417,6 +420,8 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     `recovery_exhausted`，不无限循环；
   - [x] `wait_resource` 保存独立 Resource Wait，timer/external event 成熟后由
     durable outbox 创建同 correlation 的新 Submission / Invocation，不占用旧槽位。
+    Resource Wait 的 waiting/ready/dispatched/cancelled/exhausted 已进入统一 Chat
+    Activity，不再依赖 `/wait-conditions` 单一视图或前端错误字符串。
   - [x] Provider `Retry-After` 秒数或 HTTP-date 经统一策略归一化为有限、非负 hint，
     写入 Model Call evidence 并决定 Resource Wait `not_before`；原始 header 不入 Kernel。
   - [x] Interrupt 以来源 Invocation、Stop-and-Clear 以 Conversation 建立恢复栅栏；

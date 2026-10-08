@@ -84,7 +84,7 @@ from .interactions import (
     UserInputReason,
 )
 from .memory import MemoryStateScope, MemoryStateSnapshot
-from .waits import ModelStepContinuation
+from .waits import ModelResourceWait, ModelStepContinuation
 from .scheduling import (
     ScheduleDefinition,
     ScheduleFire,
@@ -1383,6 +1383,20 @@ class ModelStepContinuationHistoryPort(Protocol):
         conversation_id: str,
     ) -> Sequence[ModelStepContinuation]:
         """Return every content-free model-step continuation in order."""
+
+
+@runtime_checkable
+class ModelRecoveryHistoryPort(
+    ModelStepContinuationHistoryPort,
+    Protocol,
+):
+    """Read-only model recovery history for one ChatSpec."""
+
+    async def scan_model_resource_waits_for_conversation(
+        self,
+        conversation_id: str,
+    ) -> Sequence[ModelResourceWait]:
+        """Return every content-free resource wait in order."""
 
 
 @runtime_checkable

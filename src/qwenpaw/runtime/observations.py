@@ -31,8 +31,9 @@ from ..kernel import (
     ModelCallRecord,
     ModelCallStatus,
     ModelCallStore,
+    ModelRecoveryHistoryPort,
+    ModelResourceWait,
     ModelStepContinuation,
-    ModelStepContinuationHistoryPort,
     ModelStepContinuationStatus,
     ObservationCategory,
     ObservationPage,
@@ -41,6 +42,7 @@ from ..kernel import (
     ObservationStage,
     ObservationStatus,
     RuntimeObservation,
+    ResourceWaitStatus,
     SubmissionHistoryPort,
     SubmissionStatus,
     TERMINAL_SUBMISSION_STATUSES,
@@ -306,6 +308,55 @@ def _model_step_observation(
             "revision": continuation.revision,
         },
         occurred_at=continuation.updated_at,
+    )
+
+
+def _model_resource_wait_status(
+    status: ResourceWaitStatus,
+) -> ObservationStatus:
+    return {
+        ResourceWaitStatus.WAITING: ObservationStatus.PENDING,
+        ResourceWaitStatus.READY: ObservationStatus.RUNNING,
+        ResourceWaitStatus.DISPATCHED: ObservationStatus.ACCEPTED,
+        ResourceWaitStatus.CANCELLED: ObservationStatus.CANCELLED,
+        ResourceWaitStatus.RECOVERY_EXHAUSTED: ObservationStatus.FAILED,
+    }[status]
+
+
+def _model_resource_wait_observation(
+    wait: ModelResourceWait,
+) -> RuntimeObservation:
+    return RuntimeObservation(
+        observation_id=_observation_id(
+            wait.wait_id,
+            ObservationStage.EXECUTION,
+        ),
+        category=ObservationCategory.MODEL,
+        stage=ObservationStage.EXECUTION,
+        status=_model_resource_wait_status(wait.status),
+        source=ObservationSource(
+            source_type="qwenpaw.model.resource-wait",
+            source_id=str(wait.wait_id),
+        ),
+        conversation_id=wait.conversation_id,
+        invocation_id=wait.invocation_id,
+        correlation_id=wait.correlation_id,
+        title="Model resource recovery",
+        facts={
+            "wait_id": str(wait.wait_id),
+            "attempt_id": str(wait.attempt_id),
+            "failure_class": wait.failure_class.value,
+            "trigger": wait.trigger.value,
+            "recovery_status": wait.status.value,
+            "not_before": (
+                wait.not_before.isoformat()
+                if wait.not_before is not None
+                else None
+            ),
+            "submission_id": _optional_uuid(wait.submission_id),
+            "revision": wait.revision,
+        },
+        occurred_at=wait.updated_at,
     )
 
 
@@ -893,6 +944,10 @@ async def _empty_model_steps() -> Sequence[ModelStepContinuation]:
     return ()
 
 
+async def _empty_model_resource_waits() -> Sequence[ModelResourceWait]:
+    return ()
+
+
 async def _empty_conversation_artifacts(
 ) -> Sequence[ConversationArtifactRecord]:
     return ()
@@ -951,7 +1006,7 @@ class LiteObservationProjection(ObservationProjectionPort):
         conversation_artifacts: ConversationArtifactHistoryPort | None = None,
         task_results: TaskResultHistoryPort | None = None,
         verifications: VerificationHistoryPort | None = None,
-        model_steps: ModelStepContinuationHistoryPort | None = None,
+        model_recovery: ModelRecoveryHistoryPort | None = None,
     ) -> None:
         self._model_calls = model_calls
         self._actions = actions
@@ -964,7 +1019,7 @@ class LiteObservationProjection(ObservationProjectionPort):
         self._conversation_artifacts = conversation_artifacts
         self._task_results = task_results
         self._verifications = verifications
-        self._model_steps = model_steps
+        self._model_recovery = model_recovery
 
     async def list_for_conversation(
         self,
@@ -1039,11 +1094,18 @@ class LiteObservationProjection(ObservationProjectionPort):
             else _empty_verifications()
         )
         model_step_records = (
-            self._model_steps.scan_model_steps_for_conversation(
+            self._model_recovery.scan_model_steps_for_conversation(
                 conversation_id,
             )
-            if self._model_steps is not None
+            if self._model_recovery is not None
             else _empty_model_steps()
+        )
+        model_resource_wait_records = (
+            self._model_recovery.scan_model_resource_waits_for_conversation(
+                conversation_id,
+            )
+            if self._model_recovery is not None
+            else _empty_model_resource_waits()
         )
         (
             model_records,
@@ -1056,6 +1118,7 @@ class LiteObservationProjection(ObservationProjectionPort):
             resolved_task_results,
             resolved_verifications,
             resolved_model_steps,
+            resolved_model_resource_waits,
         ) = await asyncio.gather(
             _scan_source(
                 self._model_calls,
@@ -1076,6 +1139,7 @@ class LiteObservationProjection(ObservationProjectionPort):
             task_result_records,
             verification_records,
             model_step_records,
+            model_resource_wait_records,
         )
         observations = [
             observation
@@ -1145,6 +1209,10 @@ class LiteObservationProjection(ObservationProjectionPort):
             _model_step_observation(record)
             for record in resolved_model_steps
         )
+        observations.extend(
+            _model_resource_wait_observation(record)
+            for record in resolved_model_resource_waits
+        )
         observations.sort(
             key=lambda item: (item.occurred_at, str(item.observation_id)),
             reverse=True,
@@ -1200,7 +1268,7 @@ def lite_observation_projection(
     conversation_artifacts: ConversationArtifactHistoryPort | None = None,
     task_results: TaskResultHistoryPort | None = None,
     verifications: VerificationHistoryPort | None = None,
-    model_steps: ModelStepContinuationHistoryPort | None = None,
+    model_recovery: ModelRecoveryHistoryPort | None = None,
 ) -> LiteObservationProjection:
     """Return the Lite semantic projection over workspace source facts."""
     from .compactions import lite_compaction_store
@@ -1219,7 +1287,7 @@ def lite_observation_projection(
         conversation_artifacts=conversation_artifacts,
         task_results=task_results,
         verifications=verifications,
-        model_steps=model_steps,
+        model_recovery=model_recovery,
     )
 
 

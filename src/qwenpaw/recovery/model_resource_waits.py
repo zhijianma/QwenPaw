@@ -572,32 +572,6 @@ class ModelResourceWaitService:
             ).fetchall()
         return tuple(self._step_from_row(row) for row in rows)
 
-    async def scan_model_steps_for_conversation(
-        self,
-        conversation_id: str,
-    ) -> tuple[ModelStepContinuation, ...]:
-        """Return content-free model-step recovery history for one Chat."""
-        if not conversation_id.strip():
-            raise ValueError("conversation_id cannot be empty")
-        await self.start()
-        return await asyncio.to_thread(
-            self._scan_model_steps_for_conversation_sync,
-            conversation_id,
-        )
-
-    def _scan_model_steps_for_conversation_sync(
-        self,
-        conversation_id: str,
-    ) -> tuple[ModelStepContinuation, ...]:
-        with self._connect() as connection:
-            rows = connection.execute(
-                "SELECT * FROM model_step_continuations "
-                "WHERE agent_id = ? AND conversation_id = ? "
-                "ORDER BY created_at, continuation_id",
-                (self.agent_id, conversation_id),
-            ).fetchall()
-        return tuple(self._step_from_row(row) for row in rows)
-
     async def dispatch_model_step(
         self,
         continuation_id: UUID,
@@ -1055,7 +1029,85 @@ class ModelResourceWaitService:
         )
 
 
+class ModelRecoveryHistory:
+    """Read-only adapter over the model recovery source of truth."""
+
+    def __init__(self, service: ModelResourceWaitService) -> None:
+        self._service = service
+        self._database_path = service.database_path
+        self._agent_id = service.agent_id
+
+    async def scan_model_steps_for_conversation(
+        self,
+        conversation_id: str,
+    ) -> tuple[ModelStepContinuation, ...]:
+        """Return content-free model-step recovery history for one Chat."""
+        self._validate_conversation_id(conversation_id)
+        await self._service.start()
+        return await asyncio.to_thread(
+            self._scan_model_steps_for_conversation_sync,
+            conversation_id,
+        )
+
+    async def scan_model_resource_waits_for_conversation(
+        self,
+        conversation_id: str,
+    ) -> tuple[ModelResourceWait, ...]:
+        """Return content-free resource recovery history for one Chat."""
+        self._validate_conversation_id(conversation_id)
+        await self._service.start()
+        return await asyncio.to_thread(
+            self._scan_model_resource_waits_for_conversation_sync,
+            conversation_id,
+        )
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self._database_path, timeout=30.0)
+        connection.row_factory = sqlite3.Row
+        return connection
+
+    def _scan_model_steps_for_conversation_sync(
+        self,
+        conversation_id: str,
+    ) -> tuple[ModelStepContinuation, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM model_step_continuations "
+                "WHERE agent_id = ? AND conversation_id = ? "
+                "ORDER BY created_at, continuation_id",
+                (self._agent_id, conversation_id),
+            ).fetchall()
+        return tuple(
+            ModelStepContinuation.model_validate(dict(row))
+            for row in rows
+        )
+
+    def _scan_model_resource_waits_for_conversation_sync(
+        self,
+        conversation_id: str,
+    ) -> tuple[ModelResourceWait, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM model_resource_waits "
+                "WHERE agent_id = ? AND conversation_id = ? "
+                "ORDER BY created_at, wait_id",
+                (self._agent_id, conversation_id),
+            ).fetchall()
+        waits = []
+        for row in rows:
+            values = dict(row)
+            values["trigger"] = values.pop("trigger_kind")
+            waits.append(ModelResourceWait.model_validate(values))
+        return tuple(waits)
+
+    @staticmethod
+    def _validate_conversation_id(conversation_id: str) -> None:
+        if not conversation_id.strip():
+            raise ValueError("conversation_id cannot be empty")
+
+
 __all__ = [
+    "ModelRecoveryHistory",
     "ModelResourceWaitConflictError",
     "ModelResourceWaitError",
     "ModelResourceWaitNotFoundError",

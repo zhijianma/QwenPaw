@@ -285,6 +285,11 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   `action_reconciliation_required`，当前不会自动重做或猜测副作用结果。
 - 状态经现有 Chat Runtime Observation 展示为 pending / accepted / cancelled /
   blocked / failed，不伪造 Queue 项，不依赖 Task 页面或前端私有状态。
+- Kernel/SDK 新增只读 `ModelRecoveryHistoryPort`；独立查询 Adapter 从同一恢复事实
+  读取 Resource Wait 与 Model Step，Chat snapshot、列表和分页均消费该 Port。
+- Resource Wait 的 waiting / ready / dispatched / cancelled / exhausted 现在也进入
+  Activity；投影只含失败类别、触发方式、`not_before`、状态和因果 ID，不含 Provider
+  payload、Prompt、异常正文或凭据。
 - 尚未完成：按 `ActionResult` / uncertain side-effect 与 Checkpoint 自动对账、
   Provider token 级原地续传、真实断流与进程重启的浏览器端到端演练。
 

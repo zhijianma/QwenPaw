@@ -60,7 +60,10 @@ from qwenpaw.invocation_control import (
     SQLiteInvocationControl,
 )
 from qwenpaw.runtime.model_calls import lite_model_call_store
-from qwenpaw.recovery.model_resource_waits import ModelResourceWaitService
+from qwenpaw.recovery.model_resource_waits import (
+    ModelRecoveryHistory,
+    ModelResourceWaitService,
+)
 from qwenpaw.runtime.actions import lite_action_store
 from qwenpaw.runtime.observation_index import (
     LiteObservationIndex,
@@ -208,7 +211,7 @@ async def test_model_step_recovery_projects_content_safe_blocker(
 
     observations = await lite_observation_projection(
         tmp_path,
-        model_steps=recovery,
+        model_recovery=ModelRecoveryHistory(recovery),
     ).list_for_conversation(conversation_id)
 
     assert len(observations) == 1
@@ -222,6 +225,68 @@ async def test_model_step_recovery_projects_content_safe_blocker(
     assert observation.facts["output_boundary"] == "partial_stream"
     serialized = observation.model_dump_json()
     assert "partial output text" not in serialized
+    assert "messages" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_model_resource_wait_projects_content_safe_activity(
+    tmp_path,
+) -> None:
+    conversation_id = "chat-resource-wait"
+    invocation_id = uuid4()
+    attempt = ModelCallAttempt(
+        attempt_id=uuid4(),
+        route_decision_id=uuid4(),
+        invocation_id=invocation_id,
+        correlation_id=invocation_id,
+        conversation_id=conversation_id,
+        registry_generation=1,
+        context_manifest_id=uuid4(),
+        model_call_index=1,
+        attempt_index=1,
+        provider_id="provider-a",
+        model_id="model-a",
+        adapter_id="example.Adapter",
+        adapter_version="1.0.0",
+    )
+    result = ModelCallResult(
+        attempt_id=attempt.attempt_id,
+        invocation_id=invocation_id,
+        conversation_id=conversation_id,
+        status=ModelCallStatus.FAILED,
+        error_kind="quota_exhausted",
+        retryable=True,
+        emitted_content=False,
+        output_boundary=ModelOutputBoundary.PRE_OUTPUT,
+        failure_class=ModelFailureClass.QUOTA_EXHAUSTED,
+        recovery_disposition=ModelRecoveryDisposition.WAIT_RESOURCE,
+        cost_unknown=True,
+    )
+    recovery = ModelResourceWaitService(
+        tmp_path / "recovery.sqlite3",
+        agent_id="agent-1",
+    )
+    wait = await recovery.defer(attempt, result)
+    assert wait is not None
+
+    observations = await lite_observation_projection(
+        tmp_path,
+        model_recovery=ModelRecoveryHistory(recovery),
+    ).list_for_conversation(conversation_id)
+
+    assert len(observations) == 1
+    observation = observations[0]
+    assert observation.source.source_type == (
+        "qwenpaw.model.resource-wait"
+    )
+    assert observation.category is ObservationCategory.MODEL
+    assert observation.stage is ObservationStage.EXECUTION
+    assert observation.status is ObservationStatus.PENDING
+    assert observation.facts["failure_class"] == "quota_exhausted"
+    assert observation.facts["trigger"] == "external_event"
+    assert observation.facts["recovery_status"] == "waiting"
+    serialized = observation.model_dump_json()
+    assert "provider payload" not in serialized
     assert "messages" not in serialized
 
 
