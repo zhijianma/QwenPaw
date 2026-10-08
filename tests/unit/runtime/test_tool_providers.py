@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Tests for the task-independent workspace Tool Provider adapter."""
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -10,7 +11,7 @@ import pytest
 from qwenpaw.capabilities import GenerationRegistry
 from qwenpaw.capabilities.system_tools import WorkspaceToolProvider
 from qwenpaw.drivers.credentials.types import CredentialRecord
-from qwenpaw.kernel.invocation import InvocationScope
+from qwenpaw.kernel.invocation import CapabilitySelection, InvocationScope
 from qwenpaw.kernel.models import (
     ActionKind,
     CapabilityBundle,
@@ -21,6 +22,10 @@ from qwenpaw.kernel.models import (
     ToolSelection,
 )
 from qwenpaw.runtime.assembly import RuntimeAssemblyFactory
+from qwenpaw.runtime.actions import (
+    FilesystemActionStore,
+    RuntimeActionRecorder,
+)
 from qwenpaw.runtime.tool_providers import (
     ProviderToolHost,
     WorkspaceToolHost,
@@ -259,6 +264,7 @@ class _ConfiguredToolProvider:
 
     def __init__(self) -> None:
         self.host: Any = None
+        self.selection: ToolSelection | None = None
 
     async def health_check(self) -> bool:
         return True
@@ -269,8 +275,9 @@ class _ConfiguredToolProvider:
         selection: ToolSelection,
         host: Any,
     ) -> list[ToolDefinition]:
-        del scope, selection
+        del scope
         self.host = host
+        self.selection = selection
 
         async def configured_tool() -> str:
             return str(host.config_snapshot().get("label", ""))
@@ -302,6 +309,85 @@ def _configured_tool_bundle() -> CapabilityBundle:
             ),
         ),
     )
+
+
+@pytest.mark.asyncio
+async def test_resolve_governed_action_tool_uses_exact_selection(
+    tmp_path: Path,
+) -> None:
+    registry = GenerationRegistry()
+    factory = RuntimeAssemblyFactory(registry)
+    await factory.prepare()
+    provider = _ConfiguredToolProvider()
+    await registry.activate_bundle(
+        _configured_tool_bundle(),
+        lambda _: provider,
+    )
+    assembly = await factory.open(
+        agent_id="default",
+        conversation_id="chat-action-retry",
+        session_id="chat-action-retry",
+        root_agent_id="default",
+        root_session_id="chat-action-retry",
+        workspace_dir=tmp_path,
+        selection=CapabilitySelection(
+            tool_provider_ids=(provider.provider_id,),
+        ),
+        registry_generation=registry.generation,
+    )
+    recorder = RuntimeActionRecorder(
+        assembly.scope,
+        FilesystemActionStore(tmp_path),
+    )
+    request_context = {"_action_recorder": recorder}
+    context = SimpleNamespace(
+        invocation_scope=assembly.scope,
+        extras={"runtime_assembly": assembly},
+        workspace=SimpleNamespace(
+            config=SimpleNamespace(
+                capability_configs={provider.provider_id: {}},
+                capability_credential_refs={},
+            ),
+            driver_manager=None,
+            local_workspace=None,
+        ),
+    )
+    selection = ToolSelection(
+        active_modes=("coding",),
+        active_skills=("review",),
+        enabled_features=("example.retry",),
+        explicit_enabled=("configured_tool",),
+        explicit_disabled=("other_tool",),
+        subagent_allowed_tools=("configured_tool",),
+    )
+
+    tool = await AgentBuilder().resolve_governed_action_tool(
+        ctx=context,
+        agent_config=SimpleNamespace(),
+        request_context=request_context,
+        provider_id=provider.provider_id,
+        tool_name="configured_tool",
+        tool_selection=selection,
+        governor=None,
+    )
+
+    assert provider.selection == selection
+    assert tool.name == "configured_tool"
+    assert request_context["_tool_provider_owners"] == {
+        "configured_tool": provider.provider_id,
+    }
+    assert getattr(tool, "_qp_request_context") is request_context
+    with pytest.raises(LookupError, match="resolved 0 matches"):
+        await AgentBuilder().resolve_governed_action_tool(
+            ctx=context,
+            agent_config=SimpleNamespace(),
+            request_context=request_context,
+            provider_id=provider.provider_id,
+            tool_name="missing_tool",
+            tool_selection=selection,
+            governor=None,
+        )
+    await assembly.close()
 
 
 @pytest.mark.asyncio

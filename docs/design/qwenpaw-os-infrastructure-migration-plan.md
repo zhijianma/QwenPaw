@@ -541,6 +541,9 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     feature 与 subagent whitelist），并在新 attempt admission 校验一致性；避免热更新
     后按当前 Chat 配置重建出另一套工具。历史 checkpoint 没有选择快照时，后续自动
     dispatcher 必须 fail closed，不能猜测或补默认值。
+  - [x] AgentBuilder 提供 exact-action resolver：只从已 pin 的 assembly 中打开指定
+    Tool Provider，原样传入冻结的 `ToolSelection`，并要求工具名唯一命中；Provider
+    不在选择内、实现身份不符、工具缺失或冲突均 fail closed，不回退到当前 generation。
   - [ ] 在上述单一身份上接入自动 retry dispatcher：必须同时具备 attempt budget、
     Stop/Interrupt fencing、无流式输出边界，以及 Runtime Orchestrator 内的执行入口；
     不能仅凭 `retryable=true` 或绕过 Orchestrator 直接重新调用工具。

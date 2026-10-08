@@ -16,6 +16,7 @@ from typing import Any, Iterable
 from uuid import UUID
 
 from ..agents.acp.meta import ACP_PROJECT_DIR_META_KEY
+from ..kernel import ToolSelection
 from ..utils.io_utils import run_sync_io
 from ..utils.logging import sanitize_log_value
 from .driver_providers import close_driver_session
@@ -308,6 +309,7 @@ class AgentBuilder:
         active_modes: Iterable[str],
         active_skills: Iterable[str],
         enabled_features: Iterable[str],
+        tool_selection: ToolSelection | None = None,
     ) -> list[Any]:
         """Collect tools from pinned providers and reject collisions."""
         from ..kernel.invocation import DEFAULT_TOOL_PROVIDER_ID
@@ -322,7 +324,7 @@ class AgentBuilder:
         invocation = getattr(ctx, "invocation_scope", None)
         if invocation is None:
             raise RuntimeError("tool providers require an invocation scope")
-        selection = tool_selection_from_request(
+        selection = tool_selection or tool_selection_from_request(
             active_modes=tuple(active_modes),
             active_skills=tuple(active_skills),
             enabled_features=tuple(enabled_features),
@@ -431,6 +433,62 @@ class AgentBuilder:
                 tools.append(tool)
         request_context["_tool_provider_owners"] = dict(owners)
         return tools
+
+    async def resolve_governed_action_tool(
+        self,
+        *,
+        ctx: Any,
+        agent_config: Any,
+        request_context: dict[str, Any],
+        provider_id: str,
+        tool_name: str,
+        tool_selection: ToolSelection,
+        governor: Any,
+    ) -> Any:
+        """Resolve one exact tool from an already-pinned provider."""
+        invocation = getattr(ctx, "invocation_scope", None)
+        extras = getattr(ctx, "extras", None)
+        assembly = (
+            extras.get("runtime_assembly")
+            if isinstance(extras, dict)
+            else None
+        )
+        if invocation is None or assembly is None:
+            raise RuntimeError("governed Action requires a pinned assembly")
+        if provider_id not in invocation.selection.tool_provider_ids:
+            raise ValueError("Action provider is outside pinned selection")
+        provider = assembly.require(provider_id, "tool.provider")
+        if getattr(provider, "provider_id", None) != provider_id:
+            raise TypeError("Action provider implementation identity mismatch")
+        tools = await self._collect_provider_tools(
+            tool_providers=(provider,),
+            ctx=ctx,
+            local_workspace=self._get_local_workspace(ctx),
+            agent_config=agent_config,
+            request_context=request_context,
+            governor=governor,
+            active_modes=tool_selection.active_modes,
+            active_skills=tool_selection.active_skills,
+            enabled_features=tool_selection.enabled_features,
+            tool_selection=tool_selection,
+        )
+        from .actions import RuntimeActionRecorder
+
+        recorder = request_context.get("_action_recorder")
+        if not isinstance(recorder, RuntimeActionRecorder):
+            raise RuntimeError("governed Action recorder is unavailable")
+        recorder.bind_tool_owners(
+            request_context.get("_tool_provider_owners"),
+        )
+        recorder.bind_tool_selection(tool_selection)
+        matches = [
+            tool for tool in tools if self._tool_name(tool) == tool_name
+        ]
+        if len(matches) != 1:
+            raise LookupError(
+                f"Action tool '{tool_name}' resolved {len(matches)} matches",
+            )
+        return matches[0]
 
     @staticmethod
     def _ensure_governed_provider_tool(
