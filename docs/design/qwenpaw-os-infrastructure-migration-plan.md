@@ -478,6 +478,14 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     并行后台结果以 binding 去重并合并最新 Session，不依赖用户发送“继续”；启动修复
     只有在 ActionStore 精确匹配 action、invocation 与 observation digest 时才发布
     孤立 snapshot。
+  - [x] uncertain Action 已接入统一 Chat Interaction：恢复 worker 以稳定
+    `continuation_id` 创建 blocking Approval，绑定精确的终态 Action evidence digest；
+    用户只能选择“已核实安全，重试一次”或“停止恢复”。授权引用随 model-step
+    continuation 持久化，审批落库后即使进程重启也会创建同 correlation 的新
+    Submission / Invocation；执行前再次校验 Interaction revision 和 Action digest，
+    来源 Invocation 之后出现新 Submission 或证据变化均失败关闭。拒绝或停止会取消
+    continuation，不改写原 ActionResult，不恢复旧协程，也不复用 Task 私有 retry
+    API。
 - [ ] 把 WebSocket 增量续传、sticky route 和 HTTP fallback 保持为 Provider
   Adapter capability；严格验证 response identity/prefix，失败时回退持久上下文重建，
   Kernel 不感知具体传输。

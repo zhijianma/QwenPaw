@@ -18,6 +18,7 @@ from qwenpaw.kernel import (
     ModelStepContextCheckpoint,
     ModelStepReconciliation,
     ModelStepReconciliationReason,
+    ModelStepRetryAuthorization,
     ModelStepContinuationStatus,
     ResourceWaitStatus,
     ResourceWaitTrigger,
@@ -528,6 +529,7 @@ async def test_model_step_reconciliation_migrates_existing_database(
         }
     assert "reconciliation_json" in columns
     assert "context_checkpoint_json" in columns
+    assert "retry_authorization_json" in columns
 
 
 @pytest.mark.asyncio
@@ -642,3 +644,66 @@ async def test_model_step_context_cannot_resolve_uncertain_action(
             continuation.continuation_id,
             checkpoint,
         )
+
+
+@pytest.mark.asyncio
+async def test_uncertain_action_retry_authorization_survives_restart(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "resource-waits.sqlite3"
+    service = ModelResourceWaitService(database, agent_id="default")
+    attempt = _attempt()
+    continuation = await service.defer_model_step(
+        attempt,
+        ModelCallResult(
+            attempt_id=attempt.attempt_id,
+            invocation_id=attempt.invocation_id,
+            conversation_id=attempt.conversation_id,
+            status=ModelCallStatus.FAILED,
+            emitted_content=True,
+            output_boundary=ModelOutputBoundary.PARTIAL_STREAM,
+            failure_class=ModelFailureClass.STREAM_INTERRUPTED,
+            recovery_disposition=(
+                ModelRecoveryDisposition.CONTINUE_MODEL_STEP
+            ),
+        ),
+    )
+    assert continuation is not None
+    await service.require_action_reconciliation(
+        continuation.continuation_id,
+        ModelStepReconciliation(
+            reason=ModelStepReconciliationReason.UNCERTAIN_SIDE_EFFECT,
+            action_count=1,
+            pending_result_count=0,
+            uncertain_side_effect_count=1,
+            terminal_result_count=1,
+        ),
+    )
+    authorization = ModelStepRetryAuthorization(
+        interaction_id=uuid4(),
+        response_revision=2,
+        continuation_id=continuation.continuation_id,
+        invocation_id=continuation.invocation_id,
+        conversation_id=continuation.conversation_id,
+        action_evidence_digest=f"sha256:{'f' * 64}",
+        action_count=1,
+    )
+
+    ready = await service.authorize_uncertain_action_retry(
+        continuation.continuation_id,
+        authorization,
+    )
+    replayed = await service.authorize_uncertain_action_retry(
+        continuation.continuation_id,
+        authorization,
+    )
+    restarted = ModelResourceWaitService(database, agent_id="default")
+    restored = await restarted.get_model_step(
+        continuation.continuation_id,
+    )
+
+    assert ready.status is ModelStepContinuationStatus.READY
+    assert ready.reconciliation is None
+    assert ready.retry_authorization == authorization
+    assert replayed == ready
+    assert restored == ready

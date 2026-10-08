@@ -60,6 +60,7 @@ from qwenpaw.kernel import (
     ModelStepContextCheckpoint,
     ModelStepContinuationStatus,
     ResourceWaitStatus,
+    SideEffectStatus,
     SubmissionInputEnvelope,
     SubmissionStatus,
     TurnSubmissionRequest,
@@ -757,6 +758,204 @@ async def test_partial_model_step_stops_for_action_reconciliation(
         conversation_id=chat.id,
     )
     assert queue.submissions == ()
+    await control.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("decision", "superseded", "expected_status"),
+    [
+        ("retry_once", False, ModelStepContinuationStatus.DISPATCHED),
+        ("retry_once", True, ModelStepContinuationStatus.CANCELLED),
+        ("stop", False, ModelStepContinuationStatus.CANCELLED),
+    ],
+)
+async def test_uncertain_action_requires_exact_chat_decision(
+    tmp_path: Path,
+    decision: str,
+    superseded: bool,
+    expected_status: ModelStepContinuationStatus,
+) -> None:
+    manager = ChatManager(
+        repo=JsonChatRepository(tmp_path / "chats.json"),
+    )
+    chat = await manager.create_chat(
+        ChatSpec(
+            id="chat-1",
+            session_id="console:chat-1",
+            user_id="local-user",
+            channel="console",
+        ),
+    )
+    control = InvocationControlService(
+        store=SQLiteInvocationControl(tmp_path / "control.sqlite3"),
+    )
+    recovery_path = tmp_path / "resource-waits.sqlite3"
+    interaction_path = tmp_path / "interactions.sqlite3"
+    recovery = ModelResourceWaitService(
+        recovery_path,
+        agent_id="default",
+    )
+    interactions = InteractionService(interaction_path)
+    attempt = ModelCallAttempt(
+        attempt_id=uuid4(),
+        route_decision_id=uuid4(),
+        invocation_id=uuid4(),
+        correlation_id=uuid4(),
+        conversation_id=chat.id,
+        registry_generation=1,
+        context_manifest_id=uuid4(),
+        model_call_index=1,
+        attempt_index=1,
+        provider_id="provider-a",
+        model_id="model-a",
+    )
+    continuation = await recovery.defer_model_step(
+        attempt,
+        ModelCallResult(
+            attempt_id=attempt.attempt_id,
+            invocation_id=attempt.invocation_id,
+            conversation_id=chat.id,
+            status=ModelCallStatus.FAILED,
+            emitted_content=True,
+            output_boundary=ModelOutputBoundary.PARTIAL_STREAM,
+            failure_class=ModelFailureClass.STREAM_INTERRUPTED,
+            recovery_disposition=(
+                ModelRecoveryDisposition.CONTINUE_MODEL_STEP
+            ),
+        ),
+    )
+    assert continuation is not None
+    source_lease = await control.begin_turn(
+        TurnSubmissionRequest(
+            agent_id="default",
+            conversation_id=chat.id,
+            content="perform external write",
+            input_envelope=SubmissionInputEnvelope(
+                kind=CONSOLE_SUBMISSION_ENVELOPE,
+                payload={},
+            ),
+            idempotency_key="uncertain-source-with-interaction",
+            correlation_id=attempt.correlation_id,
+        ),
+        invocation_id=attempt.invocation_id,
+    )
+    await control.finish_turn(source_lease, SubmissionStatus.FAILED)
+    action = ActionRequest(
+        invocation_id=attempt.invocation_id,
+        correlation_id=attempt.correlation_id,
+        conversation_id=chat.id,
+        registry_generation=1,
+        capability_id="qwenpaw.system.test-tool",
+        kind=ActionKind.TOOL,
+        action_name="external_write",
+        arguments={},
+        redacted_arguments={},
+        arguments_hash=f"sha256:{'a' * 64}",
+        idempotency_key="uncertain-action",
+    )
+    action_store = lite_action_store(tmp_path)
+    await action_store.begin(action)
+    await action_store.complete(
+        ActionResult(
+            action_id=action.action_id,
+            invocation_id=action.invocation_id,
+            conversation_id=action.conversation_id,
+            status=ActionStatus.UNKNOWN,
+            observation_digest=f"sha256:{'b' * 64}",
+            side_effect_status=SideEffectStatus.UNCERTAIN,
+        ),
+    )
+    workspace = SimpleNamespace(
+        agent_id="default",
+        workspace_dir=tmp_path,
+        chat_manager=manager,
+        interaction_service=interactions,
+        model_resource_wait_service=recovery,
+    )
+    dispatcher = WorkspaceChatSubmissionDispatcher(
+        workspace=workspace,
+        control=control,
+    )
+
+    # pylint: disable=protected-access
+    await dispatcher._dispatch_ready_model_steps()
+    [interaction] = await interactions.list_open(
+        agent_id="default",
+        conversation_id=chat.id,
+    )
+    assert interaction.kind is InteractionKind.APPROVAL
+    assert interaction.continuation_mode is ContinuationMode.CHECKPOINT
+    assert interaction.continuation_checkpoint_id == (
+        continuation.continuation_id
+    )
+    await interactions.resolve(
+        InteractionResponse(
+            interaction_id=interaction.interaction_id,
+            idempotency_key=f"decision:{decision}",
+            expected_revision=1,
+            actor=ActorRef(type=ActorType.USER, id="local-user"),
+            selected_option_ids=(decision,),
+        ),
+    )
+    if superseded:
+        await control.enqueue_turn(
+            TurnSubmissionRequest(
+                agent_id="default",
+                conversation_id=chat.id,
+                content="newer user direction",
+                input_envelope=SubmissionInputEnvelope(
+                    kind=CONSOLE_SUBMISSION_ENVELOPE,
+                    payload={},
+                ),
+                idempotency_key="newer-user-submission",
+                correlation_id=uuid4(),
+            ),
+        )
+    recovery = ModelResourceWaitService(
+        recovery_path,
+        agent_id="default",
+    )
+    interactions = InteractionService(interaction_path)
+    workspace.model_resource_wait_service = recovery
+    workspace.interaction_service = interactions
+    dispatcher = WorkspaceChatSubmissionDispatcher(
+        workspace=workspace,
+        control=control,
+    )
+    await dispatcher._dispatch_ready_model_steps()
+    # pylint: enable=protected-access
+
+    final = await recovery.get_model_step(continuation.continuation_id)
+    assert final is not None
+    assert final.status is expected_status
+    queue = await control.read_queue(
+        agent_id="default",
+        conversation_id=chat.id,
+    )
+    if decision == "retry_once" and not superseded:
+        assert final.retry_authorization is not None
+        assert len(queue.submissions) == 1
+        submission = queue.submissions[0]
+        assert submission.input_envelope is not None
+        # pylint: disable=protected-access
+        payload = await dispatcher._materialize_model_step_payload(
+            submission.input_envelope,
+            chat,
+            submission,
+        )
+        # pylint: enable=protected-access
+        assert "verified that one retry" in (
+            payload["content_parts"][0]["text"]
+        )
+        assert payload["meta"]["request_context"][
+            "model_step_retry_interaction_id"
+        ] == str(interaction.interaction_id)
+    else:
+        assert not any(
+            item.idempotency_key.startswith("model-step-continuation:")
+            for item in queue.submissions
+        )
     await control.close()
 
 

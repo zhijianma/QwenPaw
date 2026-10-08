@@ -26,6 +26,7 @@ from ..kernel import (
     ModelStepContinuationStatus,
     ModelStepReconciliation,
     ModelStepReconciliationReason,
+    ModelStepRetryAuthorization,
     ResourceWaitStatus,
     ResourceWaitTrigger,
     WaitCondition,
@@ -175,6 +176,7 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
                     status TEXT NOT NULL,
                     reconciliation_json TEXT,
                     context_checkpoint_json TEXT,
+                    retry_authorization_json TEXT,
                     submission_id TEXT,
                     revision INTEGER NOT NULL,
                     created_at TEXT NOT NULL,
@@ -209,6 +211,11 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
                 connection.execute(
                     "ALTER TABLE model_step_continuations "
                     "ADD COLUMN context_checkpoint_json TEXT",
+                )
+            if "retry_authorization_json" not in step_columns:
+                connection.execute(
+                    "ALTER TABLE model_step_continuations "
+                    "ADD COLUMN retry_authorization_json TEXT",
                 )
 
     async def start(self) -> None:
@@ -393,9 +400,9 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
                 "(continuation_id, attempt_id, invocation_id, "
                 "correlation_id, agent_id, conversation_id, "
                 "output_boundary, status, reconciliation_json, "
-                "context_checkpoint_json, submission_id, revision, "
-                "created_at, updated_at) VALUES "
-                "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "context_checkpoint_json, retry_authorization_json, "
+                "submission_id, revision, created_at, updated_at) VALUES "
+                "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 self._step_to_values(continuation),
             )
         return continuation
@@ -711,6 +718,22 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
         self.notify_change()
         return updated
 
+    async def authorize_uncertain_action_retry(
+        self,
+        continuation_id: UUID,
+        authorization: ModelStepRetryAuthorization,
+    ) -> ModelStepContinuation:
+        """Make one exact uncertain Action set eligible for a new step."""
+        await self.start()
+        async with self._write_lock:
+            updated = await asyncio.to_thread(
+                self._authorize_uncertain_action_retry_sync,
+                continuation_id,
+                authorization,
+            )
+        self.notify_change()
+        return updated
+
     async def cancel_model_step(
         self,
         continuation_id: UUID,
@@ -828,6 +851,68 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
                     "status": ModelStepContinuationStatus.READY,
                     "reconciliation": None,
                     "context_checkpoint": checkpoint,
+                    "revision": current.revision + 1,
+                    "updated_at": utc_now(),
+                },
+            )
+            self._update_model_step(connection, updated)
+            connection.commit()
+            return updated
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def _authorize_uncertain_action_retry_sync(
+        self,
+        continuation_id: UUID,
+        authorization: ModelStepRetryAuthorization,
+    ) -> ModelStepContinuation:
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM model_step_continuations "
+                "WHERE continuation_id = ?",
+                (str(continuation_id),),
+            ).fetchone()
+            if row is None:
+                raise ModelResourceWaitNotFoundError(str(continuation_id))
+            current = self._step_from_row(row)
+            if current.retry_authorization is not None:
+                if current.retry_authorization != authorization:
+                    raise ModelResourceWaitConflictError(
+                        "model-step retry authorization conflict",
+                    )
+                connection.rollback()
+                return current
+            if (
+                authorization.continuation_id != current.continuation_id
+                or authorization.invocation_id != current.invocation_id
+                or authorization.conversation_id != current.conversation_id
+            ):
+                raise ModelResourceWaitConflictError(
+                    "model-step retry authorization identity mismatch",
+                )
+            reconciliation = current.reconciliation
+            if (
+                current.status
+                is not ModelStepContinuationStatus
+                .ACTION_RECONCILIATION_REQUIRED
+                or reconciliation is None
+                or reconciliation.reason
+                is not ModelStepReconciliationReason.UNCERTAIN_SIDE_EFFECT
+                or reconciliation.action_count != authorization.action_count
+            ):
+                raise ModelResourceWaitConflictError(
+                    "only uncertain Actions may authorize model-step retry",
+                )
+            updated = current.model_copy(
+                update={
+                    "status": ModelStepContinuationStatus.READY,
+                    "reconciliation": None,
+                    "retry_authorization": authorization,
                     "revision": current.revision + 1,
                     "updated_at": utc_now(),
                 },
@@ -1224,6 +1309,15 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
             if raw_checkpoint is not None
             else None
         )
+        raw_authorization = values.pop(
+            "retry_authorization_json",
+            None,
+        )
+        values["retry_authorization"] = (
+            json.loads(raw_authorization)
+            if raw_authorization is not None
+            else None
+        )
         return ModelStepContinuation.model_validate(values)
 
     @staticmethod
@@ -1250,6 +1344,11 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
                 else None
             ),
             (
+                continuation.retry_authorization.model_dump_json()
+                if continuation.retry_authorization is not None
+                else None
+            ),
+            (
                 str(continuation.submission_id)
                 if continuation.submission_id
                 else None
@@ -1268,7 +1367,8 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
         connection.execute(
             "UPDATE model_step_continuations SET status = ?, "
             "reconciliation_json = ?, context_checkpoint_json = ?, "
-            "submission_id = ?, revision = ?, updated_at = ? "
+            "retry_authorization_json = ?, submission_id = ?, "
+            "revision = ?, updated_at = ? "
             "WHERE continuation_id = ?",
             (
                 continuation.status.value,
@@ -1280,6 +1380,11 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
                 (
                     continuation.context_checkpoint.model_dump_json()
                     if continuation.context_checkpoint is not None
+                    else None
+                ),
+                (
+                    continuation.retry_authorization.model_dump_json()
+                    if continuation.retry_authorization is not None
                     else None
                 ),
                 (

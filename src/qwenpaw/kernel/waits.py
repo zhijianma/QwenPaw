@@ -191,6 +191,25 @@ class ModelStepContextCheckpoint(KernelModel):
     created_at: AwareDatetime = Field(default_factory=utc_now)
 
 
+class ModelStepRetryAuthorization(KernelModel):
+    """Exact user authorization to retry after uncertain side effects."""
+
+    interaction_id: UUID
+    response_revision: int = Field(ge=2)
+    continuation_id: UUID
+    invocation_id: UUID
+    conversation_id: NonEmptyStr
+    action_evidence_digest: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True,
+            pattern=r"^sha256:[0-9a-f]{64}$",
+        ),
+    ]
+    action_count: int = Field(ge=1)
+    authorized_at: AwareDatetime = Field(default_factory=utc_now)
+
+
 class HarnessRecoveryContextCheckpoint(KernelModel):
     """Content-safe proof that a Harness context can continue safely."""
 
@@ -320,6 +339,7 @@ class ModelStepContinuation(KernelModel):
     )
     reconciliation: ModelStepReconciliation | None = None
     context_checkpoint: ModelStepContextCheckpoint | None = None
+    retry_authorization: ModelStepRetryAuthorization | None = None
     submission_id: UUID | None = None
     revision: int = Field(default=1, ge=1)
     created_at: AwareDatetime = Field(default_factory=utc_now)
@@ -359,6 +379,24 @@ class ModelStepContinuation(KernelModel):
             raise ValueError(
                 "model-step checkpoint identity does not match continuation",
             )
+        authorization = self.retry_authorization
+        if authorization is not None:
+            if (
+                authorization.continuation_id != self.continuation_id
+                or authorization.invocation_id != self.invocation_id
+                or authorization.conversation_id != self.conversation_id
+            ):
+                raise ValueError(
+                    "model-step retry authorization identity mismatch",
+                )
+            if self.context_checkpoint is not None:
+                raise ValueError(
+                    "retry authorization cannot use committed Action context",
+                )
+            if self.reconciliation is not None:
+                raise ValueError(
+                    "authorized model-step retry cannot remain blocked",
+                )
         if self.updated_at < self.created_at:
             raise ValueError("updated_at cannot precede created_at")
         return self
@@ -550,6 +588,7 @@ __all__ = [
     "HarnessStepContinuation",
     "HarnessStepContinuationStatus",
     "ModelStepContextCheckpoint",
+    "ModelStepRetryAuthorization",
     "ModelStepContinuation",
     "ModelStepContinuationStatus",
     "ModelStepReconciliation",

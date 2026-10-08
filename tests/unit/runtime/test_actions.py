@@ -59,6 +59,7 @@ from qwenpaw.runtime.actions import (
     model_step_action_call_ids,
     model_step_action_context_bindings,
     model_step_action_evidence_digest,
+    model_step_reconciliation_evidence_digest,
     model_step_committed_action_items,
 )
 from qwenpaw.runtime.environments import (
@@ -220,6 +221,7 @@ def test_model_step_action_evidence_requires_stable_executor_call_id() -> None:
 
     assert digest is not None
     assert digest.startswith("sha256:")
+    assert model_step_reconciliation_evidence_digest([], invocation_id) is None
     assert model_step_action_call_ids(
         [record],
         invocation_id,
@@ -244,6 +246,31 @@ def test_model_step_action_evidence_requires_stable_executor_call_id() -> None:
         [_action_record(invocation_id, suffix="legacy")],
         invocation_id,
     ) is None
+
+
+def test_uncertain_action_has_exact_reconciliation_digest() -> None:
+    invocation_id = uuid4()
+    uncertain = _action_record(
+        invocation_id,
+        suffix="uncertain",
+        status=ActionStatus.UNKNOWN,
+        side_effect_status=SideEffectStatus.UNCERTAIN,
+    )
+
+    digest = model_step_reconciliation_evidence_digest(
+        [uncertain],
+        invocation_id,
+    )
+
+    assert digest is not None
+    assert digest.startswith("sha256:")
+    assert (
+        model_step_reconciliation_evidence_digest(
+            [_action_record(invocation_id, suffix="pending")],
+            invocation_id,
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio

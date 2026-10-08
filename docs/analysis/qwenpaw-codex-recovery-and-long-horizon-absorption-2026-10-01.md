@@ -355,6 +355,11 @@ Codex 的“边收流边执行工具”建立在其 Provider 事件协议、工�
   repair 也必须精确匹配 ActionStore 结果。来源成功且未被 Stop / Interrupt / 新输入
   覆盖时自动续行。恢复加载时把结果合并到最新 Session，
   因此同一来源的并行后台 Action 不会用旧快照相互覆盖。
+- [x] uncertain Action 不再永久停在只读诊断状态：统一 Interaction Plane 生成精确
+  绑定 `continuation_id + Action evidence digest` 的审批。用户核实副作用未发生或可
+  安全重复后，只授权一个新的 model-step Submission；选择停止则持久取消。审批决议、
+  授权引用和原 ActionResult 各自保持不可变，重启恢复会重新校验 revision 与 digest，
+  不把宽泛“继续”当作副作用重放许可。
 
 ### R4：可选 Provider 增量续传
 

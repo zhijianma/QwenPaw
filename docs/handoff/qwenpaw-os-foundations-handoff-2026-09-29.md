@@ -753,6 +753,26 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   浏览器重载后的 Activity 元素计数为 0。历史“这是 Action”会话没有后端语义 Action
   observation，因此也不会仅凭标题或消息文案伪造活动。未运行全仓测试。
 
+### 2026-10-08 Uncertain Action Reconciliation
+
+- partial model stream 遇到 `unknown/partial` 或 `SideEffectStatus.UNCERTAIN`
+  Action 时，恢复 worker 现在通过统一 Chat Approval Interaction 请求人工对账，不再
+  永久停在 `action_reconciliation_required`，也没有复用 Task 页面私有状态。
+- Approval 以稳定 Interaction ID 绑定 `continuation_id`、Invocation、correlation、
+  Action 数量和内容安全 evidence digest。只有“已核实安全，重试一次”会写入
+  `ModelStepRetryAuthorization`；“停止恢复”、过期或取消均持久取消 continuation。
+- 授权后创建新的 Submission / Invocation，原 ActionRequest/ActionResult 和旧 Python
+  stack 保持不变。入队前及执行 materialize 时都会重新验证 Interaction revision 与
+  Action digest；来源 Invocation 之后出现新 Submission、证据变化、跨 Chat 或身份
+  不一致均失败关闭。
+- Interaction HTTP response 同时唤醒普通 continuation 与 resource/model-step recovery
+  worker，不再依赖最长 60 秒轮询。54 项恢复、Action、dispatcher 与 Interaction API
+  定点测试通过；新增用例覆盖审批落库后重建 service 实例的 retry/stop 两条路径，
+  以及审批后新用户 Submission 取消旧恢复。
+  AST、mypy、flake8、pylint 门禁通过。仓库固定 Black 23.3.0 在当前 Python 3.13
+  pre-commit 环境因访问已移除的 `ast.Str` 失败；源码已用项目 Conda 环境按 79 列完成
+  定点格式化，未运行全仓测试。
+
 ### 本阶段此前已执行的定点验证
 
 - 后端核心路径定点测试：70 项通过。

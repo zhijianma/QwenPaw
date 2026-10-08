@@ -7,6 +7,7 @@ import asyncio
 import copy
 import json
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid5
@@ -17,18 +18,27 @@ from ...invocation_control import (
 )
 from ...kernel import (
     TERMINAL_SUBMISSION_STATUSES,
+    ActionRecord,
     BackgroundActionContextCheckpoint,
     BackgroundActionContinuation,
     BackgroundActionContinuationStatus,
+    ContinuationMode,
     ConversationContinuation,
     ControlCommandKind,
     ControlReceipt,
+    InteractionKind,
+    InteractionMode,
+    InteractionOption,
+    InteractionRequest,
     InteractionStatus,
     HarnessStepContinuation,
     HarnessStepContinuationStatus,
     ModelResourceWait,
     ModelStepContinuation,
     ModelStepContinuationStatus,
+    ModelStepReconciliation,
+    ModelStepReconciliationReason,
+    ModelStepRetryAuthorization,
     ResourceWaitStatus,
     SubmissionInputEnvelope,
     SubmissionStatus,
@@ -249,14 +259,7 @@ class WorkspaceChatSubmissionDispatcher:
         from ...runtime.actions import (
             assess_model_step_reconciliation,
             lite_action_store,
-            model_step_committed_action_items,
-            model_step_action_evidence_digest,
-        )
-        from ...runtime.model_step_contexts import (
-            ModelStepContextConflictError,
-            ModelStepContextNotFoundError,
-            context_has_committed_action_items,
-            lite_model_step_context_store,
+            model_step_reconciliation_evidence_digest,
         )
 
         action_store = lite_action_store(Path(workspace_dir))
@@ -268,95 +271,263 @@ class WorkspaceChatSubmissionDispatcher:
             continuation.invocation_id,
         )
         if reconciliation is not None:
-            committed_items = model_step_committed_action_items(
-                actions,
-                continuation.invocation_id,
-            )
-            evidence_digest = model_step_action_evidence_digest(
-                actions,
-                continuation.invocation_id,
-            )
-            checkpoint = continuation.context_checkpoint
-            checkpoint_id = (
-                checkpoint.checkpoint_id
-                if checkpoint is not None
-                else uuid5(
-                    continuation.continuation_id,
-                    "private-agent-context",
-                )
-            )
-            try:
-                stored_checkpoint, agent_state = (
-                    await lite_model_step_context_store(
-                        Path(workspace_dir),
-                    ).load(checkpoint_id)
-                )
-            except (
-                ModelStepContextConflictError,
-                ModelStepContextNotFoundError,
+            if (
+                reconciliation.reason
+                is ModelStepReconciliationReason.UNCERTAIN_SIDE_EFFECT
             ):
-                stored_checkpoint = None
-                agent_state = None
-            context_ready = (
-                committed_items is not None
-                and evidence_digest is not None
-                and stored_checkpoint is not None
-                and agent_state is not None
-                and stored_checkpoint.continuation_id
-                == continuation.continuation_id
-                and stored_checkpoint.invocation_id
-                == continuation.invocation_id
-                and stored_checkpoint.conversation_id
-                == continuation.conversation_id
-                and stored_checkpoint.action_count
-                == reconciliation.action_count
-                and stored_checkpoint.action_evidence_digest
-                == evidence_digest
-                and context_has_committed_action_items(
-                    agent_state,
-                    committed_items,
+                evidence_digest = model_step_reconciliation_evidence_digest(
+                    actions,
+                    continuation.invocation_id,
                 )
-            )
-            if not context_ready:
-                await self._resource_waits.require_action_reconciliation(
-                    continuation.continuation_id,
+                if evidence_digest is None:
+                    await self._resource_waits.require_action_reconciliation(
+                        continuation.continuation_id,
+                        reconciliation,
+                    )
+                    return
+                continuation = (
+                    await self._resolve_uncertain_action_reconciliation(
+                        continuation,
+                        reconciliation,
+                        evidence_digest,
+                    )
+                )
+                if continuation is None:
+                    return
+            else:
+                continuation = await self._attach_model_step_context(
+                    continuation,
                     reconciliation,
+                    actions,
                 )
-                return
-            continuation = (
-                await self._resource_waits.attach_model_step_context(
-                    continuation.continuation_id,
-                    stored_checkpoint,
-                )
-            )
-            submissions = (
-                await self._control.scan_submissions_for_conversation(
-                    agent_id=continuation.agent_id,
-                    conversation_id=continuation.conversation_id,
-                )
-            )
-            source = next(
-                (
-                    item
-                    for item in submissions
-                    if item.submission_id
-                    == stored_checkpoint.source_submission_id
-                ),
-                None,
-            )
-            if source is None or any(
-                item.sequence > source.sequence for item in submissions
-            ):
-                await self._resource_waits.cancel_model_step(
-                    continuation.continuation_id,
-                )
-                return
+                if continuation is None:
+                    return
         dispatched = await self._resource_waits.dispatch_model_step(
             continuation.continuation_id,
             self._enqueue_model_step,
         )
         if dispatched.status is ModelStepContinuationStatus.DISPATCHED:
             self._dispatcher.wake()
+
+    # pylint: disable-next=too-many-locals
+    async def _attach_model_step_context(
+        self,
+        continuation: ModelStepContinuation,
+        reconciliation: ModelStepReconciliation,
+        actions: Sequence[ActionRecord],
+    ) -> ModelStepContinuation | None:
+        """Attach exact committed Action context or leave the step blocked."""
+        from ...runtime.actions import (
+            model_step_action_evidence_digest,
+            model_step_committed_action_items,
+        )
+        from ...runtime.model_step_contexts import (
+            ModelStepContextConflictError,
+            ModelStepContextNotFoundError,
+            context_has_committed_action_items,
+            lite_model_step_context_store,
+        )
+
+        workspace_dir = Path(self._workspace.workspace_dir)
+        committed_items = model_step_committed_action_items(
+            actions,
+            continuation.invocation_id,
+        )
+        evidence_digest = model_step_action_evidence_digest(
+            actions,
+            continuation.invocation_id,
+        )
+        checkpoint = continuation.context_checkpoint
+        checkpoint_id = (
+            checkpoint.checkpoint_id
+            if checkpoint is not None
+            else uuid5(
+                continuation.continuation_id,
+                "private-agent-context",
+            )
+        )
+        try:
+            (
+                stored_checkpoint,
+                agent_state,
+            ) = await lite_model_step_context_store(workspace_dir).load(
+                checkpoint_id,
+            )
+        except (
+            ModelStepContextConflictError,
+            ModelStepContextNotFoundError,
+        ):
+            stored_checkpoint = None
+            agent_state = None
+        context_ready = (
+            committed_items is not None
+            and evidence_digest is not None
+            and stored_checkpoint is not None
+            and agent_state is not None
+            and stored_checkpoint.continuation_id
+            == continuation.continuation_id
+            and stored_checkpoint.invocation_id == continuation.invocation_id
+            and stored_checkpoint.conversation_id
+            == continuation.conversation_id
+            and stored_checkpoint.action_count == reconciliation.action_count
+            and stored_checkpoint.action_evidence_digest == evidence_digest
+            and context_has_committed_action_items(
+                agent_state,
+                committed_items,
+            )
+        )
+        if not context_ready:
+            await self._resource_waits.require_action_reconciliation(
+                continuation.continuation_id,
+                reconciliation,
+            )
+            return None
+        continuation = await self._resource_waits.attach_model_step_context(
+            continuation.continuation_id,
+            stored_checkpoint,
+        )
+        submissions = await self._control.scan_submissions_for_conversation(
+            agent_id=continuation.agent_id,
+            conversation_id=continuation.conversation_id,
+        )
+        source = next(
+            (
+                item
+                for item in submissions
+                if item.submission_id == stored_checkpoint.source_submission_id
+            ),
+            None,
+        )
+        if source is None or any(
+            item.sequence > source.sequence for item in submissions
+        ):
+            await self._resource_waits.cancel_model_step(
+                continuation.continuation_id,
+            )
+            return None
+        return continuation
+
+    async def _resolve_uncertain_action_reconciliation(
+        self,
+        continuation: ModelStepContinuation,
+        reconciliation: ModelStepReconciliation,
+        evidence_digest: str,
+    ) -> ModelStepContinuation | None:
+        """Require an exact Chat approval before one uncertain retry."""
+        if self._interactions is None:
+            await self._resource_waits.require_action_reconciliation(
+                continuation.continuation_id,
+                reconciliation,
+            )
+            return None
+        interaction_id = uuid5(
+            continuation.continuation_id,
+            "uncertain-action-retry",
+        )
+        interaction = await self._interactions.get_request(interaction_id)
+        if interaction is None:
+            interaction = InteractionRequest(
+                interaction_id=interaction_id,
+                kind=InteractionKind.APPROVAL,
+                mode=InteractionMode.BLOCKING,
+                agent_id=continuation.agent_id,
+                conversation_id=continuation.conversation_id,
+                invocation_id=continuation.invocation_id,
+                correlation_id=continuation.correlation_id,
+                source_id=continuation.continuation_id,
+                continuation_mode=ContinuationMode.CHECKPOINT,
+                continuation_checkpoint_id=continuation.continuation_id,
+                title="Reconcile uncertain action",
+                prompt=(
+                    "An external action may already have taken effect. "
+                    "Retry only after verifying that repeating it is safe."
+                ),
+                options=(
+                    InteractionOption(
+                        option_id="retry_once",
+                        label="Verified safe; retry once",
+                    ),
+                    InteractionOption(
+                        option_id="stop",
+                        label="Stop recovery",
+                    ),
+                ),
+                metadata={
+                    "purpose": "model_step_action_reconciliation",
+                    "action_count": reconciliation.action_count,
+                    "action_evidence_digest": evidence_digest,
+                },
+            )
+            await self._interactions.open(interaction)
+        actual_binding = (
+            interaction.kind,
+            interaction.mode,
+            interaction.agent_id,
+            interaction.conversation_id,
+            interaction.invocation_id,
+            interaction.correlation_id,
+            interaction.source_id,
+            interaction.continuation_mode,
+            interaction.continuation_checkpoint_id,
+        )
+        expected_binding = (
+            InteractionKind.APPROVAL,
+            InteractionMode.BLOCKING,
+            continuation.agent_id,
+            continuation.conversation_id,
+            continuation.invocation_id,
+            continuation.correlation_id,
+            continuation.continuation_id,
+            ContinuationMode.CHECKPOINT,
+            continuation.continuation_id,
+        )
+        if (
+            actual_binding != expected_binding
+            or interaction.metadata.get("action_count")
+            != reconciliation.action_count
+            or interaction.metadata.get("action_evidence_digest")
+            != evidence_digest
+        ):
+            raise RuntimeError(
+                "uncertain Action interaction binding mismatch",
+            )
+        resolution = await self._interactions.get_resolution(interaction_id)
+        if resolution is None:
+            await self._resource_waits.require_action_reconciliation(
+                continuation.continuation_id,
+                reconciliation,
+            )
+            return None
+        if (
+            resolution.status is not InteractionStatus.RESOLVED
+            or resolution.response is None
+            or len(resolution.response.selected_option_ids) != 1
+        ):
+            await self._resource_waits.cancel_model_step(
+                continuation.continuation_id,
+            )
+            return None
+        decision = resolution.response.selected_option_ids[0]
+        if decision == "stop":
+            await self._resource_waits.cancel_model_step(
+                continuation.continuation_id,
+            )
+            return None
+        if decision != "retry_once":
+            raise RuntimeError("unsupported uncertain Action decision")
+        return await self._resource_waits.authorize_uncertain_action_retry(
+            continuation.continuation_id,
+            ModelStepRetryAuthorization(
+                interaction_id=interaction_id,
+                response_revision=resolution.revision,
+                continuation_id=continuation.continuation_id,
+                invocation_id=continuation.invocation_id,
+                conversation_id=continuation.conversation_id,
+                action_evidence_digest=evidence_digest,
+                action_count=reconciliation.action_count,
+                authorized_at=resolution.resolved_at,
+            ),
+        )
 
     async def _dispatch_ready_harness_steps(self) -> None:
         """Dispatch admitted Harness continuations through the Chat queue."""
@@ -727,6 +898,31 @@ class WorkspaceChatSubmissionDispatcher:
             for record in records
         ):
             return None
+        idempotency_key = (
+            "model-step-continuation:"
+            f"{continuation.continuation_id}"
+        )
+        if continuation.retry_authorization is not None:
+            submissions = (
+                await self._control.scan_submissions_for_conversation(
+                    agent_id=continuation.agent_id,
+                    conversation_id=continuation.conversation_id,
+                )
+            )
+            source = next(
+                (
+                    item
+                    for item in submissions
+                    if item.invocation_id == continuation.invocation_id
+                ),
+                None,
+            )
+            if source is None or any(
+                item.sequence > source.sequence
+                and item.idempotency_key != idempotency_key
+                for item in submissions
+            ):
+                return None
         request = TurnSubmissionRequest(
             agent_id=continuation.agent_id,
             conversation_id=continuation.conversation_id,
@@ -745,10 +941,7 @@ class WorkspaceChatSubmissionDispatcher:
                     ),
                 },
             ),
-            idempotency_key=(
-                "model-step-continuation:"
-                f"{continuation.continuation_id}"
-            ),
+            idempotency_key=idempotency_key,
             correlation_id=continuation.correlation_id,
         )
         receipt = await self._control.enqueue_turn(
@@ -1287,19 +1480,62 @@ class WorkspaceChatSubmissionDispatcher:
                 raise ValueError(
                     "model-step context checkpoint does not match recovery",
                 )
+        authorization = continuation.retry_authorization
+        if authorization is not None:
+            if self._interactions is None:
+                raise RuntimeError(
+                    "model-step retry authorization is unavailable",
+                )
+            resolution = await self._interactions.get_resolution(
+                authorization.interaction_id,
+            )
+            if (
+                resolution is None
+                or resolution.status is not InteractionStatus.RESOLVED
+                or resolution.revision != authorization.response_revision
+                or resolution.response is None
+                or resolution.response.selected_option_ids != ("retry_once",)
+            ):
+                raise ValueError(
+                    "model-step retry authorization is not valid",
+                )
+            from ...runtime.actions import (
+                lite_action_store,
+                model_step_reconciliation_evidence_digest,
+            )
+
+            records = await lite_action_store(
+                Path(self._workspace.workspace_dir),
+            ).scan_for_conversation(continuation.conversation_id)
+            actual_digest = model_step_reconciliation_evidence_digest(
+                records,
+                continuation.invocation_id,
+            )
+            if actual_digest != authorization.action_evidence_digest:
+                raise ValueError(
+                    "model-step retry Action evidence changed",
+                )
+        recovery_instruction = (
+            "QwenPaw runtime model-step recovery: the prior model stream "
+            "ended before a terminal response. Continue the original task "
+            "from durable conversation state. Do not treat partial output "
+            "as committed and do not repeat external actions."
+        )
+        if authorization is not None:
+            recovery_instruction = (
+                "QwenPaw runtime model-step recovery: the prior model "
+                "stream ended after an uncertain external action. The user "
+                "verified that one retry from the safe conversation "
+                "boundary is allowed. Re-evaluate the task and do not "
+                "assume the prior partial output was committed."
+            )
         return {
             "channel_id": chat.channel,
             "sender_id": chat.user_id,
             "content_parts": [
                 {
                     "type": "text",
-                    "text": (
-                        "QwenPaw runtime model-step recovery: the prior "
-                        "model stream ended before a terminal response. "
-                        "Continue the original task from durable "
-                        "conversation state. Do not treat partial output "
-                        "as committed and do not repeat external actions."
-                    ),
+                    "text": recovery_instruction,
                 },
             ],
             "message_metadata": {
@@ -1322,6 +1558,18 @@ class WorkspaceChatSubmissionDispatcher:
                             ),
                         }
                         if checkpoint is not None
+                        else {}
+                    ),
+                    **(
+                        {
+                            "model_step_retry_interaction_id": str(
+                                authorization.interaction_id,
+                            ),
+                            "model_step_retry_evidence_digest": (
+                                authorization.action_evidence_digest
+                            ),
+                        }
+                        if authorization is not None
                         else {}
                     ),
                 },

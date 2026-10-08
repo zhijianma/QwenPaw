@@ -134,6 +134,20 @@ def model_step_action_evidence_digest(
         is not ModelStepReconciliationReason.DURABLE_CONTEXT_REQUIRED
     ):
         return None
+    return model_step_reconciliation_evidence_digest(
+        records,
+        invocation_id,
+    )
+
+
+def model_step_reconciliation_evidence_digest(
+    records: Sequence[ActionRecord],
+    invocation_id: UUID,
+) -> str | None:
+    """Hash the exact terminal Action set awaiting reconciliation."""
+    assessment = assess_model_step_reconciliation(records, invocation_id)
+    if assessment is None or assessment.pending_result_count:
+        return None
     evidence: list[dict[str, Any]] = []
     for record in records:
         if record.request.invocation_id != invocation_id:
@@ -1015,5 +1029,6 @@ __all__ = [
     "model_step_action_context_bindings",
     "model_step_committed_action_items",
     "model_step_action_evidence_digest",
+    "model_step_reconciliation_evidence_digest",
     "public_action_record",
 ]

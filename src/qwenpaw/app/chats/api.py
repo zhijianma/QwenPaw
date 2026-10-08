@@ -859,6 +859,7 @@ async def respond_chat_interaction(
         dispatcher = getattr(workspace, "submission_dispatcher", None)
         if dispatcher is not None:
             dispatcher.wake_continuations()
+            dispatcher.wake_resource_waits()
         return resolution
     except InteractionNotFoundError as exc:
         raise HTTPException(
