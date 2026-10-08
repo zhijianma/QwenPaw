@@ -595,14 +595,34 @@ def _interaction_observations(
 
 def _control_observations(
     record: ControlRecord,
+    *,
+    invocation_correlations: dict[UUID, UUID],
+    submission_correlations: dict[UUID, UUID],
 ) -> tuple[RuntimeObservation, ...]:
     command = record.command
     receipt = record.receipt
+    correlation_id = (
+        invocation_correlations.get(command.target_invocation_id)
+        if command.target_invocation_id is not None
+        else None
+    )
+    if correlation_id is None and command.target_submission_id is not None:
+        correlation_id = submission_correlations.get(
+            command.target_submission_id,
+        )
+    if correlation_id is None and command.ordered_submission_ids:
+        ordered_correlations = {
+            submission_correlations.get(submission_id)
+            for submission_id in command.ordered_submission_ids
+        }
+        ordered_correlations.discard(None)
+        if len(ordered_correlations) == 1:
+            correlation_id = ordered_correlations.pop()
     common = {
         "category": _control_category(command.kind),
         "conversation_id": command.conversation_id,
         "invocation_id": command.target_invocation_id,
-        "correlation_id": None,
+        "correlation_id": correlation_id,
         "registry_generation": None,
     }
     requested = RuntimeObservation(
@@ -1069,6 +1089,13 @@ class LiteObservationProjection(ObservationProjectionPort):
         )
         return list(page.items)
 
+    async def scan_for_conversation(
+        self,
+        conversation_id: str,
+    ) -> tuple[RuntimeObservation, ...]:
+        """Return all current observations for correlation replay."""
+        return await self._load_observations(conversation_id)
+
     async def _load_observations(
         self,
         conversation_id: str,
@@ -1194,10 +1221,23 @@ class LiteObservationProjection(ObservationProjectionPort):
             for record in resolved_interactions
             for observation in _interaction_observations(record)
         )
+        invocation_correlations = {
+            submission.invocation_id: submission.correlation_id
+            for submission in resolved_submissions
+            if submission.invocation_id is not None
+        }
+        submission_correlations = {
+            submission.submission_id: submission.correlation_id
+            for submission in resolved_submissions
+        }
         observations.extend(
             observation
             for record in resolved_controls
-            for observation in _control_observations(record)
+            for observation in _control_observations(
+                record,
+                invocation_correlations=invocation_correlations,
+                submission_correlations=submission_correlations,
+            )
         )
         observations.extend(
             observation

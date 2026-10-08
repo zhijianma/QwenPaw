@@ -1001,8 +1001,17 @@ Cron 不形成独立审批或产物事实源。
       注册；热注册后新 Invocation 立即可用，无需重启。Producer admission 在
       Invocation 创建时冻结，卸载只阻止新 Invocation，已固定旧 generation 的执行可
       继续完成。
-    - [ ] 接入可回放 Trajectory；在此之前不增加公开 HTTP 写入口，也不允许模型文本
-      声明 Outcome。
+    - [x] 接入 correlation-scoped 可回放 Trajectory：复用现有 Model、Action、
+      Submission、Steer/Interrupt、Interaction、Artifact、Evidence、Verification、
+      Wait/Recovery 与 Compaction Observation，并把完整 Outcome supersession 链投影为
+      `OUTCOME`。只存 content-free source pointer 的派生索引按发生时间正序固定快照
+      分页；`GET /api/chats/{ChatSpec.id}/trajectories/{correlation_id}` 为只读 API。
+      Legacy 无 correlation 的事实明确不进入轨迹，不从时间相邻关系猜测归属；不增加
+      HTTP 写入口，也不允许模型文本声明 Outcome。
+      2026-10-08 固定 Chat `1ee31988-b37a-48b9-b6ce-423c52f6a3a9` 的真实
+      correlation `b19d5f7f-2045-4607-b36c-2ba70c45e41a` 返回 v1 Trajectory：10 个
+      正序事实覆盖 Model、Action、Guardrail、HITL 与 Submission，全部 correlation
+      一致；该链没有显式 Outcome，因此响应未伪造 Outcome 节点。
   - [ ] `BudgetLease` 与现有 `ExecutionBudget`、Usage Scope、Capability lease
     明确区分；Lite 只冻结接口，Workstation / Hub 再实现可派生和级联撤销。
 

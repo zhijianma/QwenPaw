@@ -326,6 +326,13 @@ Lite 先做本地 Registry 与关键词发现，不引入 Nacos、向量数据�
 
 先保证事件携带稳定因果 ID、版本和证据引用，再建设自动评分与仿真界面。
 
+截至 2026-10-08，Lite 已提供第一版可回放 Trajectory：按 ChatSpec + correlation 从
+现有 Observation 聚合 Model、Action、Submission、Steer/Interrupt、Interaction、
+Artifact、Evidence、Verification、Wait/Recovery、Compaction，并追加完整 Outcome
+supersession 历史。派生索引只保存 source pointer，通过固定 watermark 正序分页；它
+不是第二套事件库，也不包含隐藏推理。无 correlation 的 legacy 事实保持缺失，不使用
+时间邻近或文本相似度进行猜测关联。
+
 ### A8. 语义观测与独立 Runtime Evidence
 
 优先级：P1；契约现在冻结，先复用现有 Ledger 和 Middleware。

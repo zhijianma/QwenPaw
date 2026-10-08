@@ -359,7 +359,8 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - 同一意图可跨多个 Submission / Invocation；blocking Interaction 投影为
   `waiting_user`，后续 continuation 重新进入 `running`。
 - Submission `succeeded` 只投影为 `inactive`，不从 assistant message、HTTP response
-  或 SSE 结束推断业务完成。Outcome Store、Verification 联动与 Trajectory 仍待实现。
+  或 SSE 结束推断业务完成。Outcome Store、Verification 联动与 Trajectory 已在后续
+  2026-10-08 切片实现，详见下文。
 - Runtime SSE 仅读取最近 200 个 Submission 并合并当前 Queue，返回
   `execution_window_truncated` 明示截断，不调用全量 Observation 重建接口。
 - 本切片相邻定点验证：64 项通过；覆盖领域校验、游标、Runtime API、SQLite/Service
@@ -394,8 +395,16 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   Invocation 固定 Agent、ChatSpec、correlation、Invocation、generation 和 producer。
   system capability 自动注册，plugin 必须由 Host 显式热注册后才对新 Invocation 可见；
   已打开 Invocation 持有准入 lease，卸载不会中断旧 generation 的收尾。
-- 本轮相邻定点验证：66 项通过；未开放 HTTP 写入口，模型文本和未注册插件仍不得声明
-  Outcome，Trajectory 尚未接入。
+- correlation-scoped Trajectory 已接入只读 Chat API：复用现有 Observation，追加完整
+  Outcome supersession 历史，并以 content-free index 固定快照正序分页。Steer 与
+  Interrupt 通过 target Invocation 对应的 Submission 恢复 correlation；legacy 缺失
+  correlation 的事实不猜测归属。
+- 本轮 Trajectory 相邻定点验证：35 项通过；未开放 HTTP 写入口，模型文本和未注册
+  插件仍不得声明 Outcome。
+- 真实运行服务 `localhost:8004` 已返回
+  `qwenpaw.conversation-trajectory-page.v1`：固定 Chat 的 correlation
+  `b19d5f7f-2045-4607-b36c-2ba70c45e41a` 得到 10 个正序节点，覆盖 Model、Action、
+  Guardrail、HITL 和 Submission，全部归属一致且未虚构不存在的 Outcome。
 
 ### 本阶段此前已执行的定点验证
 

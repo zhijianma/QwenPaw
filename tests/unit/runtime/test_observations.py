@@ -54,6 +54,7 @@ from qwenpaw.kernel import (
     VerificationRecord,
     VerificationResult,
     VerificationStatus,
+    TurnSubmission,
     TurnSubmissionRequest,
     UserInputReason,
 )
@@ -981,13 +982,30 @@ async def test_control_projects_safe_audit_without_instruction_content(
                 ),
             )
 
+    correlation_id = uuid4()
+    submission = TurnSubmission(
+        agent_id="default",
+        conversation_id=conversation_id,
+        content="private submission content",
+        idempotency_key="private-submission-key",
+        correlation_id=correlation_id,
+        sequence=1,
+        invocation_id=invocation_id,
+        status=SubmissionStatus.SUCCEEDED,
+    )
+
+    class SubmissionHistory:
+        async def scan_submissions_for_conversation(self, **_kwargs):
+            return (submission,)
+
     observations = await lite_observation_projection(
         tmp_path,
         agent_id="default",
         controls=History(),
+        submissions=SubmissionHistory(),
     ).list_for_conversation(conversation_id)
 
-    assert len(observations) == 4
+    assert len(observations) == 6
     assert {item.category for item in observations} == {
         ObservationCategory.CONTROL,
         ObservationCategory.INTERRUPT,
@@ -1007,11 +1025,21 @@ async def test_control_projects_safe_audit_without_instruction_content(
     assert steer_evidence.status is ObservationStatus.APPLIED
     assert steer_evidence.facts["applied_at_safe_point"] == "before_tool_batch"
     assert interrupt_evidence.status is ObservationStatus.ACCEPTED
+    control_observations = [
+        item
+        for item in observations
+        if item.source.source_type
+        in {"qwenpaw.control.command", "qwenpaw.control.receipt"}
+    ]
+    assert all(
+        item.correlation_id == correlation_id
+        for item in control_observations
+    )
     intent = next(
         item
         for item in observations
-        if item.category is ObservationCategory.CONTROL
-        and item.stage is ObservationStage.INTENT
+        if item.source.source_type == "qwenpaw.control.command"
+        and item.category is ObservationCategory.CONTROL
     )
     assert intent.facts["has_instruction"] is True
     serialized = "".join(item.model_dump_json() for item in observations)

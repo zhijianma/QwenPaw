@@ -154,6 +154,7 @@ class LiteObservationIndex:
         observations: tuple[RuntimeObservation, ...],
         limit: int,
         cursor: str | None,
+        ascending: bool,
     ) -> tuple[tuple[ObservationIndexEntry, ...], str | None]:
         owner = _owner_key(conversation_id)
         connection = self._connect()
@@ -223,19 +224,22 @@ class LiteObservationIndex:
                     raise ObservationCursorError(
                         "observation cursor anchor is not available",
                     )
+                operator = ">" if ascending else "<"
                 clauses.append(
-                    "(occurred_at < ? OR (occurred_at = ? "
-                    "AND observation_id < ?))",
+                    f"(occurred_at {operator} ? OR (occurred_at = ? "
+                    f"AND observation_id {operator} ?))",
                 )
                 arguments.extend(
                     (occurred_at, occurred_at, observation_id),
                 )
             arguments.append(limit + 1)
+            direction = "ASC" if ascending else "DESC"
             rows = connection.execute(
                 "SELECT observation_id, occurred_at "
                 "FROM observation_index WHERE "
                 + " AND ".join(clauses)
-                + " ORDER BY occurred_at DESC, observation_id DESC "
+                + f" ORDER BY occurred_at {direction}, "
+                + f"observation_id {direction} "
                 "LIMIT ?",
                 arguments,
             ).fetchall()
@@ -271,6 +275,7 @@ class LiteObservationIndex:
         *,
         limit: int,
         cursor: str | None,
+        ascending: bool = False,
     ) -> tuple[tuple[ObservationIndexEntry, ...], str | None]:
         """Index current pointers and return one fixed-watermark page."""
         return await run_sync_io(
@@ -279,6 +284,7 @@ class LiteObservationIndex:
             observations,
             limit,
             cursor,
+            ascending,
         )
 
 

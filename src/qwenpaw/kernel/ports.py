@@ -1423,6 +1423,17 @@ class ObservationProjectionPort(Protocol):
 
 
 @runtime_checkable
+class ObservationHistoryPort(Protocol):
+    """Read every semantic observation for deterministic replay."""
+
+    async def scan_for_conversation(
+        self,
+        conversation_id: str,
+    ) -> Sequence[RuntimeObservation]:
+        """Return all current observations for one ChatSpec identity."""
+
+
+@runtime_checkable
 class VerificationHistoryPort(Protocol):
     """Read-only Task verification history for one ChatSpec identity."""
 
@@ -1461,6 +1472,20 @@ class ConversationOutcomeStore(Protocol):
         correlation_ids: Sequence[UUID],
     ) -> Sequence[ConversationOutcome]:
         """Return at most one latest outcome for each requested intent."""
+
+
+@runtime_checkable
+class ConversationOutcomeHistoryPort(Protocol):
+    """Read immutable Outcome supersession history for replay."""
+
+    async def list_for_correlation(
+        self,
+        *,
+        agent_id: str,
+        conversation_id: str,
+        correlation_id: UUID,
+    ) -> Sequence[ConversationOutcome]:
+        """Return one complete correlation history in chronological order."""
 
 
 @runtime_checkable

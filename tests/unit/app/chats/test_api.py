@@ -16,6 +16,7 @@ from qwenpaw.app.chats.api import (
     list_chat_model_calls,
     list_chat_observations,
     page_chat_observations,
+    page_chat_trajectory,
     list_chats,
 )
 from qwenpaw.app.chats.models import ChatHistory, ChatSpec
@@ -26,6 +27,8 @@ from qwenpaw.invocation_control import (
 from qwenpaw.kernel import (
     ActionKind,
     ActionRequest,
+    ConversationOutcome,
+    ConversationOutcomeStatus,
     ArtifactRef,
     EvidenceRef,
     PlanStep,
@@ -39,6 +42,7 @@ from qwenpaw.kernel import (
 )
 from qwenpaw.runtime.actions import lite_action_store
 from qwenpaw.runtime.model_calls import lite_model_call_store
+from qwenpaw.runtime.outcomes import lite_conversation_outcome_store
 from qwenpaw.schemas import DataContent, Message
 from qwenpaw.tasks.ledger import SQLiteExecutionLedger
 from qwenpaw.tasks.results import verification_signal
@@ -519,3 +523,44 @@ async def test_page_chat_observations_maps_invalid_cursor_to_400(tmp_path):
         )
 
     assert raised.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_page_chat_trajectory_returns_owned_outcome(tmp_path):
+    chat_id = "chat-trajectory"
+    correlation_id = uuid4()
+    manager = SimpleNamespace(
+        get_chat=AsyncMock(return_value=_chat(chat_id)),
+    )
+    outcomes = lite_conversation_outcome_store(tmp_path)
+    outcome = ConversationOutcome(
+        agent_id="default",
+        conversation_id=chat_id,
+        correlation_id=correlation_id,
+        status=ConversationOutcomeStatus.ACHIEVED,
+        producer_id="qwenpaw.system.tests",
+        summary="The requested result is verified.",
+    )
+    await outcomes.append(outcome)
+    workspace = SimpleNamespace(
+        workspace_dir=tmp_path,
+        agent_id="default",
+        interaction_service=None,
+        invocation_control=None,
+        conversation_outcome_store=outcomes,
+    )
+
+    page = await page_chat_trajectory(
+        chat_id=chat_id,
+        correlation_id=correlation_id,
+        limit=20,
+        cursor=None,
+        mgr=manager,
+        workspace=workspace,
+    )
+
+    assert page.conversation_id == chat_id
+    assert page.correlation_id == correlation_id
+    assert len(page.items) == 1
+    assert page.items[0].category.value == "outcome"
+    assert page.items[0].source.source_id == str(outcome.outcome_id)

@@ -29,6 +29,7 @@ class ObservationCategory(str, Enum):
     VERIFICATION = "verification"
     ARTIFACT = "artifact"
     EVIDENCE = "evidence"
+    OUTCOME = "outcome"
 
 
 class ObservationStage(str, Enum):
@@ -127,8 +128,22 @@ class ObservationPage(KernelModel):
     next_cursor: NonEmptyStr | None = None
 
 
+class ConversationTrajectoryPage(KernelModel):
+    """Chronological replay page for one correlation-scoped intent."""
+
+    schema_id: Literal["qwenpaw.conversation-trajectory-page.v1"] = Field(
+        default="qwenpaw.conversation-trajectory-page.v1",
+        alias="schema",
+    )
+    conversation_id: NonEmptyStr
+    correlation_id: UUID
+    items: tuple[RuntimeObservation, ...] = ()
+    next_cursor: NonEmptyStr | None = None
+
+
 __all__ = [
     "MAX_OBSERVATION_FACTS_BYTES",
+    "ConversationTrajectoryPage",
     "ObservationCategory",
     "ObservationPage",
     "ObservationSource",

@@ -236,6 +236,41 @@ class SQLiteConversationOutcomeStore:
             unique_ids,
         )
 
+    def _list_for_correlation_sync(
+        self,
+        agent_id: str,
+        conversation_id: str,
+        correlation_id: UUID,
+    ) -> tuple[ConversationOutcome, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT model_json FROM conversation_outcomes "
+                "WHERE agent_id = ? AND conversation_id = ? "
+                "AND correlation_id = ? "
+                "ORDER BY created_at ASC, outcome_id ASC",
+                (agent_id, conversation_id, str(correlation_id)),
+            ).fetchall()
+        self._protect_files()
+        return tuple(self._parse(row) for row in rows)
+
+    async def list_for_correlation(
+        self,
+        *,
+        agent_id: str,
+        conversation_id: str,
+        correlation_id: UUID,
+    ) -> tuple[ConversationOutcome, ...]:
+        """Return the immutable supersession chain in replay order."""
+        if not agent_id.strip() or not conversation_id.strip():
+            raise ValueError("outcome owner cannot be empty")
+        await self.initialize()
+        return await asyncio.to_thread(
+            self._list_for_correlation_sync,
+            agent_id,
+            conversation_id,
+            correlation_id,
+        )
+
 
 def lite_conversation_outcome_store(
     workspace_dir: Path,

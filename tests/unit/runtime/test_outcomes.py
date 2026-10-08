@@ -87,6 +87,12 @@ async def test_outcome_requires_explicit_latest_supersession(tmp_path) -> None:
         correlation_ids=(correlation_id, uuid4()),
     )
     assert latest == (achieved,)
+    history = await store.list_for_correlation(
+        agent_id="default",
+        conversation_id="chat-1",
+        correlation_id=correlation_id,
+    )
+    assert history == (first, achieved)
     assert stat.S_IMODE(store.database_path.stat().st_mode) == 0o600
 
 

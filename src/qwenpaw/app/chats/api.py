@@ -73,6 +73,7 @@ from ...kernel import (
     ObservationPage,
     RuntimeObservation,
     ConversationRuntimeProjection,
+    ConversationTrajectoryPage,
     ControlReceipt,
     QueueProjection,
     SubmissionInputEnvelope,
@@ -91,6 +92,7 @@ from ...runtime.actions import lite_action_store, public_action_record
 from ...runtime.model_calls import lite_model_call_store
 from ...runtime.observation_index import ObservationCursorError
 from ...runtime.observations import lite_observation_projection
+from ...runtime.trajectories import lite_conversation_trajectory
 from ...recovery import ModelRecoveryHistory
 from ...tasks.artifacts import (
     ArtifactIntegrityError,
@@ -587,20 +589,7 @@ async def _chat_runtime_projection_context(
             status_code=503,
             detail="Interaction service is unavailable",
         )
-    observations = lite_observation_projection(
-        Path(workspace.workspace_dir),
-        agent_id=workspace.agent_id,
-        interactions=interactions,
-        controls=control,
-        submissions=control,
-        conversation_artifacts=conversation_artifact_receipts(
-            Path(workspace.workspace_dir),
-        ),
-        task_results=lite_task_result_history(
-            Path(workspace.workspace_dir),
-        ),
-        model_recovery=_model_recovery_history(workspace),
-    )
+    observations = _chat_observation_projection(workspace)
     return ConversationRuntimeProjectionService(
         control,
         interactions,
@@ -613,6 +602,24 @@ def _model_recovery_history(workspace) -> ModelRecoveryHistory | None:
     """Return the read-only recovery adapter for one workspace."""
     service = getattr(workspace, "model_resource_wait_service", None)
     return ModelRecoveryHistory(service) if service is not None else None
+
+
+def _chat_observation_projection(workspace):
+    """Compose the shared semantic read model for one Workspace."""
+    return lite_observation_projection(
+        Path(workspace.workspace_dir),
+        agent_id=workspace.agent_id,
+        interactions=workspace.interaction_service,
+        controls=workspace.invocation_control,
+        submissions=workspace.invocation_control,
+        conversation_artifacts=conversation_artifact_receipts(
+            Path(workspace.workspace_dir),
+        ),
+        task_results=lite_task_result_history(
+            Path(workspace.workspace_dir),
+        ),
+        model_recovery=_model_recovery_history(workspace),
+    )
 
 
 def _conversation_outcome_store(workspace):
@@ -1581,19 +1588,8 @@ async def list_chat_observations(
             status_code=404,
             detail=f"Chat not found: {chat_id}",
         )
-    observations = await lite_observation_projection(
-        Path(workspace.workspace_dir),
-        agent_id=workspace.agent_id,
-        interactions=workspace.interaction_service,
-        controls=workspace.invocation_control,
-        submissions=workspace.invocation_control,
-        conversation_artifacts=conversation_artifact_receipts(
-            Path(workspace.workspace_dir),
-        ),
-        task_results=lite_task_result_history(
-            Path(workspace.workspace_dir),
-        ),
-        model_recovery=_model_recovery_history(workspace),
+    observations = await _chat_observation_projection(
+        workspace,
     ).list_for_conversation(
         chat_id,
         limit=limit,
@@ -1619,23 +1615,46 @@ async def page_chat_observations(
             status_code=404,
             detail=f"Chat not found: {chat_id}",
         )
-    projection = lite_observation_projection(
-        Path(workspace.workspace_dir),
-        agent_id=workspace.agent_id,
-        interactions=workspace.interaction_service,
-        controls=workspace.invocation_control,
-        submissions=workspace.invocation_control,
-        conversation_artifacts=conversation_artifact_receipts(
-            Path(workspace.workspace_dir),
-        ),
-        task_results=lite_task_result_history(
-            Path(workspace.workspace_dir),
-        ),
-        model_recovery=_model_recovery_history(workspace),
-    )
+    projection = _chat_observation_projection(workspace)
     try:
         return await projection.page_for_conversation(
             chat_id,
+            limit=limit,
+            cursor=cursor,
+        )
+    except ObservationCursorError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get(
+    "/{chat_id}/trajectories/{correlation_id}",
+    response_model=ConversationTrajectoryPage,
+)
+async def page_chat_trajectory(
+    chat_id: str,
+    correlation_id: UUID,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    cursor: Annotated[str | None, Query(max_length=2048)] = None,
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+) -> ConversationTrajectoryPage:
+    """Replay one owned correlation from intent through explicit Outcome."""
+    chat_spec = await mgr.get_chat(chat_id)
+    if not chat_spec:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Chat not found: {chat_id}",
+        )
+    projection = lite_conversation_trajectory(
+        Path(workspace.workspace_dir),
+        observations=_chat_observation_projection(workspace),
+        outcomes=_conversation_outcome_store(workspace),
+    )
+    try:
+        return await projection.page_for_correlation(
+            agent_id=workspace.agent_id,
+            conversation_id=chat_id,
+            correlation_id=correlation_id,
             limit=limit,
             cursor=cursor,
         )

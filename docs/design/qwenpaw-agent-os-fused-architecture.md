@@ -393,6 +393,12 @@ generation；provider 请求不包含这些字段，不能跨会话或冒充其�
 Invocation 打开时形成 lease；热卸载只影响后续 Invocation，不打断已固定旧 generation
 的执行。
 
+Trajectory 不另建事实源。Lite 从既有 semantic Observation 与不可变 Outcome
+supersession 历史派生 correlation-scoped 正序回放，并以 content-free index 保存源
+指针、固定分页 watermark。Steer/Interrupt 通过其 target Invocation 对应的 Submission
+恢复 correlation；Artifact、Evidence、Verification、Wait/Recovery 和 Outcome 保留
+原权威引用。缺少 correlation 的 legacy 事实不会靠时间邻近猜测归属。
+
 Approval、Ask User、Suggestion、Steer 和 Interrupt 均是执行链中的一等事件。
 Interaction 或资源等待必须保存 durable `WaitCondition` 并释放计算资源；满足条件后
 由 outbox 创建新的 continuation Submission，而不是恢复旧 Python 调用栈。
