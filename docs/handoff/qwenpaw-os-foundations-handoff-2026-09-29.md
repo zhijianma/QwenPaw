@@ -442,8 +442,21 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - 固定 Chat `/clear` 后真实返回 `CAPABILITY_LOCK_E2E_OK`。API 证据显示 generation
   11 的 9 个 system release；Lock 与 Context 在 ID/hash、Invocation、generation
   四项全部一致，Context 含 72 个内容安全 fragment。
-- 本切片相邻定点验证 70 项通过；尚未实现关键词发现索引、稳定 tag/promotion 和
+- 本切片相邻定点验证 71 项通过；尚未实现关键词发现索引、稳定 tag/promotion 和
   Workstation/Hub 远端 Release Registry。
+
+### 2026-10-08 Stable Capability Release 与安全回滚
+
+- Capability Registry 已为每个 system/plugin provider 建立内容寻址的 `stable`
+  release tag，展开已晋升 Capability 的 descriptor hash，而非只暴露 generation。
+- 热替换可使用 expected release hash fencing 做一次 provider 级回滚；回滚生成新的
+  单调 generation、只恢复目标 provider，期间其他 provider 晋升不会被撤销，已固定
+  旧 lease 也不会漂移。失败 staging 不改变 stable tag 或当前 generation。
+- 回滚点包含 Python 实现对象，因此明确只在当前进程有效；重启继续从安装 manifest
+  装配，不能反序列化代码对象。持久 Promotion/Evaluation Journal 与授权晋升门禁仍是
+  后续基础设施切片，不应被当前 stable tag 冒充。
+- 本切片定点验证 39 项通过，覆盖 Registry、system/plugin 同合同、Task Runtime
+  相邻路径与 Lite 插件热激活；未执行全仓测试。
 
 ### 本阶段此前已执行的定点验证
 

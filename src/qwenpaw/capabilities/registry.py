@@ -16,6 +16,7 @@ from ..kernel.models import (
     CapabilityDescriptor,
 )
 from ..kernel.ports import CapabilityLease
+from ..kernel.releases import CapabilityReleaseTag
 from .contracts import (
     CapabilityImplementationError,
     validate_capability_implementation,
@@ -47,6 +48,18 @@ class RegistrySnapshot:
 
 class ActivationError(RuntimeError):
     """Raised when staging or health checks reject an activation."""
+
+
+class ReleaseRollbackError(RuntimeError):
+    """Raised when a stable provider release cannot be rolled back."""
+
+
+@dataclass(frozen=True)
+class _ProviderRollbackPoint:
+    """Last promoted provider state retained for a fenced rollback."""
+
+    promoted_release_hash: str
+    contributions: Mapping[str, ActivatedContribution]
 
 
 class GenerationLease(CapabilityLease):
@@ -118,6 +131,8 @@ class GenerationRegistry:
         self._lock = asyncio.Lock()
         self._ensure_lock = asyncio.Lock()
         self._provider_cleanup: dict[str, list[Callable[[], None]]] = {}
+        self._stable_releases: dict[str, CapabilityReleaseTag] = {}
+        self._rollback_points: dict[str, _ProviderRollbackPoint] = {}
 
     @property
     def generation(self) -> int:
@@ -131,6 +146,13 @@ class GenerationRegistry:
         """Return one descriptor from the current immutable snapshot."""
         contribution = self._current.capabilities.get(capability_id)
         return contribution.descriptor if contribution else None
+
+    def stable_release(
+        self,
+        provider_id: str,
+    ) -> CapabilityReleaseTag | None:
+        """Return the current content-addressed stable provider tag."""
+        return self._stable_releases.get(provider_id)
 
     async def pin(
         self,
@@ -234,6 +256,13 @@ class GenerationRegistry:
             ) from exc
 
         async with self._lock:
+            previous = {
+                capability_id: contribution
+                for capability_id, contribution in (
+                    self._current.capabilities.items()
+                )
+                if contribution.descriptor.provider_id == bundle.provider_id
+            }
             capabilities = {
                 capability_id: contribution
                 for capability_id, contribution in (
@@ -247,6 +276,84 @@ class GenerationRegistry:
                 generation=generation,
                 capabilities=MappingProxyType(capabilities),
             )
+            descriptors = tuple(
+                contribution.descriptor
+                for contribution in staged.values()
+            )
+            release = CapabilityReleaseTag.create(
+                provider_id=bundle.provider_id,
+                provider_kind=bundle.provider_kind,
+                version=bundle.version,
+                promoted_generation=generation,
+                descriptors=descriptors,
+            )
+            self._rollback_points[bundle.provider_id] = (
+                _ProviderRollbackPoint(
+                    promoted_release_hash=release.release_hash,
+                    contributions=MappingProxyType(previous),
+                )
+            )
+            self._stable_releases[bundle.provider_id] = release
+            self._current = snapshot
+            self._snapshots[generation] = snapshot
+            self._leases[generation] = 0
+            self._reclaim_unleased()
+            return snapshot
+
+    async def rollback_provider(
+        self,
+        provider_id: str,
+        *,
+        expected_release_hash: str,
+    ) -> RegistrySnapshot:
+        """Rollback one provider without reverting unrelated promotions."""
+        async with self._lock:
+            current_release = self._stable_releases.get(provider_id)
+            point = self._rollback_points.get(provider_id)
+            if current_release is None or point is None:
+                raise ReleaseRollbackError(
+                    f"provider '{provider_id}' has no rollback point",
+                )
+            if current_release.release_hash != expected_release_hash:
+                raise ReleaseRollbackError(
+                    f"provider '{provider_id}' stable release changed",
+                )
+            if point.promoted_release_hash != expected_release_hash:
+                raise ReleaseRollbackError(
+                    f"provider '{provider_id}' rollback point is stale",
+                )
+
+            capabilities = {
+                capability_id: contribution
+                for capability_id, contribution in (
+                    self._current.capabilities.items()
+                )
+                if contribution.descriptor.provider_id != provider_id
+            }
+            capabilities.update(point.contributions)
+            generation = self._current.generation + 1
+            snapshot = RegistrySnapshot(
+                generation=generation,
+                capabilities=MappingProxyType(capabilities),
+            )
+            previous_descriptors = tuple(
+                contribution.descriptor
+                for contribution in point.contributions.values()
+            )
+            if previous_descriptors:
+                descriptor = previous_descriptors[0]
+                self._stable_releases[provider_id] = (
+                    CapabilityReleaseTag.create(
+                        provider_id=provider_id,
+                        provider_kind=descriptor.provider_kind,
+                        version=descriptor.version,
+                        promoted_generation=generation,
+                        descriptors=previous_descriptors,
+                    )
+                )
+            else:
+                self._stable_releases.pop(provider_id, None)
+            self._rollback_points.pop(provider_id, None)
             self._current = snapshot
             self._snapshots[generation] = snapshot
             self._leases[generation] = 0
@@ -283,6 +390,8 @@ class GenerationRegistry:
                 capabilities=MappingProxyType(capabilities),
             )
             self._current = snapshot
+            self._stable_releases.pop(provider_id, None)
+            self._rollback_points.pop(provider_id, None)
             self._snapshots[generation] = snapshot
             self._leases[generation] = 0
             self._reclaim_unleased()
@@ -346,5 +455,6 @@ __all__ = [
     "ContributionFactory",
     "GenerationLease",
     "GenerationRegistry",
+    "ReleaseRollbackError",
     "RegistrySnapshot",
 ]

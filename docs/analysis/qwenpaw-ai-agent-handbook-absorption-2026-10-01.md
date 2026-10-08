@@ -327,8 +327,15 @@ descriptor hash；不保存实现对象、配置值或 Secret。Lock 以 Invocat
 `ContextManifest` 引用同一 lock ID/hash。热替换后的新 Invocation 获得新 release，
 旧 Invocation 和按旧 generation 恢复的 Invocation 继续引用旧版本证据。
 
-当前只锁定已选择能力，不把整个可发现目录塞入运行证据。Lite 关键词发现索引、稳定
-tag/release promotion 以及 Workstation/Hub 的远端 Release Registry 仍待实现。
+当前只锁定已选择能力，不把整个可发现目录塞入运行证据。Lite Registry 进一步为
+每个 system/plugin provider 生成内容寻址的 `stable` release tag；tag 展开每个
+Capability 的 descriptor hash，不依赖易漂移的 generation 整数。替换后可携带预期
+release hash 做一次 provider 级回滚；回滚产生单调递增的新 generation，只替换目标
+provider，不撤销期间其他 provider 的发布，旧 Invocation lease 继续使用原版本。
+
+该回滚点只保存当前进程内的可执行对象，不伪装为跨重启代码恢复。进程重启仍从已安装
+manifest 重新装配；Lite 关键词发现索引、持久 Promotion/Evaluation Journal、授权晋升
+门禁以及 Workstation/Hub 的远端 Release Registry 仍待实现。
 
 ### A7. Outcome、Trajectory 与 Evaluation
 

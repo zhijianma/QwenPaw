@@ -6,6 +6,7 @@ from .registry import (
     ActivationError,
     GenerationLease,
     GenerationRegistry,
+    ReleaseRollbackError,
     RegistrySnapshot,
 )
 from .system_tools import (
@@ -46,6 +47,7 @@ __all__ = [
     "ActivationError",
     "GenerationLease",
     "GenerationRegistry",
+    "ReleaseRollbackError",
     "RegistrySnapshot",
     "SYSTEM_MEMORY_CAPABILITY_BUNDLE",
     "SYSTEM_COMMAND_CAPABILITY_BUNDLE",

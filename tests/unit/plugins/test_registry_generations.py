@@ -80,6 +80,10 @@ async def test_one_plugin_activates_two_slots_in_one_generation() -> None:
     }
     assert lease.generation == 2
     assert lease.resolve("task-insights.runner").slot == "runner"
+    release = registry.stable_release("task-insights")
+    assert release is not None
+    assert release.provider_kind is CapabilityProviderKind.PLUGIN
+    assert release.version == "1.0.0"
     await lease.close()
 
 
@@ -87,6 +91,7 @@ async def test_one_plugin_activates_two_slots_in_one_generation() -> None:
 async def test_failed_health_check_keeps_current_generation() -> None:
     registry = GenerationRegistry()
     await registry.activate(_manifest(), _factory)
+    original_release = registry.stable_release("task-insights")
 
     with pytest.raises(ActivationError, match="health check failed"):
         await registry.activate(
@@ -99,6 +104,32 @@ async def test_failed_health_check_keeps_current_generation() -> None:
         )
 
     assert registry.generation == 2
+    assert registry.stable_release("task-insights") == original_release
+
+
+@pytest.mark.asyncio
+async def test_plugin_release_rolls_back_without_drifting_new_lease() -> None:
+    registry = GenerationRegistry()
+    await registry.activate(_manifest(), _factory)
+    await registry.activate(_manifest("2.0.0"), _factory)
+    promoted = registry.stable_release("task-insights")
+    assert promoted is not None
+    promoted_lease = await registry.pin()
+
+    await registry.rollback_provider(
+        "task-insights",
+        expected_release_hash=promoted.release_hash,
+    )
+    current = await registry.pin()
+
+    assert current.resolve("task-insights.runner").version == "1.0.0"
+    assert promoted_lease.resolve("task-insights.runner").version == "2.0.0"
+    restored = registry.stable_release("task-insights")
+    assert restored is not None
+    assert restored.provider_kind is CapabilityProviderKind.PLUGIN
+    assert restored.version == "1.0.0"
+    await current.close()
+    await promoted_lease.close()
 
 
 @pytest.mark.asyncio

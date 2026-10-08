@@ -329,6 +329,7 @@ from .capability_locks import (
     CapabilityLockManifest,
     CapabilityRelease,
 )
+from .releases import CapabilityReleaseTag
 from .ports import (
     ActionStore,
     AgentFactory,
@@ -385,6 +386,7 @@ __all__ = [
     "CapabilityLockManifest",
     "CapabilityLockStore",
     "CapabilityRelease",
+    "CapabilityReleaseTag",
     "ActionApprovalLink",
     "ActionKind",
     "ActionRecord",

@@ -11,6 +11,7 @@ from ..capabilities.registry import (
     ActivationError,
     GenerationLease,
     GenerationRegistry as CoreGenerationRegistry,
+    ReleaseRollbackError,
     RegistrySnapshot,
 )
 from ..kernel.models import (
@@ -93,5 +94,6 @@ __all__ = [
     "GenerationLease",
     "GenerationRegistry",
     "RegistrySnapshot",
+    "ReleaseRollbackError",
     "activate_plugin_bundle",
 ]

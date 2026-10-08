@@ -1029,7 +1029,12 @@ Cron 不形成独立审批或产物事实源。
     展开为实际选中的 system/plugin release 证据。Assembly 在执行前以 pinned
     descriptor 编译并 `0600` append-once 持久化；InvocationScope 与 ContextManifest
     引用同一 lock ID/hash，冲突失败关闭。Chat 只读 API 可审计 Lock 与 Context 的
-    对齐关系；不持久化实现、配置值或 Secret。Lite 的关键词发现索引、稳定 tag 和
+    对齐关系；不持久化实现、配置值或 Secret。
+  - [x] Lite Registry 为 system/plugin provider 生成同构、内容寻址的 `stable`
+    release tag；tag 展开 descriptor hash。替换版本可使用 expected release hash
+    fencing 做 provider 级一次性回滚，回滚发布新的单调 generation、保留无关 provider
+    的并发晋升，旧 lease 不漂移。可执行回滚点仅在进程内；重启由 manifest 重新装配。
+    关键词发现索引、持久 Promotion/Evaluation Journal、授权晋升门禁与
     Workstation/Hub Release Registry 仍待实现。
 
 - [x] 每个公开扩展模块均有 system/plugin contract tests；system-only 模块具有
