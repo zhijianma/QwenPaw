@@ -8,6 +8,7 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
+from uuid import UUID, uuid5
 
 from agentscope.permission import PermissionBehavior
 from agentscope.tool import ToolResponse
@@ -18,7 +19,9 @@ from ..kernel import (
     ActionRetryDisposition,
     ActionRetryInputStore,
     ActionStore,
+    CapabilitySelection,
     InvocationScope,
+    ToolSelection,
 )
 from ..kernel.models import JsonObject
 from ..tool_calls import ToolCoordinator
@@ -40,6 +43,60 @@ class PreparedActionRetry:
     continuation: ActionRetryContinuation
     previous: ActionRecord
     arguments: JsonObject
+
+
+@dataclass(frozen=True)
+class ActionRetryExecutionPlan:
+    """Deterministic Orchestrator admission for one outbox revision."""
+
+    invocation_id: UUID
+    correlation_id: UUID
+    chat_id: str
+    tool_call_id: str
+    registry_generation: int
+    capability_selection: CapabilitySelection
+    tool_selection: ToolSelection
+    provider_execution_digest: str
+
+    @classmethod
+    def from_prepared(
+        cls,
+        prepared: PreparedActionRetry,
+    ) -> "ActionRetryExecutionPlan":
+        """Compile stable identities without transport session aliases."""
+        continuation = prepared.continuation
+        checkpoint = continuation.checkpoint
+        chat_id = checkpoint.conversation_id
+        selection = checkpoint.tool_selection
+        provider_digest = checkpoint.provider_execution_digest
+        if chat_id is None or selection is None or provider_digest is None:
+            raise ActionRetryAdmissionError(
+                "Action retry cannot compile an execution plan",
+            )
+        return cls(
+            invocation_id=uuid5(
+                continuation.continuation_id,
+                f"execution:{continuation.revision}",
+            ),
+            correlation_id=checkpoint.correlation_id,
+            chat_id=chat_id,
+            tool_call_id=(
+                f"action-retry:{continuation.continuation_id}:"
+                f"{continuation.revision}"
+            ),
+            registry_generation=checkpoint.registry_generation,
+            capability_selection=CapabilitySelection(
+                tool_provider_ids=(checkpoint.capability_id,),
+                memory_provider_id=None,
+                prompt_provider_ids=(),
+                driver_provider_id=None,
+                command_provider_ids=(),
+                hook_provider_ids=(),
+                stop_gate_provider_ids=(),
+            ),
+            tool_selection=selection,
+            provider_execution_digest=provider_digest,
+        )
 
 
 class ActionRetryExecutionAdmission:
@@ -196,6 +253,7 @@ class GovernedActionExecutor:
 __all__ = [
     "ActionRetryAdmissionError",
     "ActionRetryExecutionAdmission",
+    "ActionRetryExecutionPlan",
     "GovernedActionDeniedError",
     "GovernedActionExecutor",
     "PreparedActionRetry",

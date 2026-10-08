@@ -565,6 +565,10 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     checkpoint 与源 Action，要求 ToolSelection/Provider digest 完整、checkpoint 全量
     相等、源 observation digest 未漂移且 retry decision 仍指向同一 next attempt；旧版
     或损坏证据均 fail closed，dispatcher 不直接信任 outbox 中的参数引用。
+  - [x] admission 编译确定性的 `ActionRetryExecutionPlan`：以 continuation id 与 revision
+    派生 Invocation/ToolCall 身份，直接使用 `ChatSpec.id` 作为内部会话身份，并只选择
+    原 Tool Provider；generation、correlation、ToolSelection 与 Provider digest 均冻结，
+    durable Submission 重放不会生成另一组运行身份或混入无关 Provider。
   - [ ] 在上述单一身份上接入自动 retry dispatcher：必须同时具备 attempt budget、
     Stop/Interrupt fencing、无流式输出边界，以及 Runtime Orchestrator 内的执行入口；
     不能仅凭 `retryable=true` 或绕过 Orchestrator 直接重新调用工具。

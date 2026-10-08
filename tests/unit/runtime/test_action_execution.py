@@ -20,6 +20,7 @@ from qwenpaw.kernel import (
 from qwenpaw.runtime.action_execution import (
     ActionRetryAdmissionError,
     ActionRetryExecutionAdmission,
+    ActionRetryExecutionPlan,
     GovernedActionDeniedError,
     GovernedActionExecutor,
 )
@@ -270,11 +271,24 @@ async def test_retry_execution_admission_rebuilds_durable_authority(
     )
 
     prepared = await admission.prepare(continuation)
+    plan = ActionRetryExecutionPlan.from_prepared(prepared)
 
     assert prepared.arguments == {"value": "private"}
     assert prepared.previous.request.action_id == (
         continuation.checkpoint.action_id
     )
+    assert plan.chat_id == scope.conversation_id
+    assert plan.correlation_id == scope.correlation_id
+    assert plan.registry_generation == scope.registry_generation
+    assert plan.capability_selection.tool_provider_ids == (
+        continuation.checkpoint.capability_id,
+    )
+    assert plan.capability_selection.memory_provider_id is None
+    assert plan.tool_selection == continuation.checkpoint.tool_selection
+    assert plan.provider_execution_digest == (
+        continuation.checkpoint.provider_execution_digest
+    )
+    assert plan == ActionRetryExecutionPlan.from_prepared(prepared)
     drifted = continuation.model_copy(
         update={
             "source_observation_digest": f"sha256:{'b' * 64}",
