@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
 from pathlib import Path
 from uuid import UUID, uuid5
@@ -37,6 +37,12 @@ class ModelResourceWaitConflictError(ModelResourceWaitError):
 
 class ModelResourceWaitNotFoundError(ModelResourceWaitError):
     """Raised when a wait identity is unknown."""
+
+
+ResourceWaitDispatcher = Callable[
+    [ModelResourceWait],
+    Awaitable[UUID | None],
+]
 
 
 class ModelResourceWaitService:
@@ -289,6 +295,117 @@ class ModelResourceWaitService:
                 wait_id,
                 submission_id,
             )
+
+    async def dispatch_ready(
+        self,
+        wait_id: UUID,
+        dispatch: ResourceWaitDispatcher,
+    ) -> ModelResourceWait:
+        """Serialize cancellation with one external enqueue operation.
+
+        A ``None`` result means that the caller found a durable control
+        fence and the wait must become cancelled instead of dispatched.
+        """
+        await self.start()
+        async with self._write_lock:
+            current = await asyncio.to_thread(self._get_sync, wait_id)
+            if current is None:
+                raise ModelResourceWaitNotFoundError(str(wait_id))
+            if current.status is not ResourceWaitStatus.READY:
+                return current
+            submission_id = await dispatch(current)
+            if submission_id is None:
+                return await asyncio.to_thread(
+                    self._cancel_wait_sync,
+                    wait_id,
+                )
+            return await asyncio.to_thread(
+                self._mark_dispatched_sync,
+                wait_id,
+                submission_id,
+            )
+
+    async def cancel_for_conversation(
+        self,
+        *,
+        agent_id: str,
+        conversation_id: str,
+    ) -> tuple[ModelResourceWait, ...]:
+        """Cancel every continuation that has not entered the turn queue."""
+        if agent_id != self.agent_id or not conversation_id.strip():
+            return ()
+        await self.start()
+        async with self._write_lock:
+            return await asyncio.to_thread(
+                self._cancel_for_conversation_sync,
+                conversation_id,
+            )
+
+    def _cancel_for_conversation_sync(
+        self,
+        conversation_id: str,
+    ) -> tuple[ModelResourceWait, ...]:
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                "SELECT * FROM model_resource_waits "
+                "WHERE agent_id = ? AND conversation_id = ? "
+                "AND status IN (?, ?) ORDER BY created_at, wait_id",
+                (
+                    self.agent_id,
+                    conversation_id,
+                    ResourceWaitStatus.WAITING.value,
+                    ResourceWaitStatus.READY.value,
+                ),
+            ).fetchall()
+            cancelled = tuple(
+                self._cancel_wait(connection, self._from_row(row))
+                for row in rows
+            )
+            connection.commit()
+            return cancelled
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def _cancel_wait_sync(self, wait_id: UUID) -> ModelResourceWait:
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            current = self._load(connection, wait_id)
+            if current.status not in {
+                ResourceWaitStatus.WAITING,
+                ResourceWaitStatus.READY,
+            }:
+                connection.rollback()
+                return current
+            cancelled = self._cancel_wait(connection, current)
+            connection.commit()
+            return cancelled
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    @classmethod
+    def _cancel_wait(
+        cls,
+        connection: sqlite3.Connection,
+        current: ModelResourceWait,
+    ) -> ModelResourceWait:
+        cancelled = current.model_copy(
+            update={
+                "status": ResourceWaitStatus.CANCELLED,
+                "revision": current.revision + 1,
+                "updated_at": utc_now(),
+            },
+        )
+        cls._update(connection, cancelled)
+        return cancelled
 
     def _mark_dispatched_sync(
         self,

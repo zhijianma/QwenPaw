@@ -41,6 +41,8 @@ ModelCallResult(wait_resource)
                      idempotent enqueue     |
                                             v
                               new Submission / Invocation
+
+waiting / ready -- Interrupt or Stop-and-Clear fence --> cancelled
 ```
 
 - `rate_limited`：Lite 使用有界 timer；后续可由 Provider Adapter 提供经过校验的
@@ -48,6 +50,14 @@ ModelCallResult(wait_resource)
 - `quota_exhausted`：默认等待外部资源事件，不自动循环消耗额度。
 - enqueue 与 outbox 标记之间崩溃时，稳定 idempotency key 会取得同一 Submission，
   不重复创建执行。
+- `Interrupt Current` 以来源 `invocation_id` 阻止同一运行的迟到恢复；
+  `Stop and Clear` 还会取消该 `ChatSpec.id` 下尚未入队的全部等待。
+- 恢复 worker 先读取 Queue revision，再读取持久化 Control；若 Stop 恰好发生在检查
+  之后，恢复 enqueue 的乐观并发校验必定失败，下一轮再将 Wait 终结为 cancelled。
+- enqueue 只先落库，不立即唤醒 consumer；Wait 与 `submission_id` 绑定成功后才允许
+  通用 dispatcher 执行。进程启动也先修复 Resource Wait outbox，再恢复 Queue 消费。
+- 执行恢复 Submission 前再次校验 Wait 已处于 dispatched 且反向绑定当前
+  `submission_id`，取消态或伪造 envelope 不能进入 Runtime。
 - 后续执行重新检查副作用；未知或不确定的 Action 不能因模型恢复而盲目重放。
 
 ## 4. 长程交互替代“一问一答”
@@ -86,6 +96,8 @@ Adapter 声明；Kernel 不假设任意模型流可以原地续传。
   不保存输出正文和隐藏 reasoning。
 - [x] 未见终态 chunk 的 EOF 记为 `stream_interrupted`；未产生内容时可由
   transport policy 安全重试，已经产生内容时禁止整请求重放。
+- [x] Interrupt / Stop-and-Clear 对资源恢复提交建立持久化 fencing；竞态 enqueue
+  使用 Queue revision 关闭，取消后的 Wait 不会复活旧任务。
 - [ ] 从真实 Provider retry-after hint 计算动态等待时间。
 - [ ] 从部分流边界创建可验证的新 Model Step continuation。
 - [ ] Action uncertainty 与 Checkpoint 决定恢复前自动对账。

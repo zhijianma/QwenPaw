@@ -34,11 +34,18 @@ from qwenpaw.kernel import (
     InteractionKind,
     InteractionMode,
     InteractionRequest,
+    ModelCallAttempt,
+    ModelCallResult,
+    ModelCallStatus,
+    ModelFailureClass,
+    ModelRecoveryDisposition,
+    ResourceWaitStatus,
     UserInputReason,
     SteerSafePoint,
     SubmissionStatus,
     TurnSubmissionRequest,
 )
+from qwenpaw.recovery import ModelResourceWaitService
 
 
 async def _control_context(tmp_path: Path):
@@ -62,6 +69,10 @@ async def _control_context(tmp_path: Path):
         invocation_control=service,
         interaction_service=InteractionService(
             tmp_path / "interactions.sqlite3",
+        ),
+        model_resource_wait_service=ModelResourceWaitService(
+            tmp_path / "resource-waits.sqlite3",
+            agent_id="default",
         ),
     )
     workspace.submission_dispatcher = WorkspaceChatSubmissionDispatcher(
@@ -163,6 +174,61 @@ async def test_chat_queue_reorder_cancel_and_idempotent_replay(
         conversation_id="chat-spec-1",
     )
     assert remaining.submissions == ()
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_stop_and_clear_cancels_pending_model_recovery(
+    tmp_path: Path,
+) -> None:
+    app, service, _ = await _control_context(tmp_path)
+    workspace = app.dependency_overrides[get_workspace]()
+    attempt = ModelCallAttempt(
+        attempt_id=uuid4(),
+        route_decision_id=uuid4(),
+        invocation_id=uuid4(),
+        correlation_id=uuid4(),
+        conversation_id="chat-spec-1",
+        registry_generation=1,
+        context_manifest_id=uuid4(),
+        model_call_index=1,
+        attempt_index=1,
+        provider_id="provider-a",
+        model_id="model-a",
+    )
+    wait = await workspace.model_resource_wait_service.defer(
+        attempt,
+        ModelCallResult(
+            attempt_id=attempt.attempt_id,
+            invocation_id=attempt.invocation_id,
+            conversation_id=attempt.conversation_id,
+            status=ModelCallStatus.FAILED,
+            failure_class=ModelFailureClass.QUOTA_EXHAUSTED,
+            recovery_disposition=(
+                ModelRecoveryDisposition.WAIT_RESOURCE
+            ),
+        ),
+    )
+    assert wait is not None
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        stopped = await client.post(
+            "/api/chats/chat-spec-1/control/stop-and-clear",
+            json={
+                "idempotency_key": "stop-resource-wait",
+                "expected_revision": 0,
+            },
+        )
+
+    cancelled = await workspace.model_resource_wait_service.get(
+        wait.wait_id,
+    )
+    assert stopped.status_code == 200
+    assert cancelled is not None
+    assert cancelled.status is ResourceWaitStatus.CANCELLED
     await service.close()
 
 

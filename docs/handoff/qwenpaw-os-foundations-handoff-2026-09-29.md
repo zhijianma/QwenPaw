@@ -232,6 +232,21 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - Git 提交钩子：pre-commit、prepare-commit-msg、commit-msg、post-commit
   均通过。
 
+### 2026-10-08 模型恢复 Interrupt fencing
+
+- Resource Wait 新增原子 `dispatch_ready` 与 conversation cancel；取消和恢复入队在
+  Lite 进程内串行，`waiting/ready` 可稳定终结为 `cancelled`。
+- `Interrupt Current` 通过来源 `invocation_id` fencing 迟到恢复；
+  `Stop and Clear` 同时取消该 Chat 尚未入队的 Resource Wait。
+- dispatcher 先捕获 Queue revision、再读取持久化 Control，恢复 enqueue 使用乐观
+  revision；Stop 若插入检查与 enqueue 之间，旧提交会冲突而不是复活。
+- 恢复 Submission 先持久化但不唤醒 consumer；Wait 绑定完成后才启动执行。服务重启
+  同样先修复 Resource Wait outbox，再恢复通用 Queue consumer。
+- 恢复执行入口要求 Wait 为 `dispatched` 且绑定当前 `submission_id`，取消态和伪造
+  envelope 均失败关闭。
+- 定点验证覆盖 Wait 取消、单次 dispatch、HTTP Stop、crash-after-enqueue 与确定性
+  Stop/enqueue 竞态；该模块不涉及 Task 页面。
+
 ### 本阶段此前已执行的定点验证
 
 - 后端核心路径定点测试：70 项通过。

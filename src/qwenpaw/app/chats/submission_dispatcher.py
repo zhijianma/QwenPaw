@@ -16,6 +16,7 @@ from ...invocation_control import (
 )
 from ...kernel import (
     ConversationContinuation,
+    ControlCommandKind,
     ControlReceipt,
     InteractionStatus,
     ModelResourceWait,
@@ -63,6 +64,8 @@ class WorkspaceChatSubmissionDispatcher:
 
     async def start(self) -> None:
         """Recover queued Console turns after workspace services start."""
+        if self._resource_waits is not None:
+            await self._dispatch_ready_resource_waits()
         await self._dispatcher.start()
         if self._interactions is not None and self._continuation_task is None:
             self._continuation_task = asyncio.create_task(
@@ -146,6 +149,44 @@ class WorkspaceChatSubmissionDispatcher:
         """Create one idempotent continuation for a ready resource wait."""
         if wait.status is not ResourceWaitStatus.READY:
             raise RuntimeError("model resource wait is not ready")
+
+        dispatched = await self._resource_waits.dispatch_ready(
+            wait.wait_id,
+            self._enqueue_resource_wait,
+        )
+        if dispatched.status is ResourceWaitStatus.DISPATCHED:
+            self._dispatcher.wake()
+
+    async def _enqueue_resource_wait(
+        self,
+        wait: ModelResourceWait,
+    ) -> UUID | None:
+        """Enqueue unless an authoritative stop command fences the wait."""
+        projection = await self._control.read_queue(
+            agent_id=wait.agent_id,
+            conversation_id=wait.conversation_id,
+        )
+        records = await self._control.scan_for_conversation(
+            agent_id=wait.agent_id,
+            conversation_id=wait.conversation_id,
+        )
+        if any(
+            (
+                record.command.kind
+                in {
+                    ControlCommandKind.INTERRUPT_CURRENT,
+                    ControlCommandKind.STOP_AND_CLEAR,
+                }
+                and record.command.target_invocation_id
+                == wait.invocation_id
+            )
+            or (
+                record.command.kind is ControlCommandKind.STOP_AND_CLEAR
+                and record.command.requested_at >= wait.created_at
+            )
+            for record in records
+        ):
+            return None
         request = TurnSubmissionRequest(
             agent_id=wait.agent_id,
             conversation_id=wait.conversation_id,
@@ -161,15 +202,15 @@ class WorkspaceChatSubmissionDispatcher:
             idempotency_key=f"model-resource-continuation:{wait.wait_id}",
             correlation_id=wait.correlation_id,
         )
-        receipt = await self.enqueue(request)
+        receipt = await self._control.enqueue_turn(
+            request,
+            expected_revision=projection.revision,
+        )
         if receipt.submission_id is None:
             raise RuntimeError(
                 "model recovery enqueue returned no submission identity",
             )
-        await self._resource_waits.mark_dispatched(
-            wait.wait_id,
-            receipt.submission_id,
-        )
+        return receipt.submission_id
 
     async def _run_continuations(self) -> None:
         """Retry ready outbox entries without coupling them to HTTP."""
@@ -357,6 +398,13 @@ class WorkspaceChatSubmissionDispatcher:
         ):
             raise ValueError(
                 "model resource wait does not belong to its ChatSpec",
+            )
+        if (
+            wait.status is not ResourceWaitStatus.DISPATCHED
+            or wait.submission_id != submission.submission_id
+        ):
+            raise ValueError(
+                "model resource wait is not bound to this Submission",
             )
         return {
             "channel_id": chat.channel,

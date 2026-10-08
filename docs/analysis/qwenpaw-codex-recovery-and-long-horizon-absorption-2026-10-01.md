@@ -298,7 +298,8 @@ Codex 的“边收流边执行工具”建立在其 Provider 事件协议、工�
 - [x] 模型结果为 `wait_resource` 时持久化独立资源等待；
 - [x] timer 到期或 external event 释放后，以幂等 outbox 创建 continuation；
 - [x] Lite 使用本地 SQLite source 和 worker，不引入前端 Queue 或消息中间件；
-- [ ] Interrupt revision 对恢复提交进行 fencing；
+- [x] Interrupt 按来源 Invocation、Stop-and-Clear 按 Conversation 对恢复提交进行
+  fencing；Queue revision 关闭“检查后、入队前”的竞态，取消 Wait 不会复活；
 - [ ] Workstation/Hub 用健康探针或分布式 lease 替换 Lite Adapter。
 
 ### R3：部分流与 Action 对账

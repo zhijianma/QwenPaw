@@ -135,6 +135,79 @@ async def test_rate_limit_wait_uses_timer_without_provider_payload(
 
 
 @pytest.mark.asyncio
+async def test_conversation_cancel_fences_wait_before_dispatch(
+    tmp_path: Path,
+) -> None:
+    attempt = _attempt()
+    service = ModelResourceWaitService(
+        tmp_path / "resource-waits.sqlite3",
+        agent_id="default",
+    )
+    wait = await service.defer(
+        attempt,
+        _result(attempt, ModelFailureClass.QUOTA_EXHAUSTED),
+    )
+    assert wait is not None
+    await service.release(wait.wait_id)
+
+    [cancelled] = await service.cancel_for_conversation(
+        agent_id="default",
+        conversation_id="chat-1",
+    )
+    dispatched = False
+
+    async def dispatch(_wait):
+        nonlocal dispatched
+        dispatched = True
+        return uuid4()
+
+    replay = await service.dispatch_ready(wait.wait_id, dispatch)
+
+    assert cancelled.status is ResourceWaitStatus.CANCELLED
+    assert replay == cancelled
+    assert not dispatched
+    assert not await service.list_ready()
+    [condition] = await service.list_wait_conditions(
+        agent_id="default",
+        conversation_id="chat-1",
+        include_terminal=True,
+    )
+    assert condition.status is WaitConditionStatus.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_dispatch_ready_persists_callback_submission_once(
+    tmp_path: Path,
+) -> None:
+    attempt = _attempt()
+    service = ModelResourceWaitService(
+        tmp_path / "resource-waits.sqlite3",
+        agent_id="default",
+    )
+    wait = await service.defer(
+        attempt,
+        _result(attempt, ModelFailureClass.QUOTA_EXHAUSTED),
+    )
+    assert wait is not None
+    await service.release(wait.wait_id)
+    submission_id = uuid4()
+    calls = 0
+
+    async def dispatch(_wait):
+        nonlocal calls
+        calls += 1
+        return submission_id
+
+    dispatched = await service.dispatch_ready(wait.wait_id, dispatch)
+    replay = await service.dispatch_ready(wait.wait_id, dispatch)
+
+    assert dispatched.status is ResourceWaitStatus.DISPATCHED
+    assert dispatched.submission_id == submission_id
+    assert replay == dispatched
+    assert calls == 1
+
+
+@pytest.mark.asyncio
 async def test_non_resource_result_does_not_create_wait(
     tmp_path: Path,
 ) -> None:

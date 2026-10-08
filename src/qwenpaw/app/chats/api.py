@@ -993,9 +993,9 @@ async def stop_and_clear_chat(
     mgr: ChatManager = Depends(get_chat_manager),
     workspace=Depends(get_workspace),
 ) -> ControlReceipt:
-    """Atomically clear queued turns and interrupt the captured invocation."""
+    """Clear queued work, pending recovery, and the captured invocation."""
     service = await _chat_control_context(chat_id, mgr, workspace)
-    return await _apply_chat_control(
+    receipt = await _apply_chat_control(
         service.stop_and_clear(
             agent_id=workspace.agent_id,
             conversation_id=chat_id,
@@ -1003,6 +1003,17 @@ async def stop_and_clear_chat(
             expected_revision=body.expected_revision,
         ),
     )
+    resource_waits = getattr(
+        workspace,
+        "model_resource_wait_service",
+        None,
+    )
+    if resource_waits is not None:
+        await resource_waits.cancel_for_conversation(
+            agent_id=workspace.agent_id,
+            conversation_id=chat_id,
+        )
+    return receipt
 
 
 @router.post(

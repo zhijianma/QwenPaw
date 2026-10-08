@@ -20,6 +20,7 @@ from qwenpaw.app.chats.submission_dispatcher import (
 from qwenpaw.app.task_tracker import TaskTracker
 from qwenpaw.invocation_control import (
     InvocationControlService,
+    QueueRevisionConflictError,
     SQLiteInvocationControl,
 )
 from qwenpaw.interactions import InteractionService
@@ -40,6 +41,7 @@ from qwenpaw.kernel import (
     ModelCallStatus,
     ModelFailureClass,
     ModelRecoveryDisposition,
+    ResourceWaitStatus,
     SubmissionInputEnvelope,
     SubmissionStatus,
     TurnSubmissionRequest,
@@ -379,17 +381,20 @@ async def test_workspace_dispatcher_recovers_released_model_resource_wait(
         control=control,
     )
 
-    original_mark = resource_waits.mark_dispatched
+    original_dispatch = resource_waits.dispatch_ready
 
-    async def fail_after_enqueue(*_args, **_kwargs):
+    async def fail_after_enqueue(wait_id, dispatch):
+        current = await resource_waits.get(wait_id)
+        assert current is not None
+        await dispatch(current)
         raise RuntimeError("simulated resource wait crash after enqueue")
 
-    resource_waits.mark_dispatched = fail_after_enqueue
+    resource_waits.dispatch_ready = fail_after_enqueue
     # The second drain must obtain the same idempotent Submission.
     # pylint: disable=protected-access
     with pytest.raises(RuntimeError, match="simulated resource wait crash"):
         await dispatcher._dispatch_ready_resource_waits()
-    resource_waits.mark_dispatched = original_mark
+    resource_waits.dispatch_ready = original_dispatch
     await dispatcher._dispatch_ready_resource_waits()
     # pylint: enable=protected-access
 
@@ -414,4 +419,93 @@ async def test_workspace_dispatcher_recovers_released_model_resource_wait(
     await asyncio.sleep(0.05)
     assert len(observed) == 1
     await dispatcher.stop()
+    await control.close()
+
+
+@pytest.mark.asyncio
+async def test_model_recovery_honors_stop_during_enqueue_race(
+    tmp_path: Path,
+) -> None:
+    manager = ChatManager(
+        repo=JsonChatRepository(tmp_path / "chats.json"),
+    )
+    chat = await manager.create_chat(
+        ChatSpec(
+            id="chat-1",
+            session_id="console:chat-1",
+            user_id="local-user",
+            channel="console",
+        ),
+    )
+    control = InvocationControlService(
+        store=SQLiteInvocationControl(tmp_path / "control.sqlite3"),
+    )
+    resource_waits = ModelResourceWaitService(
+        tmp_path / "resource-waits.sqlite3",
+        agent_id="default",
+    )
+    attempt = ModelCallAttempt(
+        attempt_id=uuid4(),
+        route_decision_id=uuid4(),
+        invocation_id=uuid4(),
+        correlation_id=uuid4(),
+        conversation_id=chat.id,
+        registry_generation=1,
+        context_manifest_id=uuid4(),
+        model_call_index=1,
+        attempt_index=1,
+        provider_id="provider-a",
+        model_id="model-a",
+    )
+    wait = await resource_waits.defer(
+        attempt,
+        ModelCallResult(
+            attempt_id=attempt.attempt_id,
+            invocation_id=attempt.invocation_id,
+            conversation_id=chat.id,
+            status=ModelCallStatus.FAILED,
+            failure_class=ModelFailureClass.QUOTA_EXHAUSTED,
+            recovery_disposition=ModelRecoveryDisposition.WAIT_RESOURCE,
+        ),
+    )
+    assert wait is not None
+    await resource_waits.release(wait.wait_id)
+    workspace = SimpleNamespace(
+        agent_id="default",
+        chat_manager=manager,
+        model_resource_wait_service=resource_waits,
+    )
+    dispatcher = WorkspaceChatSubmissionDispatcher(
+        workspace=workspace,
+        control=control,
+    )
+    original_scan = control.scan_for_conversation
+
+    async def stop_after_scan(**kwargs):
+        records = await original_scan(**kwargs)
+        await control.stop_and_clear(
+            agent_id="default",
+            conversation_id=chat.id,
+            idempotency_key="stop-during-recovery-enqueue",
+            expected_revision=0,
+        )
+        return records
+
+    control.scan_for_conversation = stop_after_scan
+
+    # pylint: disable=protected-access
+    with pytest.raises(QueueRevisionConflictError):
+        await dispatcher._dispatch_ready_resource_waits()
+    control.scan_for_conversation = original_scan
+    await dispatcher._dispatch_ready_resource_waits()
+    # pylint: enable=protected-access
+
+    cancelled = await resource_waits.get(wait.wait_id)
+    queue = await control.read_queue(
+        agent_id="default",
+        conversation_id=chat.id,
+    )
+    assert cancelled is not None
+    assert cancelled.status is ResourceWaitStatus.CANCELLED
+    assert queue.submissions == ()
     await control.close()
