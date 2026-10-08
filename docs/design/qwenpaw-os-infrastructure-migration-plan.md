@@ -512,6 +512,11 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     上限固定到每个 ActionRequest；ActionResult 的裁决持久记录下一 attempt、预算和
     `retry_after_seconds`。后续 attempt 继承原策略，预算耗尽转为明确 forbidden，
     延迟未到抛出可调度的 typed error。Activity 只公开上述内容安全调度事实。
+  - [x] Lite 在发布 retryable ActionResult 前保存 `0600` 私有执行输入 checkpoint；
+    公开 Action 与 Activity 只携带 checkpoint ID、参数安全摘要和因果身份，不暴露
+    原始参数。相同 Action/attempt 重放幂等，内容冲突失败关闭；写入失败会把裁决降级
+    为 `retry_input_unavailable`，不会留下一个无法执行却声称可重试的公开结果。系统
+    Tool、插件 Tool、Driver 与 Harness Recorder 共用该 Store Port 和 Lite Adapter。
   - [ ] 在上述单一身份上接入自动 retry dispatcher：必须同时具备 attempt budget、
     可取消延迟、Stop/Interrupt fencing、无流式输出边界，以及重启后可判定的私有执行
     输入；不能仅凭 `retryable=true` 重新调用工具。

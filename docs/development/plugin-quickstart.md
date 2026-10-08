@@ -222,6 +222,9 @@ executor enforcement can duplicate external writes and is a contract defect.
 The Host pins a bounded retry policy to the first Action and carries it across
 attempts. A retry decision includes the next attempt and durable backoff, but
 it is not proof that a dispatcher has executed the retry.
+Lite stores exact retry input in an owner-only Host checkpoint only after
+admission. Plugins receive the Action execution context, never the checkpoint
+store or another provider's raw arguments.
 
 The process-wide governance registry is used for discovery, conflict checks,
 and deferred unload cleanup. Each guarded invocation tool also captures its

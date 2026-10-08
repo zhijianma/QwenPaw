@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -26,6 +27,7 @@ from ..kernel import (
     ActionResult,
     ActionRetryDecision,
     ActionRetryDisposition,
+    ActionRetryInputStore,
     ActionRetryPolicy,
     ActionRetryReason,
     ActionStore,
@@ -57,6 +59,8 @@ from .tool_artifacts import (
     TOOL_ARTIFACT_ERRORS_KEY,
     TOOL_ARTIFACT_LINKS_KEY,
 )
+
+logger = logging.getLogger(__name__)
 
 ACTION_REQUEST_CONTEXT_KEY = "qwenpaw_action_request"
 ACTION_REQUEST_STATE_KEY = "qwenpaw_action_request_state"
@@ -665,12 +669,14 @@ class RuntimeActionRecorder:
         *,
         tool_owners: dict[str, str] | None = None,
         retry_policy: ActionRetryPolicy | None = None,
+        retry_input_store: ActionRetryInputStore | None = None,
         clock: Callable[[], datetime] = utc_now,
     ) -> None:
         self._scope = scope
         self._store = store
         self._tool_owners = dict(tool_owners or {})
         self._retry_policy = retry_policy or ActionRetryPolicy()
+        self._retry_input_store = retry_input_store
         self._clock = clock
 
     def bind_tool_owners(self, tool_owners: dict[str, str] | None) -> None:
@@ -1130,6 +1136,38 @@ class RuntimeActionRecorder:
                 continue
         return tuple(artifacts), tuple(evidence)
 
+    async def _bind_retry_input(
+        self,
+        request: ActionRequest,
+        decision: ActionRetryDecision,
+    ) -> ActionRetryDecision:
+        """Publish a retry decision only after private input is durable."""
+        if (
+            decision.disposition
+            is not ActionRetryDisposition.RETRY_FROM_NEW_ACTION
+            or self._retry_input_store is None
+        ):
+            return decision
+        try:
+            checkpoint = await self._retry_input_store.save(
+                request,
+                decision,
+            )
+        except Exception:
+            logger.exception(
+                "Action retry input could not be persisted for %s",
+                request.action_id,
+            )
+            return ActionRetryDecision(
+                disposition=ActionRetryDisposition.FORBIDDEN,
+                reason=ActionRetryReason.RETRY_INPUT_UNAVAILABLE,
+                provider_retryable=decision.provider_retryable,
+                max_attempts=decision.max_attempts,
+            )
+        return decision.model_copy(
+            update={"input_checkpoint_id": checkpoint.checkpoint_id},
+        )
+
     async def complete(
         self,
         response: ToolResponse,
@@ -1158,6 +1196,10 @@ class RuntimeActionRecorder:
                 )
                 is True
             ),
+        )
+        retry_decision = await self._bind_retry_input(
+            request,
+            retry_decision,
         )
         response.metadata[ACTION_RETRY_DECISION_METADATA_KEY] = (
             retry_decision.model_dump(mode="json")
@@ -1271,6 +1313,10 @@ class RuntimeActionRecorder:
             status=status,
             side_effect_status=side_effect_status,
             provider_retryable=retryable,
+        )
+        retry_decision = await self._bind_retry_input(
+            request,
+            retry_decision,
         )
         result = ActionResult(
             action_id=request.action_id,

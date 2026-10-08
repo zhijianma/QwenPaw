@@ -164,6 +164,7 @@ class ActionRetryReason(str, Enum):
     EFFECTFUL_RETRY_UNSUPPORTED = "effectful_retry_unsupported"
     EXECUTOR_IDEMPOTENT_FAILURE = "executor_idempotent_failure"
     ATTEMPT_BUDGET_EXHAUSTED = "attempt_budget_exhausted"
+    RETRY_INPUT_UNAVAILABLE = "retry_input_unavailable"
     TRANSIENT_FAILURE = "transient_failure"
 
 
@@ -611,6 +612,7 @@ class ActionRetryDecision(KernelModel):
     max_attempts: int = Field(default=2, ge=1, le=10)
     next_attempt: int | None = Field(default=None, ge=2)
     retry_after_seconds: float | None = Field(default=None, ge=0)
+    input_checkpoint_id: UUID | None = None
 
     @model_validator(mode="after")
     def validate_schedule(self) -> Self:
@@ -621,6 +623,8 @@ class ActionRetryDecision(KernelModel):
         )
         if not admitted and self.next_attempt is not None:
             raise ValueError("non-retry decision cannot schedule an attempt")
+        if not admitted and self.input_checkpoint_id is not None:
+            raise ValueError("non-retry decision cannot bind retry input")
         if self.retry_after_seconds is not None and (
             self.next_attempt is None
         ):
@@ -631,6 +635,30 @@ class ActionRetryDecision(KernelModel):
         ):
             raise ValueError("scheduled attempt exceeds retry budget")
         return self
+
+
+class ActionRetryInputCheckpoint(KernelModel):
+    """Content-safe reference to private input for one admitted retry."""
+
+    checkpoint_id: UUID
+    action_id: UUID
+    retry_root_action_id: UUID
+    invocation_id: UUID
+    conversation_id: NonEmptyStr | None = None
+    correlation_id: UUID
+    registry_generation: int = Field(ge=1)
+    capability_id: NamespacedId
+    kind: ActionKind
+    action_name: NonEmptyStr
+    arguments_hash: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True,
+            pattern=r"^sha256:[0-9a-f]{64}$",
+        ),
+    ]
+    next_attempt: int = Field(ge=2)
+    created_at: AwareDatetime = Field(default_factory=utc_now)
 
 
 class ActionResult(KernelModel):

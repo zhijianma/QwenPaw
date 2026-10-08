@@ -872,6 +872,7 @@ async def test_action_uses_the_same_observation_contract(tmp_path) -> None:
     assert observations[0].facts["retry_max_attempts"] == 2
     assert observations[0].facts["retry_next_attempt"] is None
     assert observations[0].facts["retry_after_seconds"] is None
+    assert observations[0].facts["retry_input_checkpoint_id"] is None
     intent = next(
         item
         for item in observations

@@ -543,6 +543,12 @@ def _action_observations(
                 if result.retry_decision is not None
                 else None
             ),
+            "retry_input_checkpoint_id": (
+                str(result.retry_decision.input_checkpoint_id)
+                if result.retry_decision is not None
+                and result.retry_decision.input_checkpoint_id is not None
+                else None
+            ),
             "side_effect_status": (
                 result.side_effect_status.value
                 if result.side_effect_status is not None

@@ -28,6 +28,8 @@ from .models import (
     ActionRecord,
     ActionRequest,
     ActionResult,
+    ActionRetryDecision,
+    ActionRetryInputCheckpoint,
     ApprovalDecision,
     ApprovalRequest,
     ApprovalStatus,
@@ -1657,6 +1659,24 @@ class ActionStore(Protocol):
         limit: int = 100,
     ) -> Sequence[ActionRecord]:
         """Return newest action records for one ChatSpec identity."""
+
+
+@runtime_checkable
+class ActionRetryInputStore(Protocol):
+    """Private raw input paired with a content-safe retry checkpoint."""
+
+    async def save(
+        self,
+        request: ActionRequest,
+        decision: ActionRetryDecision,
+    ) -> ActionRetryInputCheckpoint:
+        """Persist exact input before publishing a retryable result."""
+
+    async def load(
+        self,
+        checkpoint_id: UUID,
+    ) -> tuple[ActionRetryInputCheckpoint, JsonObject]:
+        """Load exact input for one verified retry dispatcher."""
 
 
 @runtime_checkable

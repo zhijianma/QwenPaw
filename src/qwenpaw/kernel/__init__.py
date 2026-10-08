@@ -24,6 +24,7 @@ from .models import (
     ActionResult,
     ActionRetryDecision,
     ActionRetryDisposition,
+    ActionRetryInputCheckpoint,
     ActionRetryPolicy,
     ActionRetryReason,
     ActionStatus,
@@ -357,6 +358,7 @@ from .releases import (
     CapabilityReleaseTag,
 )
 from .ports import (
+    ActionRetryInputStore,
     ActionStore,
     AgentFactory,
     CapabilityLease,
@@ -446,9 +448,11 @@ __all__ = [
     "ActionResult",
     "ActionRetryDecision",
     "ActionRetryDisposition",
+    "ActionRetryInputCheckpoint",
     "ActionRetryPolicy",
     "ActionRetryReason",
     "ActionStatus",
+    "ActionRetryInputStore",
     "ActionStore",
     "ActorRef",
     "ActorType",
