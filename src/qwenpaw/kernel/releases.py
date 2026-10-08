@@ -113,6 +113,210 @@ class CapabilityPromotionCheck(KernelModel):
     outcome: CapabilityCheckOutcome
     evidence_ids: tuple[UUID, ...] = ()
 
+    @model_validator(mode="after")
+    def validate_evidence_ids(self) -> Self:
+        """Reject ambiguous duplicate evidence references."""
+        if len(self.evidence_ids) != len(set(self.evidence_ids)):
+            raise ValueError("promotion check evidence IDs must be unique")
+        return self
+
+
+class CapabilityPromotionEvidence(KernelModel):
+    """Content-safe proof produced for one candidate check."""
+
+    schema_id: Literal["qwenpaw.capability-promotion-evidence.v1"] = Field(
+        default="qwenpaw.capability-promotion-evidence.v1",
+        alias="schema",
+    )
+    evidence_id: UUID
+    candidate_id: UUID
+    candidate_hash: Sha256Digest
+    check_id: NamespacedId
+    producer_id: NamespacedId
+    outcome: CapabilityCheckOutcome
+    capability_ids: tuple[NamespacedId, ...] = ()
+    evidence_hash: Sha256Digest
+    created_at: AwareDatetime = Field(default_factory=utc_now)
+
+    @staticmethod
+    def calculate_identity(
+        *,
+        candidate_id: UUID,
+        candidate_hash: str,
+        check_id: str,
+        producer_id: str,
+        outcome: CapabilityCheckOutcome,
+        capability_ids: tuple[str, ...],
+    ) -> tuple[UUID, str, tuple[str, ...]]:
+        """Calculate canonical evidence identity without constructing it."""
+        ordered = tuple(sorted(capability_ids))
+        identity = {
+            "candidate_id": str(candidate_id),
+            "candidate_hash": candidate_hash,
+            "check_id": check_id,
+            "producer_id": producer_id,
+            "outcome": outcome.value,
+            "capability_ids": ordered,
+        }
+        encoded = json.dumps(
+            identity,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        digest = hashlib.sha256(encoded).hexdigest()
+        evidence_hash = f"sha256:{digest}"
+        return (
+            uuid5(candidate_id, evidence_hash),
+            evidence_hash,
+            ordered,
+        )
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        candidate: CapabilityPromotionCandidate,
+        check_id: str,
+        producer_id: str,
+        outcome: CapabilityCheckOutcome,
+        capability_ids: tuple[str, ...],
+    ) -> Self:
+        """Create deterministic evidence identity without result payloads."""
+        evidence_id, evidence_hash, ordered = cls.calculate_identity(
+            candidate_id=candidate.candidate_id,
+            candidate_hash=candidate.candidate_hash,
+            check_id=check_id,
+            producer_id=producer_id,
+            outcome=outcome,
+            capability_ids=capability_ids,
+        )
+        return cls(
+            evidence_id=evidence_id,
+            candidate_id=candidate.candidate_id,
+            candidate_hash=candidate.candidate_hash,
+            check_id=check_id,
+            producer_id=producer_id,
+            outcome=outcome,
+            capability_ids=ordered,
+            evidence_hash=evidence_hash,
+        )
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> Self:
+        """Bind evidence identity and hash to content-safe facts."""
+        evidence_id, evidence_hash, ordered = self.calculate_identity(
+            candidate_id=self.candidate_id,
+            candidate_hash=self.candidate_hash,
+            check_id=self.check_id,
+            producer_id=self.producer_id,
+            outcome=self.outcome,
+            capability_ids=self.capability_ids,
+        )
+        if self.capability_ids != ordered:
+            raise ValueError("promotion evidence capabilities are unstable")
+        if self.evidence_id != evidence_id:
+            raise ValueError("capability promotion evidence ID is invalid")
+        if self.evidence_hash != evidence_hash:
+            raise ValueError("capability promotion evidence hash is invalid")
+        if len(self.capability_ids) != len(set(self.capability_ids)):
+            raise ValueError("promotion evidence capabilities must be unique")
+        return self
+
+
+class CapabilityPromotionEvidenceBundle(KernelModel):
+    """Immutable evidence set supporting one candidate evaluation."""
+
+    schema_id: Literal[
+        "qwenpaw.capability-promotion-evidence-bundle.v1"
+    ] = Field(
+        default="qwenpaw.capability-promotion-evidence-bundle.v1",
+        alias="schema",
+    )
+    bundle_id: UUID
+    candidate_id: UUID
+    candidate_hash: Sha256Digest
+    evaluator_id: NamespacedId
+    evidence: tuple[CapabilityPromotionEvidence, ...] = Field(min_length=1)
+    bundle_hash: Sha256Digest
+    created_at: AwareDatetime = Field(default_factory=utc_now)
+
+    @staticmethod
+    def calculate_identity(
+        *,
+        candidate_id: UUID,
+        candidate_hash: str,
+        evaluator_id: str,
+        evidence: tuple[CapabilityPromotionEvidence, ...],
+    ) -> tuple[UUID, str]:
+        """Calculate canonical bundle identity without constructing it."""
+        identity = {
+            "candidate_id": str(candidate_id),
+            "candidate_hash": candidate_hash,
+            "evaluator_id": evaluator_id,
+            "evidence": [
+                item.model_dump(mode="json", exclude={"created_at"})
+                for item in evidence
+            ],
+        }
+        encoded = json.dumps(
+            identity,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        digest = hashlib.sha256(encoded).hexdigest()
+        bundle_hash = f"sha256:{digest}"
+        return uuid5(candidate_id, bundle_hash), bundle_hash
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        candidate: CapabilityPromotionCandidate,
+        evaluator_id: str,
+        evidence: tuple[CapabilityPromotionEvidence, ...],
+    ) -> Self:
+        """Create one deterministic bundle over immutable evidence."""
+        bundle_id, bundle_hash = cls.calculate_identity(
+            candidate_id=candidate.candidate_id,
+            candidate_hash=candidate.candidate_hash,
+            evaluator_id=evaluator_id,
+            evidence=evidence,
+        )
+        return cls(
+            bundle_id=bundle_id,
+            candidate_id=candidate.candidate_id,
+            candidate_hash=candidate.candidate_hash,
+            evaluator_id=evaluator_id,
+            evidence=evidence,
+            bundle_hash=bundle_hash,
+        )
+
+    @model_validator(mode="after")
+    def validate_bundle(self) -> Self:
+        """Reject cross-candidate, duplicate, or tampered evidence."""
+        evidence_ids = tuple(item.evidence_id for item in self.evidence)
+        if len(evidence_ids) != len(set(evidence_ids)):
+            raise ValueError("promotion bundle evidence IDs must be unique")
+        if any(
+            item.candidate_id != self.candidate_id
+            or item.candidate_hash != self.candidate_hash
+            for item in self.evidence
+        ):
+            raise ValueError("promotion bundle evidence candidate mismatch")
+        bundle_id, bundle_hash = self.calculate_identity(
+            candidate_id=self.candidate_id,
+            candidate_hash=self.candidate_hash,
+            evaluator_id=self.evaluator_id,
+            evidence=self.evidence,
+        )
+        if self.bundle_id != bundle_id:
+            raise ValueError("capability evidence bundle ID is invalid")
+        if self.bundle_hash != bundle_hash:
+            raise ValueError("capability evidence bundle hash is invalid")
+        return self
+
 
 class CapabilityPromotionEvaluation(KernelModel):
     """Host-owned decision over one immutable candidate."""
@@ -125,6 +329,7 @@ class CapabilityPromotionEvaluation(KernelModel):
     candidate_id: UUID
     candidate_hash: Sha256Digest
     evaluator_id: NamespacedId
+    evidence_bundle_id: UUID | None = None
     decision: CapabilityEvaluationDecision
     checks: tuple[CapabilityPromotionCheck, ...] = Field(min_length=1)
     evaluated_at: AwareDatetime = Field(default_factory=utc_now)
@@ -144,6 +349,47 @@ class CapabilityPromotionEvaluation(KernelModel):
                 raise ValueError("denied promotion requires a failed check")
         elif CapabilityCheckOutcome.FAILED in outcomes:
             raise ValueError("indeterminate promotion cannot contain failures")
+        return self
+
+
+class CapabilityPromotionAssessment(KernelModel):
+    """Evaluation paired with the exact evidence that supports it."""
+
+    evaluation: CapabilityPromotionEvaluation
+    evidence_bundle: CapabilityPromotionEvidenceBundle
+
+    @model_validator(mode="after")
+    def validate_assessment(self) -> Self:
+        """Require complete, candidate-bound evidence for every check."""
+        evaluation = self.evaluation
+        bundle = self.evidence_bundle
+        if evaluation.evidence_bundle_id != bundle.bundle_id:
+            raise ValueError("promotion assessment bundle ID mismatch")
+        if evaluation.evaluator_id != bundle.evaluator_id:
+            raise ValueError("promotion assessment evaluator mismatch")
+        if (
+            evaluation.candidate_id != bundle.candidate_id
+            or evaluation.candidate_hash != bundle.candidate_hash
+        ):
+            raise ValueError("promotion assessment candidate mismatch")
+        evidence_by_id = {
+            item.evidence_id: item for item in bundle.evidence
+        }
+        referenced: set[UUID] = set()
+        for check in evaluation.checks:
+            if not check.evidence_ids:
+                raise ValueError("promotion checks require evidence")
+            for evidence_id in check.evidence_ids:
+                evidence = evidence_by_id.get(evidence_id)
+                if evidence is None:
+                    raise ValueError("promotion check evidence is missing")
+                if evidence.check_id != check.check_id:
+                    raise ValueError("promotion check evidence mismatch")
+                if evidence.outcome is not check.outcome:
+                    raise ValueError("promotion evidence outcome mismatch")
+                referenced.add(evidence_id)
+        if referenced != set(evidence_by_id):
+            raise ValueError("promotion bundle contains unreferenced evidence")
         return self
 
 
@@ -221,13 +467,20 @@ class CapabilityPromotionEvent(KernelModel):
         )
 
     @staticmethod
-    def calculate_event_hash(**values: object) -> str:
+    def calculate_event_hash(
+        *,
+        include_nested_none: bool = False,
+        **values: object,
+    ) -> str:
         """Hash every event field except its stored integrity digest."""
         if values.get("registry_epoch_id") is None:
             values.pop("registry_epoch_id", None)
         payload = {
             key: (
-                value.model_dump(mode="json")
+                value.model_dump(
+                    mode="json",
+                    exclude_none=not include_nested_none,
+                )
                 if isinstance(value, KernelModel)
                 else value.value
                 if isinstance(value, Enum)
@@ -294,7 +547,31 @@ class CapabilityPromotionEvent(KernelModel):
             occurred_at=self.occurred_at,
         )
         if self.event_hash != expected_hash:
-            raise ValueError("capability promotion event hash is invalid")
+            legacy_hash = None
+            if (
+                self.evaluation is not None
+                and self.evaluation.evidence_bundle_id is None
+            ):
+                legacy_hash = self.calculate_event_hash(
+                    event_id=self.event_id,
+                    operation_id=self.operation_id,
+                    registry_epoch_id=self.registry_epoch_id,
+                    action=self.action,
+                    phase=self.phase,
+                    candidate=self.candidate,
+                    evaluation=self.evaluation,
+                    from_generation=self.from_generation,
+                    target_generation=self.target_generation,
+                    previous_release_hash=self.previous_release_hash,
+                    target_release=self.target_release,
+                    reason_code=self.reason_code,
+                    occurred_at=self.occurred_at,
+                    include_nested_none=True,
+                )
+            if self.event_hash != legacy_hash:
+                raise ValueError(
+                    "capability promotion event hash is invalid",
+                )
         return self
 
 
@@ -457,8 +734,11 @@ __all__ = [
     "CapabilityCheckOutcome",
     "CapabilityEvaluationDecision",
     "CapabilityPromotionAction",
+    "CapabilityPromotionAssessment",
     "CapabilityPromotionCandidate",
     "CapabilityPromotionCheck",
+    "CapabilityPromotionEvidence",
+    "CapabilityPromotionEvidenceBundle",
     "CapabilityPromotionEvaluation",
     "CapabilityPromotionEvent",
     "CapabilityPromotionPhase",

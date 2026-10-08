@@ -3,15 +3,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Sequence
+from uuid import UUID
 
 from ..kernel import (
     CapabilityCheckOutcome,
     CapabilityEvaluationDecision,
+    CapabilityPromotionAssessment,
     CapabilityPromotionCandidate,
     CapabilityPromotionCheck,
+    CapabilityPromotionEvidence,
+    CapabilityPromotionEvidenceBundle,
     CapabilityPromotionEvaluation,
     CapabilityPromotionEvent,
     CapabilityReleaseTag,
@@ -28,6 +33,55 @@ class CapabilityPromotionConflictError(RuntimeError):
     """Raised when one operation phase has different durable evidence."""
 
 
+class CapabilityPromotionEvidenceConflictError(RuntimeError):
+    """Raised when one bundle identity has different evidence."""
+
+
+def build_capability_promotion_assessment(
+    candidate: CapabilityPromotionCandidate,
+    release: CapabilityReleaseTag | None,
+    *,
+    evaluator_id: str,
+    decision: CapabilityEvaluationDecision,
+    checks: tuple[tuple[str, CapabilityCheckOutcome], ...],
+) -> CapabilityPromotionAssessment:
+    capability_ids = release.capability_ids if release is not None else ()
+    evidence = tuple(
+        CapabilityPromotionEvidence.create(
+            candidate=candidate,
+            check_id=check_id,
+            producer_id=evaluator_id,
+            outcome=outcome,
+            capability_ids=capability_ids,
+        )
+        for check_id, outcome in checks
+    )
+    bundle = CapabilityPromotionEvidenceBundle.create(
+        candidate=candidate,
+        evaluator_id=evaluator_id,
+        evidence=evidence,
+    )
+    evaluation = CapabilityPromotionEvaluation(
+        candidate_id=candidate.candidate_id,
+        candidate_hash=candidate.candidate_hash,
+        evaluator_id=evaluator_id,
+        evidence_bundle_id=bundle.bundle_id,
+        decision=decision,
+        checks=tuple(
+            CapabilityPromotionCheck(
+                check_id=item.check_id,
+                outcome=item.outcome,
+                evidence_ids=(item.evidence_id,),
+            )
+            for item in evidence
+        ),
+    )
+    return CapabilityPromotionAssessment(
+        evaluation=evaluation,
+        evidence_bundle=bundle,
+    )
+
+
 class ContractCapabilityPromotionGate:
     """Lite gate admitting candidates that passed Registry staging."""
 
@@ -35,41 +89,170 @@ class ContractCapabilityPromotionGate:
         self,
         candidate: CapabilityPromotionCandidate,
         release: CapabilityReleaseTag,
-    ) -> CapabilityPromotionEvaluation:
+    ) -> CapabilityPromotionAssessment:
         """Record the shared schema, implementation, and health gate."""
-        del release
-        return CapabilityPromotionEvaluation(
-            candidate_id=candidate.candidate_id,
-            candidate_hash=candidate.candidate_hash,
+        return build_capability_promotion_assessment(
+            candidate,
+            release,
             evaluator_id="qwenpaw.contract-gate",
             decision=CapabilityEvaluationDecision.ALLOW,
             checks=(
-                CapabilityPromotionCheck(
-                    check_id="contract.activation",
-                    outcome=CapabilityCheckOutcome.PASSED,
-                ),
+                ("contract.schema", CapabilityCheckOutcome.PASSED),
+                ("contract.implementation", CapabilityCheckOutcome.PASSED),
+                ("contract.health", CapabilityCheckOutcome.PASSED),
             ),
         )
 
 
-def rejected_contract_evaluation(
+def rejected_contract_assessment(
     candidate: CapabilityPromotionCandidate,
     *,
     check_id: str,
-) -> CapabilityPromotionEvaluation:
+) -> CapabilityPromotionAssessment:
     """Create content-safe denial evidence for a staging failure."""
-    return CapabilityPromotionEvaluation(
-        candidate_id=candidate.candidate_id,
-        candidate_hash=candidate.candidate_hash,
+    return build_capability_promotion_assessment(
+        candidate,
+        None,
         evaluator_id="qwenpaw.contract-gate",
         decision=CapabilityEvaluationDecision.DENY,
-        checks=(
-            CapabilityPromotionCheck(
-                check_id=check_id,
-                outcome=CapabilityCheckOutcome.FAILED,
-            ),
-        ),
+        checks=((check_id, CapabilityCheckOutcome.FAILED),),
     )
+
+
+def _bundle_payload(
+    bundle: CapabilityPromotionEvidenceBundle,
+) -> dict:
+    payload = bundle.model_dump(mode="json")
+    payload.pop("created_at", None)
+    for evidence in payload["evidence"]:
+        evidence.pop("created_at", None)
+    return payload
+
+
+class InMemoryCapabilityPromotionEvidenceStore:
+    """Process-local evidence store for isolated registries and tests."""
+
+    def __init__(self) -> None:
+        self._bundles: dict[UUID, CapabilityPromotionEvidenceBundle] = {}
+        self._lock = asyncio.Lock()
+
+    async def append(
+        self,
+        bundle: CapabilityPromotionEvidenceBundle,
+    ) -> None:
+        """Append one immutable bundle idempotently."""
+        async with self._lock:
+            existing = self._bundles.get(bundle.bundle_id)
+            if existing is not None and _bundle_payload(
+                existing,
+            ) != _bundle_payload(bundle):
+                raise CapabilityPromotionEvidenceConflictError(
+                    "promotion bundle already has different evidence",
+                )
+            self._bundles[bundle.bundle_id] = bundle
+
+    async def get(
+        self,
+        bundle_id: UUID,
+    ) -> CapabilityPromotionEvidenceBundle | None:
+        """Return one bundle by identity."""
+        async with self._lock:
+            return self._bundles.get(bundle_id)
+
+    async def list_for_candidate(
+        self,
+        candidate_id: UUID,
+        *,
+        limit: int = 100,
+    ) -> Sequence[CapabilityPromotionEvidenceBundle]:
+        """Return newest bundles for one candidate."""
+        if limit < 1 or limit > 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        async with self._lock:
+            bundles = [
+                item
+                for item in self._bundles.values()
+                if item.candidate_id == candidate_id
+            ]
+        bundles.sort(key=lambda item: item.created_at, reverse=True)
+        return tuple(bundles[:limit])
+
+
+class FilesystemCapabilityPromotionEvidenceStore:
+    """Owner-only append-once Lite promotion evidence store."""
+
+    def __init__(self, state_dir: Path) -> None:
+        self._root = (
+            Path(state_dir) / "lite" / "capability-promotion-evidence"
+        )
+
+    def _path(self, bundle_id: UUID) -> Path:
+        return self._root / f"{bundle_id}.json"
+
+    async def append(
+        self,
+        bundle: CapabilityPromotionEvidenceBundle,
+    ) -> None:
+        """Persist one immutable bundle exactly once."""
+        path = self._path(bundle.bundle_id)
+        async with get_path_lock(path):
+            try:
+                payload = await read_json_async(path)
+            except FileNotFoundError:
+                payload = None
+            if payload is not None:
+                existing = CapabilityPromotionEvidenceBundle.model_validate(
+                    payload,
+                )
+                if _bundle_payload(existing) != _bundle_payload(bundle):
+                    raise CapabilityPromotionEvidenceConflictError(
+                        "promotion bundle already has different evidence",
+                    )
+                return
+            await write_json_atomic_async(
+                path,
+                bundle.model_dump(mode="json"),
+                sort_keys=True,
+            )
+
+    async def get(
+        self,
+        bundle_id: UUID,
+    ) -> CapabilityPromotionEvidenceBundle | None:
+        """Return one bundle by identity."""
+        try:
+            payload = await read_json_async(self._path(bundle_id))
+        except FileNotFoundError:
+            return None
+        return CapabilityPromotionEvidenceBundle.model_validate(payload)
+
+    def _list_sync(
+        self,
+        candidate_id: UUID,
+        limit: int,
+    ) -> list[CapabilityPromotionEvidenceBundle]:
+        bundles = [
+            CapabilityPromotionEvidenceBundle.model_validate(
+                json.loads(path.read_text(encoding="utf-8")),
+            )
+            for path in self._root.glob("*.json")
+        ]
+        bundles = [
+            item for item in bundles if item.candidate_id == candidate_id
+        ]
+        bundles.sort(key=lambda item: item.created_at, reverse=True)
+        return bundles[:limit]
+
+    async def list_for_candidate(
+        self,
+        candidate_id: UUID,
+        *,
+        limit: int = 100,
+    ) -> Sequence[CapabilityPromotionEvidenceBundle]:
+        """Return newest bundles for one candidate."""
+        if limit < 1 or limit > 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        return await run_sync_io(self._list_sync, candidate_id, limit)
 
 
 class FilesystemCapabilityPromotionJournal:
@@ -148,7 +331,11 @@ class FilesystemCapabilityPromotionJournal:
 
 __all__ = [
     "CapabilityPromotionConflictError",
+    "CapabilityPromotionEvidenceConflictError",
     "ContractCapabilityPromotionGate",
+    "FilesystemCapabilityPromotionEvidenceStore",
     "FilesystemCapabilityPromotionJournal",
-    "rejected_contract_evaluation",
+    "InMemoryCapabilityPromotionEvidenceStore",
+    "build_capability_promotion_assessment",
+    "rejected_contract_assessment",
 ]

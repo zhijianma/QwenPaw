@@ -223,6 +223,7 @@ async def lifespan(  # pylint: disable=too-many-statements,too-many-branches
         from .app_services import AppServiceManager
         from .workspace_registry import WorkspaceRegistry
         from ..capabilities.promotions import (
+            FilesystemCapabilityPromotionEvidenceStore,
             FilesystemCapabilityPromotionJournal,
         )
 
@@ -234,6 +235,9 @@ async def lifespan(  # pylint: disable=too-many-statements,too-many-branches
             app_services=app_services,
             capability_promotion_journal=(
                 FilesystemCapabilityPromotionJournal(WORKING_DIR)
+            ),
+            capability_promotion_evidence_store=(
+                FilesystemCapabilityPromotionEvidenceStore(WORKING_DIR)
             ),
         )
         app.state.workspace_registry = workspace_registry

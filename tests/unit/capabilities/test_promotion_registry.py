@@ -13,6 +13,10 @@ from qwenpaw.capabilities import (
     ProviderDeactivationError,
     ReleaseRollbackError,
 )
+from qwenpaw.capabilities.promotions import (
+    FilesystemCapabilityPromotionEvidenceStore,
+    build_capability_promotion_assessment,
+)
 from qwenpaw.kernel import (
     CapabilityBundle,
     CapabilityCheckOutcome,
@@ -20,8 +24,6 @@ from qwenpaw.kernel import (
     CapabilityEvaluationDecision,
     CapabilityPromotionCandidate,
     CapabilityPromotionAction,
-    CapabilityPromotionCheck,
-    CapabilityPromotionEvaluation,
     CapabilityPromotionEvent,
     CapabilityPromotionPhase,
     CapabilityProviderKind,
@@ -71,22 +73,33 @@ class _RecordingJournal:
         return tuple(reversed(events[-limit:]))
 
 
+class _FailingEvidenceStore:
+    async def append(self, _bundle) -> None:
+        raise OSError("evidence store unavailable")
+
+    async def get(self, _bundle_id):
+        return None
+
+    async def list_for_candidate(self, _candidate_id, *, limit=100):
+        del limit
+        return ()
+
+
 class _DenyGate:
     async def evaluate(
         self,
         candidate: CapabilityPromotionCandidate,
         release: CapabilityReleaseTag,
-    ) -> CapabilityPromotionEvaluation:
-        del release
-        return CapabilityPromotionEvaluation(
-            candidate_id=candidate.candidate_id,
-            candidate_hash=candidate.candidate_hash,
+    ):
+        return build_capability_promotion_assessment(
+            candidate,
+            release,
             evaluator_id="tests.deny-gate",
             decision=CapabilityEvaluationDecision.DENY,
             checks=(
-                CapabilityPromotionCheck(
-                    check_id="scenario.external-write",
-                    outcome=CapabilityCheckOutcome.FAILED,
+                (
+                    "scenario.external-write",
+                    CapabilityCheckOutcome.FAILED,
                 ),
             ),
         )
@@ -127,6 +140,55 @@ async def test_successful_activation_records_prepared_and_committed() -> None:
     assert journal.events[1].target_release == registry.stable_release(
         "qwenpaw.system.test",
     )
+    evaluation = journal.events[1].evaluation
+    assert evaluation is not None
+    assert evaluation.evidence_bundle_id is not None
+    [bundle] = await registry.promotion_evidence(
+        evaluation.candidate_id,
+    )
+    assert bundle.bundle_id == evaluation.evidence_bundle_id
+    assert {item.check_id for item in bundle.evidence} == {
+        "contract.schema",
+        "contract.implementation",
+        "contract.health",
+    }
+
+
+@pytest.mark.asyncio
+async def test_missing_promotion_evidence_prevents_publication() -> None:
+    journal = _RecordingJournal()
+    registry = GenerationRegistry(
+        promotion_journal=journal,
+        promotion_evidence_store=_FailingEvidenceStore(),
+    )
+
+    with pytest.raises(ActivationError, match="promotion evidence failed"):
+        await registry.activate_bundle(_bundle(), _factory)
+
+    assert registry.generation == 1
+    assert registry.stable_release("qwenpaw.system.test") is None
+    assert not journal.events
+
+
+@pytest.mark.asyncio
+async def test_repeated_candidate_reuses_durable_evidence_bundle(
+    tmp_path,
+) -> None:
+    journal = _RecordingJournal()
+    evidence_store = FilesystemCapabilityPromotionEvidenceStore(tmp_path)
+    registry = GenerationRegistry(
+        promotion_journal=journal,
+        promotion_evidence_store=evidence_store,
+    )
+
+    first = await registry.activate_bundle(_bundle(), _factory)
+    second = await registry.activate_bundle(_bundle(), _factory)
+    candidate_id = journal.events[-1].candidate.candidate_id
+    bundles = await registry.promotion_evidence(candidate_id)
+
+    assert first.generation == 2
+    assert second.generation == 3
+    assert len(bundles) == 1
 
 
 @pytest.mark.asyncio

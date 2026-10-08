@@ -515,6 +515,28 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - 本切片 98 项 Registry、Promotion、Plugin lifecycle 与管理 API 相邻定点测试通过；
   AST、mypy、flake8、pylint 等文件级门禁通过，未执行全仓测试。
 
+### 2026-10-08 Promotion Evidence Bundle
+
+- Kernel 新增 `CapabilityPromotionEvidence`、Bundle、Assessment 与 Evidence Store
+  Port；Assessment 强制 Evaluation、evaluator、Candidate、check、outcome 和 evidence
+  reference 一致，未引用或跨 Candidate 的 Evidence 会在进入 Registry 前失败。
+- 默认 Contract Gate 分别记录 schema、implementation 和 health 证明。Registry 在
+  prepared WAL 前先持久化并回读 Bundle；Store 不可用时不发布 generation 或 stable
+  release。activate、rollback 与 deactivate 都走同一证据前置门禁。
+- Lite 使用 `0600` append-only Evidence Store；Bundle identity/hash 排除运行时时间，
+  同一 candidate 重试或重新安装可安全复用，不会因 `created_at` 漂移冲突。
+- `GET /api/plugins/capability-promotion-evidence?candidate_id=...` 提供内容安全回查。
+  真实 8004 服务返回 system tasks Candidate 的 1 个 Bundle、3 个 checks 和 13 个
+  capability identity；不含 implementation、配置或 Secret。
+- 模型演进兼容了无 `evidence_bundle_id` 的历史 WAL，以及短暂版本曾把 null 纳入 hash
+  的 6 条过渡 WAL；本地 86 条真实历史记录全部验证通过，Promotion API 从 500 恢复
+  为 200。
+- 当前 Bundle 仍只证明 contract/schema/health。按 Slot 风险执行真实 Scenario、
+  Evidence Artifact 与人工授权仍未完成，不能宣称完整安全发布门禁。
+- 本切片 106 项 Capability、Promotion、Plugin lifecycle、Workspace Registry 与管理
+  API 相邻定点测试通过；AST、mypy、flake8、pylint 等文件级门禁通过，未执行全仓
+  测试。
+
 ### 本阶段此前已执行的定点验证
 
 - 后端核心路径定点测试：70 项通过。

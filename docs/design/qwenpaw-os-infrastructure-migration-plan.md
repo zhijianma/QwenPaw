@@ -1049,8 +1049,12 @@ Cron 不形成独立审批或产物事实源。
   - [x] provider deactivate 已纳入同一 Promotion WAL：prepared 成功后才发布不含该
     provider 的新 generation，commit 失败恢复 snapshot、stable tag 与 rollback fence
     并记录 aborted；不存在的 provider 保持幂等且不生成虚假 Journal Event。
-  - [ ] 按 Slot 风险补齐真实 Scenario Runner、Evidence Bundle、人工授权策略与
-    卸载授权门禁；当前自动 Gate 仅结构化既有 schema/implementation/health 门禁。
+  - [x] Promotion Evidence Bundle 已冻结并接入真实发布：每个 check 回指同一
+    Candidate 的内容寻址证据；Lite Store 使用 `0600` append-only 文件。Registry 在
+    prepared WAL 前持久化并回读 Bundle，证据缺失、跨 Candidate、check/outcome 不匹配
+    或 Store 故障都失败关闭；只读 API 可按 candidate 回查，不暴露实现、配置或 Secret。
+  - [ ] 按 Slot 风险补齐真实 Scenario Runner、人工授权策略与卸载授权门禁；当前
+    Evidence Bundle 证明 schema/implementation/health，但不冒充高风险行为场景通过。
     关键词发现索引与 Workstation/Hub Release Registry 仍待实现。
 
 - [x] 每个公开扩展模块均有 system/plugin contract tests；system-only 模块具有

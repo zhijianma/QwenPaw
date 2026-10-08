@@ -17,7 +17,8 @@ from .events import (
 )
 from .releases import (
     CapabilityPromotionCandidate,
-    CapabilityPromotionEvaluation,
+    CapabilityPromotionAssessment,
+    CapabilityPromotionEvidenceBundle,
     CapabilityPromotionEvent,
     CapabilityReleaseTag,
 )
@@ -1396,6 +1397,31 @@ class CapabilityPromotionJournal(Protocol):
 
 
 @runtime_checkable
+class CapabilityPromotionEvidenceStore(Protocol):
+    """Immutable evidence bundles supporting promotion evaluations."""
+
+    async def append(
+        self,
+        bundle: CapabilityPromotionEvidenceBundle,
+    ) -> None:
+        """Persist one content-safe bundle exactly once."""
+
+    async def get(
+        self,
+        bundle_id: UUID,
+    ) -> CapabilityPromotionEvidenceBundle | None:
+        """Return one bundle by immutable identity."""
+
+    async def list_for_candidate(
+        self,
+        candidate_id: UUID,
+        *,
+        limit: int = 100,
+    ) -> Sequence[CapabilityPromotionEvidenceBundle]:
+        """Return newest bundles for one candidate."""
+
+
+@runtime_checkable
 class CapabilityPromotionGate(Protocol):
     """Host policy boundary that decides candidate publication."""
 
@@ -1403,8 +1429,8 @@ class CapabilityPromotionGate(Protocol):
         self,
         candidate: CapabilityPromotionCandidate,
         release: CapabilityReleaseTag,
-    ) -> CapabilityPromotionEvaluation:
-        """Return a structured allow, deny, or indeterminate decision."""
+    ) -> CapabilityPromotionAssessment:
+        """Return a decision paired with complete supporting evidence."""
 
 
 @runtime_checkable

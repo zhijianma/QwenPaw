@@ -19,7 +19,10 @@ from typing import TYPE_CHECKING, Any
 from .multi_agent_manager import MultiAgentManager
 
 if TYPE_CHECKING:
-    from ..kernel import CapabilityPromotionJournal
+    from ..kernel import (
+        CapabilityPromotionEvidenceStore,
+        CapabilityPromotionJournal,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +38,9 @@ class WorkspaceRegistry(MultiAgentManager):
         capability_promotion_journal: (
             CapabilityPromotionJournal | None
         ) = None,
+        capability_promotion_evidence_store: (
+            CapabilityPromotionEvidenceStore | None
+        ) = None,
     ) -> None:
         super().__init__()
         from ..capabilities import GenerationRegistry
@@ -43,6 +49,9 @@ class WorkspaceRegistry(MultiAgentManager):
         self._bootstrap_kwargs = bootstrap_plugins_kwargs or {}
         self.capability_registry = GenerationRegistry(
             promotion_journal=capability_promotion_journal,
+            promotion_evidence_store=(
+                capability_promotion_evidence_store
+            ),
         )
 
     def _create_workspace(self, agent_id: str, workspace_dir: str) -> Any:

@@ -15,6 +15,7 @@ import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
+from uuid import UUID
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -26,6 +27,7 @@ from qwenpaw.app.routers.plugins import (
     _list_plugins_from_disk,
     _safe_extract_zip,
     install_plugin,
+    list_capability_promotion_evidence,
     list_capability_promotions,
     list_capability_releases,
     list_plugins,
@@ -34,6 +36,7 @@ from qwenpaw.app.routers.plugins import (
 from qwenpaw.app.routers.frontend_plugin import list_frontend_plugins
 from qwenpaw.capabilities import GenerationRegistry
 from qwenpaw.capabilities.promotions import (
+    FilesystemCapabilityPromotionEvidenceStore,
     FilesystemCapabilityPromotionJournal,
 )
 from qwenpaw.kernel.models import (
@@ -555,7 +558,11 @@ async def test_list_capability_releases_uses_os_registry_during_startup():
 @pytest.mark.asyncio
 async def test_list_capability_promotions_reads_durable_wal(tmp_path):
     journal = FilesystemCapabilityPromotionJournal(tmp_path)
-    registry = GenerationRegistry(promotion_journal=journal)
+    evidence_store = FilesystemCapabilityPromotionEvidenceStore(tmp_path)
+    registry = GenerationRegistry(
+        promotion_journal=journal,
+        promotion_evidence_store=evidence_store,
+    )
     provider_id = "provider.audit"
     await registry.activate_bundle(
         CapabilityBundle(
@@ -600,3 +607,16 @@ async def test_list_capability_promotions_reads_durable_wal(tmp_path):
         item["candidate"]["provider_id"] == provider_id
         for item in result["items"]
     )
+    candidate_id = result["items"][0]["candidate"]["candidate_id"]
+    evidence_result = await list_capability_promotion_evidence(
+        request,
+        candidate_id=UUID(candidate_id),
+        limit=10,
+    )
+    [bundle] = evidence_result["items"]
+    assert bundle["candidate_id"] == candidate_id
+    assert {item["check_id"] for item in bundle["evidence"]} == {
+        "contract.schema",
+        "contract.implementation",
+        "contract.health",
+    }

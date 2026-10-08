@@ -1142,6 +1142,16 @@ published together as a new registry generation. Existing runs retain their
 old generation; new runs see the update. A failed health check leaves the
 current generation unchanged.
 
+Publication also creates an immutable Promotion Evidence Bundle before the
+new generation becomes visible. The built-in Gate records separate schema,
+implementation, and health checks bound to the candidate hash and exact
+capability IDs. If that bundle cannot be persisted and read back, installation
+fails closed. Plugin code does not write these host-owned records. Use the
+read-only `/api/plugins/capability-promotions` and
+`/api/plugins/capability-promotion-evidence?candidate_id=<uuid>` endpoints to
+trace a release; neither endpoint exposes implementation objects, config
+values, or credentials.
+
 Use the same install command after changing the version to update the plugin.
 Replacement is transactional: the old capability bundle remains resolvable
 until the new bundle passes import, contract, identity, schema, and health
@@ -1154,6 +1164,11 @@ capabilities. Update does not execute permanent uninstall hooks.
 Run `qwenpaw plugin uninstall task-insights`. A running app removes hot
 contributions without a service restart. Runs already holding a generation
 lease finish against their pinned snapshot.
+
+Uninstall uses the same append-only promotion journal. QwenPaw commits the
+provider deactivation before dismantling plugin-owned host state; a journal or
+evidence failure leaves the loaded plugin intact instead of producing a torn
+half-unload.
 
 ## 6. Clean-room acceptance walkthrough
 

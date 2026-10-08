@@ -12,16 +12,20 @@ from pydantic import ValidationError
 
 from qwenpaw.capabilities.promotions import (
     CapabilityPromotionConflictError,
+    FilesystemCapabilityPromotionEvidenceStore,
     FilesystemCapabilityPromotionJournal,
+    build_capability_promotion_assessment,
 )
 from qwenpaw.kernel import (
     CapabilityCheckOutcome,
     CapabilityEvaluationDecision,
     CapabilityPromotionAction,
+    CapabilityPromotionAssessment,
     CapabilityPromotionCandidate,
     CapabilityPromotionCheck,
     CapabilityPromotionEvaluation,
     CapabilityPromotionEvent,
+    CapabilityPromotionEvidenceBundle,
     CapabilityPromotionPhase,
     CapabilityProviderKind,
     CapabilityReleaseTag,
@@ -90,6 +94,72 @@ def _event(
         target_release=release,
         reason_code=reason_code,
     )
+
+
+def _assessment() -> CapabilityPromotionAssessment:
+    candidate = _candidate()
+    release = CapabilityReleaseTag.create(
+        provider_id=candidate.provider_id,
+        provider_kind=candidate.provider_kind,
+        version=candidate.version,
+        promoted_generation=2,
+        descriptors=(),
+    )
+    return build_capability_promotion_assessment(
+        candidate,
+        release,
+        evaluator_id="qwenpaw.contract-gate",
+        decision=CapabilityEvaluationDecision.ALLOW,
+        checks=(("contract.schema", CapabilityCheckOutcome.PASSED),),
+    )
+
+
+@pytest.mark.asyncio
+async def test_evidence_store_is_append_once_queryable_and_owner_only(
+    tmp_path,
+) -> None:
+    store = FilesystemCapabilityPromotionEvidenceStore(tmp_path)
+    bundle = _assessment().evidence_bundle
+
+    await store.append(bundle)
+    await store.append(bundle)
+    persisted = await store.get(bundle.bundle_id)
+    listed = await store.list_for_candidate(bundle.candidate_id)
+    path = (
+        tmp_path
+        / "lite"
+        / "capability-promotion-evidence"
+        / f"{bundle.bundle_id}.json"
+    )
+
+    assert persisted == bundle
+    assert listed == [bundle]
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_assessment_rejects_tampered_or_cross_check_evidence() -> None:
+    assessment = _assessment()
+    payload = assessment.model_dump(mode="json")
+    payload["evidence_bundle"]["evidence"][0]["evidence_hash"] = (
+        f"sha256:{'0' * 64}"
+    )
+
+    with pytest.raises(ValidationError, match="evidence hash"):
+        CapabilityPromotionAssessment.model_validate(payload)
+
+    payload = assessment.model_dump(mode="json")
+    payload["evaluation"]["checks"][0]["check_id"] = "contract.health"
+    with pytest.raises(ValidationError, match="evidence mismatch"):
+        CapabilityPromotionAssessment.model_validate(payload)
+
+
+def test_bundle_rejects_cross_candidate_evidence() -> None:
+    assessment = _assessment()
+    payload = assessment.evidence_bundle.model_dump(mode="json")
+    payload["candidate_id"] = str(uuid4())
+
+    with pytest.raises(ValidationError, match="candidate mismatch"):
+        CapabilityPromotionEvidenceBundle.model_validate(payload)
 
 
 @pytest.mark.asyncio
@@ -166,3 +236,41 @@ def test_rejected_event_requires_denied_evaluation() -> None:
 
     with pytest.raises(ValidationError, match="rejected promotion"):
         CapabilityPromotionEvent.model_validate(payload)
+
+
+def test_legacy_event_without_evidence_bundle_id_keeps_valid_hash() -> None:
+    event = _event()
+    payload = event.model_dump(mode="json")
+    payload["evaluation"].pop("evidence_bundle_id")
+
+    restored = CapabilityPromotionEvent.model_validate(payload)
+
+    assert restored.evaluation is not None
+    assert restored.evaluation.evidence_bundle_id is None
+    assert restored.event_hash == event.event_hash
+
+
+def test_transitional_event_with_hashed_null_bundle_remains_valid() -> None:
+    event = _event()
+    legacy_hash = CapabilityPromotionEvent.calculate_event_hash(
+        event_id=event.event_id,
+        operation_id=event.operation_id,
+        registry_epoch_id=event.registry_epoch_id,
+        action=event.action,
+        phase=event.phase,
+        candidate=event.candidate,
+        evaluation=event.evaluation,
+        from_generation=event.from_generation,
+        target_generation=event.target_generation,
+        previous_release_hash=event.previous_release_hash,
+        target_release=event.target_release,
+        reason_code=event.reason_code,
+        occurred_at=event.occurred_at,
+        include_nested_none=True,
+    )
+    payload = event.model_dump(mode="json")
+    payload["event_hash"] = legacy_hash
+
+    restored = CapabilityPromotionEvent.model_validate(payload)
+
+    assert restored.event_hash == legacy_hash

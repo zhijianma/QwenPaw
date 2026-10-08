@@ -19,6 +19,7 @@ from ..kernel.models import (
 )
 from ..kernel.ports import (
     CapabilityLease,
+    CapabilityPromotionEvidenceStore,
     CapabilityPromotionGate,
     CapabilityPromotionJournal,
 )
@@ -26,10 +27,11 @@ from ..kernel.releases import (
     CapabilityCheckOutcome,
     CapabilityEvaluationDecision,
     CapabilityPromotionAction,
+    CapabilityPromotionAssessment,
     CapabilityPromotionCandidate,
-    CapabilityPromotionCheck,
     CapabilityPromotionEvaluation,
     CapabilityPromotionEvent,
+    CapabilityPromotionEvidenceBundle,
     CapabilityPromotionPhase,
     CapabilityReleaseTag,
 )
@@ -39,7 +41,9 @@ from .contracts import (
 )
 from .promotions import (
     ContractCapabilityPromotionGate,
-    rejected_contract_evaluation,
+    InMemoryCapabilityPromotionEvidenceStore,
+    build_capability_promotion_assessment,
+    rejected_contract_assessment,
 )
 
 ContributionFactory = Callable[
@@ -94,6 +98,7 @@ class _PromotionTransaction:
     operation_id: UUID
     candidate: CapabilityPromotionCandidate
     evaluation: CapabilityPromotionEvaluation
+    evidence_bundle: CapabilityPromotionEvidenceBundle
     previous_snapshot: RegistrySnapshot
     previous_release: CapabilityReleaseTag | None
     previous_rollback: _ProviderRollbackPoint | None
@@ -109,6 +114,7 @@ class _RollbackTransaction:
     operation_id: UUID
     candidate: CapabilityPromotionCandidate
     evaluation: CapabilityPromotionEvaluation
+    evidence_bundle: CapabilityPromotionEvidenceBundle
     previous_snapshot: RegistrySnapshot
     previous_release: CapabilityReleaseTag
     rollback_point: _ProviderRollbackPoint
@@ -123,6 +129,7 @@ class _DeactivationTransaction:
     operation_id: UUID
     candidate: CapabilityPromotionCandidate
     evaluation: CapabilityPromotionEvaluation
+    evidence_bundle: CapabilityPromotionEvidenceBundle
     previous_snapshot: RegistrySnapshot
     previous_release: CapabilityReleaseTag | None
     previous_rollback: _ProviderRollbackPoint | None
@@ -196,6 +203,9 @@ class GenerationRegistry:
         self,
         *,
         promotion_journal: CapabilityPromotionJournal | None = None,
+        promotion_evidence_store: (
+            CapabilityPromotionEvidenceStore | None
+        ) = None,
         promotion_gate: CapabilityPromotionGate | None = None,
         registry_epoch_id: UUID | None = None,
     ) -> None:
@@ -214,6 +224,10 @@ class GenerationRegistry:
         self._stable_releases: dict[str, CapabilityReleaseTag] = {}
         self._rollback_points: dict[str, _ProviderRollbackPoint] = {}
         self._promotion_journal = promotion_journal
+        self._promotion_evidence_store = (
+            promotion_evidence_store
+            or InMemoryCapabilityPromotionEvidenceStore()
+        )
         self._promotion_gate = (
             promotion_gate or ContractCapabilityPromotionGate()
         )
@@ -267,6 +281,33 @@ class GenerationRegistry:
         )
         return tuple(events)
 
+    async def promotion_evidence(
+        self,
+        candidate_id: UUID,
+        *,
+        limit: int = 100,
+    ) -> tuple[CapabilityPromotionEvidenceBundle, ...]:
+        """Read immutable evidence bundles for one candidate."""
+        bundles = await self._promotion_evidence_store.list_for_candidate(
+            candidate_id,
+            limit=limit,
+        )
+        return tuple(bundles)
+
+    async def _persist_promotion_evidence(
+        self,
+        bundle: CapabilityPromotionEvidenceBundle,
+    ) -> None:
+        await self._promotion_evidence_store.append(bundle)
+        persisted = await self._promotion_evidence_store.get(
+            bundle.bundle_id,
+        )
+        if persisted is None or (
+            persisted.bundle_id != bundle.bundle_id
+            or persisted.bundle_hash != bundle.bundle_hash
+        ):
+            raise RuntimeError("promotion evidence persistence mismatch")
+
     async def _append_promotion_event(
         self,
         event: CapabilityPromotionEvent,
@@ -281,12 +322,11 @@ class GenerationRegistry:
         candidate: CapabilityPromotionCandidate,
         check_id: str,
     ) -> None:
-        if self._promotion_journal is None:
-            return
-        evaluation = rejected_contract_evaluation(
+        assessment = rejected_contract_assessment(
             candidate,
             check_id=check_id,
         )
+        evaluation = assessment.evaluation
         event = CapabilityPromotionEvent.create(
             operation_id=operation_id,
             registry_epoch_id=self._registry_epoch_id,
@@ -308,6 +348,9 @@ class GenerationRegistry:
             reason_code=check_id,
         )
         try:
+            await self._persist_promotion_evidence(
+                assessment.evidence_bundle,
+            )
             await self._append_promotion_event(event)
         except Exception:  # pylint: disable=broad-except
             logger.exception(
@@ -509,7 +552,7 @@ class GenerationRegistry:
                 for contribution in staged.values()
             ),
         )
-        evaluation = await self._evaluate_release(
+        assessment = await self._evaluate_release(
             operation_id=operation_id,
             candidate=candidate,
             release=release,
@@ -519,7 +562,8 @@ class GenerationRegistry:
         return _PromotionTransaction(
             operation_id=operation_id,
             candidate=candidate,
-            evaluation=evaluation,
+            evaluation=assessment.evaluation,
+            evidence_bundle=assessment.evidence_bundle,
             previous_snapshot=previous_snapshot,
             previous_release=previous_release,
             previous_rollback=previous_rollback,
@@ -536,21 +580,37 @@ class GenerationRegistry:
         release: CapabilityReleaseTag,
         previous_snapshot: RegistrySnapshot,
         previous_release: CapabilityReleaseTag | None,
-    ) -> CapabilityPromotionEvaluation:
+    ) -> CapabilityPromotionAssessment:
         try:
-            evaluation = await self._promotion_gate.evaluate(
+            assessment = await self._promotion_gate.evaluate(
                 candidate,
                 release,
             )
+            if not isinstance(
+                assessment,
+                CapabilityPromotionAssessment,
+            ):
+                raise TypeError(
+                    "promotion gate must return an assessment",
+                )
         except Exception as exc:
-            evaluation = rejected_contract_evaluation(
+            assessment = rejected_contract_assessment(
                 candidate,
                 check_id="evaluation.error",
             )
+            try:
+                await self._persist_promotion_evidence(
+                    assessment.evidence_bundle,
+                )
+            except Exception as evidence_error:
+                raise ActivationError(
+                    f"promotion evidence failed for "
+                    f"'{candidate.provider_id}'",
+                ) from evidence_error
             await self._append_rejected_evaluation(
                 operation_id=operation_id,
                 candidate=candidate,
-                evaluation=evaluation,
+                evaluation=assessment.evaluation,
                 previous_snapshot=previous_snapshot,
                 previous_release=previous_release,
                 reason_code="evaluation.error",
@@ -559,7 +619,17 @@ class GenerationRegistry:
                 f"promotion evaluation failed for "
                 f"'{candidate.provider_id}'",
             ) from exc
+        evaluation = assessment.evaluation
         if evaluation.decision is not CapabilityEvaluationDecision.ALLOW:
+            try:
+                await self._persist_promotion_evidence(
+                    assessment.evidence_bundle,
+                )
+            except Exception as exc:
+                raise ActivationError(
+                    f"promotion evidence failed for "
+                    f"'{candidate.provider_id}'",
+                ) from exc
             await self._append_rejected_evaluation(
                 operation_id=operation_id,
                 candidate=candidate,
@@ -572,7 +642,7 @@ class GenerationRegistry:
                 f"promotion evaluation did not allow "
                 f"'{candidate.provider_id}'",
             )
-        return evaluation
+        return assessment
 
     async def _append_rejected_evaluation(
         self,
@@ -640,6 +710,14 @@ class GenerationRegistry:
         transaction: _PromotionTransaction,
     ) -> RegistrySnapshot:
         provider_id = transaction.candidate.provider_id
+        try:
+            await self._persist_promotion_evidence(
+                transaction.evidence_bundle,
+            )
+        except Exception as exc:
+            raise ActivationError(
+                f"promotion evidence failed for '{provider_id}'",
+            ) from exc
         prepared = self._transaction_event(
             transaction,
             CapabilityPromotionPhase.PREPARED,
@@ -789,22 +867,23 @@ class GenerationRegistry:
                 ),
             },
         )
-        evaluation = CapabilityPromotionEvaluation(
-            candidate_id=candidate.candidate_id,
-            candidate_hash=candidate.candidate_hash,
+        assessment = build_capability_promotion_assessment(
+            candidate,
+            target_release,
             evaluator_id="qwenpaw.rollback-gate",
             decision=CapabilityEvaluationDecision.ALLOW,
             checks=(
-                CapabilityPromotionCheck(
-                    check_id="rollback.release-fence",
-                    outcome=CapabilityCheckOutcome.PASSED,
+                (
+                    "rollback.release-fence",
+                    CapabilityCheckOutcome.PASSED,
                 ),
             ),
         )
         return _RollbackTransaction(
             operation_id=uuid4(),
             candidate=candidate,
-            evaluation=evaluation,
+            evaluation=assessment.evaluation,
+            evidence_bundle=assessment.evidence_bundle,
             previous_snapshot=self._current,
             previous_release=current_release,
             rollback_point=point,
@@ -857,6 +936,14 @@ class GenerationRegistry:
         transaction: _RollbackTransaction,
     ) -> RegistrySnapshot:
         provider_id = transaction.candidate.provider_id
+        try:
+            await self._persist_promotion_evidence(
+                transaction.evidence_bundle,
+            )
+        except Exception as exc:
+            raise ReleaseRollbackError(
+                f"rollback evidence failed for '{provider_id}'",
+            ) from exc
         try:
             await self._append_promotion_event(
                 self._rollback_event(
@@ -986,15 +1073,15 @@ class GenerationRegistry:
                 "capability_ids": sorted(contributions),
             },
         )
-        evaluation = CapabilityPromotionEvaluation(
-            candidate_id=candidate.candidate_id,
-            candidate_hash=candidate.candidate_hash,
+        assessment = build_capability_promotion_assessment(
+            candidate,
+            previous_release,
             evaluator_id="qwenpaw.deactivation-contract",
             decision=CapabilityEvaluationDecision.ALLOW,
             checks=(
-                CapabilityPromotionCheck(
-                    check_id="deactivate.provider-present",
-                    outcome=CapabilityCheckOutcome.PASSED,
+                (
+                    "deactivate.provider-present",
+                    CapabilityCheckOutcome.PASSED,
                 ),
             ),
         )
@@ -1007,7 +1094,8 @@ class GenerationRegistry:
         return _DeactivationTransaction(
             operation_id=uuid4(),
             candidate=candidate,
-            evaluation=evaluation,
+            evaluation=assessment.evaluation,
+            evidence_bundle=assessment.evidence_bundle,
             previous_snapshot=self._current,
             previous_release=previous_release,
             previous_rollback=self._rollback_points.get(provider_id),
@@ -1045,6 +1133,14 @@ class GenerationRegistry:
         transaction: _DeactivationTransaction,
     ) -> RegistrySnapshot:
         provider_id = transaction.candidate.provider_id
+        try:
+            await self._persist_promotion_evidence(
+                transaction.evidence_bundle,
+            )
+        except Exception as exc:
+            raise ProviderDeactivationError(
+                f"deactivation evidence failed for '{provider_id}'",
+            ) from exc
         try:
             await self._append_promotion_event(
                 self._deactivation_event(

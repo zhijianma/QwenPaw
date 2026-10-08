@@ -16,6 +16,7 @@ import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Query
 from fastapi.responses import FileResponse
@@ -754,6 +755,37 @@ async def list_capability_promotions(
         "registry_epoch_id": str(registry.registry_epoch_id),
         "registry_generation": registry.generation,
         "items": [event.model_dump(mode="json") for event in events],
+    }
+
+
+@router.get(
+    "/capability-promotion-evidence",
+    summary="List capability promotion evidence bundles",
+    description=(
+        "Return content-safe evidence supporting one immutable candidate."
+    ),
+)
+async def list_capability_promotion_evidence(
+    request: Request,
+    candidate_id: UUID,
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> dict:
+    """Return evidence bundles without implementation or config data."""
+    registry = _capability_registry(request)
+    if registry is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Capability registry is not ready yet. Try again shortly.",
+        )
+    bundles = await registry.promotion_evidence(
+        candidate_id,
+        limit=limit,
+    )
+    return {
+        "registry_epoch_id": str(registry.registry_epoch_id),
+        "registry_generation": registry.generation,
+        "candidate_id": str(candidate_id),
+        "items": [bundle.model_dump(mode="json") for bundle in bundles],
     }
 
 
