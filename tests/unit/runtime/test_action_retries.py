@@ -25,6 +25,7 @@ from qwenpaw.kernel import (
     CapabilitySelection,
     InvocationScope,
     ToolEffect,
+    ToolSelection,
 )
 from qwenpaw.runtime.action_retries import (
     ActionRetryContinuationConflictError,
@@ -47,6 +48,11 @@ def _request() -> ActionRequest:
         conversation_id="chat-retry-input",
         registry_generation=4,
         capability_id="example.private-tool",
+        tool_selection=ToolSelection(
+            active_modes=("coding",),
+            enabled_features=("example.retry",),
+            subagent_allowed_tools=("private_tool",),
+        ),
         kind=ActionKind.TOOL,
         action_name="private_tool",
         arguments={"content": "private retry body", "path": "report.md"},
@@ -113,6 +119,7 @@ async def test_private_retry_input_is_owner_only_and_idempotent(
     assert second == first
     assert loaded == first
     assert arguments == request.arguments
+    assert first.tool_selection == request.tool_selection
     assert "private retry body" not in first.model_dump_json()
     path = next(
         tmp_path.glob(".qwenpaw/lite/action-retry-inputs/*.json"),
@@ -150,6 +157,11 @@ async def test_runtime_binds_private_input_before_retryable_result(
         retry_input_store=input_store,
         retry_continuation_store=continuation_store,
     )
+    selection = ToolSelection(
+        active_modes=("coding",),
+        active_skills=("review",),
+    )
+    recorder.bind_tool_selection(selection)
     context = ToolCallContext(
         tool_call_id="call-private-retry",
         tool_name="read_private",
@@ -200,6 +212,7 @@ async def test_runtime_binds_private_input_before_retryable_result(
     [continuation] = await continuation_store.list_pending(
         agent_id=scope.agent_id,
     )
+    assert continuation.checkpoint.tool_selection == selection
     assert continuation.checkpoint == checkpoint
     assert continuation.source_observation_digest == (
         record.result.observation_digest

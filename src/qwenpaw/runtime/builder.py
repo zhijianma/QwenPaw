@@ -875,9 +875,19 @@ class AgentBuilder:
                 RuntimeCompactionRecorder,
                 lite_compaction_store,
             )
+            from .tool_providers import tool_selection_from_request
 
-            request_context["_action_recorder"].bind_tool_owners(
+            action_recorder = request_context["_action_recorder"]
+            action_recorder.bind_tool_owners(
                 request_context.get("_tool_provider_owners"),
+            )
+            action_recorder.bind_tool_selection(
+                tool_selection_from_request(
+                    active_modes=tuple(active_modes),
+                    active_skills=tuple(effective_skills),
+                    enabled_features=(),
+                    request_context=request_context,
+                ),
             )
             request_context[
                 "_context_manifest_compiler"

@@ -530,6 +530,7 @@ class ActionRequest(KernelModel):
     registry_generation: int = Field(ge=1)
     environment_ref: EnvironmentRef | None = None
     capability_id: NamespacedId
+    tool_selection: "ToolSelection | None" = None
     kind: ActionKind
     action_name: NonEmptyStr
     arguments: SkipJsonSchema[JsonObject] = Field(
@@ -651,6 +652,7 @@ class ActionRetryInputCheckpoint(KernelModel):
     correlation_id: UUID
     registry_generation: int = Field(ge=1)
     capability_id: NamespacedId
+    tool_selection: "ToolSelection | None" = None
     kind: ActionKind
     action_name: NonEmptyStr
     arguments_hash: Annotated[

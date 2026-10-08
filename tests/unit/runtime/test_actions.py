@@ -53,6 +53,7 @@ from qwenpaw.kernel import (
     RiskLevel,
     SideEffectStatus,
     ToolEffect,
+    ToolSelection,
 )
 from qwenpaw.kernel.driver import DriverApprovalRejectedError
 from qwenpaw.kernel.invocation import DEFAULT_DRIVER_PROVIDER_ID
@@ -812,6 +813,55 @@ async def test_action_retry_uses_current_matching_environment_resolution(
     assert retry.environment_ref.resolution_id != (
         first_resolution.resolution_id
     )
+
+
+@pytest.mark.asyncio
+async def test_action_retry_rejects_changed_tool_selection(
+    tmp_path: Path,
+) -> None:
+    scope = _scope(tmp_path, "chat-retry-selection")
+    store = FilesystemActionStore(tmp_path)
+    first_selection = ToolSelection(active_modes=("coding",))
+    first_recorder = RuntimeActionRecorder(
+        scope,
+        store,
+        tool_selection=first_selection,
+    )
+    first_context = _context("read_file", "call-selection-1")
+    await first_recorder.begin(
+        first_context,
+        effect=ToolEffect.NONE,
+        policy_decision="allow",
+    )
+    await first_recorder.complete(
+        ToolResponse(
+            content=[TextBlock(type="text", text="temporary failure")],
+            id=first_context.tool_call_id,
+            state=ToolResultState.ERROR,
+            metadata={ACTION_RETRY_HINT_METADATA_KEY: True},
+        ),
+        first_context,
+    )
+    [previous] = await store.list_for_conversation(
+        scope.conversation_id,
+    )
+    retry_scope = scope.model_copy(
+        update={
+            "invocation_id": uuid4(),
+            "correlation_id": scope.invocation_id,
+        },
+    )
+    retry_recorder = RuntimeActionRecorder(
+        retry_scope,
+        store,
+        tool_selection=ToolSelection(active_modes=("research",)),
+    )
+
+    with pytest.raises(ActionConflictError, match="tool selection mismatch"):
+        await retry_recorder.begin_retry(
+            _context("read_file", "call-selection-2"),
+            previous,
+        )
 
 
 @pytest.mark.asyncio

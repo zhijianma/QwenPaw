@@ -537,6 +537,10 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     attempt，拒绝时不创建 Action。执行器返回前反查 terminal Action evidence，不能因
     result processor 只记录 warning 而误报成功。Provider/generation 解析仍由后续
     Runtime Orchestrator admission 接入，恢复 worker 不持有工具函数。
+  - [x] Action 与私有 retry checkpoint 同步冻结实际 `ToolSelection`（mode、skill、
+    feature 与 subagent whitelist），并在新 attempt admission 校验一致性；避免热更新
+    后按当前 Chat 配置重建出另一套工具。历史 checkpoint 没有选择快照时，后续自动
+    dispatcher 必须 fail closed，不能猜测或补默认值。
   - [ ] 在上述单一身份上接入自动 retry dispatcher：必须同时具备 attempt budget、
     Stop/Interrupt fencing、无流式输出边界，以及 Runtime Orchestrator 内的执行入口；
     不能仅凭 `retryable=true` 或绕过 Orchestrator 直接重新调用工具。
