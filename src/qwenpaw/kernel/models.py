@@ -757,7 +757,7 @@ class EnvironmentRecord(KernelModel):
         return self
 
 
-class _ActionChatIdentity(KernelModel):
+class _ChatIdentity(KernelModel):
     """Canonical ChatSpec identity with legacy input compatibility."""
 
     chat_id: NonEmptyStr | None = Field(
@@ -772,7 +772,7 @@ class _ActionChatIdentity(KernelModel):
         return self.chat_id
 
 
-class ActionApprovalLink(_ActionChatIdentity):
+class ActionApprovalLink(_ChatIdentity):
     """Immutable relation for approvals discovered during an action."""
 
     action_id: UUID
@@ -782,7 +782,7 @@ class ActionApprovalLink(_ActionChatIdentity):
     linked_at: AwareDatetime = Field(default_factory=utc_now)
 
 
-class ActionRequest(_ActionChatIdentity):
+class ActionRequest(_ChatIdentity):
     """Privacy-safe durable intent recorded before external execution.
 
     ``arguments`` is available only to the in-memory executor. Durable
@@ -854,7 +854,7 @@ class ActionRequest(_ActionChatIdentity):
         return self
 
 
-class ActionExecutionContext(_ActionChatIdentity):
+class ActionExecutionContext(_ChatIdentity):
     """Content-safe Action identity visible to the active executor."""
 
     action_id: UUID
@@ -904,7 +904,7 @@ class ActionRetryDecision(KernelModel):
         return self
 
 
-class ActionRetryInputCheckpoint(_ActionChatIdentity):
+class ActionRetryInputCheckpoint(_ChatIdentity):
     """Content-safe reference to private input for one admitted retry."""
 
     checkpoint_id: UUID
@@ -933,7 +933,7 @@ class ActionRetryInputCheckpoint(_ActionChatIdentity):
     created_at: AwareDatetime = Field(default_factory=utc_now)
 
 
-class ActionResult(_ActionChatIdentity):
+class ActionResult(_ChatIdentity):
     """Content-minimal terminal evidence for one action request."""
 
     action_id: UUID
@@ -993,7 +993,7 @@ class ActionResult(_ActionChatIdentity):
         return self
 
 
-class CommittedActionItem(_ActionChatIdentity):
+class CommittedActionItem(_ChatIdentity):
     """Content-safe binding between Action evidence and model context."""
 
     action_id: UUID
@@ -2091,13 +2091,12 @@ class ContextFragment(KernelModel):
         return self
 
 
-class ContextManifest(KernelModel):
+class ContextManifest(_ChatIdentity):
     """Content-free input evidence shared by one logical model call."""
 
     manifest_id: UUID = Field(default_factory=uuid4)
     invocation_id: UUID
     correlation_id: UUID
-    conversation_id: NonEmptyStr | None = None
     registry_epoch_id: UUID | None = None
     registry_generation: int = Field(ge=1)
     capability_lock_id: UUID | None = None
@@ -2156,14 +2155,13 @@ class ContextManifest(KernelModel):
         return self
 
 
-class RouteDecision(KernelModel):
+class RouteDecision(_ChatIdentity):
     """Immutable selection of one concrete provider/model attempt."""
 
     route_decision_id: UUID = Field(default_factory=uuid4)
     attempt_id: UUID = Field(default_factory=uuid4)
     invocation_id: UUID
     correlation_id: UUID
-    conversation_id: NonEmptyStr | None = None
     registry_epoch_id: UUID | None = None
     registry_generation: int = Field(ge=1)
     context_manifest_id: UUID
@@ -2180,7 +2178,7 @@ class RouteDecision(KernelModel):
     decided_at: AwareDatetime = Field(default_factory=utc_now)
 
 
-class ModelCallAttempt(KernelModel):
+class ModelCallAttempt(_ChatIdentity):
     """Durable intent recorded before one concrete upstream request."""
 
     attempt_id: UUID
@@ -2188,7 +2186,6 @@ class ModelCallAttempt(KernelModel):
     invocation_id: UUID
     correlation_id: UUID
     agent_id: NonEmptyStr | None = None
-    conversation_id: NonEmptyStr | None = None
     registry_epoch_id: UUID | None = None
     registry_generation: int = Field(ge=1)
     context_manifest_id: UUID
@@ -2213,12 +2210,11 @@ class ModelCallAttempt(KernelModel):
     started_at: AwareDatetime = Field(default_factory=utc_now)
 
 
-class ModelCallResult(KernelModel):
+class ModelCallResult(_ChatIdentity):
     """Content-free terminal evidence for one upstream model attempt."""
 
     attempt_id: UUID
     invocation_id: UUID
-    conversation_id: NonEmptyStr | None = None
     status: ModelCallStatus
     error_kind: str = ""
     retryable: bool = False
@@ -2400,8 +2396,8 @@ class ModelCallRecord(KernelModel):
             raise ValueError("model result attempt identity mismatch")
         if self.result.invocation_id != self.attempt.invocation_id:
             raise ValueError("model result invocation mismatch")
-        if self.result.conversation_id != self.attempt.conversation_id:
-            raise ValueError("model result conversation mismatch")
+        if self.result.chat_id != self.attempt.chat_id:
+            raise ValueError("model result chat mismatch")
         if (
             self.result.transport_recovery_mode
             is ModelTransportRecoveryMode.INLINE_RESUME

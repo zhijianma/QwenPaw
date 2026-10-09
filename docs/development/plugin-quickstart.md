@@ -225,6 +225,10 @@ plugin providers.
 plugins can roll forward without rewriting durable records; new plugin code and
 serialized contracts should use `chat_id`.
 
+The same identity rule applies to Context Manifest and Model Call contracts:
+public JSON uses `chat_id`; `conversation_id` is accepted only while reading
+legacy persisted records or through the deprecated Python property.
+
 `idempotency_mode` is an execution guarantee, not a retry preference. Keep
 the default `UNDECLARED` when the executor ignores Host keys. Use
 `HOST_GUARDED` when only QwenPaw prevents duplicate admission. Declare

@@ -1193,6 +1193,10 @@ Cron 不形成独立审批或产物事实源。
       11、primary、succeeded、input 40042 / output 74 tokens，Invocation 与
       ContextManifest 均有稳定引用。真实验收发现并修复了 ContextVar 跨异步关闭和
       terminal chunk 被误判为取消两类仅流式路径问题。
+    - [x] Model Call 公共合同统一使用 `chat_id = ChatSpec.id`：Context Manifest、
+      Route、Attempt 与 Result 的新 JSON/OpenAPI 不再公开 `conversation_id`，历史
+      SQLite/JSON 和旧 Python 属性继续兼容读取。2026-10-10 运行中的固定 Chat
+      直接读取迁移前真实记录，Attempt/Result 均只返回 `chat_id`，未重写历史数据。
     - [x] Route 已同时记录逻辑请求和实际 Provider/Model，Attempt 记录实际 Adapter、
       Formatter 及其包版本；Provider 返回的微单位成本直接留证，缺失价格明确记录
       `cost_unknown=true`，不冒充零成本。固定 Chat 再次 `/clear` 后真实返回
@@ -1225,8 +1229,8 @@ Cron 不形成独立审批或产物事实源。
       聚合。Console 不再下载明细并维护第二套页面私有聚合口径；`/details` 仅保留为
       明细查询与兼容 API。Agent/Chat/Turn 通过 `scopes` 结构化行公开身份；旧复合键
       map 仅作迁移兼容且不要求客户端解析。公共模型与 Console 统一使用 `chat_id`；
-      旧 `conversation_id` 只在 Model Call/SQLite 适配边界及同步弃用别名中保留。不同
-      Agent 下相同 Chat/Turn ID 仍严格隔离。
+      旧 `conversation_id` 只在 Model Call/SQLite 存储适配边界及同步弃用别名中保留。
+      不同 Agent 下相同 Chat/Turn ID 仍严格隔离。
     - [x] Token Usage Summary 已从单一 JSON 数据源切换为 Model Call usage 的可重建
       Lite 投影。SQLite 只保存内容无关的派生字段，以 `attempt_id` 幂等；应用启动扫描
       全部已配置 Agent Workspace 并原子 rebuild。首次初始化冻结下一 UTC 日为 legacy

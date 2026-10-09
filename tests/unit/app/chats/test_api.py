@@ -287,6 +287,11 @@ async def test_list_chat_model_calls_returns_content_free_records(tmp_path):
     assert record.route.reason is ModelRouteReason.PRIMARY
     assert record.attempt.context_manifest_id == manifest_id
     assert record.result is None
+    payload = record.model_dump(mode="json")
+    assert payload["route"]["chat_id"] == chat_id
+    assert "conversation_id" not in payload["route"]
+    assert payload["attempt"]["chat_id"] == chat_id
+    assert "conversation_id" not in payload["attempt"]
     assert "messages" not in record.model_dump_json()
     manager.get_chat.assert_awaited_once_with(chat_id)
 
