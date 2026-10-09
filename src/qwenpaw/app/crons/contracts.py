@@ -8,11 +8,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, Protocol
 
+from ...kernel import ScheduleDefinition
 from ...scheduling import ScheduleTriggerTickReport
 
 from .models import CronJobSpec, CronRuntimeDecision
 
-CronOccurrenceExecutor = Callable[[str, datetime], Awaitable[None]]
+ScheduleOccurrenceExecutor = Callable[
+    [ScheduleDefinition, datetime],
+    Awaitable[None],
+]
+# Compatibility name retained while callers migrate to the shared contract.
+CronOccurrenceExecutor = ScheduleOccurrenceExecutor
 
 
 @dataclass(frozen=True)
@@ -58,7 +64,7 @@ class CronTaskRuntime(Protocol):
         self,
         *,
         now: datetime,
-        execute: CronOccurrenceExecutor,
+        execute: ScheduleOccurrenceExecutor,
     ) -> ScheduleTriggerTickReport:
         """Consume one durable trigger batch through manager accounting."""
 
@@ -86,3 +92,15 @@ class HeartbeatTaskRuntime(Protocol):
         request: HeartbeatExecutionRequest,
     ) -> dict[str, Any]:
         """Run one Heartbeat through Schedule, Task, and Delivery."""
+
+    async def synchronize(
+        self,
+        request: HeartbeatExecutionRequest,
+    ) -> datetime | None:
+        """Reconcile the current Heartbeat declaration and cursor."""
+
+    async def remove(self) -> bool:
+        """Remove the current Heartbeat declaration and cursor."""
+
+    def schedule_id(self) -> str:
+        """Return the stable per-Agent Heartbeat schedule identity."""

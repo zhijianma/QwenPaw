@@ -471,7 +471,7 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
   - [x] Model Call 在恢复边界落库后产生 typed Runtime signal；错误保存不注入
     Envelope partial blocks，下一 Invocation 从最后一个完整 session 边界重建。用户
     主动取消仍保存已展示 partial，两种终态不再共用错误保存语义。
-- [ ] 以 Action Plane 完成副作用恢复：已成功 Action 不重做，failed 服从重试
+- [x] 以 Action Plane 完成副作用恢复：已成功 Action 不重做，failed 服从重试
   policy，uncertain 必须先对账或取得显式授权。只有具备 provider-neutral committed
   action identity 的 Adapter 才能开启流内工具执行。
   - [x] 过渡安全门：来源 Invocation 只要存在持久化 `ActionRequest`，Model Step
@@ -830,8 +830,11 @@ Invocation，新 Invocation 自动使用新 generation。
     的 final/silent Agent Cron 同步 catalog 后不再注册 APScheduler job，暂停、恢复、
     更新、删除与重启均复用 Cursor。handler 明确区分“失败事实已记账后 handled”与
     “Scheduler/记账暂态故障 retry”，misfire 写回既有 Cron history，next-run 从
-    Cursor outcome 投影。text-only、stream、service job 与 Heartbeat 暂时继续走
-    APScheduler，因此父项保持未完成。
+    Cursor outcome 投影。Heartbeat 也已通过同一 worker 路由完整
+    `ScheduleDefinition`，启动/热更新同步 definition + cursor，禁用同时移除两者，
+    运行时重新解析 HEARTBEAT.md、active hours 与 last dispatch；迁移成功后不再注册
+    APScheduler，并通过新 Runtime 实例恢复旧 Cursor。text-only、stream 与 service
+    job 暂时继续走 APScheduler，因此父项保持未完成。
   - [x] APScheduler Trigger Adapter 为已迁移 Cron 与 Heartbeat 保存真实
     `scheduled_for` 并生成稳定 Fire 幂等键；手动触发使用独立操作键，不与定时槽
     竞争。尚未迁移的 Cron 类型继续走显式兼容路径。
@@ -1091,7 +1094,7 @@ Cron 不形成独立审批或产物事实源。
       Environment、Sandbox、Action 与 SDK 共 120 项定点测试通过。
     - [ ] Harness Remote、Workstation 与 Hub runner 仍需实现等价 Adapter、真实
       约束兑现和可验证 attestation；完成前父项保持未完成。
-  - [ ] 语义观测统一 `MODEL`、`ACTION`、`CONTROL`、`GUARDRAIL`、
+  - [x] 语义观测统一 `MODEL`、`ACTION`、`CONTROL`、`GUARDRAIL`、
     `COMPACTION`、`HITL`、`INTERRUPT` 与 `VERIFICATION`；模型意图、策略判定、实际执行和
     Runtime 独立 Evidence 使用稳定因果 ID 关联，不把 Agent 自报结果当作事实。
     - [x] 冻结 `RuntimeObservation`、Category/Stage/Status、Source 和只读
@@ -1186,7 +1189,7 @@ Cron 不形成独立审批或产物事实源。
       因而不会双算；旧 SQLite 自动增加 nullable context columns。
     - [ ] Workstation / Hub 的健康度、成本和数据边界动态路由仍待实现。Lite 当前
       继续使用确定性主模型与显式 fallback 顺序，不静默切换。
-  - [ ] Run Completion、Verification 与业务 Outcome 分层；当前已阻止 Invocation
+  - [x] Run Completion、Verification 与业务 Outcome 分层；当前已阻止 Invocation
     success 被投影成业务完成，本阶段不建设完整 Evaluation UI。
     - [x] Kernel 已冻结 `ConversationOutcome` 与 Store Port；Lite SQLite 以具名 producer、
       correlation、Artifact/Evidence/Verification 引用和显式 supersession 保存不可变

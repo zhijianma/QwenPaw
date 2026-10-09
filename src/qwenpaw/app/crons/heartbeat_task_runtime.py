@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
@@ -75,6 +76,40 @@ class LiteHeartbeatTaskRuntime:  # pylint: disable=too-few-public-methods
             owner_prefix="heartbeat",
         )
 
+    async def synchronize(
+        self,
+        request: HeartbeatExecutionRequest,
+    ) -> datetime | None:
+        """Reconcile the current Heartbeat declaration and trigger cursor."""
+        conversation_id = await self._bind_conversation(
+            channel=request.channel,
+            user_id=request.user_id,
+            transport_context=request.transport_context,
+        )
+        definition = self._definition(
+            request,
+            conversation_id=conversation_id,
+        )
+        await self._scheduled.upsert_definition(definition)
+        return await self._scheduled.next_fire_at(
+            agent_id=definition.agent_id,
+            schedule_id=definition.schedule_id,
+        )
+
+    async def remove(self) -> bool:
+        """Remove the Heartbeat declaration without deleting Fire history."""
+        return await self._scheduled.remove_definition(
+            agent_id=self._workspace.agent_id,
+            schedule_id=self.schedule_id(),
+        )
+
+    def schedule_id(self) -> str:
+        """Return the stable per-Agent Heartbeat schedule identity."""
+        digest = hashlib.sha256(
+            self._workspace.agent_id.encode("utf-8"),
+        ).hexdigest()[:20]
+        return f"qwenpaw.system.heartbeat.agent-{digest}"
+
     async def _bind_conversation(
         self,
         *,
@@ -112,7 +147,7 @@ class LiteHeartbeatTaskRuntime:  # pylint: disable=too-few-public-methods
             transport_context=request.transport_context,
         )
         return ScheduleDefinition(
-            schedule_id=self._schedule_id(),
+            schedule_id=self.schedule_id(),
             agent_id=self._workspace.agent_id,
             conversation_id=conversation_id,
             name="Heartbeat",
@@ -135,12 +170,6 @@ class LiteHeartbeatTaskRuntime:  # pylint: disable=too-few-public-methods
                 "delivery_policy": policy.model_dump(mode="json"),
             },
         )
-
-    def _schedule_id(self) -> str:
-        digest = hashlib.sha256(
-            self._workspace.agent_id.encode("utf-8"),
-        ).hexdigest()[:20]
-        return f"qwenpaw.system.heartbeat.agent-{digest}"
 
     @staticmethod
     def _trigger(every: str) -> ScheduleTrigger:

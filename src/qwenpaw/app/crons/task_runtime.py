@@ -8,7 +8,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from .conversation_binding import CronConversationBinder
-from .contracts import CronOccurrenceExecutor
+from .contracts import ScheduleOccurrenceExecutor
 from .executor import cron_session_id_for_job
 from .models import (
     CronJobSpec,
@@ -169,16 +169,13 @@ class LiteCronTaskRuntime:
         self,
         *,
         now: datetime,
-        execute: CronOccurrenceExecutor,
+        execute: ScheduleOccurrenceExecutor,
     ) -> ScheduleTriggerTickReport:
-        """Consume due Cron definitions with explicit failure accounting."""
+        """Consume shared due definitions with explicit accounting."""
 
         async def handle(definition, scheduled_for):
-            raw_job_id = definition.metadata.get("legacy_cron_job_id")
-            if not isinstance(raw_job_id, str) or not raw_job_id:
-                return ScheduleOccurrenceHandling.RETRY
             try:
-                await execute(raw_job_id, scheduled_for)
+                await execute(definition, scheduled_for)
             except Exception as error:  # noqa: BLE001 - policy decides
                 if isinstance(
                     error,

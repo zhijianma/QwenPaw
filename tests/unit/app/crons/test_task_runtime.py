@@ -290,8 +290,8 @@ async def test_durable_trigger_runs_real_task_and_advances_once_cursor(
     runtime = LiteCronTaskRuntime(workspace)
     executions = []
 
-    async def execute(job_id: str, occurrence: datetime) -> None:
-        assert job_id == "worker-once"
+    async def execute(definition, occurrence: datetime) -> None:
+        assert definition.metadata["legacy_cron_job_id"] == "worker-once"
         executions.append(
             await runtime.execute(
                 job,

@@ -13,8 +13,10 @@ from qwenpaw.app.crons.heartbeat_task_runtime import (
     HEARTBEAT_QUIET_RESULT,
     LiteHeartbeatTaskRuntime,
 )
+from qwenpaw.app.crons.task_runtime import LiteCronTaskRuntime
 from qwenpaw.inbox import SQLiteInboxProjectionStore
 from qwenpaw.plugins.generations import GenerationRegistry
+from qwenpaw.scheduling import SQLiteSchedulerStore
 from qwenpaw.tasks.bootstrap import task_service_for_workspace
 
 
@@ -147,3 +149,100 @@ async def test_main_heartbeat_does_not_request_delivery(
         tmp_path / ".qwenpaw" / "lite" / "inbox.db",
     )
     assert await inbox.list_items(agent_id="default") == ()
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_definition_and_cursor_are_hot_reconciled(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Synchronization creates no Task and removal clears durable wakeup."""
+    monkeypatch.setattr("qwenpaw.constant.WORKING_DIR", tmp_path)
+    workspace = _workspace(tmp_path, "unused")
+    runtime = LiteHeartbeatTaskRuntime(workspace)
+    request = HeartbeatExecutionRequest(
+        query_text="Check the workspace.",
+        every="30m",
+        target="main",
+        timeout_seconds=30,
+        trigger="scheduled",
+        scheduled_for=datetime(2030, 1, 1, tzinfo=timezone.utc),
+        channel="console",
+        user_id="main",
+        transport_context="main",
+    )
+
+    next_fire_at = await runtime.synchronize(request)
+
+    store = SQLiteSchedulerStore(tmp_path / "scheduler.db")
+    definitions = await store.list_definitions(agent_id="default")
+    assert len(definitions) == 1
+    assert definitions[0].metadata["source"] == "heartbeat"
+    assert definitions[0].schedule_id == runtime.schedule_id()
+    assert next_fire_at is not None
+    assert workspace.channel_manager.console.payloads == []
+    assert await runtime.remove() is True
+    assert await store.list_definitions(agent_id="default") == ()
+    assert (
+        await store.get_cursor(
+            agent_id="default",
+            schedule_id=runtime.schedule_id(),
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_restarted_worker_resumes_durable_heartbeat_cursor(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """A fresh Runtime instance consumes the persisted Heartbeat cursor."""
+    monkeypatch.setattr("qwenpaw.constant.WORKING_DIR", tmp_path)
+    workspace = _workspace(tmp_path, "Restart recovery complete")
+    request = HeartbeatExecutionRequest(
+        query_text="Check the workspace.",
+        every="30m",
+        target="main",
+        timeout_seconds=30,
+        trigger="scheduled",
+        scheduled_for=datetime(2030, 1, 1, tzinfo=timezone.utc),
+        channel="console",
+        user_id="main",
+        transport_context="main",
+    )
+    initial = LiteHeartbeatTaskRuntime(workspace)
+    next_fire_at = await initial.synchronize(request)
+    assert next_fire_at is not None
+
+    restarted_heartbeat = LiteHeartbeatTaskRuntime(workspace)
+    restarted_worker = LiteCronTaskRuntime(workspace)
+    results = []
+
+    async def execute(definition, occurrence: datetime) -> None:
+        assert definition.metadata["source"] == "heartbeat"
+        results.append(
+            await restarted_heartbeat.execute(
+                HeartbeatExecutionRequest(
+                    query_text=request.query_text,
+                    every=request.every,
+                    target=request.target,
+                    timeout_seconds=request.timeout_seconds,
+                    trigger="scheduled",
+                    scheduled_for=occurrence,
+                    channel=request.channel,
+                    user_id=request.user_id,
+                    transport_context=request.transport_context,
+                ),
+            ),
+        )
+
+    report = await restarted_worker.run_due(
+        now=next_fire_at,
+        execute=execute,
+    )
+
+    assert report.outcomes[0].disposition.value == "dispatched"
+    assert len(results) == 1
+    assert results[0]["delivery_status"] == "not_requested"
+    assert len(workspace.channel_manager.console.payloads) == 1

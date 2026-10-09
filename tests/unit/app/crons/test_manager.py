@@ -15,13 +15,18 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from qwenpaw.app.crons.contracts import ServiceCronJob
-from qwenpaw.app.crons.manager import CronManager
+from qwenpaw.app.crons.contracts import (
+    HeartbeatExecutionRequest,
+    ServiceCronJob,
+)
+from qwenpaw.app.crons.manager import HEARTBEAT_JOB_ID, CronManager
 from qwenpaw.app.crons.models import (
     CronJobSpec,
     CronJobState,
@@ -134,7 +139,16 @@ class _DurableTriggerRuntime(_CatalogRuntime):
         self.run_due_calls += 1
         if self.due_job_id is None:
             return ScheduleTriggerTickReport(outcomes=())
-        await execute(self.due_job_id, now)
+        await execute(
+            SimpleNamespace(
+                schedule_id=cron_schedule_id(
+                    "default",
+                    self.due_job_id,
+                ),
+                metadata={"legacy_cron_job_id": self.due_job_id},
+            ),
+            now,
+        )
         return ScheduleTriggerTickReport(
             outcomes=(
                 ScheduleTriggerOutcome(
@@ -148,6 +162,20 @@ class _DurableTriggerRuntime(_CatalogRuntime):
                 ),
             ),
         )
+
+
+class _HeartbeatRuntime:
+    """Minimal durable Heartbeat catalog double."""
+
+    def __init__(self) -> None:
+        self.next_run_at = datetime(2030, 1, 1, tzinfo=timezone.utc)
+        self.synchronize = AsyncMock(return_value=self.next_run_at)
+        self.remove = AsyncMock(return_value=True)
+        self.execute = AsyncMock()
+
+    @staticmethod
+    def schedule_id() -> str:
+        return "qwenpaw.system.heartbeat.test"
 
 
 def _catalog_manager(
@@ -252,6 +280,180 @@ async def test_durable_trigger_lifecycle_replaces_job_apscheduler(
     await manager.stop()
     assert manager._durable_trigger_task is None
     assert trigger_task.done()
+
+
+@pytest.mark.asyncio
+async def test_start_migrates_heartbeat_without_apscheduler_wakeup(
+    repo: InMemoryJobRepository,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """A synchronized Heartbeat has exactly one durable wakeup owner."""
+    task_runtime = _DurableTriggerRuntime()
+    heartbeat_runtime = _HeartbeatRuntime()
+    request = HeartbeatExecutionRequest(
+        query_text="Check the workspace.",
+        every="30m",
+        target="main",
+        timeout_seconds=30,
+        trigger="scheduled",
+        scheduled_for=datetime(2030, 1, 1, tzinfo=timezone.utc),
+        channel="console",
+        user_id="main",
+        transport_context="main",
+    )
+    monkeypatch.setattr(
+        "qwenpaw.app.crons.manager.get_heartbeat_config",
+        lambda _agent_id: SimpleNamespace(enabled=True, every="30m"),
+    )
+    monkeypatch.setattr(
+        "qwenpaw.app.crons.manager.prepare_heartbeat_task_request",
+        AsyncMock(return_value=request),
+    )
+    workspace = MagicMock()
+    workspace.agent_id = "default"
+    workspace.workspace_dir = tmp_path
+    manager = CronManager(
+        repo=repo,
+        workspace=workspace,
+        channel_manager=AsyncMock(),
+        agent_id="default",
+        task_runtime=task_runtime,
+        heartbeat_task_runtime=heartbeat_runtime,
+    )
+
+    await manager.start()
+    try:
+        heartbeat_runtime.synchronize.assert_awaited_once_with(request)
+        assert manager._scheduler.get_job(HEARTBEAT_JOB_ID) is None
+        assert manager._heartbeat_next_run_at == heartbeat_runtime.next_run_at
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_catalog_failure_removes_state_before_fallback(
+    repo: InMemoryJobRepository,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Legacy fallback is admitted only after durable state is removed."""
+    heartbeat_runtime = _HeartbeatRuntime()
+    heartbeat_runtime.synchronize.side_effect = RuntimeError(
+        "catalog unavailable",
+    )
+    request = HeartbeatExecutionRequest(
+        query_text="Check the workspace.",
+        every="30m",
+        target="main",
+        timeout_seconds=30,
+        trigger="scheduled",
+        scheduled_for=datetime(2030, 1, 1, tzinfo=timezone.utc),
+        channel="console",
+        user_id="main",
+        transport_context="main",
+    )
+    monkeypatch.setattr(
+        "qwenpaw.app.crons.manager.get_heartbeat_config",
+        lambda _agent_id: SimpleNamespace(enabled=True, every="30m"),
+    )
+    monkeypatch.setattr(
+        "qwenpaw.app.crons.manager.prepare_heartbeat_task_request",
+        AsyncMock(return_value=request),
+    )
+    workspace = MagicMock()
+    workspace.agent_id = "default"
+    workspace.workspace_dir = tmp_path
+    manager = CronManager(
+        repo=repo,
+        workspace=workspace,
+        channel_manager=AsyncMock(),
+        agent_id="default",
+        task_runtime=_DurableTriggerRuntime(),
+        heartbeat_task_runtime=heartbeat_runtime,
+    )
+
+    await manager.start()
+    try:
+        heartbeat_runtime.remove.assert_awaited_once_with()
+        assert manager._scheduler.get_job(HEARTBEAT_JOB_ID) is not None
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_reschedule_disables_durable_heartbeat(
+    repo: InMemoryJobRepository,
+    monkeypatch,
+) -> None:
+    """Disabling Heartbeat removes its definition and durable cursor."""
+    task_runtime = _DurableTriggerRuntime()
+    heartbeat_runtime = _HeartbeatRuntime()
+    workspace = MagicMock()
+    workspace.agent_id = "default"
+    manager = CronManager(
+        repo=repo,
+        workspace=workspace,
+        channel_manager=AsyncMock(),
+        agent_id="default",
+        task_runtime=task_runtime,
+        heartbeat_task_runtime=heartbeat_runtime,
+    )
+    manager._started = True
+    monkeypatch.setattr(
+        "qwenpaw.app.crons.manager.get_heartbeat_config",
+        lambda _agent_id: SimpleNamespace(enabled=False, every="30m"),
+    )
+
+    await manager.reschedule_heartbeat()
+
+    heartbeat_runtime.remove.assert_awaited_once_with()
+    assert manager._scheduler.get_job(HEARTBEAT_JOB_ID) is None
+    assert manager._heartbeat_next_run_at is None
+
+
+@pytest.mark.asyncio
+async def test_durable_definition_routes_heartbeat_through_current_inputs(
+    repo: InMemoryJobRepository,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """The shared durable callback reloads Heartbeat at execution time."""
+    run_once = AsyncMock()
+    monkeypatch.setattr(
+        "qwenpaw.app.crons.manager.run_heartbeat_once",
+        run_once,
+    )
+    heartbeat_runtime = _HeartbeatRuntime()
+    workspace = MagicMock()
+    workspace.workspace_dir = tmp_path
+    manager = CronManager(
+        repo=repo,
+        workspace=workspace,
+        channel_manager=AsyncMock(),
+        agent_id="default",
+        task_runtime=_DurableTriggerRuntime(),
+        heartbeat_task_runtime=heartbeat_runtime,
+    )
+    scheduled_for = datetime(2030, 1, 1, tzinfo=timezone.utc)
+
+    await manager._execute_durable_occurrence(
+        SimpleNamespace(
+            schedule_id=heartbeat_runtime.schedule_id(),
+            metadata={"source": "heartbeat"},
+        ),
+        scheduled_for,
+    )
+
+    run_once.assert_awaited_once_with(
+        workspace=workspace,
+        channel_manager=manager._channel_manager,
+        agent_id="default",
+        workspace_dir=workspace.workspace_dir,
+        task_runtime=heartbeat_runtime,
+        trigger="scheduled",
+        scheduled_for=scheduled_for,
+    )
 
 
 @pytest.mark.asyncio

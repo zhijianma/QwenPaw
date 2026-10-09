@@ -219,6 +219,71 @@ def _last_preview_from_delta(delta: list[dict[str, Any]]) -> str | None:
     return None
 
 
+async def prepare_heartbeat_task_request(
+    *,
+    agent_id: Optional[str] = None,
+    workspace_dir: Optional[Path] = None,
+    trigger: Literal["scheduled", "manual"] = "manual",
+    scheduled_for: datetime | None = None,
+    enforce_active_hours: bool = True,
+) -> HeartbeatExecutionRequest | None:
+    """Resolve current Heartbeat inputs for the durable Task Runtime."""
+    hb = await run_sync_io(get_heartbeat_config, agent_id)
+    if enforce_active_hours and not _in_active_hours(hb.active_hours):
+        logger.debug("heartbeat skipped: outside active hours")
+        return None
+
+    path = (
+        Path(workspace_dir) / HEARTBEAT_FILE
+        if workspace_dir
+        else get_heartbeat_query_path()
+    )
+    if not await run_sync_io(path.is_file):
+        logger.debug("heartbeat skipped: no file at %s", path)
+        return None
+    query_text = (
+        await run_sync_io(read_text_file_with_encoding_fallback, path)
+    ).strip()
+    if not query_text:
+        logger.debug("heartbeat skipped: empty query file")
+        return None
+
+    if agent_id:
+        last_dispatch = await run_sync_io(read_last_dispatch, agent_id)
+    else:
+        config = await run_sync_io(load_config)
+        last_dispatch = config.last_dispatch
+
+    target = (hb.target or "").strip().lower()
+    selected_target = target
+    delivery_channel = DEFAULT_CHANNEL
+    delivery_user = "main"
+    transport_context = "main"
+    if target == HEARTBEAT_TARGET_LAST:
+        if (
+            last_dispatch
+            and last_dispatch.channel
+            and (last_dispatch.user_id or last_dispatch.session_id)
+        ):
+            delivery_channel = last_dispatch.channel
+            delivery_user = last_dispatch.user_id or "main"
+            transport_context = last_dispatch.session_id or delivery_user
+        else:
+            selected_target = "main"
+
+    return HeartbeatExecutionRequest(
+        query_text=query_text,
+        every=hb.every,
+        target=selected_target,
+        timeout_seconds=hb.timeout_seconds,
+        trigger=trigger,
+        scheduled_for=(scheduled_for or datetime.now(timezone.utc)),
+        channel=delivery_channel,
+        user_id=delivery_user,
+        transport_context=transport_context,
+    )
+
+
 # pylint: disable=too-many-branches,too-many-statements
 async def run_heartbeat_once(
     *,
@@ -233,6 +298,17 @@ async def run_heartbeat_once(
     """Run one heartbeat: read HEARTBEAT.md, run agent, optionally
     dispatch to last channel (target=last).
     """
+    if task_runtime is not None:
+        request = await prepare_heartbeat_task_request(
+            agent_id=agent_id,
+            workspace_dir=workspace_dir,
+            trigger=trigger,
+            scheduled_for=scheduled_for,
+        )
+        if request is not None:
+            await task_runtime.execute(request)
+        return
+
     hb = await run_sync_io(get_heartbeat_config, agent_id)
     if not _in_active_hours(hb.active_hours):
         logger.debug("heartbeat skipped: outside active hours")
@@ -280,38 +356,6 @@ async def run_heartbeat_once(
         last_dispatch = config.last_dispatch
 
     target = (hb.target or "").strip().lower()
-    selected_target = target
-    delivery_channel = DEFAULT_CHANNEL
-    delivery_user = "main"
-    transport_context = "main"
-    if target == HEARTBEAT_TARGET_LAST:
-        if (
-            last_dispatch
-            and last_dispatch.channel
-            and (last_dispatch.user_id or last_dispatch.session_id)
-        ):
-            delivery_channel = last_dispatch.channel
-            delivery_user = last_dispatch.user_id or "main"
-            transport_context = last_dispatch.session_id or delivery_user
-        else:
-            selected_target = "main"
-
-    if task_runtime is not None:
-        await task_runtime.execute(
-            HeartbeatExecutionRequest(
-                query_text=query_text,
-                every=hb.every,
-                target=selected_target,
-                timeout_seconds=timeout_seconds,
-                trigger=trigger,
-                scheduled_for=(scheduled_for or datetime.now(timezone.utc)),
-                channel=delivery_channel,
-                user_id=delivery_user,
-                transport_context=transport_context,
-            ),
-        )
-        return
-
     if target == HEARTBEAT_TARGET_LAST and last_dispatch:
         ld = last_dispatch
         if ld.channel and (ld.user_id or ld.session_id):

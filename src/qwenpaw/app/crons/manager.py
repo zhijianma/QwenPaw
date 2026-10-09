@@ -22,6 +22,7 @@ from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from qwenpaw.exceptions import ConfigurationException
 
+from ...kernel import ScheduleDefinition
 from ...scheduling import ScheduleTriggerDisposition
 
 from ...config import get_heartbeat_config
@@ -39,6 +40,7 @@ from .heartbeat import (
     is_cron_expression,
     parse_heartbeat_cron,
     parse_heartbeat_every,
+    prepare_heartbeat_task_request,
     run_heartbeat_once,
 )
 from .models import (
@@ -209,9 +211,9 @@ class CronManager(ManagerBase):
                             job.name,
                         )
 
-            # Heartbeat: scheduled job when enabled in config
             hb = get_heartbeat_config(self._agent_id)
-            if getattr(hb, "enabled", False):
+            heartbeat_migrated = await self._synchronize_heartbeat_runtime(hb)
+            if getattr(hb, "enabled", False) and not heartbeat_migrated:
                 trigger = self._build_heartbeat_trigger(hb.every)
                 self._scheduler.add_job(
                     self._heartbeat_callback,
@@ -334,7 +336,17 @@ class CronManager(ManagerBase):
             for job in jobs
             if job.id is not None
         }
+        heartbeat_schedule_id = self._heartbeat_schedule_id()
         for outcome in report.outcomes:
+            if outcome.schedule_id == heartbeat_schedule_id:
+                self._heartbeat_next_run_at = outcome.next_fire_at
+                if outcome.disposition is ScheduleTriggerDisposition.MISFIRED:
+                    logger.warning(
+                        "Durable Heartbeat occurrence exceeded misfire "
+                        "grace: scheduled_for=%s",
+                        outcome.scheduled_for.isoformat(),
+                    )
+                continue
             job = by_schedule_id.get(outcome.schedule_id)
             if job is None:
                 continue
@@ -352,9 +364,23 @@ class CronManager(ManagerBase):
 
     async def _execute_durable_occurrence(
         self,
-        job_id: str,
+        definition: ScheduleDefinition,
         scheduled_for: datetime,
     ) -> None:
+        if definition.metadata.get("source") == "heartbeat":
+            if self._heartbeat_task_runtime is None:
+                raise KeyError("Durable Heartbeat Runtime is unavailable")
+            await self._run_heartbeat(
+                trigger="scheduled",
+                scheduled_for=scheduled_for,
+            )
+            return
+        job_id = definition.metadata.get("legacy_cron_job_id")
+        if not isinstance(job_id, str) or not job_id:
+            raise KeyError(
+                f"Unknown durable schedule declaration: "
+                f"{definition.schedule_id}",
+            )
         job = await self._repo.get_job(job_id)
         if job is None:
             raise KeyError(f"Durable Cron declaration is absent: {job_id}")
@@ -827,8 +853,8 @@ class CronManager(ManagerBase):
                 self._scheduler.remove_job(HEARTBEAT_JOB_ID)
             self._heartbeat_next_run_at = None
 
-            # Add heartbeat job if enabled
-            if getattr(hb, "enabled", False):
+            heartbeat_migrated = await self._synchronize_heartbeat_runtime(hb)
+            if getattr(hb, "enabled", False) and not heartbeat_migrated:
                 trigger = self._build_heartbeat_trigger(hb.every)
                 self._scheduler.add_job(
                     self._heartbeat_callback,
@@ -848,7 +874,53 @@ class CronManager(ManagerBase):
                     hb.every,
                 )
             else:
-                logger.info("heartbeat disabled, job removed")
+                logger.info(
+                    "heartbeat %s",
+                    (
+                        "migrated to durable trigger"
+                        if heartbeat_migrated
+                        else "disabled, job removed"
+                    ),
+                )
+
+    async def _synchronize_heartbeat_runtime(self, config: Any) -> bool:
+        """Reconcile Heartbeat into the shared durable trigger catalog."""
+        runtime = self._heartbeat_task_runtime
+        if runtime is None or not self._has_durable_trigger_worker():
+            return False
+        if not getattr(config, "enabled", False):
+            await runtime.remove()
+            return False
+        workspace_dir = getattr(self._workspace, "workspace_dir", None)
+        try:
+            request = await prepare_heartbeat_task_request(
+                agent_id=self._agent_id,
+                workspace_dir=workspace_dir,
+                trigger="scheduled",
+                scheduled_for=datetime.now(timezone.utc),
+                enforce_active_hours=False,
+            )
+            if request is not None:
+                self._heartbeat_next_run_at = await runtime.synchronize(
+                    request,
+                )
+                return True
+        except Exception:  # pylint: disable=broad-except
+            await runtime.remove()
+            logger.exception(
+                "Durable Heartbeat synchronization failed; using the "
+                "legacy wakeup after durable state removal",
+            )
+            return False
+        await runtime.remove()
+        return False
+
+    def _heartbeat_schedule_id(self) -> str | None:
+        runtime = self._heartbeat_task_runtime
+        if runtime is None:
+            return None
+        value = runtime.schedule_id()
+        return value if isinstance(value, str) and value else None
 
     def _register_memory_jobs(self) -> None:
         memory_manager = getattr(self._workspace, "memory_manager", None)
