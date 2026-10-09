@@ -939,6 +939,20 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - Model Error Policy、Model Call、Resource Wait、Runtime Save 与 Observation 相关
   `111 passed`；Task 页面没有改动。
 
+### 2026-10-09 Workspace Driver Catalog Budget
+
+- Kernel 的 128-tool / 64 KiB Driver Catalog 上限保持不变，并导出统一字节计量函数，
+  校验与兼容层不再复制预算口径。
+- Workspace 兼容 Driver 仅在目录超限时压缩 MCP 展示注解：工具说明保留首个非空
+  摘要行，JSON Schema 只移除无执行语义的 `title`；参数 description、type、required、
+  enum、default 及约束均保留。压缩后仍超限继续失败关闭。
+- 真实启用的 40-tool MCP 目录原模型可见负载约 84.8 KiB，曾使普通 Chat 在模型调用前
+  失败；修复后原 Chat 成功返回 `CATALOG_COMPACTION_OK`，并写入带 Agent、ChatSpec.id、
+  Invocation turn、日期和实际 Provider/Model 的 Token 明细。
+- Driver Adapter 与 Runtime 定点测试 `44 passed`，改动文件 pre-commit 全部通过；
+  Task 页面没有改动。后续 Tool Search / 按需加载应作为独立能力，不以放宽目录上限
+  代替当前安全边界。
+
 ### 2026-10-09 Durable Execution Deadline
 
 - `ExecutionBudget.max_duration_seconds` 不再在每次 resume 时重新获得完整预算。首次

@@ -23,7 +23,11 @@ from agentscope.permission import PermissionBehavior, PermissionDecision
 from agentscope.tool import ToolBase, ToolChunk
 
 from ...kernel.invocation import DEFAULT_DRIVER_PROVIDER_ID
-from ...kernel.driver import DriverApprovalRejectedError
+from ...kernel.driver import (
+    DriverApprovalRejectedError,
+    driver_catalog_size,
+    driver_catalog_within_budget,
+)
 from ...kernel.models import (
     ActionIdempotencyMode,
     ActionRequest,
@@ -41,6 +45,66 @@ from ..capabilities import (
 logger = logging.getLogger(__name__)
 
 DriverInvoker = Callable[[DriverInvocation], Awaitable[DriverInvocationResult]]
+
+_MAX_COMPACT_DESCRIPTION_BYTES = 512
+
+
+def _compact_description(value: str) -> str:
+    """Keep one bounded model-facing summary line from Driver prose."""
+    summary = next(
+        (line.strip() for line in value.splitlines() if line.strip()),
+        "",
+    )
+    encoded = summary.encode("utf-8")
+    if len(encoded) <= _MAX_COMPACT_DESCRIPTION_BYTES:
+        return summary
+    body = encoded[: _MAX_COMPACT_DESCRIPTION_BYTES - 3].decode(
+        "utf-8",
+        errors="ignore",
+    )
+    return f"{body.rstrip()}..."
+
+
+def _strip_schema_titles(value: Any) -> Any:
+    """Remove display-only JSON Schema titles without changing validation."""
+    if isinstance(value, dict):
+        return {
+            key: _strip_schema_titles(item)
+            for key, item in value.items()
+            if key != "title"
+        }
+    if isinstance(value, list):
+        return [_strip_schema_titles(item) for item in value]
+    return value
+
+
+def _compact_workspace_catalog(
+    definitions: list[DriverToolDefinition],
+) -> list[DriverToolDefinition]:
+    """Compact legacy MCP annotations only when the Kernel budget requires."""
+    catalog = tuple(definitions)
+    if driver_catalog_within_budget(catalog):
+        return definitions
+    before = driver_catalog_size(catalog)
+    compacted = [
+        definition.model_copy(
+            update={
+                "description": _compact_description(
+                    definition.description,
+                ),
+                "input_schema": _strip_schema_titles(
+                    definition.input_schema,
+                ),
+            },
+        )
+        for definition in definitions
+    ]
+    logger.info(
+        "Compacted Workspace Driver catalog from %d to %d bytes",
+        before,
+        driver_catalog_size(tuple(compacted)),
+    )
+    return compacted
 
 
 def _action_classification(
@@ -409,6 +473,8 @@ async def build_driver_definitions(
 
     if not definitions:
         return [], []
+
+    definitions = _compact_workspace_catalog(definitions)
 
     from ...agents.prompt import build_driver_policy_recheck_hint
 

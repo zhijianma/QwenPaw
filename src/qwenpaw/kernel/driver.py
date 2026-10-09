@@ -13,6 +13,26 @@ _MAX_DRIVER_PROMPT_BYTES = 32 * 1024
 _MAX_DRIVER_CATALOG_BYTES = 64 * 1024
 
 
+def driver_catalog_size(
+    definitions: tuple[DriverToolDefinition, ...],
+) -> int:
+    """Return the exact encoded size used by the Kernel catalog gate."""
+    encoded = json.dumps(
+        [definition.model_dump(mode="json") for definition in definitions],
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return len(encoded)
+
+
+def driver_catalog_within_budget(
+    definitions: tuple[DriverToolDefinition, ...],
+) -> bool:
+    """Return whether a catalog fits the stable Kernel byte budget."""
+    return driver_catalog_size(definitions) <= _MAX_DRIVER_CATALOG_BYTES
+
+
 class DriverApprovalRejectedError(PermissionError):
     """Raised when a Driver approval cannot authorize execution."""
 
@@ -76,13 +96,7 @@ def _validate_driver_definitions(
             raise ValueError("driver tool names must be unique")
         capability_ids.add(definition.capability_id)
         tool_names.add(definition.name)
-    encoded = json.dumps(
-        [definition.model_dump(mode="json") for definition in definitions],
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    if len(encoded) > _MAX_DRIVER_CATALOG_BYTES:
+    if not driver_catalog_within_budget(definitions):
         raise ValueError(
             f"driver provider '{provider_id}' tool catalog is too large",
         )
@@ -145,5 +159,7 @@ __all__ = [
     "CapabilityCredentialUnavailableError",
     "DriverApprovalRejectedError",
     "DriverCredentialUnavailableError",
+    "driver_catalog_size",
+    "driver_catalog_within_budget",
     "validate_driver_session",
 ]

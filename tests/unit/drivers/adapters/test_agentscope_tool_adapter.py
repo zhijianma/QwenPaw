@@ -323,6 +323,76 @@ def test_read_only_capability_has_narrow_action_classification():
     assert reversible is True
 
 
+class TestBuildDriverDefinitions:
+    async def test_small_catalog_preserves_full_metadata(self):
+        capability = _capability(name="small", tool_name="small_tool")
+        capability = DriverCapability(
+            **{
+                **capability.__dict__,
+                "description": "Summary\nExtended guidance",
+                "input_schema": {
+                    "title": "Request",
+                    "type": "object",
+                },
+            },
+        )
+        manager = SimpleNamespace(
+            list_capabilities=AsyncMock(return_value=[capability]),
+            invoke_capability=AsyncMock(),
+        )
+
+        definitions, _ = await at.build_driver_definitions(manager, {})
+
+        assert definitions[0].description == "Summary\nExtended guidance"
+        assert definitions[0].input_schema["title"] == "Request"
+
+    async def test_oversized_catalog_compacts_annotations_not_semantics(self):
+        capabilities = []
+        for index in range(40):
+            capability = _capability(
+                name=f"cap-{index}",
+                tool_name=f"tool_{index}",
+            )
+            capabilities.append(
+                DriverCapability(
+                    **{
+                        **capability.__dict__,
+                        "description": (
+                            f"Tool {index} summary\n" + "long guidance " * 90
+                        ),
+                        "input_schema": {
+                            "title": f"Tool {index} request",
+                            "type": "object",
+                            "properties": {
+                                "path": {
+                                    "title": "Path",
+                                    "type": "string",
+                                    "description": "Target path",
+                                    "default": "README.md",
+                                },
+                            },
+                            "required": ["path"],
+                        },
+                    },
+                ),
+            )
+        manager = SimpleNamespace(
+            list_capabilities=AsyncMock(return_value=capabilities),
+            invoke_capability=AsyncMock(),
+        )
+
+        definitions, _ = await at.build_driver_definitions(manager, {})
+
+        assert at.driver_catalog_within_budget(tuple(definitions))
+        assert definitions[0].description == "Tool 0 summary"
+        assert "title" not in definitions[0].input_schema
+        path_schema = definitions[0].input_schema["properties"]["path"]
+        assert "title" not in path_schema
+        assert path_schema["description"] == "Target path"
+        assert path_schema["default"] == "README.md"
+        assert definitions[0].input_schema["required"] == ["path"]
+
+
 # ---------------------------------------------------------------------------
 # build_driver_agent_tools
 # ---------------------------------------------------------------------------
