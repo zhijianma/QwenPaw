@@ -1,6 +1,12 @@
 # -*- coding: utf-8 -*-
 """Provider-neutral capability catalog infrastructure."""
 
+from .authorization import (
+    CapabilityPromotionAuthorizationRequired,
+    authorize_capability_promotion,
+    promotion_risk_for_slots,
+    validate_promotion_authorization,
+)
 from .registry import (
     ActivatedContribution,
     ActivationError,
@@ -46,6 +52,7 @@ from .system_stop_gates import (
 __all__ = [
     "ActivatedContribution",
     "ActivationError",
+    "CapabilityPromotionAuthorizationRequired",
     "GenerationLease",
     "GenerationRegistry",
     "ProviderDeactivationError",
@@ -67,4 +74,7 @@ __all__ = [
     "WorkspacePromptProvider",
     "WorkspaceStopGateProvider",
     "WorkspaceToolProvider",
+    "authorize_capability_promotion",
+    "promotion_risk_for_slots",
+    "validate_promotion_authorization",
 ]

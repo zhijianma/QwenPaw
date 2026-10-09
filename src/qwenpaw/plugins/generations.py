@@ -26,6 +26,9 @@ from ..kernel.models import (
     PluginContribution,
 )
 from ..kernel.releases import CapabilityPromotionCandidate
+from ..kernel.promotion_authorization import (
+    CapabilityPromotionAuthorization,
+)
 from .architecture import PluginManifest
 from .contributions import (
     validate_contribution_implementation,
@@ -101,6 +104,7 @@ async def activate_plugin_bundle(
     *,
     implementation_hash: str = _UNKNOWN_IMPLEMENTATION_HASH,
     operator_authorized: bool = False,
+    authorization: CapabilityPromotionAuthorization | None = None,
 ) -> RegistrySnapshot:
     """Validate a plugin manifest and publish its common capability bundle."""
     bundle = plugin_capability_bundle(manifest, implementation_hash)
@@ -123,6 +127,7 @@ async def activate_plugin_bundle(
         bundle,
         adapter,
         operator_authorized=operator_authorized,
+        authorization=authorization,
     )
 
 

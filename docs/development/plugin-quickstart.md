@@ -1283,9 +1283,12 @@ published together as a new registry generation. Existing runs retain their
 old generation; new runs see the update. A failed health check leaves the
 current generation unchanged.
 
-Capability-bearing installs use an exact-candidate conditional request. The
-first API request returns HTTP `428` with a content-safe candidate hash. The
-Console and CLI repeat the same explicit install with
+Capability promotion uses the Host Slot Contract risk instead of a risk value
+reported by plugin code. Low-risk UI-only candidates can be installed without
+an extra confirmation. Medium- and high-risk candidates use an exact-candidate
+conditional request. The first API request returns HTTP `428` with a
+content-safe candidate hash and the Host-classified risk. The Console and CLI
+repeat the same explicit install with
 `X-QwenPaw-Authorize-Candidate: <candidate-hash>`. The hash binds the manifest,
 Contribution contract, and bounded plugin source tree. QwenPaw validates it
 under the per-plugin lifecycle lock before copying files, installing
@@ -1294,6 +1297,11 @@ A changed URL, ZIP, directory, or stale confirmation fails closed. Startup
 restoration does not require an operator to be online and is recorded as
 `not_applicable`; an explicit install records
 `promotion.operator-authorized=passed` in the Evidence Bundle.
+
+The same policy runs at the provider-neutral Generation Registry boundary, so
+system and plugin candidates cannot diverge. Every evaluation records
+`promotion.risk.low`, `.medium`, or `.high` Evidence. Plugins can declare a
+Slot, but cannot lower its Host-owned risk or mint an authorization grant.
 
 Publication also creates an immutable Promotion Evidence Bundle before the
 new generation becomes visible. The built-in Gate records separate schema,

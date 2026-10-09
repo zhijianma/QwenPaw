@@ -893,6 +893,19 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - Task Workbench 继续后置；当前剩余工作聚焦 Model Recovery Contract、恢复终态和
   非插件来源的通用人工授权策略，不为本裁决新增第二套状态机。
 
+### 2026-10-09 通用 Promotion 人工授权
+
+- Promotion 授权已从 capability Plugin 私有 boolean 提升为 Kernel 稳定事实和
+  provider-neutral Host Policy；system/plugin 在同一 Registry 强制点按 Slot Contract
+  计算 low/medium/high 风险。
+- 显式 low-risk 候选不增加交互；medium/high 必须确认精确 candidate hash。陈旧确认
+  在 factory、依赖安装或插件代码执行前失败关闭，内部启动/恢复不伪造人工授权。
+- 每次 Promotion Evidence Bundle 增加 `promotion.risk.<level>`；Plugin HTTP 428 继续
+  作为 Adapter，响应同时返回 Host 计算的 risk。Plugin SDK 不导出授权器，避免插件
+  自行降级风险或签发 grant。
+- system 高风险、陈旧候选、low-risk UI 热安装、Promotion/Scenario/Router/CLI 共
+  `185 passed`；文件级 mypy、flake8、pylint 已通过。Task 页面没有改动。
+
 ## 5. 钉钉文档归档清单
 
 ### 框架分析目录

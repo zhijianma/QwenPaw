@@ -369,6 +369,12 @@ from .releases import (
     CapabilityPromotionPhase,
     CapabilityReleaseTag,
 )
+from .promotion_authorization import (
+    CapabilityPromotionAuthorization,
+    CapabilityPromotionAuthorizationStatus,
+    CapabilityPromotionOrigin,
+    CapabilityPromotionRisk,
+)
 from .ports import (
     ActionRetryContinuationStore,
     ActionRetryInputStore,
@@ -449,6 +455,8 @@ __all__ = [
     "CapabilityCheckOutcome",
     "CapabilityEvaluationDecision",
     "CapabilityPromotionAction",
+    "CapabilityPromotionAuthorization",
+    "CapabilityPromotionAuthorizationStatus",
     "CapabilityPromotionAssessment",
     "CapabilityPromotionCandidate",
     "CapabilityPromotionCheck",
@@ -457,6 +465,8 @@ __all__ = [
     "CapabilityPromotionEvaluation",
     "CapabilityPromotionEvent",
     "CapabilityPromotionPhase",
+    "CapabilityPromotionOrigin",
+    "CapabilityPromotionRisk",
     "ActionApprovalLink",
     "ActionExecutionContext",
     "ActionIdempotencyMode",

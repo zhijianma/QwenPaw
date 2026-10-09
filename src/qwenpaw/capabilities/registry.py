@@ -18,6 +18,11 @@ from ..kernel.models import (
     CapabilityContribution,
     CapabilityDescriptor,
 )
+from ..kernel.promotion_authorization import (
+    CapabilityPromotionAuthorization,
+    CapabilityPromotionAuthorizationStatus,
+    CapabilityPromotionOrigin,
+)
 from ..kernel.ports import (
     CapabilityLease,
     CapabilityPromotionEvidenceStore,
@@ -41,6 +46,10 @@ from ..kernel.releases import (
 from .contracts import (
     CapabilityImplementationError,
     validate_capability_implementation,
+)
+from .authorization import (
+    authorize_capability_promotion,
+    validate_promotion_authorization,
 )
 from .promotions import (
     ContractCapabilityPromotionGate,
@@ -375,9 +384,7 @@ class GenerationRegistry:
             target_generation=None,
             previous_release_hash=(
                 release.release_hash
-                if (
-                    release := self.stable_release(candidate.provider_id)
-                )
+                if (release := self.stable_release(candidate.provider_id))
                 is not None
                 else None
             ),
@@ -447,6 +454,11 @@ class GenerationRegistry:
         factory: ContributionFactory,
         *,
         operator_authorized: bool = False,
+        authorization: CapabilityPromotionAuthorization | None = None,
+        promotion_origin: CapabilityPromotionOrigin = (
+            CapabilityPromotionOrigin.INTERNAL_BOOTSTRAP
+        ),
+        confirmed_candidate_hash: str | None = None,
     ) -> RegistrySnapshot:
         """Stage and atomically publish a system or plugin bundle."""
         operation_id = uuid4()
@@ -455,6 +467,43 @@ class GenerationRegistry:
             provider_kind=bundle.provider_kind,
             version=bundle.version,
             bundle_payload=bundle.model_dump(mode="json"),
+        )
+        if authorization is not None and (
+            operator_authorized
+            or promotion_origin
+            is not CapabilityPromotionOrigin.INTERNAL_BOOTSTRAP
+            or confirmed_candidate_hash is not None
+        ):
+            raise ValueError(
+                "promotion authorization and ingress arguments conflict",
+            )
+        if authorization is None:
+            if operator_authorized and (
+                promotion_origin
+                is not CapabilityPromotionOrigin.INTERNAL_BOOTSTRAP
+                or confirmed_candidate_hash is not None
+            ):
+                raise ValueError(
+                    "legacy operator flag conflicts with ingress arguments",
+                )
+            authorization = authorize_capability_promotion(
+                bundle,
+                candidate,
+                origin=(
+                    CapabilityPromotionOrigin.OPERATOR_REQUEST
+                    if operator_authorized
+                    else promotion_origin
+                ),
+                confirmed_candidate_hash=(
+                    candidate.candidate_hash
+                    if operator_authorized
+                    else confirmed_candidate_hash
+                ),
+            )
+        authorization = validate_promotion_authorization(
+            bundle,
+            candidate,
+            authorization,
         )
         try:
             staged = await self._stage_bundle(bundle, factory)
@@ -472,7 +521,7 @@ class GenerationRegistry:
                 candidate=candidate,
                 bundle=bundle,
                 staged=staged,
-                operator_authorized=operator_authorized,
+                authorization=authorization,
             )
             return await self._commit_promotion(transaction)
 
@@ -557,7 +606,7 @@ class GenerationRegistry:
         candidate: CapabilityPromotionCandidate,
         bundle: CapabilityBundle,
         staged: Mapping[str, ActivatedContribution],
-        operator_authorized: bool,
+        authorization: CapabilityPromotionAuthorization,
     ) -> _PromotionTransaction:
         previous_snapshot = self._current
         previous_release = self._stable_releases.get(bundle.provider_id)
@@ -589,8 +638,7 @@ class GenerationRegistry:
             version=bundle.version,
             promoted_generation=generation,
             descriptors=tuple(
-                contribution.descriptor
-                for contribution in staged.values()
+                contribution.descriptor for contribution in staged.values()
             ),
         )
         scenario_evidence: Sequence[CapabilityPromotionEvidence] = ()
@@ -613,9 +661,17 @@ class GenerationRegistry:
             producer_id="qwenpaw.promotion-authorization",
             outcome=(
                 CapabilityCheckOutcome.PASSED
-                if operator_authorized
+                if authorization.status
+                is CapabilityPromotionAuthorizationStatus.GRANTED
                 else CapabilityCheckOutcome.NOT_APPLICABLE
             ),
+            capability_ids=release.capability_ids,
+        )
+        risk_evidence = CapabilityPromotionEvidence.create(
+            candidate=candidate,
+            check_id=f"promotion.risk.{authorization.risk.value}",
+            producer_id="qwenpaw.promotion-authorization",
+            outcome=CapabilityCheckOutcome.PASSED,
             capability_ids=release.capability_ids,
         )
         assessment = await self._evaluate_release(
@@ -626,6 +682,7 @@ class GenerationRegistry:
             previous_release=previous_release,
             scenario_evidence=(
                 *scenario_evidence,
+                risk_evidence,
                 authorization_evidence,
             ),
         )
@@ -819,9 +876,7 @@ class GenerationRegistry:
         )
         self._stable_releases[provider_id] = transaction.release
         self._current = transaction.snapshot
-        self._snapshots[transaction.snapshot.generation] = (
-            transaction.snapshot
-        )
+        self._snapshots[transaction.snapshot.generation] = transaction.snapshot
         self._leases[transaction.snapshot.generation] = 0
         committed = self._transaction_event(
             transaction,
@@ -849,15 +904,11 @@ class GenerationRegistry:
         if transaction.previous_release is None:
             self._stable_releases.pop(provider_id, None)
         else:
-            self._stable_releases[provider_id] = (
-                transaction.previous_release
-            )
+            self._stable_releases[provider_id] = transaction.previous_release
         if transaction.previous_rollback is None:
             self._rollback_points.pop(provider_id, None)
         else:
-            self._rollback_points[provider_id] = (
-                transaction.previous_rollback
-            )
+            self._rollback_points[provider_id] = transaction.previous_rollback
 
     async def _journal_aborted_promotion(
         self,
@@ -1008,9 +1059,7 @@ class GenerationRegistry:
             evaluation=transaction.evaluation,
             from_generation=transaction.previous_snapshot.generation,
             target_generation=transaction.snapshot.generation,
-            previous_release_hash=(
-                transaction.previous_release.release_hash
-            ),
+            previous_release_hash=(transaction.previous_release.release_hash),
             target_release=transaction.target_release,
             reason_code=reason_code,
         )
@@ -1040,16 +1089,12 @@ class GenerationRegistry:
                 f"rollback journal prepare failed for '{provider_id}'",
             ) from exc
         self._current = transaction.snapshot
-        self._snapshots[transaction.snapshot.generation] = (
-            transaction.snapshot
-        )
+        self._snapshots[transaction.snapshot.generation] = transaction.snapshot
         self._leases[transaction.snapshot.generation] = 0
         if transaction.target_release is None:
             self._stable_releases.pop(provider_id, None)
         else:
-            self._stable_releases[provider_id] = (
-                transaction.target_release
-            )
+            self._stable_releases[provider_id] = transaction.target_release
         self._rollback_points.pop(provider_id, None)
         try:
             await self._append_promotion_event(
@@ -1254,9 +1299,7 @@ class GenerationRegistry:
         self._current = transaction.snapshot
         self._stable_releases.pop(provider_id, None)
         self._rollback_points.pop(provider_id, None)
-        self._snapshots[transaction.snapshot.generation] = (
-            transaction.snapshot
-        )
+        self._snapshots[transaction.snapshot.generation] = transaction.snapshot
         self._leases[transaction.snapshot.generation] = 0
         try:
             await self._append_promotion_event(
@@ -1283,13 +1326,9 @@ class GenerationRegistry:
         self._snapshots.pop(transaction.snapshot.generation, None)
         self._leases.pop(transaction.snapshot.generation, None)
         if transaction.previous_release is not None:
-            self._stable_releases[provider_id] = (
-                transaction.previous_release
-            )
+            self._stable_releases[provider_id] = transaction.previous_release
         if transaction.previous_rollback is not None:
-            self._rollback_points[provider_id] = (
-                transaction.previous_rollback
-            )
+            self._rollback_points[provider_id] = transaction.previous_rollback
 
     async def _journal_aborted_deactivation(
         self,

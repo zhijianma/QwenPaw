@@ -637,8 +637,7 @@ async def test_list_capability_releases_is_stable_and_content_safe():
     ]
     assert all("implementation" not in item for item in result["items"])
     assert all(
-        item["release_hash"].startswith("sha256:")
-        for item in result["items"]
+        item["release_hash"].startswith("sha256:") for item in result["items"]
     )
 
 
@@ -746,6 +745,7 @@ async def test_list_capability_promotions_reads_durable_wal(tmp_path):
         "contract.implementation",
         "contract.health",
         "promotion.operator-authorized",
+        "promotion.risk.high",
     }
     assert artifact["kind"] == "capability.promotion-evidence"
     assert artifact["metadata"]["candidate_id"] == candidate_id

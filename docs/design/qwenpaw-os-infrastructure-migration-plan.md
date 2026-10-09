@@ -1250,7 +1250,13 @@ Cron 不形成独立审批或产物事实源。
     `content_hash`、size 和下载字节一致，时间戳不影响 Artifact identity。只读 API
     返回 candidate/bundle/evaluator lineage，不暴露实现、配置、日志、主机路径或
     Secret，system/plugin 共用同一路径。
-  - [ ] 补齐非插件来源与风险分级的通用人工授权策略。关键词发现索引与
+  - [x] Promotion 人工授权已从 Plugin Loader 特例提升为 provider-neutral Host
+    Policy：`CapabilityPromotionOrigin` 区分内部启动、内部恢复与显式 operator ingress，
+    risk 从 Host Slot Contract 聚合而不是信任 Provider 自报。low-risk 显式候选无需
+    人工确认；medium/high 必须绑定精确 candidate hash，过期 hash 在 factory、依赖和
+    插件代码执行前失败关闭。system/plugin 共用 Registry 强制点和
+    `promotion.risk.<level>` Evidence；Plugin 的 428 只是同一策略的 HTTP Adapter。
+    内部启动/恢复继续记录 `not_applicable`，不能伪造人工授权。关键词发现索引与
     Workstation/Hub Release Registry 仍待实现。
 
 - [x] 每个公开扩展模块均有 system/plugin contract tests；system-only 模块具有

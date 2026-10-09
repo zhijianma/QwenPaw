@@ -23,7 +23,17 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _dist_version
 from packaging.requirements import Requirement
 
-from ..capabilities import GenerationRegistry
+from ..capabilities import (
+    CapabilityPromotionAuthorizationRequired,
+    GenerationRegistry,
+    authorize_capability_promotion,
+    promotion_risk_for_slots,
+)
+from ..kernel.promotion_authorization import (
+    CapabilityPromotionAuthorizationStatus,
+    CapabilityPromotionOrigin,
+    CapabilityPromotionRisk,
+)
 from ..kernel.models import PluginContribution
 from .architecture import (
     PluginManifest,
@@ -97,11 +107,13 @@ class PluginPromotionAuthorizationRequired(RuntimeError):
         candidate_id: str,
         candidate_hash: str,
         capability_ids: tuple[str, ...],
+        risk: CapabilityPromotionRisk = CapabilityPromotionRisk.HIGH,
     ) -> None:
         self.provider_id = provider_id
         self.candidate_id = candidate_id
         self.candidate_hash = candidate_hash
         self.capability_ids = capability_ids
+        self.risk = risk
         super().__init__(
             f"promotion authorization required for '{provider_id}'",
         )
@@ -113,6 +125,7 @@ class PluginPromotionAuthorizationRequired(RuntimeError):
             "provider_id": self.provider_id,
             "candidate_id": self.candidate_id,
             "candidate_hash": self.candidate_hash,
+            "risk": self.risk.value,
             "capability_ids": list(self.capability_ids),
         }
 
@@ -1288,12 +1301,8 @@ class PluginLoader:
         )
         del _manifest_path
         current = self._loaded_plugins.get(manifest.id)
-        if (
-            not manifest.contributions
-            and (
-                current is None
-                or not current.manifest.contributions
-            )
+        if not manifest.contributions and (
+            current is None or not current.manifest.contributions
         ):
             return None
         implementation_hash = await asyncio.to_thread(
@@ -1328,21 +1337,45 @@ class PluginLoader:
             manifest,
             implementation_hash,
         )
-        if confirmed_candidate_hash != candidate.candidate_hash:
-            declarations = bundle.contributions
-            if removes_current_capabilities and current is not None:
-                declarations = current.manifest.contributions
-            capability_ids = tuple(
-                f"{bundle.provider_id}.{item.contribution_id}"
-                for item in declarations
-            )
+        if removes_current_capabilities and current is not None:
+            declarations = current.manifest.contributions
+            risk = promotion_risk_for_slots(item.slot for item in declarations)
+            if (
+                risk is CapabilityPromotionRisk.LOW
+                and confirmed_candidate_hash is None
+            ):
+                return False
+            if confirmed_candidate_hash == candidate.candidate_hash:
+                return True
             raise PluginPromotionAuthorizationRequired(
                 bundle.provider_id,
                 str(candidate.candidate_id),
                 candidate.candidate_hash,
-                capability_ids,
+                tuple(
+                    f"{bundle.provider_id}.{item.contribution_id}"
+                    for item in declarations
+                ),
+                risk,
             )
-        return True
+        try:
+            authorization = authorize_capability_promotion(
+                bundle,
+                candidate,
+                origin=CapabilityPromotionOrigin.OPERATOR_REQUEST,
+                confirmed_candidate_hash=confirmed_candidate_hash,
+            )
+        except CapabilityPromotionAuthorizationRequired as exc:
+            raise PluginPromotionAuthorizationRequired(
+                exc.provider_id,
+                exc.candidate_id,
+                exc.candidate_hash,
+                exc.capability_ids,
+                exc.risk,
+            ) from exc
+        return (
+            authorization.status
+            is CapabilityPromotionAuthorizationStatus.GRANTED
+        )
 
     @staticmethod
     def _verify_installed_candidate(
@@ -1712,13 +1745,14 @@ class PluginLoader:
 
         # Re-read manifest from the installed location so that
         # source_path in the record points to the correct directory
-        installed_manifest, installed_hash = (
-            await self._verified_installed_source(
-                source_path,
-                target_dir,
-                operator_authorized=operator_authorized,
-                confirmed_candidate_hash=confirmed_candidate_hash,
-            )
+        (
+            installed_manifest,
+            installed_hash,
+        ) = await self._verified_installed_source(
+            source_path,
+            target_dir,
+            operator_authorized=operator_authorized,
+            confirmed_candidate_hash=confirmed_candidate_hash,
         )
 
         # Install Python dependencies only after candidate verification.
@@ -1827,13 +1861,11 @@ class PluginLoader:
 
         self.registry.assert_memory_backends_not_in_use(plugin_id)
 
-        operator_authorized = (
-            self._authorize_permanent_deactivation(
-                plugin_id,
-                delete_files=delete_files,
-                deactivate_capabilities=deactivate_capabilities,
-                confirmed_release_hash=confirmed_release_hash,
-            )
+        operator_authorized = self._authorize_permanent_deactivation(
+            plugin_id,
+            delete_files=delete_files,
+            deactivate_capabilities=deactivate_capabilities,
+            confirmed_release_hash=confirmed_release_hash,
         )
 
         # Publish the provider removal before mutating plugin-owned host

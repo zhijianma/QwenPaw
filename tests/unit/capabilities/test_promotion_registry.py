@@ -154,6 +154,7 @@ async def test_successful_activation_records_prepared_and_committed() -> None:
         "contract.implementation",
         "contract.health",
         "promotion.operator-authorized",
+        "promotion.risk.high",
     }
     authorization = next(
         item
@@ -380,9 +381,12 @@ async def test_successful_deactivation_records_one_wal_operation() -> None:
     )
 
     assert snapshot.generation == 3
-    assert registry.current_descriptor(
-        "qwenpaw.system.test.factory",
-    ) is None
+    assert (
+        registry.current_descriptor(
+            "qwenpaw.system.test.factory",
+        )
+        is None
+    )
     assert registry.stable_release("qwenpaw.system.test") is None
     assert [event.action for event in journal.events] == [
         CapabilityPromotionAction.DEACTIVATE,
@@ -435,10 +439,7 @@ async def test_operator_authorized_deactivation_records_evidence() -> None:
         if evidence.check_id == "deactivate.operator-authorized"
     ]
     assert len(authorization_evidence) == 1
-    assert (
-        authorization_evidence[0].outcome
-        is CapabilityCheckOutcome.PASSED
-    )
+    assert authorization_evidence[0].outcome is CapabilityCheckOutcome.PASSED
 
 
 @pytest.mark.asyncio
@@ -455,9 +456,12 @@ async def test_deactivation_prepare_failure_keeps_provider_active() -> None:
 
     assert registry.generation == 2
     assert registry.stable_release("qwenpaw.system.test") == release
-    assert registry.current_descriptor(
-        "qwenpaw.system.test.factory",
-    ) is not None
+    assert (
+        registry.current_descriptor(
+            "qwenpaw.system.test.factory",
+        )
+        is not None
+    )
     assert not journal.events
 
 

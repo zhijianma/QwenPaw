@@ -72,6 +72,33 @@ def _write_engine_plugin(
     )
 
 
+def _write_low_risk_ui_plugin(source: Path) -> None:
+    source.mkdir(parents=True)
+    (source / "plugin.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "qwenpaw.plugin.v2",
+                "id": "low-risk-ui",
+                "name": "Low Risk UI",
+                "version": "1.0.0",
+                "restart_policy": "hot",
+                "contributions": [
+                    {
+                        "id": "settings",
+                        "slot": "ui.settings",
+                        "entrypoint": "frontend.js",
+                    },
+                ],
+            },
+        ),
+        encoding="utf-8",
+    )
+    (source / "frontend.js").write_text(
+        "export default {};\n",
+        encoding="utf-8",
+    )
+
+
 async def _authorized_install(
     loader: PluginLoader,
     source: Path,
@@ -83,6 +110,38 @@ async def _authorized_install(
         confirmed_candidate_hash=candidate_hash,
         **kwargs,
     )
+
+
+@pytest.mark.asyncio
+async def test_explicit_low_risk_ui_install_does_not_require_challenge(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    install_dir = tmp_path / "installed"
+    _write_low_risk_ui_plugin(source)
+    registry = GenerationRegistry(
+        promotion_journal=FilesystemCapabilityPromotionJournal(tmp_path),
+    )
+    loader = PluginLoader(
+        [install_dir],
+        capability_registry=registry,
+    )
+
+    record = await loader.load_plugin_from_path(
+        source,
+        install_dir=install_dir,
+    )
+    events = await registry.promotion_events(provider_id="low-risk-ui")
+    [evidence_bundle] = await registry.promotion_evidence(
+        events[-1].candidate.candidate_id,
+    )
+    outcomes = {
+        item.check_id: item.outcome.value for item in evidence_bundle.evidence
+    }
+
+    assert record.enabled
+    assert outcomes["promotion.risk.low"] == "passed"
+    assert outcomes["promotion.operator-authorized"] == "not_applicable"
 
 
 @pytest.mark.asyncio
