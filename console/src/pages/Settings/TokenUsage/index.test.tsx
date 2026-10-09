@@ -9,13 +9,14 @@
  * The presentational children are stubbed with prop capture; the charts
  * and date picker are minimal drivers.
  */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import React from "react";
 
 const apiMocks = vi.hoisted(() => ({
-  getTokenUsageDetails: vi.fn(),
+  getTokenUsage: vi.fn(),
   getGlobalLlmToolTrend: vi.fn(),
 }));
 
@@ -166,8 +167,98 @@ function makeRecord(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function makeSummary(records: ReturnType<typeof makeRecord>[]) {
+  const totals = records.reduce(
+    (acc, record) => ({
+      prompt_tokens: acc.prompt_tokens + record.prompt_tokens,
+      completion_tokens: acc.completion_tokens + record.completion_tokens,
+      cache_read_tokens: acc.cache_read_tokens + record.cache_read_tokens,
+      cache_write_tokens: acc.cache_write_tokens + record.cache_write_tokens,
+      cache_eligible_input_tokens:
+        acc.cache_eligible_input_tokens + record.cache_eligible_input_tokens,
+      cache_observed_calls:
+        acc.cache_observed_calls + record.cache_observed_calls,
+      call_count: acc.call_count + record.call_count,
+    }),
+    {
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      cache_eligible_input_tokens: 0,
+      cache_observed_calls: 0,
+      call_count: 0,
+    },
+  );
+  const stats = (record: ReturnType<typeof makeRecord>) => ({
+    prompt_tokens: record.prompt_tokens,
+    completion_tokens: record.completion_tokens,
+    cache_read_tokens: record.cache_read_tokens,
+    cache_write_tokens: record.cache_write_tokens,
+    cache_eligible_input_tokens: record.cache_eligible_input_tokens,
+    cache_observed_calls: record.cache_observed_calls,
+    call_count: record.call_count,
+  });
+  return {
+    total_prompt_tokens: totals.prompt_tokens,
+    total_completion_tokens: totals.completion_tokens,
+    total_cache_read_tokens: totals.cache_read_tokens,
+    total_cache_write_tokens: totals.cache_write_tokens,
+    total_cache_eligible_input_tokens: totals.cache_eligible_input_tokens,
+    cache_observed_calls: totals.cache_observed_calls,
+    cache_hit_rate: null,
+    total_calls: totals.call_count,
+    by_model: Object.fromEntries(
+      records.map((record) => [
+        `${record.provider_id}:${record.model}`,
+        {
+          ...stats(record),
+          provider_id: record.provider_id,
+          model: record.model,
+        },
+      ]),
+    ),
+    by_date: Object.fromEntries(
+      records.map((record, index) => [
+        `${record.date}:${index}`,
+        stats(record),
+      ]),
+    ),
+    by_date_model: {},
+    by_agent: Object.fromEntries(
+      records.map((record, index) => [
+        `${record.agent_id ?? "none"}:${index}`,
+        { ...stats(record), agent_id: record.agent_id },
+      ]),
+    ),
+    by_chat: Object.fromEntries(
+      records.map((record, index) => [
+        `${record.agent_id ?? "none"}:${record.conversation_id}:${index}`,
+        {
+          ...stats(record),
+          agent_id: record.agent_id,
+          conversation_id: record.conversation_id,
+        },
+      ]),
+    ),
+    by_turn: Object.fromEntries(
+      records.map((record, index) => [
+        `${record.agent_id ?? "none"}:${record.conversation_id}:${
+          record.turn_id
+        }:${index}`,
+        {
+          ...stats(record),
+          agent_id: record.agent_id,
+          conversation_id: record.conversation_id,
+          turn_id: record.turn_id,
+        },
+      ]),
+    ),
+  };
+}
+
 function setupDefaultMocks() {
-  apiMocks.getTokenUsageDetails.mockResolvedValue([makeRecord()]);
+  apiMocks.getTokenUsage.mockResolvedValue(makeSummary([makeRecord()]));
   apiMocks.getGlobalLlmToolTrend.mockResolvedValue([
     { date: "2026-09-01", agent_llm_calls: 4, tool_calls: 2 },
   ]);
@@ -185,7 +276,7 @@ describe("TokenUsagePage", () => {
   });
 
   it("shows the loading state before the details arrive", () => {
-    apiMocks.getTokenUsageDetails.mockReturnValue(new Promise(() => {}));
+    apiMocks.getTokenUsage.mockReturnValue(new Promise(() => {}));
     render(<TokenUsagePage />);
     expect(screen.getByTestId("loading-state")).toBeInTheDocument();
   });
@@ -208,10 +299,16 @@ describe("TokenUsagePage", () => {
   });
 
   it("builds model and agent table rows from the records", async () => {
-    apiMocks.getTokenUsageDetails.mockResolvedValue([
-      makeRecord(),
-      makeRecord({ provider_id: "anthropic", model: "claude", agent_id: null }),
-    ]);
+    apiMocks.getTokenUsage.mockResolvedValue(
+      makeSummary([
+        makeRecord(),
+        makeRecord({
+          provider_id: "anthropic",
+          model: "claude",
+          agent_id: null,
+        }),
+      ]),
+    );
     render(<TokenUsagePage />);
     await waitFor(() => expect(capturedProps.tables).toBeTruthy());
     // Model rows are keyed provider:model.
@@ -246,16 +343,16 @@ describe("TokenUsagePage", () => {
   });
 
   it("falls back to the agent id when the store has no profile", async () => {
-    apiMocks.getTokenUsageDetails.mockResolvedValue([
-      makeRecord({ agent_id: "unknown-agent" }),
-    ]);
+    apiMocks.getTokenUsage.mockResolvedValue(
+      makeSummary([makeRecord({ agent_id: "unknown-agent" })]),
+    );
     render(<TokenUsagePage />);
     await waitFor(() => expect(capturedProps.tables).toBeTruthy());
     expect(capturedProps.tables.byAgentData[0].agent).toBe("unknown-agent");
   });
 
   it("shows the error state with a retry that refetches", async () => {
-    apiMocks.getTokenUsageDetails.mockRejectedValueOnce(new Error("down"));
+    apiMocks.getTokenUsage.mockRejectedValueOnce(new Error("down"));
     const user = userEvent.setup();
     render(<TokenUsagePage />);
     await waitFor(() => {
@@ -265,7 +362,7 @@ describe("TokenUsagePage", () => {
     expect(stableMessage.error).toHaveBeenCalledWith("tokenUsage.loadFailed");
     expect(capturedProps.tables).toBeNull();
 
-    apiMocks.getTokenUsageDetails.mockResolvedValueOnce([makeRecord()]);
+    apiMocks.getTokenUsage.mockResolvedValueOnce(makeSummary([makeRecord()]));
     await user.click(screen.getByTestId("retry"));
     await waitFor(() =>
       expect(screen.getByTestId("summary-cards")).toBeInTheDocument(),
@@ -273,7 +370,7 @@ describe("TokenUsagePage", () => {
   });
 
   it("shows the empty state when there are no records", async () => {
-    apiMocks.getTokenUsageDetails.mockResolvedValue([]);
+    apiMocks.getTokenUsage.mockResolvedValue(makeSummary([]));
     render(<TokenUsagePage />);
     await waitFor(() =>
       expect(screen.getByTestId("empty-state")).toBeInTheDocument(),
@@ -344,19 +441,17 @@ describe("TokenUsagePage", () => {
     await waitFor(() =>
       expect(screen.getByTestId("llm-tool-line")).toBeInTheDocument(),
     );
-    const callsBefore = apiMocks.getTokenUsageDetails.mock.calls.length;
+    const callsBefore = apiMocks.getTokenUsage.mock.calls.length;
 
     const dayjs = (await import("dayjs")).default;
     datePickerMock.onChange([dayjs().subtract(7, "day"), dayjs()]);
 
     await waitFor(() =>
-      expect(apiMocks.getTokenUsageDetails.mock.calls.length).toBe(
-        callsBefore + 1,
-      ),
+      expect(apiMocks.getTokenUsage.mock.calls.length).toBe(callsBefore + 1),
     );
     const [range] =
-      apiMocks.getTokenUsageDetails.mock.calls[
-        apiMocks.getTokenUsageDetails.mock.calls.length - 1
+      apiMocks.getTokenUsage.mock.calls[
+        apiMocks.getTokenUsage.mock.calls.length - 1
       ];
     expect(range.start_date).toBe(
       dayjs().subtract(7, "day").format("YYYY-MM-DD"),
@@ -368,10 +463,10 @@ describe("TokenUsagePage", () => {
     await waitFor(() =>
       expect(screen.getByTestId("llm-tool-line")).toBeInTheDocument(),
     );
-    const callsBefore = apiMocks.getTokenUsageDetails.mock.calls.length;
+    const callsBefore = apiMocks.getTokenUsage.mock.calls.length;
     datePickerMock.onChange(null);
     datePickerMock.onChange([null, null]);
     await new Promise((r) => setTimeout(r, 30));
-    expect(apiMocks.getTokenUsageDetails.mock.calls.length).toBe(callsBefore);
+    expect(apiMocks.getTokenUsage.mock.calls.length).toBe(callsBefore);
   });
 });

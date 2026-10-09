@@ -1128,6 +1128,10 @@ Cron 不形成独立审批或产物事实源。
       Chat 消息继续携带本 turn usage 和上下文窗口投影，并显式区分
       `provider_reported` 与 `local_estimate`。旧三段聚合键保持只读兼容，不伪造
       conversation/turn identity。
+    - [x] Token Usage Summary 已成为服务端权威统计契约：同一查询同时返回全局、
+      日期、实际 Provider/Model、日期×模型、Agent、`ChatSpec.id` 和 Invocation turn
+      聚合。Console 不再下载明细并维护第二套页面私有聚合口径；`/details` 仅保留为
+      明细查询与兼容 API。不同 Agent 下相同 Chat/Turn ID 使用复合 scope key 隔离。
     - [ ] Workstation / Hub 的健康度、成本和数据边界动态路由仍待实现。Lite 当前
       继续使用确定性主模型与显式 fallback 顺序，不静默切换。
   - [ ] Run Completion、Verification 与业务 Outcome 分层；当前已阻止 Invocation

@@ -3,7 +3,11 @@
 
 from .buffer import _UsageEvent
 from .manager import (
+    TokenUsageByAgent,
+    TokenUsageByConversation,
+    TokenUsageByDateModel,
     TokenUsageByModel,
+    TokenUsageByTurn,
     TokenUsageRecord,
     TokenUsageStats,
     TokenUsageSummary,
@@ -17,7 +21,11 @@ from .turn_usage import (
 )
 
 __all__ = [
+    "TokenUsageByAgent",
+    "TokenUsageByConversation",
+    "TokenUsageByDateModel",
     "TokenUsageByModel",
+    "TokenUsageByTurn",
     "TokenUsageRecord",
     "TokenUsageStats",
     "TokenUsageSummary",

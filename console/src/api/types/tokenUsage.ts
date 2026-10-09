@@ -28,6 +28,18 @@ export interface TokenUsageStats {
   call_count: number;
 }
 
+export interface TokenUsageByAgent extends TokenUsageStats {
+  agent_id: string | null;
+}
+
+export interface TokenUsageByChat extends TokenUsageByAgent {
+  conversation_id: string | null;
+}
+
+export interface TokenUsageByTurn extends TokenUsageByChat {
+  turn_id: string | null;
+}
+
 export interface TokenUsageSummary {
   total_prompt_tokens: number;
   total_completion_tokens: number;
@@ -39,4 +51,8 @@ export interface TokenUsageSummary {
   total_calls: number;
   by_model: Record<string, TokenUsageStats>;
   by_date: Record<string, TokenUsageStats>;
+  by_date_model: Record<string, Record<string, TokenUsageStats>>;
+  by_agent: Record<string, TokenUsageByAgent>;
+  by_chat: Record<string, TokenUsageByChat>;
+  by_turn: Record<string, TokenUsageByTurn>;
 }

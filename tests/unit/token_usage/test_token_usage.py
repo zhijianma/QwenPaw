@@ -487,6 +487,10 @@ class TestTokenUsageModels:
         assert summary.total_calls == 0
         assert summary.by_model == {}
         assert summary.by_date == {}
+        assert summary.by_date_model == {}
+        assert summary.by_agent == {}
+        assert summary.by_chat == {}
+        assert summary.by_turn == {}
 
     def test_summary_with_data(self):
         """Should accept populated data."""
@@ -660,6 +664,48 @@ class TestTokenUsageManagerCore:
         assert summary.total_cache_eligible_input_tokens == 1000
         assert summary.cache_observed_calls == 2
         assert summary.cache_hit_rate == 54
+
+    @pytest.mark.asyncio
+    async def test_get_summary_exposes_all_ownership_dimensions(self):
+        """The API aggregate should own every supported usage scope."""
+        manager = TokenUsageManager()
+        merged: dict = {}
+        _apply_event(
+            merged,
+            _ev(
+                agent_id="bot-a",
+                conversation_id="chat-1",
+                turn_id="turn-1",
+            ),
+        )
+        _apply_event(
+            merged,
+            _ev(
+                agent_id="bot-a",
+                conversation_id="chat-1",
+                turn_id="turn-2",
+                prompt_tokens=40,
+                completion_tokens=10,
+            ),
+        )
+        # pylint: disable=protected-access
+        manager._buffer.get_merged_data = AsyncMock(return_value=merged)
+
+        summary = await manager.get_summary(
+            start_date=date(2026, 4, 24),
+            end_date=date(2026, 4, 24),
+        )
+
+        assert summary.by_agent['["bot-a"]'].prompt_tokens == 140
+        chat = summary.by_chat['["bot-a","chat-1"]']
+        assert chat.conversation_id == "chat-1"
+        assert chat.call_count == 2
+        assert set(summary.by_turn) == {
+            '["bot-a","chat-1","turn-1"]',
+            '["bot-a","chat-1","turn-2"]',
+        }
+        by_model = summary.by_date_model["2026-04-24"]
+        assert by_model["openai:gpt-4"].prompt_tokens == 140
 
     @pytest.mark.asyncio
     async def test_get_details_empty(self, tmp_path, monkeypatch):

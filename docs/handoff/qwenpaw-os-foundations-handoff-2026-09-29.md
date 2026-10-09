@@ -922,6 +922,9 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - Console Token Usage 已将同一明细投影为全局摘要及 Agent、Chat、Turn、日期、模型
   五个切面。Chat/Turn 使用包含 Agent 的复合键；旧记录即使没有 Chat/Turn，也只在
   各自 Agent 内显示为“未归属”，不会跨 Agent 合并或伪造历史归属。
+- `/api/token-usage` 现已正式返回 `by_date_model`、`by_agent`、`by_chat` 和
+  `by_turn`，不再只把这些维度留给前端临时计算。Console 直接消费权威 Summary；
+  旧 `useDataAggregation` 已删除，`/details` 继续保留给明细查询与兼容调用。
 - Chat 的每个完成 ResponseCard 直接显示该 Turn 的总 Token、输入/输出及实际
   Provider/Model；`local_estimate` 明确显示为约数，旧回合无 usage 时不伪造空统计。
   数据来自卡片持久 metadata，刷新及历史恢复后仍可见，不依赖全局最新 Turn Store。
@@ -929,6 +932,8 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   `60 passed`；统计页新增聚合与页面定点测试 `19 passed`，Turn 卡片及 usage
   定点测试 `51 passed`。真实统计页已验证五个切面；真实 Chat Turn 显示
   `34.6K tok` 及实际模型，刷新后保持一致。Task 页面没有改动。
+- 权威 Summary 收口新增后端 `51 passed`、Console 页面/API `16 passed`；Python
+  文件级 pre-commit 与前端 ESLint/Prettier 通过。Task 页面仍未改动。
 
 ### 2026-10-09 Model Recovery Kernel Contract
 

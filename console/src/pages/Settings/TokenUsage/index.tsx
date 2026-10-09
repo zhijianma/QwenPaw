@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import dayjs, { type Dayjs } from "dayjs";
 import { useTheme } from "../../../contexts/ThemeContext";
 import api from "../../../api";
-import type { TokenUsageRecord } from "../../../api/types/tokenUsage";
+import type { TokenUsageSummary } from "../../../api/types/tokenUsage";
 import type { LlmToolDaily } from "../../../api/modules/agentStats";
 import { useAppMessage } from "../../../hooks/useAppMessage";
 import { PageHeader } from "@/components/PageHeader";
@@ -20,7 +20,6 @@ import {
 } from "./components";
 import { useAgentStore } from "../../../stores/agentStore";
 import { getAgentDisplayName } from "../../../utils/agentDisplayName";
-import { useDataAggregation } from "./hooks/useDataAggregation";
 import { lineChartChrome } from "./hooks/lineChartChrome";
 import { useModelTrendConfig } from "./hooks/useModelTrendConfig";
 import { useTokenTypeConfig } from "./hooks/useTokenTypeConfig";
@@ -38,7 +37,9 @@ function TokenUsagePage() {
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
-  const [records, setRecords] = useState<TokenUsageRecord[]>([]);
+  const [usageSummary, setUsageSummary] = useState<TokenUsageSummary | null>(
+    null,
+  );
   const [llmToolDays, setLlmToolDays] = useState<LlmToolDaily[] | null>(null);
   const [trendLoading, setTrendLoading] = useState(true);
   const [trendError, setTrendError] = useState(false);
@@ -95,14 +96,14 @@ function TokenUsagePage() {
     setError(false);
     void fetchTrend(trendId);
     try {
-      const detailsData = await api.getTokenUsageDetails(dateRange);
+      const summary = await api.getTokenUsage(dateRange);
       if (detailsId !== detailsFetchIdRef.current) return;
-      setRecords(detailsData);
+      setUsageSummary(summary);
     } catch (err) {
       console.error("Failed to load token usage:", err);
       if (detailsId !== detailsFetchIdRef.current) return;
       message.error(t("tokenUsage.loadFailed"));
-      setRecords([]);
+      setUsageSummary(null);
       setError(true);
     } finally {
       if (detailsId === detailsFetchIdRef.current) {
@@ -123,7 +124,8 @@ function TokenUsagePage() {
     setEndDate(dates[1]);
   };
 
-  const aggregatedData = useDataAggregation(records);
+  const aggregatedData =
+    usageSummary && usageSummary.total_calls > 0 ? usageSummary : null;
 
   const modelTrendConfig = useModelTrendConfig({
     byDateModel: aggregatedData?.by_date_model ?? null,
