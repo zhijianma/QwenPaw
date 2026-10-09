@@ -187,14 +187,16 @@ Ready。进程内持久化 Ledger 到实际 ConsoleChannel 的链路已经通过
 缺失 `object="message"` 造成 Channel 静默忽略的协议缺陷。浏览器和外部媒体
 Channel 的上传/展示等价验收尚未完成，所以
 `LiteCronTaskRuntime.supports(stream)` 仍为 false。这是显式迁移门禁，不是能力
-探测遗漏。
+探测遗漏。每次实际 fallback 都继续写带结构化 decision 的 Cron history；同一
+Job/decision/trigger 的首次使用还会通过幂等 Operational Event 投影持久化警告、
+稳定原因码和 removal gates。告警投影失败不会阻止旧生产执行，但会留下错误日志。
 
 Cron 的 JSON 声明、APScheduler 唤醒器与 Scheduler catalog 现在由
 `CronManager` 作为一个迁移事务协调：新声明只有在 catalog 同步成功后才提交；更新
 失败恢复旧声明；删除底层仓库拒绝时恢复 catalog；启动恢复失败会把 job 持久化为
 disabled 并移除 APScheduler job。切换到 legacy path 时会主动删除确定性的 Kernel
 schedule definition，但不会删除既有 Fire/Lease 历史。final/silent Agent Cron、
-Heartbeat 与 service Cron 已由
+text-only、Heartbeat 与 service Cron 已由
 独立 durable polling lifecycle 消费 Cursor，不再向 APScheduler 注册同名 job；
 stream job 仍保留原 APScheduler 兼容路径，因此父
 迁移项尚未完成。

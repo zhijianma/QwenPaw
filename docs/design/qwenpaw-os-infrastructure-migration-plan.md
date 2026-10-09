@@ -965,6 +965,9 @@ Invocation，新 Invocation 自动使用新 generation。
     handler 误当 Provider factory，也不覆写第三方源码。
   - [x] Cron Runtime 选择使用结构化 decision；Job 详情、最近状态、历史和日志
     共享稳定 fallback 原因码与删除门槛，旧 `supports()` Runtime 显式标记兼容状态。
+    stream 每次实际 fallback 都写 history；同一 Job/decision/trigger 的首次使用通过
+    幂等 `OperationalEvent → Delivery → Inbox` 持久化迁移警告，且诊断投影失败不
+    阻断旧生产执行。
   - [x] 旧 Inbox Migration 将 agent-scoped 观察起点、扫描与成功/失败计数、源指纹、
     连续稳定扫描和脱敏错误持久化到新 SQLite 表；只读 API 以 7 天、3 次稳定干净扫描
     作为关闭双读门槛，但不授权物理删除旧 JSON。

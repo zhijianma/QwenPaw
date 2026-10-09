@@ -1569,6 +1569,11 @@ class CronManager(ManagerBase):
                         runtime_decision.reason_code.value,
                         runtime_decision.reason,
                     )
+                    await self._publish_runtime_compatibility_warning(
+                        job,
+                        runtime_decision,
+                        trigger=trigger,
+                    )
                     execution_result = await self._executor.execute(job)
                 execution_succeeded = True
                 delivery_failed = (
@@ -1719,3 +1724,45 @@ class CronManager(ManagerBase):
                             logger.exception(
                                 "failed to append cron result inbox event",
                             )
+
+    async def _publish_runtime_compatibility_warning(
+        self,
+        job: CronJobSpec,
+        decision: CronRuntimeDecision,
+        *,
+        trigger: Literal["scheduled", "manual"],
+    ) -> None:
+        """Persist one idempotent warning for an intentional legacy path."""
+        if (
+            decision.reason_code
+            is not CronRuntimeDecisionCode.STREAM_DELIVERY_UNVERIFIED
+        ):
+            return
+        try:
+            await publish_cron_event(
+                self._workspace,
+                agent_id=self._agent_id,
+                source_id=job.id or "unknown",
+                event_type="cron_compatibility_fallback",
+                status="success",
+                severity="warning",
+                title="Cron compatibility path active",
+                body=(
+                    "This stream Cron still uses the legacy executor until "
+                    "its external Channel equivalence gates pass."
+                ),
+                payload={
+                    "job_id": job.id,
+                    "task_type": job.task_type,
+                    "dispatch_mode": job.dispatch.mode,
+                    "trigger": trigger,
+                    "runtime_path": decision.path.value,
+                    "reason_code": decision.reason_code.value,
+                    "removal_gates": list(decision.removal_gates),
+                },
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.exception(
+                "failed to persist Cron compatibility warning: job_id=%s",
+                job.id,
+            )
