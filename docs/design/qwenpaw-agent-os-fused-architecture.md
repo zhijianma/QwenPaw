@@ -509,7 +509,9 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
 - [ ] 将 Tool、Driver、MCP、Shell、Browser 与远程执行统一适配到
   `ActionRequest` / `ActionResult`，不为每类能力复制审批、重试和审计。
   - [x] Tool 垂直切片已落地：系统 Tool 与插件 Tool 共用执行前 Request、执行后
-    Result、内容最小化、Artifact/Evidence 关联和 fail-closed 语义。
+    Result、内容最小化、Artifact/Evidence 关联和 fail-closed 语义。Action 公共模型
+    统一以 `chat_id = ChatSpec.id` 表达归属，历史 `conversation_id` 仅作为输入与
+    Python 属性兼容，不再作为新 JSON 字段扩散。
   - [x] Driver 垂直切片已落地：系统与插件 Provider、旧 Driver Manager 兼容路径
     共用 Driver Action；运行中审批通过不可变 `ActionApprovalLink` 关联，拒绝与
     执行失败分开。MCP 作为 Driver 协议随该路径接入；显式 `readOnlyHint` 映射为

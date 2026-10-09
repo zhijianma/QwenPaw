@@ -166,6 +166,7 @@ async def project_summary() -> str:
     execution = current_action_execution()
     if execution is None:
         raise RuntimeError("project_summary requires the Action Host")
+    # execution.chat_id is the owning ChatSpec.id when this action is scoped.
     # Forward execution.idempotency_key only when the real executor stores
     # and deduplicates it durably across retries.
     return "Project summary"
@@ -206,14 +207,23 @@ should not use them. Use `file`, `network`, `shell`, or `internal` as the
 governance type, and set `target_param` when policy must inspect a path, URL,
 command, or other target.
 
-`action_kind` is an optional executor-family declaration, separate from the
-governance type. Most tools should omit it: the host maps process effects to
-`shell` and other ordinary tools to `tool`. A provider that owns a real browser
-execution boundary may set `action_kind=ActionKind.BROWSER`; the same applies
-to future executor families exposed by the SDK. Never use `action_kind` merely
-to change approval behavior, and never infer it from a tool or policy name.
-The host still owns Policy, Approval, Action Request/Result, and environment
-evidence for both system and plugin providers.
+`action_kind` is an executor-family declaration, separate from the governance
+type and effect. Ordinary tools may omit it and resolve to `tool`. Tools with a
+`process` effect should declare it whenever the executor is known: an operating
+system command uses `ActionKind.SHELL`, while a workflow orchestrator remains
+`ActionKind.TOOL`. The legacy host still maps an undeclared process effect to
+`shell` for older plugins, but new code must not rely on effect as a type
+discriminator. A provider that owns a real browser execution boundary may set
+`action_kind=ActionKind.BROWSER`; the same applies to future executor families
+exposed by the SDK. Never use `action_kind` merely to change approval behavior,
+and never infer it from a tool or policy name. The host still owns Policy,
+Approval, Action Request/Result, and environment evidence for both system and
+plugin providers.
+
+`current_action_execution().chat_id` is the canonical owning `ChatSpec.id`.
+`conversation_id` remains a deprecated read-only Python alias so existing
+plugins can roll forward without rewriting durable records; new plugin code and
+serialized contracts should use `chat_id`.
 
 `idempotency_mode` is an execution guarantee, not a retry preference. Keep
 the default `UNDECLARED` when the executor ignores Host keys. Use

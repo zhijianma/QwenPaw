@@ -757,18 +757,32 @@ class EnvironmentRecord(KernelModel):
         return self
 
 
-class ActionApprovalLink(KernelModel):
+class _ActionChatIdentity(KernelModel):
+    """Canonical ChatSpec identity with legacy input compatibility."""
+
+    chat_id: NonEmptyStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("chat_id", "conversation_id"),
+        description="Owning ChatSpec.id; null for an unscoped action",
+    )
+
+    @property
+    def conversation_id(self) -> str | None:
+        """Return the deprecated Python alias during migration."""
+        return self.chat_id
+
+
+class ActionApprovalLink(_ActionChatIdentity):
     """Immutable relation for approvals discovered during an action."""
 
     action_id: UUID
     invocation_id: UUID
-    conversation_id: NonEmptyStr | None = None
     approval_id: UUID
     source: ApprovalSource
     linked_at: AwareDatetime = Field(default_factory=utc_now)
 
 
-class ActionRequest(KernelModel):
+class ActionRequest(_ActionChatIdentity):
     """Privacy-safe durable intent recorded before external execution.
 
     ``arguments`` is available only to the in-memory executor. Durable
@@ -779,7 +793,6 @@ class ActionRequest(KernelModel):
     invocation_id: UUID
     correlation_id: UUID
     agent_id: NonEmptyStr | None = None
-    conversation_id: NonEmptyStr | None = None
     registry_generation: int = Field(ge=1)
     environment_ref: EnvironmentRef | None = None
     capability_id: NamespacedId
@@ -841,14 +854,13 @@ class ActionRequest(KernelModel):
         return self
 
 
-class ActionExecutionContext(KernelModel):
+class ActionExecutionContext(_ActionChatIdentity):
     """Content-safe Action identity visible to the active executor."""
 
     action_id: UUID
     invocation_id: UUID
     correlation_id: UUID
     agent_id: NonEmptyStr | None = None
-    conversation_id: NonEmptyStr | None = None
     capability_id: NamespacedId
     idempotency_mode: ActionIdempotencyMode
     idempotency_key: NonEmptyStr
@@ -892,7 +904,7 @@ class ActionRetryDecision(KernelModel):
         return self
 
 
-class ActionRetryInputCheckpoint(KernelModel):
+class ActionRetryInputCheckpoint(_ActionChatIdentity):
     """Content-safe reference to private input for one admitted retry."""
 
     checkpoint_id: UUID
@@ -900,7 +912,6 @@ class ActionRetryInputCheckpoint(KernelModel):
     retry_root_action_id: UUID
     invocation_id: UUID
     agent_id: NonEmptyStr
-    conversation_id: NonEmptyStr | None = None
     correlation_id: UUID
     registry_generation: int = Field(ge=1)
     capability_id: NamespacedId
@@ -922,12 +933,11 @@ class ActionRetryInputCheckpoint(KernelModel):
     created_at: AwareDatetime = Field(default_factory=utc_now)
 
 
-class ActionResult(KernelModel):
+class ActionResult(_ActionChatIdentity):
     """Content-minimal terminal evidence for one action request."""
 
     action_id: UUID
     invocation_id: UUID
-    conversation_id: NonEmptyStr | None = None
     status: ActionStatus
     observation: SkipJsonSchema[object | None] = Field(
         default=None,
@@ -983,12 +993,11 @@ class ActionResult(KernelModel):
         return self
 
 
-class CommittedActionItem(KernelModel):
+class CommittedActionItem(_ActionChatIdentity):
     """Content-safe binding between Action evidence and model context."""
 
     action_id: UUID
     invocation_id: UUID
-    conversation_id: NonEmptyStr | None = None
     executor_item_id: NonEmptyStr
     observation_digest: Annotated[
         str,
@@ -1023,9 +1032,9 @@ class ActionRecord(KernelModel):
                 raise ValueError(
                     "action approval link invocation does not match request",
                 )
-            if link.conversation_id != self.request.conversation_id:
+            if link.chat_id != self.request.chat_id:
                 raise ValueError(
-                    "action approval link conversation does not match request",
+                    "action approval link chat does not match request",
                 )
         if self.result is not None and set(result_approval_ids) != set(
             link_ids,
@@ -1037,9 +1046,9 @@ class ActionRecord(KernelModel):
             raise ValueError("action result does not match request")
         if self.result.invocation_id != self.request.invocation_id:
             raise ValueError("action result invocation does not match request")
-        if self.result.conversation_id != self.request.conversation_id:
+        if self.result.chat_id != self.request.chat_id:
             raise ValueError(
-                "action result conversation does not match request",
+                "action result chat does not match request",
             )
         return self
 

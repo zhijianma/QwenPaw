@@ -1056,6 +1056,12 @@ Cron 不形成独立审批或产物事实源。
       `ACTION_KIND_SHELL_OK`，批量编排器完成两次时间工具；Action API 分别保存
       `shell/execute_shell_command` 与 `tool/run_tool_batch`，均为 succeeded，命令正文
       继续投影为 `[CONTENT OMITTED]`。
+    - [x] Action 公共合同统一使用 `chat_id = ChatSpec.id`：Request、Result、Approval
+      Link、Execution Context、Retry Checkpoint 和 Committed Item 的新 JSON 不再公开
+      `conversation_id`。历史 JSON 与旧 Python 调用仍通过只读兼容别名恢复，Store 的
+      内部 conversation 命名不作为插件或 HTTP 协议扩散。2026-10-10 运行中的固定
+      Chat 成功读取迁移前的 Shell/Batch 文件记录，HTTP Request/Result 均只返回
+      `chat_id`，证明兼容恢复不依赖数据重写。
     - [x] 后处理落盘失败不再被 Coordinator 静默吞掉：已执行动作返回
       `unknown` 且禁止自动重试；请求落盘失败则 fail closed，并明确声明工具未执行。
     - [x] 2026-10-01 固定 Chat

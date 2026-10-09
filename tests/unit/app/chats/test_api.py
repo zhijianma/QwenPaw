@@ -206,6 +206,7 @@ async def test_list_chat_actions_returns_privacy_safe_records(tmp_path):
     )
 
     [record] = records
+    assert record.request.chat_id == chat_id
     assert record.request.conversation_id == chat_id
     assert record.request.kind is ActionKind.BROWSER
     assert record.request.arguments == {}
@@ -213,7 +214,10 @@ async def test_list_chat_actions_returns_privacy_safe_records(tmp_path):
         "code": "[CONTENT OMITTED]",
     }
     assert record.request.arguments_hash != "sha256:" + "a" * 64
-    assert "arguments" not in record.model_dump(mode="json")["request"]
+    payload = record.model_dump(mode="json")
+    assert payload["request"]["chat_id"] == chat_id
+    assert "conversation_id" not in payload["request"]
+    assert "arguments" not in payload["request"]
     manager.get_chat.assert_awaited_once_with(chat_id)
 
 
