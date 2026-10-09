@@ -1096,6 +1096,7 @@ def _validate_maxstep(maxstep: int) -> int:
 
 @tool_descriptor(
     async_execution=True,
+    action_kind="tool",
     tool_type="internal",
     policy_name="RunToolBatch",
     effect="process",

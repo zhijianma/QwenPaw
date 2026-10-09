@@ -1329,6 +1329,7 @@ async def _execute_posix_host(
 @tool_descriptor(
     requires_sandbox=("shell_exec",),
     async_execution=True,
+    action_kind="shell",
     tool_type="shell",
     target_param="command",
     policy_name="Bash",

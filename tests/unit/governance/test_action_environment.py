@@ -42,6 +42,24 @@ def _resolution(status: EnvironmentResolutionStatus):
     )
 
 
+def test_explicit_action_kind_is_independent_from_effect() -> None:
+    batch_tool = SimpleNamespace(_qp_action_kind=ActionKind.TOOL)
+
+    assert (
+        tool_adapter._runtime_action_kind(batch_tool, ToolEffect.PROCESS)
+        is ActionKind.TOOL
+    )
+
+
+def test_legacy_process_tool_keeps_shell_compatibility() -> None:
+    legacy_tool = SimpleNamespace(_qp_action_kind=None)
+
+    assert (
+        tool_adapter._runtime_action_kind(legacy_tool, ToolEffect.PROCESS)
+        is ActionKind.SHELL
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "status",

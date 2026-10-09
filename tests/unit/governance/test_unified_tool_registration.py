@@ -53,6 +53,7 @@ from qwenpaw.plugins.registry import PluginRegistry
 from qwenpaw.runtime.tool_registry import (
     ToolDescriptor,
     ToolGovernanceSpec,
+    get_builtin_tool_funcs,
     tool_descriptor,
 )
 
@@ -152,6 +153,23 @@ class TestBuiltinDescriptorGovernance:
         from qwenpaw.agents.tools.browser import browser as unified_browser
 
         assert unified_browser._tool_descriptor.action_kind == "browser"
+
+    def test_process_builtins_declare_executor_family(self):
+        process_descriptors = [
+            getattr(func, "_tool_descriptor")
+            for func in get_builtin_tool_funcs()
+            if getattr(func, "_tool_descriptor").governance.effect == "process"
+        ]
+
+        assert process_descriptors
+        assert all(desc.action_kind for desc in process_descriptors)
+
+    def test_process_effect_does_not_define_executor_family(self):
+        from qwenpaw.agents.tools.run_tool_batch import run_tool_batch
+        from qwenpaw.agents.tools.shell import execute_shell_command
+
+        assert execute_shell_command._tool_descriptor.action_kind == "shell"
+        assert run_tool_batch._tool_descriptor.action_kind == "tool"
 
     def test_no_governance_gaps(self):
         gaps = assert_no_governance_gaps()

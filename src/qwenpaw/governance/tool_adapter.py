@@ -486,10 +486,13 @@ def _active_tool_call_context() -> Any | None:
 
 
 def _runtime_action_kind(tool: Any, effect: ToolEffect) -> ActionKind:
-    """Resolve an explicit executor family before using legacy inference."""
+    """Resolve an explicit executor family before legacy compatibility."""
     explicit = getattr(tool, "_qp_action_kind", None)
     if explicit is not None:
         return ActionKind(explicit)
+    # Compatibility for tools registered before ActionKind became part of
+    # ToolDescriptor. New built-ins must declare their executor family; effect
+    # describes observable impact and must not be their type discriminator.
     if effect is ToolEffect.PROCESS:
         return ActionKind.SHELL
     return ActionKind.TOOL

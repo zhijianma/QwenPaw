@@ -1048,6 +1048,10 @@ Cron 不形成独立审批或产物事实源。
       留证，Artifact/Evidence 发布后写结果；内容类参数只留
       `[CONTENT OMITTED]`，参数与结果摘要仅覆盖安全投影，不生成原始 Secret 或
       工具输出的可猜测指纹，JSON 权限为 `0600`。
+    - [x] Tool 的执行器类型与副作用语义已解耦：`ActionKind` 只描述 Tool、Shell、
+      Browser 等执行器，`ToolEffect` 只驱动风险、可逆性与审批。内置 Shell 显式
+      声明 `shell`，批量工具编排器显式声明 `tool`；所有 `process` 内置工具均有
+      契约测试禁止依赖旧版 `PROCESS -> SHELL` 推断，旧插件兼容兜底继续保留。
     - [x] 后处理落盘失败不再被 Coordinator 静默吞掉：已执行动作返回
       `unknown` 且禁止自动重试；请求落盘失败则 fail closed，并明确声明工具未执行。
     - [x] 2026-10-01 固定 Chat
