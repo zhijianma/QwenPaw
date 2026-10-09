@@ -232,6 +232,10 @@ Adapter 声明；Kernel 不假设任意模型流可以原地续传。
   `ModelResourceRecoveryPort.release_provider_resource()`。旧数据库自动加列，旧记录
   因缺失身份保持可读但禁止自动释放；probe 只通知已加载 Workspace，不为事件偷偷
   启动 Agent。
+- [x] 真实独立进程边界已覆盖 rate-limit timer：第一进程提交 Wait 后被强制终止，
+  第二进程在 `not_before` 前仍读取为 waiting 并恢复剩余 timer，第三进程到期后通过
+  `list_ready → dispatch_ready` 绑定唯一 Submission，原 `ChatSpec.id` 与 correlation
+  保持不变。该用例不共享 Python 对象，也不以重开 Service 实例冒充进程重启。
 - [ ] 真实限流故障和进程重启的浏览器端到端演练。
 
 Lite 当前不保存跨 Workspace 的全局 health-event ledger。未加载 Workspace 不会接收

@@ -607,6 +607,9 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     旧 wait 缺少 identity 时失败关闭；不同模型、timer wait、非 live probe 和重复
     signal 不改变状态。Lite probe 只广播给已加载 Workspace，不为 health event
     隐式启动 Agent；Hub 的跨节点 durable health event Adapter 仍属后续实现。
+  - [x] Rate-limit timer 已通过真实强制进程终止验收：第一进程提交 Wait 后退出，
+    第二进程恢复 waiting 与剩余 timer，第三进程到期后以原 Chat/correlation 绑定唯一
+    continuation Submission。浏览器端真实 429 故障注入仍是独立未完成门禁。
 - [ ] 把 WebSocket 增量续传、sticky route 和 HTTP fallback 保持为 Provider
   Adapter capability；严格验证 response identity/prefix，失败时回退持久上下文重建，
   Kernel 不感知具体传输。

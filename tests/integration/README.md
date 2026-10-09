@@ -121,6 +121,7 @@ Run: `pytest -m p2` (~30 tests).
 | `test_cron.py` | Agent-scoped cron jobs |
 | `test_console.py` | Console-specific endpoints (chat stop, upload) |
 | `test_console_metadata.py` | Plugins / backups / token-usage / auth / agent-stats list |
+| `test_model_resource_wait_process_recovery.py` | Rate-limit wait forced-restart recovery |
 | `test_scheduler_process_recovery.py` | Forced process termination + durable retry recovery |
 | `test_settings_envs.py` | Settings + persisted env vars |
 | `test_tools.py` | Tools toggle and async execution |

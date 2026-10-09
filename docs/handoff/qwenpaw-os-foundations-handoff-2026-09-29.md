@@ -1040,6 +1040,18 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   门禁、前端 ESLint/Prettier 及完整 TypeScript typecheck 通过。
 - Task 页面及非必要 Task 后端未修改。
 
+### 2026-10-09 Model Resource Wait Forced-Restart Evidence
+
+- 新增真实独立 Python 进程验收：第一进程由 rate-limited Model Call 创建 timer Wait，
+  SQLite 提交后被强制终止；第二进程恢复同一 waiting 事实与剩余 timer；第三进程到期
+  后执行 `list_ready → dispatch_ready` 并绑定唯一 continuation Submission。
+- 进程间只共享数据库路径和公开 ID；恢复后 `ChatSpec.id`、correlation 与 wait identity
+  保持不变。该证据覆盖 Lite Store/Service 的进程崩溃边界，不宣称替代真实浏览器 429
+  故障注入验收。
+- 独立进程、Resource Wait、Model Call、Runtime recovery 与 Submission Dispatcher
+  联合定点回归 `75 passed`；所改文件 pre-commit 全部通过。
+- Task 页面、前端及非必要 Task 后端未修改。
+
 ### 2026-10-09 Model Transport Capability
 
 - Kernel 新增 Provider-neutral `ModelTransportContract`、Host-keyed HMAC Resume Evidence 与
