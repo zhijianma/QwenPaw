@@ -133,6 +133,7 @@ import {
   buildDurableComposerRequest,
   canDrainLegacyQueueItems,
   resolveComposerAdmissionOwner,
+  selectLegacyQueueItems,
   submitDurableChatRequest,
   waitForDurableAdmission,
 } from "./durableSubmission";
@@ -1550,8 +1551,14 @@ export default function ChatPage() {
     queueExecutionScopeRef.current = controller;
     return () => controller.abort();
   }, [queueSessionId, selectedAgent, queueKey]);
-  const messageQueue =
+  const storedMessageQueue =
     useMessageQueueStore((s) => s.queues[queueKey]) ?? EMPTY_QUEUE;
+  // QwenPaw queue state is server-owned. Stale browser storage must never
+  // participate in its sender state or visual projection.
+  const messageQueue = selectLegacyQueueItems(
+    usesQwenPawBackend,
+    storedMessageQueue,
+  );
   const messageQueueRef = useRef(messageQueue);
   messageQueueRef.current = messageQueue;
   const autoSendTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1903,6 +1910,11 @@ export default function ChatPage() {
   useEffect(() => {
     setIsOwner(false);
     setOwnershipResolved(false);
+    if (usesQwenPawBackend) {
+      setIsOwner(true);
+      setOwnershipResolved(true);
+      return undefined;
+    }
     const ctrl = new AbortController();
     let requested = false;
     let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1942,7 +1954,7 @@ export default function ChatPage() {
       unsubscribe();
       clearTimeout(fallbackTimer);
     };
-  }, [chatId, queueKey, sdkSessionAdapter]);
+  }, [chatId, queueKey, sdkSessionAdapter, usesQwenPawBackend]);
 
   const syncLoopModeStatus = useCallback(() => {
     if (isAgentTransition) return Promise.resolve();
@@ -2120,6 +2132,10 @@ export default function ChatPage() {
   // Reload queue when switching sessions or on first mount
   const prevQueueSessionIdRef = useRef<string | null>(null);
   useEffect(() => {
+    if (usesQwenPawBackend) {
+      prevQueueSessionIdRef.current = queueKey;
+      return;
+    }
     const isFirstMount = prevQueueSessionIdRef.current === null;
     const isSameSession = prevQueueSessionIdRef.current === queueKey;
 
@@ -2149,7 +2165,7 @@ export default function ChatPage() {
     if (newQueue.length > 0) {
       scheduleNextSend();
     }
-  }, [queueSessionId, scheduleNextSend, queueKey]);
+  }, [queueSessionId, scheduleNextSend, queueKey, usesQwenPawBackend]);
   const [chatLoading, setChatLoading] = useState<boolean | string>(false);
   const chatLoadingRef = useRef<boolean | string>(false);
   chatLoadingRef.current = chatLoading;
@@ -2208,6 +2224,7 @@ export default function ChatPage() {
     queueKey,
   ]);
   useEffect(() => {
+    if (usesQwenPawBackend) return undefined;
     const scheduleReadyQueue = () => {
       if (
         sdkSessionAdapter.isReady(chatIdRef.current) &&
@@ -2218,7 +2235,7 @@ export default function ChatPage() {
     };
     scheduleReadyQueue();
     return sdkSessionAdapter.subscribe(scheduleReadyQueue);
-  }, [sdkSessionAdapter, scheduleNextSend]);
+  }, [sdkSessionAdapter, scheduleNextSend, usesQwenPawBackend]);
   const forkRequestKeysRef = useRef(new Map<string, string>());
   const forkInFlightRef = useRef(new Set<string>());
   const [forkingSourceMessageId, setForkingSourceMessageId] = useState<

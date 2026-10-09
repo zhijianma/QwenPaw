@@ -35,6 +35,13 @@ export function canDrainLegacyQueueItems(
   );
 }
 
+export function selectLegacyQueueItems<T>(
+  usesQwenPawBackend: boolean,
+  storedItems: T[],
+): T[] {
+  return usesQwenPawBackend ? [] : storedItems;
+}
+
 const STANDARD_REQUEST_FIELDS = new Set([
   "input",
   "session_id",

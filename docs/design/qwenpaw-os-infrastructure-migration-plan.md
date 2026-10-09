@@ -355,7 +355,9 @@ Workbench。前端只能提交命令、订阅事件和展示服务端投影；�
   - [x] QwenPaw backend 从首轮分配开始不再展示、调度或后台排空遗留
     localStorage Queue；旧记录按 `agentId` 解析 backend，QwenPaw 与未知 Agent 均
     fail closed。`runState`、Web Lock 和 background sender 仅保留给外部 backend
-    兼容队列，不能因 Chat ID 映射尚未完成而短暂接管 QwenPaw admission。
+    兼容队列，不能因 Chat ID 映射尚未完成而短暂接管 QwenPaw admission。Chat
+    页面在选择队列投影、恢复存储、获取 ownership 和 SDK ready 调度四个入口均按
+    backend 边界关闭 QwenPaw 本地路径，避免陈旧 localStorage 项短暂闪现或发送。
   - [ ] 外部 backend 仍使用本地兼容队列；待其公开 Conversation/Queue capability
     明确后删除跨标签发送状态机。
 - [x] Console 与 Channel `/stop` 已按 `ChatSpec.id` 优先使用统一 Interrupt，旧路径

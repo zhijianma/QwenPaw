@@ -7,6 +7,7 @@ import {
   buildDurableSubmission,
   canDrainLegacyQueueItems,
   resolveComposerAdmissionOwner,
+  selectLegacyQueueItems,
   submitDurableChatRequest,
   waitForDurableAdmission,
 } from "./durableSubmission";
@@ -73,6 +74,13 @@ function projection(
 }
 
 describe("durable Chat submission adapter", () => {
+  it("keeps browser queue state outside QwenPaw projections", () => {
+    const stored = [{ id: "stale-browser-item" }];
+
+    expect(selectLegacyQueueItems(true, stored)).toEqual([]);
+    expect(selectLegacyQueueItems(false, stored)).toBe(stored);
+  });
+
   it("never drains a QwenPaw or unknown legacy queue owner", () => {
     const agents = [
       { id: "default", backend: "qwenpaw" as const },

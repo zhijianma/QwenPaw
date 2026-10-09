@@ -668,13 +668,8 @@ describe("ChatPage coverage", () => {
     renderWithProviders(<ChatPage />, { initialEntries: [`/chat/${chatId}`] });
     await screen.findByTestId("chat-ui");
     const { holdOwnershipLock } = await import("@/stores/messageQueueStore");
-    await waitFor(() =>
-      expect(holdOwnershipLock).toHaveBeenCalledWith(
-        chatId,
-        expect.any(Function),
-        expect.any(AbortSignal),
-      ),
-    );
+    await act(async () => {});
+    expect(holdOwnershipLock).not.toHaveBeenCalled();
     const result = await capturedOptions.sender.beforeSubmit({
       query: "follow-up during cleanup",
       fileList: [
@@ -749,13 +744,8 @@ describe("ChatPage coverage", () => {
     });
     await screen.findByTestId("chat-ui");
     const { holdOwnershipLock } = await import("@/stores/messageQueueStore");
-    await waitFor(() =>
-      expect(holdOwnershipLock).toHaveBeenCalledWith(
-        source,
-        expect.any(Function),
-        expect.any(AbortSignal),
-      ),
-    );
+    await act(async () => {});
+    expect(holdOwnershipLock).not.toHaveBeenCalled();
     const admission = capturedOptions.sender.beforeSubmit({
       query: "source pending input",
       fileList: [],
@@ -1350,15 +1340,10 @@ describe("ChatPage coverage", () => {
     });
     await screen.findByTestId("chat-ui");
 
-    // Rendering the SDK shell does not imply history and ownership are ready.
+    // QwenPaw admission is server-owned and must not wait for a Web Lock.
     const { holdOwnershipLock } = await import("@/stores/messageQueueStore");
-    await waitFor(() =>
-      expect(holdOwnershipLock).toHaveBeenCalledWith(
-        "test-session",
-        expect.any(Function),
-        expect.any(AbortSignal),
-      ),
-    );
+    await act(async () => {});
+    expect(holdOwnershipLock).not.toHaveBeenCalled();
 
     const beforeSubmit = capturedOptions?.sender?.beforeSubmit;
     expect(capturedOptions?.sender?.queue).toBeUndefined();
@@ -1672,13 +1657,8 @@ describe("ChatPage coverage", () => {
     });
     await screen.findByTestId("chat-ui");
     const { holdOwnershipLock } = await import("@/stores/messageQueueStore");
-    await waitFor(() =>
-      expect(holdOwnershipLock).toHaveBeenCalledWith(
-        "test-session",
-        expect.any(Function),
-        expect.any(AbortSignal),
-      ),
-    );
+    await act(async () => {});
+    expect(holdOwnershipLock).not.toHaveBeenCalled();
 
     const beforeSubmit = capturedOptions?.sender?.beforeSubmit;
     expect(typeof beforeSubmit).toBe("function");
@@ -1722,6 +1702,14 @@ describe("ChatPage coverage", () => {
       initialEntries: ["/chat/test-session"],
     });
     await screen.findByTestId("chat-ui");
+    const { holdOwnershipLock } = await import("@/stores/messageQueueStore");
+    await waitFor(() =>
+      expect(holdOwnershipLock).toHaveBeenCalledWith(
+        "test-session",
+        expect.any(Function),
+        expect.any(AbortSignal),
+      ),
+    );
 
     const beforeSubmit = capturedOptions?.sender?.beforeSubmit;
     const result = await beforeSubmit({ query: "do the task" });
@@ -2722,11 +2710,7 @@ describe("ChatPage coverage", () => {
         proceed: true,
       });
     });
-    expect(holdOwnershipLock).toHaveBeenCalledWith(
-      "history-loading",
-      expect.any(Function),
-      expect.any(AbortSignal),
-    );
+    expect(holdOwnershipLock).not.toHaveBeenCalled();
   });
 
   it("does not occupy another Agent's queue when its route cannot load", async () => {
@@ -2749,16 +2733,11 @@ describe("ChatPage coverage", () => {
       await screen.findByTestId("chat-ui");
       const { getDraftStorageKey } = await import("./chatInputDraft");
       const key = getDraftStorageKey("default");
-      // Direct submission is available only after history and ownership settle.
-      // Submitting sooner exercises the queue path, which correctly clears its draft.
+      // Direct submission is available after history settles; QwenPaw never
+      // waits for browser queue ownership.
       const { holdOwnershipLock } = await import("@/stores/messageQueueStore");
-      await waitFor(() =>
-        expect(holdOwnershipLock).toHaveBeenCalledWith(
-          "test-session",
-          expect.any(Function),
-          expect.any(AbortSignal),
-        ),
-      );
+      await act(async () => {});
+      expect(holdOwnershipLock).not.toHaveBeenCalled();
       localStorage.setItem(key, "submitted-draft");
       expect(
         await capturedOptions.sender.beforeSubmit({
