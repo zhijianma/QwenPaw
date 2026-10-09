@@ -730,6 +730,13 @@ version and compatibility adapter.
 Each row must run the same behavioral suite. Separate tests that merely assert
 class presence or protocol conformance are insufficient.
 
+The Artifact Renderer row is enforced by
+`tests/contract/os/test_artifact_renderer_contract.py`. The suite drives the
+system safe renderer and the public-SDK `task-insights` renderer through the
+same `ArtifactRenderService`; it verifies generation pinning, preview
+selection, content lineage, bounded safe output, and the system attachment
+fallback. Protocol checks alone do not satisfy this row.
+
 ## 11. Deprecation sequence
 
 1. Add new models, projection queries, and adapters without redirecting calls.

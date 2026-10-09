@@ -1355,6 +1355,9 @@ Cron 不形成独立审批或产物事实源。
     隐式本地 Registry；错误产品装配直接 fail closed，防止 Chat、Task
     和 Plugin Loader 分裂为不同 generation 事实源。
   - [ ] 仍需按模块完成行为级同契约矩阵，不能仅以 activation 结构校验替代运行语义。
+    - [x] `artifact.renderer` 的系统安全实现与真实 `task-insights` 插件实现通过
+      同一 `ArtifactRenderService` 行为套件，覆盖 generation pin、预览选择、来源
+      hash、MIME/大小边界和附件 fallback；协议存在性检查不计为通过。
 - [ ] Python 定点测试、pre-commit 与前端 Chat 定点测试通过。
 - [ ] 真实固定 Chat 先 `/clear`，再逐模块完成可见验收。
   - [x] STRICT internal tool 不再绕过 Governance；请求级 execution level 不修改

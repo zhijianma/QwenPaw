@@ -946,6 +946,17 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   deadline 和过期后不启动 Runner；未运行全仓测试。macOS、Linux、Windows 的
   suspend/sleep、系统时间跳变与进程重启 E2E 仍未验证，迁移计划保留独立未完成项。
 
+### 2026-10-09 Artifact Renderer Behavioral Contract
+
+- 新增 system/plugin 共用的 Artifact Renderer 行为合同，不再用 Slot 激活或
+  Protocol `isinstance` 代替运行语义。系统安全 Renderer 与真实 `task-insights`
+  插件 Renderer 均通过同一个 `ArtifactRenderService` 执行。
+- 合同覆盖 capability identity、generation pin、预览选择、来源 hash、文件名、
+  disposition、安全 MIME、输出大小，以及插件不支持附件时回退系统 Renderer 并保持
+  原始字节。没有新建插件私有渲染管线，也没有修改 Task 页面。
+- 合同、Renderer 单元、系统 Contribution 与真实 Task Artifact API 共 20 项定点测试
+  通过；文件级 AST、mypy、Black、flake8、pylint 门禁通过，未运行全仓测试。
+
 ## 5. 钉钉文档归档清单
 
 ### 框架分析目录
