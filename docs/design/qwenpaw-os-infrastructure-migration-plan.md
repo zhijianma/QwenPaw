@@ -692,6 +692,11 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
 - [x] Conversation Fork 已提升为 Kernel `ConversationForkPort` 与稳定 SDK 模型；
   Lite 通过 JSON Adapter 兼容旧 AgentState 存储，外部契约只使用
   `agent_id + ChatSpec.id + source_message_id`，HTTP 不再直接操作 Session snapshot。
+- [x] Fork 公共身份统一为 `parent_chat_id`、`root_chat_id`、`child_chat_id` 和
+  lineage `chat_id`；旧 `*_conversation_id` 仅兼容读取及只读 Python 属性，冲突双
+  身份失败关闭。Chat registry 原本已使用 `parent_chat_id`，历史数据无需重写。
+  2026-10-10 Kernel、Lite Adapter、Chat API 与 Plugin SDK 的 52 项定点测试通过，
+  三类 Fork schema 均未再公开旧身份字段。
 - [x] 实现原子 Conversation snapshot store、Chat Fork HTTP 适配器和
   Console API Client；并发幂等、运行中冲突及失败回滚已通过定点测试。
 - [x] Chat 持久化消息 Fork 操作已接入，两个消息对锚点的历史截断与新

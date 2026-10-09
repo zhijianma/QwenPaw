@@ -460,10 +460,15 @@ recalculate, rewrite, or depend on its internal v1 hash encoding.
 Conversation branching follows the same identity rule. The public SDK exports
 `ConversationForkCommand`, `ConversationForkOrigin`,
 `ConversationForkResult`, and `ConversationForkPort`. A host-provided Port
-accepts `agent_id + parent_conversation_id + source_message_id`; plugins must
+accepts `agent_id + parent_chat_id + source_message_id`; plugins must
 not derive or persist legacy `session_id` values. Fork ownership, completed
 response validation, idempotency, and lineage authorization remain Kernel
 infrastructure rather than a replaceable plugin contribution.
+
+Fork results expose `child_chat_id`; origins expose `parent_chat_id` and
+`root_chat_id`; lineage lookups accept `chat_id`. Deprecated
+`*_conversation_id` names are read-only compatibility aliases and must not be
+emitted by new plugins.
 
 The public SDK also exposes `EnvironmentContract`, `EnvironmentResolution`,
 and `EnvironmentRef`. A Chat provider may inspect

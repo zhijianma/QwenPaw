@@ -283,9 +283,9 @@ class ConversationForkPort(Protocol):
         self,
         *,
         agent_id: str,
-        conversation_id: str,
+        chat_id: str,
     ) -> tuple[str, ...]:
-        """Return child-to-root Conversation identities."""
+        """Return child-to-root ChatSpec identities."""
 
 
 @runtime_checkable

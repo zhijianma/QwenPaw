@@ -536,16 +536,16 @@ async def fork_chat(
         result = await adapter.fork(
             ConversationForkCommand(
                 agent_id=workspace.agent_id,
-                parent_conversation_id=parent_chat_id,
+                parent_chat_id=parent_chat_id,
                 source_message_id=payload.source_message_id,
                 idempotency_key=payload.idempotency_key,
                 name=payload.name,
             ),
         )
-        child = await mgr.get_chat(result.child_conversation_id)
+        child = await mgr.get_chat(result.child_chat_id)
         if child is None:
             raise ConversationForkNotFoundError(
-                result.child_conversation_id,
+                result.child_chat_id,
             )
         return child
     except ConversationForkNotFoundError as exc:

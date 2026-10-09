@@ -31,10 +31,16 @@ assistant `source_message_id` 只是父 Chat 内部的不可变历史坐标。�
 
 Kernel 以 `ConversationForkCommand`、`ConversationForkOrigin`、
 `ConversationForkResult` 和 `ConversationForkPort` 冻结存储无关契约。命令显式携带
-`agent_id + parent_conversation_id`，所以调用方只理解 `ChatSpec.id`，不接触兼容
+`agent_id + parent_chat_id`，所以调用方只理解 `ChatSpec.id`，不接触兼容
 存储使用的 `session_id`。Lite 由 `LiteConversationForkAdapter` 把 Kernel 命令映射到
 现有 JSON Chat registry 与 AgentState snapshot；未来 Workstation/Hub 可替换 Adapter，
 不改变 HTTP、Console 或插件 SDK 类型。
+
+Fork SDK 的公共 JSON/schema 使用 `parent_chat_id`、`root_chat_id` 和
+`child_chat_id`，`ConversationForkPort.lineage()` 使用 `chat_id`。迁移前的
+`*_conversation_id` 只作为输入和只读 Python 属性兼容；新旧字段同时出现但值不一致
+时失败关闭。Chat registry 已使用 `parent_chat_id` 保存 lineage，因此这次公共合同
+收口不需要重写历史 Chat 或 Session snapshot。
 
 Task Runtime 的稳定身份同样使用可选的 `conversation_id`。它必须来自真实
 `ChatSpec.id`；没有绑定 Chat 的后台 Task 保持为空，不能用 `task_id` 或临时

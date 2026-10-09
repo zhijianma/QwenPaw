@@ -77,7 +77,7 @@ class LiteConversationForkAdapter:
 
         try:
             child = await self._manager.fork_chat(
-                command.parent_conversation_id,
+                command.parent_chat_id,
                 ChatForkRequest(
                     source_message_id=command.source_message_id,
                     idempotency_key=command.idempotency_key,
@@ -101,14 +101,14 @@ class LiteConversationForkAdapter:
 
         lineage = await self.lineage(
             agent_id=command.agent_id,
-            conversation_id=child.id,
+            chat_id=child.id,
         )
         return ConversationForkResult(
-            child_conversation_id=child.id,
+            child_chat_id=child.id,
             origin=ConversationForkOrigin(
                 agent_id=command.agent_id,
-                parent_conversation_id=command.parent_conversation_id,
-                root_conversation_id=lineage[-1],
+                parent_chat_id=command.parent_chat_id,
+                root_chat_id=lineage[-1],
                 source_message_id=command.source_message_id,
                 boundary=command.boundary,
                 depth=len(lineage) - 1,
@@ -120,13 +120,25 @@ class LiteConversationForkAdapter:
         self,
         *,
         agent_id: str,
-        conversation_id: str,
+        chat_id: str | None = None,
+        conversation_id: str | None = None,
     ) -> tuple[str, ...]:
         """Return trusted child-to-root ChatSpec identities."""
         self._validate_agent(agent_id)
-        lineage = await self._manager.get_fork_lineage_ids(conversation_id)
+        if (
+            chat_id is not None
+            and conversation_id is not None
+            and chat_id != conversation_id
+        ):
+            raise ValueError(
+                "chat_id and conversation_id must identify one Chat",
+            )
+        resolved_chat_id = chat_id or conversation_id
+        if not resolved_chat_id:
+            raise ValueError("chat_id cannot be empty")
+        lineage = await self._manager.get_fork_lineage_ids(resolved_chat_id)
         if not lineage:
-            raise ConversationForkNotFoundError(conversation_id)
+            raise ConversationForkNotFoundError(resolved_chat_id)
         return lineage
 
     def _validate_agent(self, agent_id: str) -> None:

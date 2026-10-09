@@ -373,6 +373,9 @@ Receipt、Queue、Execution Chain 与 Runtime Projection 公共 Kernel/HTTP 合�
 `session_id` 继续表示传输上下文，不能作为 Chat ownership fallback。旧插件构造参数
 仍可读取，冲突双身份失败关闭；`RuntimeAssemblyFactory.open()` 对新调用者使用同一
 canonical 参数，并在生成 Scope 前完成兼容归一化。
+Conversation Fork 的 Command、Origin、Result 和 lineage Port 也只发布
+`parent_chat_id`、`root_chat_id`、`child_chat_id` 与 `chat_id`；历史
+`*_conversation_id` 仅由 SDK 兼容读取，不能形成第二套分支所有权。
 Provider-owned `AgentModeState` 与可观测 `CompactionRecord` 也沿用同一公共身份；
 SQLite 列、owner hash 和 Store 查询参数仍是 Adapter 私有兼容面，不要求数据迁移。
 Invocation 的 `CapabilityLockManifest` 同样只公开 `chat_id = ChatSpec.id`，Compiler、

@@ -365,7 +365,7 @@ async def test_lite_adapter_implements_kernel_fork_contract(tmp_path) -> None:
     )
     command = ConversationForkCommand(
         agent_id="default",
-        parent_conversation_id=parent.id,
+        parent_chat_id=parent.id,
         source_message_id="assistant-1",
         idempotency_key="kernel-fork-1",
     )
@@ -374,30 +374,40 @@ async def test_lite_adapter_implements_kernel_fork_contract(tmp_path) -> None:
     replay = await adapter.fork(command)
 
     assert isinstance(adapter, ConversationForkPort)
-    assert replay.child_conversation_id == result.child_conversation_id
-    assert result.origin.parent_conversation_id == parent.id
-    assert result.origin.root_conversation_id == parent.id
+    assert replay.child_chat_id == result.child_chat_id
+    assert result.origin.parent_chat_id == parent.id
+    assert result.origin.root_chat_id == parent.id
     assert result.origin.depth == 1
     assert await adapter.lineage(
         agent_id="default",
-        conversation_id=result.child_conversation_id,
-    ) == (result.child_conversation_id, parent.id)
+        chat_id=result.child_chat_id,
+    ) == (result.child_chat_id, parent.id)
+    assert await adapter.lineage(
+        agent_id="default",
+        conversation_id=result.child_chat_id,
+    ) == (result.child_chat_id, parent.id)
+    with pytest.raises(ValueError, match="must identify one Chat"):
+        await adapter.lineage(
+            agent_id="default",
+            chat_id=result.child_chat_id,
+            conversation_id=parent.id,
+        )
 
     nested = await adapter.fork(
         command.model_copy(
             update={
-                "parent_conversation_id": result.child_conversation_id,
+                "parent_chat_id": result.child_chat_id,
                 "idempotency_key": "kernel-fork-2",
             },
         ),
     )
-    assert nested.origin.root_conversation_id == parent.id
+    assert nested.origin.root_chat_id == parent.id
     assert nested.origin.depth == 2
 
     with pytest.raises(ConversationForkNotFoundError):
         await adapter.lineage(
             agent_id="another-agent",
-            conversation_id=result.child_conversation_id,
+            chat_id=result.child_chat_id,
         )
 
 
