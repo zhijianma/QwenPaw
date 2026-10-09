@@ -89,6 +89,36 @@ def test_trigger_cursor_rejects_non_monotonic_progress() -> None:
         )
 
 
+def test_trigger_cursor_requires_coherent_retry_state() -> None:
+    retry_at = _now() + timedelta(seconds=5)
+
+    with pytest.raises(ValidationError, match="retry time"):
+        ScheduleTriggerCursor(
+            agent_id="default",
+            schedule_id="reports.daily",
+            definition_hash="sha256:test",
+            next_fire_at=_now(),
+            retry_not_before=retry_at,
+        )
+    with pytest.raises(ValidationError, match="retry time"):
+        ScheduleTriggerCursor(
+            agent_id="default",
+            schedule_id="reports.daily",
+            definition_hash="sha256:test",
+            next_fire_at=_now(),
+            retry_count=1,
+        )
+    with pytest.raises(ValidationError, match="pending occurrence"):
+        ScheduleTriggerCursor(
+            agent_id="default",
+            schedule_id="reports.daily",
+            definition_hash="sha256:test",
+            next_fire_at=retry_at,
+            retry_not_before=retry_at,
+            retry_count=1,
+        )
+
+
 def test_schedule_definition_and_fire_round_trip() -> None:
     definition = ScheduleDefinition(
         schedule_id="reports.daily",

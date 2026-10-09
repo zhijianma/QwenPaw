@@ -829,6 +829,10 @@ Invocation，新 Invocation 自动使用新 generation。
     契约。孤儿清理同样使用 hash + revision 条件删除；并发 Worker 只有一个进度赢家，
     业务副作用继续由 Fire Lease 幂等保护。不同 Schedule 同批并发消费，单个 Cron
     继续由既有 semaphore 限流。
+    handler 异常或显式 retry 现在以 Cursor revision CAS 持久化
+    `retry_not_before/retry_count`；due query 在冷却期跳过，重启后继续遵守 Definition
+    `RetryPolicy.backoff_seconds` 与 Host 一秒防热循环下限。成功、misfire 或定义变更
+    清零 retry 状态，并发 Worker 只有一个 deferral 胜者。
   - [x] `CronManager` 已启动独立 durable trigger polling lifecycle；判定为 migrated
     的 final/silent Agent Cron 同步 catalog 后不再注册 APScheduler job，暂停、恢复、
     更新、删除与重启均复用 Cursor。handler 明确区分“失败事实已记账后 handled”与

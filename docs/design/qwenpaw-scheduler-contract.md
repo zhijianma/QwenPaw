@@ -102,13 +102,18 @@ Fire 显式包含 `agent_id`。一次计划时间只产生一个稳定 `idempote
 
 时间计算属于 Host 基础设施，不交给 Provider 或插件持有。Kernel 的
 `ScheduleTriggerCursor` 只保存 `agent_id + schedule_id`、完整 Definition hash、
-`next_fire_at`、`last_fire_at` 和 revision；不保存 APScheduler 对象。Cursor Store
+`next_fire_at`、`last_fire_at`、`retry_not_before/retry_count` 和 revision；不保存
+APScheduler 对象。Cursor Store
 提供 reconcile、exact get、due query、revision CAS advance 和 remove：
 
 - 同一 Definition 重启时保留原进度，不从当前时间重新猜测。
 - Definition 内容改变时提升 revision 并按新 Trigger 重建进度。
 - Worker 只有在处理一个 occurrence 后才能 CAS advance；崩溃后再次读取同一 due
   occurrence，并依靠 Schedule Fire 幂等键回放，不会丢任务。
+- handler 异常或显式 `retry` 不提交 occurrence，而是以 revision CAS 写入持久化
+  `retry_not_before`。due query 在冷却期不返回该 Cursor；重启后继续遵守
+  `RetryPolicy.backoff_seconds`，并至少等待 Host 的一秒防热循环下限。成功、misfire
+  或 Definition 变更会清零 retry 状态。
 - 删除 Cursor 不删除 Definition 之外的历史 Fire/Lease；Worker 清理孤儿 Cursor
   也必须携带 definition hash + revision，避免与 catalog 重建发生删除竞争。
 
@@ -143,7 +148,8 @@ Cursor Store 是 Host-only Port，不从 Plugin SDK 导出；Scheduler Provider 
    失败”，未捕获异常等同 retry。Worker 的 catalog 读取通过同一 generation-pinned
    Scheduler Provider，不能绕过插件/内置统一契约。并发 Worker 由下游 Fire Lease
    保证副作用幂等、由 Cursor CAS 选出唯一进度赢家。不同 Schedule 在同一 tick
-   并发消费，单个 Cron 的并发上限仍由 Manager semaphore 约束。
+   并发消费，单个 Cron 的并发上限仍由 Manager semaphore 约束。retry 退避由 Cursor
+   持久化，不依赖进程内 sleep 或轮询频率。
 8. [已完成：service] ReMe 等 workspace service 声明使用
    `work_kind=service`，启动时同步 catalog/cursor，迁移成功后移除 APScheduler
    唤醒。每次 occurrence 先 claim Fire Lease；长 callback 自动 renew，成功写稳定
@@ -205,6 +211,8 @@ stream job 仍保留原 APScheduler 兼容路径，因此父
 
 - 相同 `schedule_id + scheduled_for` 的并发 Fire 只创建一个 Task。
 - Worker 崩溃后，过期 lease 可恢复；旧 owner/revision 无法完成新 lease。
+- Trigger handler 暂态失败在持久化冷却期内不会被轮询热循环；重启后仍按原
+  occurrence 重试，并发 Worker 只有一个 retry CAS 胜者。
 - Task 创建后启动失败时，相同 Fire 从持久化绑定恢复执行；并发恢复只有一个
   Worker 返回 `recovered`，其他 Worker 回放同一 Run。
 - 插件热替换后，已 claim Fire 保持原 generation，新 Fire 使用新 generation。

@@ -535,6 +535,90 @@ async def test_trigger_cursor_survives_reconcile_and_advances_with_cas(
 
 
 @pytest.mark.asyncio
+async def test_trigger_retry_deferral_survives_restart_and_uses_cas(
+    tmp_path,
+) -> None:
+    path = tmp_path / "scheduler.db"
+    store = SQLiteSchedulerStore(path)
+    scheduled_for = datetime(2026, 10, 10, 9, tzinfo=timezone.utc)
+    original = await store.reconcile_cursor(
+        ScheduleTriggerCursor(
+            agent_id="agent-a",
+            schedule_id="reports.daily",
+            definition_hash="sha256:first",
+            next_fire_at=scheduled_for,
+        ),
+    )
+    retry_at = scheduled_for + timedelta(seconds=15)
+
+    deferred = await store.defer_cursor(
+        agent_id=original.agent_id,
+        schedule_id=original.schedule_id,
+        definition_hash=original.definition_hash,
+        expected_revision=original.revision,
+        scheduled_for=scheduled_for,
+        retry_not_before=retry_at,
+    )
+
+    assert deferred.revision == 2
+    assert deferred.next_fire_at == scheduled_for
+    assert deferred.retry_not_before == retry_at
+    assert deferred.retry_count == 1
+    reopened = SQLiteSchedulerStore(path)
+    assert (
+        await reopened.list_due_cursors(
+            agent_id="agent-a",
+            now=retry_at - timedelta(microseconds=1),
+        )
+        == ()
+    )
+    assert await reopened.list_due_cursors(
+        agent_id="agent-a",
+        now=retry_at,
+    ) == (deferred,)
+    with pytest.raises(ScheduleCursorConflictError, match="revision"):
+        await reopened.defer_cursor(
+            agent_id=original.agent_id,
+            schedule_id=original.schedule_id,
+            definition_hash=original.definition_hash,
+            expected_revision=original.revision,
+            scheduled_for=scheduled_for,
+            retry_not_before=retry_at,
+        )
+
+
+@pytest.mark.asyncio
+async def test_existing_cursor_table_adds_retry_query_column(tmp_path) -> None:
+    path = tmp_path / "scheduler.db"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE schedule_trigger_cursors (
+                agent_id TEXT NOT NULL,
+                schedule_id TEXT NOT NULL,
+                definition_hash TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                next_fire_at TEXT,
+                cursor_json TEXT NOT NULL,
+                PRIMARY KEY(agent_id, schedule_id)
+            )
+            """,
+        )
+    store = SQLiteSchedulerStore(path)
+
+    await store.list_due_cursors(agent_id="agent-a", now=_now())
+
+    with sqlite3.connect(path) as connection:
+        columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(schedule_trigger_cursors)",
+            ).fetchall()
+        }
+    assert "retry_not_before" in columns
+
+
+@pytest.mark.asyncio
 async def test_definition_change_resets_cursor_without_cross_agent_leak(
     tmp_path,
 ) -> None:

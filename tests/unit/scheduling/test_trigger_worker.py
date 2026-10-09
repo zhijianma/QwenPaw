@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from qwenpaw.kernel import (
+    RetryPolicy,
     ScheduleDefinition,
     ScheduleTrigger,
     ScheduleTriggerCursor,
@@ -26,6 +27,7 @@ def _definition(
     interval_seconds: float = 60,
     grace_seconds: int = 600,
     enabled: bool = True,
+    backoff_seconds: float = 0,
 ) -> ScheduleDefinition:
     return ScheduleDefinition(
         schedule_id="reports.minute",
@@ -38,6 +40,7 @@ def _definition(
             start_at=datetime(2026, 10, 9, tzinfo=timezone.utc),
         ),
         runner_id="qwenpaw.system.tasks.console-agent",
+        retry_policy=RetryPolicy(backoff_seconds=backoff_seconds),
         misfire_grace_seconds=grace_seconds,
         enabled=enabled,
     )
@@ -109,7 +112,7 @@ async def test_handler_failure_leaves_due_cursor_retryable(tmp_path) -> None:
     store = SQLiteSchedulerStore(tmp_path / "scheduler.db")
     scheduled_for = datetime(2026, 10, 9, tzinfo=timezone.utc)
     definition = _definition()
-    original = await _register(store, definition, now=scheduled_for)
+    await _register(store, definition, now=scheduled_for)
 
     async def fail(
         _definition_value: ScheduleDefinition,
@@ -129,12 +132,23 @@ async def test_handler_failure_leaves_due_cursor_retryable(tmp_path) -> None:
     assert report.outcomes[0].disposition is (
         ScheduleTriggerDisposition.RETRY_PENDING
     )
+    retry_at = scheduled_for + timedelta(seconds=1)
+    assert report.outcomes[0].retry_not_before == retry_at
+    cursor = await store.get_cursor(
+        agent_id="agent-a",
+        schedule_id=definition.schedule_id,
+    )
+    assert cursor is not None
+    assert cursor.next_fire_at == scheduled_for
+    assert cursor.retry_not_before == retry_at
+    assert cursor.retry_count == 1
+    assert cursor.revision == 2
     assert (
-        await store.get_cursor(
+        await store.list_due_cursors(
             agent_id="agent-a",
-            schedule_id=definition.schedule_id,
+            now=scheduled_for,
         )
-        == original
+        == ()
     )
 
 
@@ -144,8 +158,8 @@ async def test_handler_can_explicitly_request_retry_without_exception(
 ) -> None:
     store = SQLiteSchedulerStore(tmp_path / "scheduler.db")
     scheduled_for = datetime(2026, 10, 9, tzinfo=timezone.utc)
-    definition = _definition()
-    original = await _register(store, definition, now=scheduled_for)
+    definition = _definition(backoff_seconds=30)
+    await _register(store, definition, now=scheduled_for)
 
     async def retry(
         _definition_value: ScheduleDefinition,
@@ -165,13 +179,46 @@ async def test_handler_can_explicitly_request_retry_without_exception(
     assert report.outcomes[0].disposition is (
         ScheduleTriggerDisposition.RETRY_PENDING
     )
+    retry_at = scheduled_for + timedelta(seconds=30)
+    assert report.outcomes[0].retry_not_before == retry_at
     assert (
-        await store.get_cursor(
+        await SQLiteSchedulerStore(
+            tmp_path / "scheduler.db",
+        ).list_due_cursors(
             agent_id="agent-a",
-            schedule_id=definition.schedule_id,
+            now=retry_at - timedelta(microseconds=1),
         )
-        == original
+        == ()
     )
+
+    handled = []
+
+    async def handle_retry(
+        _definition_value: ScheduleDefinition,
+        _scheduled_for: datetime,
+    ) -> None:
+        handled.append(True)
+
+    second = await DurableScheduleTriggerWorker(
+        catalog=SQLiteSchedulerStore(tmp_path / "scheduler.db"),
+        cursors=SQLiteSchedulerStore(tmp_path / "scheduler.db"),
+    ).tick(
+        agent_id="agent-a",
+        now=retry_at,
+        handle=handle_retry,
+    )
+
+    assert handled == [True]
+    assert second.outcomes[0].disposition is (
+        ScheduleTriggerDisposition.DISPATCHED
+    )
+    cursor = await store.get_cursor(
+        agent_id="agent-a",
+        schedule_id=definition.schedule_id,
+    )
+    assert cursor is not None
+    assert cursor.retry_not_before is None
+    assert cursor.retry_count == 0
 
 
 @pytest.mark.asyncio
@@ -345,6 +392,60 @@ async def test_concurrent_workers_report_one_cursor_cas_winner(
         ScheduleTriggerDisposition.DISPATCHED,
         ScheduleTriggerDisposition.RACE_LOST,
     }
+
+
+@pytest.mark.asyncio
+async def test_concurrent_retry_deferral_has_one_cursor_cas_winner(
+    tmp_path,
+) -> None:
+    path = tmp_path / "scheduler.db"
+    first_store = SQLiteSchedulerStore(path)
+    second_store = SQLiteSchedulerStore(path)
+    scheduled_for = datetime(2026, 10, 9, tzinfo=timezone.utc)
+    await _register(first_store, _definition(), now=scheduled_for)
+    release = asyncio.Event()
+    ready = 0
+
+    async def synchronize_retry(
+        _definition_value: ScheduleDefinition,
+        _scheduled_for: datetime,
+    ) -> ScheduleOccurrenceHandling:
+        nonlocal ready
+        ready += 1
+        if ready == 2:
+            release.set()
+        await release.wait()
+        return ScheduleOccurrenceHandling.RETRY
+
+    reports = await asyncio.gather(
+        DurableScheduleTriggerWorker(
+            catalog=first_store,
+            cursors=first_store,
+        ).tick(
+            agent_id="agent-a",
+            now=scheduled_for,
+            handle=synchronize_retry,
+        ),
+        DurableScheduleTriggerWorker(
+            catalog=second_store,
+            cursors=second_store,
+        ).tick(
+            agent_id="agent-a",
+            now=scheduled_for,
+            handle=synchronize_retry,
+        ),
+    )
+
+    assert {report.outcomes[0].disposition for report in reports} == {
+        ScheduleTriggerDisposition.RETRY_PENDING,
+        ScheduleTriggerDisposition.RACE_LOST,
+    }
+    cursor = await first_store.get_cursor(
+        agent_id="agent-a",
+        schedule_id="reports.minute",
+    )
+    assert cursor is not None
+    assert cursor.retry_count == 1
 
 
 @pytest.mark.asyncio

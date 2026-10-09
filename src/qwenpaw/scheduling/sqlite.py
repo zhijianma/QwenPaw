@@ -251,6 +251,28 @@ class SQLiteSchedulerStore:
             _utc(next_fire_at) if next_fire_at is not None else None,
         )
 
+    async def defer_cursor(
+        self,
+        *,
+        agent_id: str,
+        schedule_id: str,
+        definition_hash: str,
+        expected_revision: int,
+        scheduled_for: datetime,
+        retry_not_before: datetime,
+    ) -> ScheduleTriggerCursor:
+        """Persist retry backoff without committing the occurrence."""
+        await self._prepare()
+        return await asyncio.to_thread(
+            self._defer_cursor_sync,
+            agent_id,
+            schedule_id,
+            definition_hash,
+            expected_revision,
+            _utc(scheduled_for),
+            _utc(retry_not_before),
+        )
+
     async def remove_cursor(
         self,
         *,
@@ -321,15 +343,27 @@ class SQLiteSchedulerStore:
                 definition_hash TEXT NOT NULL,
                 revision INTEGER NOT NULL,
                 next_fire_at TEXT,
+                retry_not_before TEXT,
                 cursor_json TEXT NOT NULL,
                 PRIMARY KEY(agent_id, schedule_id)
             )
             """,
         )
+        columns = SQLiteSchedulerStore._table_columns(
+            connection,
+            "schedule_trigger_cursors",
+        )
+        if "retry_not_before" not in columns:
+            connection.execute(
+                "ALTER TABLE schedule_trigger_cursors "
+                "ADD COLUMN retry_not_before TEXT",
+            )
         connection.execute(
             """
-            CREATE INDEX IF NOT EXISTS idx_schedule_cursors_due
-            ON schedule_trigger_cursors(agent_id, next_fire_at, schedule_id)
+            CREATE INDEX IF NOT EXISTS idx_schedule_cursors_due_v2
+            ON schedule_trigger_cursors(
+                agent_id, next_fire_at, retry_not_before, schedule_id
+            )
             """,
         )
 
@@ -743,6 +777,8 @@ class SQLiteSchedulerStore:
                     else None
                 ),
                 "last_fire_at": None,
+                "retry_not_before": None,
+                "retry_count": 0,
                 "updated_at": now,
             },
         )
@@ -769,12 +805,13 @@ class SQLiteSchedulerStore:
                 """
                 INSERT INTO schedule_trigger_cursors (
                     agent_id, schedule_id, definition_hash, revision,
-                    next_fire_at, cursor_json
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    next_fire_at, retry_not_before, cursor_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(agent_id, schedule_id) DO UPDATE SET
                     definition_hash = excluded.definition_hash,
                     revision = excluded.revision,
                     next_fire_at = excluded.next_fire_at,
+                    retry_not_before = excluded.retry_not_before,
                     cursor_json = excluded.cursor_json
                 """,
                 self._cursor_row(normalized),
@@ -795,10 +832,13 @@ class SQLiteSchedulerStore:
                 WHERE agent_id = ?
                   AND next_fire_at IS NOT NULL
                   AND next_fire_at <= ?
+                  AND (
+                    retry_not_before IS NULL OR retry_not_before <= ?
+                  )
                 ORDER BY next_fire_at, schedule_id
                 LIMIT ?
                 """,
-                (agent_id, now.isoformat(), limit),
+                (agent_id, now.isoformat(), now.isoformat(), limit),
             ).fetchall()
         return tuple(
             ScheduleTriggerCursor.model_validate_json(row["cursor_json"])
@@ -866,13 +906,16 @@ class SQLiteSchedulerStore:
                     "revision": current.revision + 1,
                     "last_fire_at": scheduled_for,
                     "next_fire_at": next_fire_at,
+                    "retry_not_before": None,
+                    "retry_count": 0,
                     "updated_at": now,
                 },
             )
             written = connection.execute(
                 """
                 UPDATE schedule_trigger_cursors SET
-                    revision = ?, next_fire_at = ?, cursor_json = ?
+                    revision = ?, next_fire_at = ?,
+                    retry_not_before = NULL, cursor_json = ?
                 WHERE agent_id = ? AND schedule_id = ?
                   AND definition_hash = ? AND revision = ?
                 """,
@@ -894,6 +937,78 @@ class SQLiteSchedulerStore:
                 connection.rollback()
                 raise ScheduleCursorConflictError(
                     "schedule cursor changed during advance",
+                )
+            connection.commit()
+        return updated
+
+    def _defer_cursor_sync(
+        self,
+        agent_id: str,
+        schedule_id: str,
+        definition_hash: str,
+        expected_revision: int,
+        scheduled_for: datetime,
+        retry_not_before: datetime,
+    ) -> ScheduleTriggerCursor:
+        now = datetime.now(timezone.utc)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT cursor_json FROM schedule_trigger_cursors
+                WHERE agent_id = ? AND schedule_id = ?
+                """,
+                (agent_id, schedule_id),
+            ).fetchone()
+            if row is None:
+                connection.rollback()
+                raise ScheduleCursorConflictError("schedule cursor is absent")
+            current = ScheduleTriggerCursor.model_validate_json(
+                row["cursor_json"],
+            )
+            reasons = []
+            if current.definition_hash != definition_hash:
+                reasons.append("definition")
+            if current.revision != expected_revision:
+                reasons.append("revision")
+            if current.next_fire_at != scheduled_for:
+                reasons.append("occurrence")
+            if reasons:
+                connection.rollback()
+                raise ScheduleCursorConflictError(
+                    "schedule cursor retry conflicts on: "
+                    f"{', '.join(reasons)}",
+                )
+            updated = ScheduleTriggerCursor.model_validate(
+                {
+                    **current.model_dump(),
+                    "revision": current.revision + 1,
+                    "retry_not_before": retry_not_before,
+                    "retry_count": current.retry_count + 1,
+                    "updated_at": now,
+                },
+            )
+            written = connection.execute(
+                """
+                UPDATE schedule_trigger_cursors SET
+                    revision = ?, retry_not_before = ?, cursor_json = ?
+                WHERE agent_id = ? AND schedule_id = ?
+                  AND definition_hash = ? AND revision = ?
+                """,
+                (
+                    updated.revision,
+                    retry_not_before.isoformat(),
+                    _canonical_json(updated),
+                    agent_id,
+                    schedule_id,
+                    definition_hash,
+                    expected_revision,
+                ),
+            )
+            if written.rowcount != 1:
+                connection.rollback()
+                raise ScheduleCursorConflictError(
+                    "schedule cursor changed during retry deferral",
                 )
             connection.commit()
         return updated
@@ -938,6 +1053,11 @@ class SQLiteSchedulerStore:
             (
                 _utc(cursor.next_fire_at).isoformat()
                 if cursor.next_fire_at is not None
+                else None
+            ),
+            (
+                _utc(cursor.retry_not_before).isoformat()
+                if cursor.retry_not_before is not None
                 else None
             ),
             _canonical_json(cursor),

@@ -1203,6 +1203,21 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   mypy、Black、flake8、pylint 全绿；Task 页面未修改。Heartbeat 切换、retry backoff
   持久化及真实进程级 kill/restart 演练仍是后续边界，Scheduler 父迁移项不能标记完成。
 
+### 2026-10-09 Durable Trigger Retry Backoff
+
+- 修复 Cursor Worker 在 handler 异常或显式 `retry` 时保持 occurrence due、每个 poll
+  立即重试的故障放大问题。`ScheduleTriggerCursor` 新增 Host-only
+  `retry_not_before/retry_count`，不是插件自管状态，也不改变公开 Scheduler Provider
+  的 Fire/Lease 事实模型。
+- `ScheduleTriggerCursorStore.defer_cursor()` 以 definition hash、revision 和精确
+  occurrence 做 CAS；due query 在冷却期不返回 Cursor。Definition 的
+  `RetryPolicy.backoff_seconds` 决定延迟，并由 Host 保证至少一秒防热循环。
+- retry 状态保存在同一 SQLite canonical Cursor 中，旧数据库自动增加查询列；重启
+  仍遵守退避。成功、misfire 和 definition 变更会清零；并发 Worker 只有一个 CAS
+  胜者，其他实例返回 `race_lost`。
+- Kernel/SQLite/Worker 定点测试 `36 passed`；Scheduling、Cron 与 system/plugin
+  Scheduler 合同联合回归 `261 passed`。Task 页面未修改。
+
 ## 5. 钉钉文档归档清单
 
 ### 框架分析目录

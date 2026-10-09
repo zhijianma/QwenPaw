@@ -135,11 +135,24 @@ class ScheduleTriggerCursor(KernelModel):
     revision: int = Field(default=1, ge=1)
     next_fire_at: AwareDatetime | None = None
     last_fire_at: AwareDatetime | None = None
+    retry_not_before: AwareDatetime | None = None
+    retry_count: int = Field(default=0, ge=0)
     updated_at: AwareDatetime = Field(default_factory=utc_now)
 
     @model_validator(mode="after")
     def validate_progress(self) -> Self:
         """Require the next occurrence to follow the committed one."""
+        if (self.retry_not_before is None) != (self.retry_count == 0):
+            raise ValueError(
+                "schedule retry time and positive count must be paired",
+            )
+        if self.retry_not_before is not None and (
+            self.next_fire_at is None
+            or self.retry_not_before <= self.next_fire_at
+        ):
+            raise ValueError(
+                "schedule retry time must follow the pending occurrence",
+            )
         if (
             self.last_fire_at is not None
             and self.next_fire_at is not None

@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 
 from ..kernel import (
@@ -56,6 +56,7 @@ class ScheduleTriggerOutcome:
     scheduled_for: datetime
     disposition: ScheduleTriggerDisposition
     next_fire_at: datetime | None = None
+    retry_not_before: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +75,7 @@ class DurableScheduleTriggerWorker:
         catalog: SchedulerPort,
         cursors: ScheduleTriggerCursorStore,
         batch_size: int = 100,
+        minimum_retry_delay_seconds: float = 1.0,
     ) -> None:
         if batch_size < 1 or batch_size > 1000:
             raise ValueError(
@@ -82,6 +84,9 @@ class DurableScheduleTriggerWorker:
         self._catalog = catalog
         self._cursors = cursors
         self._batch_size = batch_size
+        if minimum_retry_delay_seconds <= 0:
+            raise ValueError("minimum retry delay must be positive")
+        self._minimum_retry_delay_seconds = minimum_retry_delay_seconds
 
     async def tick(
         self,
@@ -181,18 +186,18 @@ class DurableScheduleTriggerWorker:
         try:
             handling = await handle(definition, scheduled_for)
         except Exception:  # noqa: BLE001 - retry is the durability boundary
-            return self._outcome(
-                cursor,
-                scheduled_for,
-                ScheduleTriggerDisposition.RETRY_PENDING,
-                next_fire_at=scheduled_for,
+            return await self._defer_retry(
+                cursor=cursor,
+                definition=definition,
+                scheduled_for=scheduled_for,
+                now=now,
             )
         if handling is ScheduleOccurrenceHandling.RETRY:
-            return self._outcome(
-                cursor,
-                scheduled_for,
-                ScheduleTriggerDisposition.RETRY_PENDING,
-                next_fire_at=scheduled_for,
+            return await self._defer_retry(
+                cursor=cursor,
+                definition=definition,
+                scheduled_for=scheduled_for,
+                now=now,
             )
 
         next_fire_at = next_schedule_fire_at(
@@ -242,6 +247,42 @@ class DurableScheduleTriggerWorker:
             next_fire_at=advanced.next_fire_at,
         )
 
+    async def _defer_retry(
+        self,
+        *,
+        cursor: ScheduleTriggerCursor,
+        definition: ScheduleDefinition,
+        scheduled_for: datetime,
+        now: datetime,
+    ) -> ScheduleTriggerOutcome:
+        delay = max(
+            definition.retry_policy.backoff_seconds,
+            self._minimum_retry_delay_seconds,
+        )
+        retry_not_before = now + timedelta(seconds=delay)
+        try:
+            deferred = await self._cursors.defer_cursor(
+                agent_id=cursor.agent_id,
+                schedule_id=cursor.schedule_id,
+                definition_hash=cursor.definition_hash,
+                expected_revision=cursor.revision,
+                scheduled_for=scheduled_for,
+                retry_not_before=retry_not_before,
+            )
+        except ScheduleCursorConflictError:
+            return self._outcome(
+                cursor,
+                scheduled_for,
+                ScheduleTriggerDisposition.RACE_LOST,
+            )
+        return self._outcome(
+            cursor,
+            scheduled_for,
+            ScheduleTriggerDisposition.RETRY_PENDING,
+            next_fire_at=scheduled_for,
+            retry_not_before=deferred.retry_not_before,
+        )
+
     @staticmethod
     def _outcome(
         cursor: ScheduleTriggerCursor,
@@ -249,12 +290,14 @@ class DurableScheduleTriggerWorker:
         disposition: ScheduleTriggerDisposition,
         *,
         next_fire_at: datetime | None = None,
+        retry_not_before: datetime | None = None,
     ) -> ScheduleTriggerOutcome:
         return ScheduleTriggerOutcome(
             schedule_id=cursor.schedule_id,
             scheduled_for=scheduled_for,
             disposition=disposition,
             next_fire_at=next_fire_at,
+            retry_not_before=retry_not_before,
         )
 
     @staticmethod

@@ -399,6 +399,18 @@ class ScheduleTriggerCursorStore(Protocol):
     ) -> ScheduleTriggerCursor:
         """Commit one handled occurrence using definition and revision CAS."""
 
+    async def defer_cursor(
+        self,
+        *,
+        agent_id: str,
+        schedule_id: str,
+        definition_hash: str,
+        expected_revision: int,
+        scheduled_for: datetime,
+        retry_not_before: datetime,
+    ) -> ScheduleTriggerCursor:
+        """Persist retry backoff for one uncommitted occurrence by CAS."""
+
     async def remove_cursor(
         self,
         *,
