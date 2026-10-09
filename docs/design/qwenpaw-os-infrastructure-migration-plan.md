@@ -1052,6 +1052,10 @@ Cron 不形成独立审批或产物事实源。
       Browser 等执行器，`ToolEffect` 只驱动风险、可逆性与审批。内置 Shell 显式
       声明 `shell`，批量工具编排器显式声明 `tool`；所有 `process` 内置工具均有
       契约测试禁止依赖旧版 `PROCESS -> SHELL` 推断，旧插件兼容兜底继续保留。
+      2026-10-10 固定 Chat 在同一 Invocation 真实调用两者：Shell 返回
+      `ACTION_KIND_SHELL_OK`，批量编排器完成两次时间工具；Action API 分别保存
+      `shell/execute_shell_command` 与 `tool/run_tool_batch`，均为 succeeded，命令正文
+      继续投影为 `[CONTENT OMITTED]`。
     - [x] 后处理落盘失败不再被 Coordinator 静默吞掉：已执行动作返回
       `unknown` 且禁止自动重试；请求落盘失败则 fail closed，并明确声明工具未执行。
     - [x] 2026-10-01 固定 Chat
