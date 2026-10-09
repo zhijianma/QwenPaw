@@ -833,7 +833,7 @@ class WorkspaceChatSubmissionDispatcher:
                 response_revision=resolution.revision,
                 continuation_id=continuation.continuation_id,
                 invocation_id=continuation.invocation_id,
-                conversation_id=continuation.conversation_id,
+                chat_id=continuation.chat_id,
                 action_evidence_digest=evidence_digest,
                 action_count=reconciliation.action_count,
                 authorized_at=resolution.resolved_at,

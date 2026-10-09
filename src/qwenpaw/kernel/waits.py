@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import timedelta
 from enum import Enum
 from typing import Annotated, Self
@@ -83,6 +84,33 @@ class ResourceWaitStatus(str, Enum):
     DISPATCHED = "dispatched"
     CANCELLED = "cancelled"
     RECOVERY_EXHAUSTED = "recovery_exhausted"
+
+
+class _ChatIdentity(KernelModel):
+    """Canonical ChatSpec identity with legacy input compatibility."""
+
+    chat_id: NonEmptyStr = Field(
+        validation_alias=AliasChoices("chat_id", "conversation_id"),
+        description="Owning ChatSpec.id",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_chat_identity(cls, value: object) -> object:
+        """Reject ambiguous canonical and legacy Chat identities."""
+        if isinstance(value, Mapping):
+            chat_id = value.get("chat_id")
+            conversation_id = value.get("conversation_id")
+            if chat_id and conversation_id and chat_id != conversation_id:
+                raise ValueError(
+                    "chat_id and conversation_id must identify one Chat",
+                )
+        return value
+
+    @property
+    def conversation_id(self) -> str:
+        """Return the deprecated Python alias during migration."""
+        return self.chat_id
 
 
 class ModelStepContinuationStatus(str, Enum):
@@ -186,13 +214,12 @@ class ModelStepReconciliation(KernelModel):
         return self
 
 
-class ModelStepContextCheckpoint(KernelModel):
+class ModelStepContextCheckpoint(_ChatIdentity):
     """Content-safe reference to an immutable private context snapshot."""
 
     checkpoint_id: UUID
     continuation_id: UUID
     invocation_id: UUID
-    conversation_id: NonEmptyStr
     source_submission_id: UUID
     action_evidence_digest: Annotated[
         str,
@@ -205,14 +232,13 @@ class ModelStepContextCheckpoint(KernelModel):
     created_at: AwareDatetime = Field(default_factory=utc_now)
 
 
-class ModelStepRetryAuthorization(KernelModel):
+class ModelStepRetryAuthorization(_ChatIdentity):
     """Exact user authorization to retry after uncertain side effects."""
 
     interaction_id: UUID
     response_revision: int = Field(ge=2)
     continuation_id: UUID
     invocation_id: UUID
-    conversation_id: NonEmptyStr
     action_evidence_digest: Annotated[
         str,
         StringConstraints(
@@ -224,12 +250,11 @@ class ModelStepRetryAuthorization(KernelModel):
     authorized_at: AwareDatetime = Field(default_factory=utc_now)
 
 
-class HarnessRecoveryContextCheckpoint(KernelModel):
+class HarnessRecoveryContextCheckpoint(_ChatIdentity):
     """Content-safe proof that a Harness context can continue safely."""
 
     checkpoint_id: UUID
     invocation_id: UUID
-    conversation_id: NonEmptyStr
     source_submission_id: UUID
     backend: NonEmptyStr
     provider_context_digest: Annotated[
@@ -378,7 +403,7 @@ class ActionRetryContinuation(KernelModel):
         return self
 
 
-class ModelStepContinuation(KernelModel):
+class ModelStepContinuation(_ChatIdentity):
     """Content-free continuation after a partial model stream fails."""
 
     continuation_id: UUID
@@ -386,7 +411,6 @@ class ModelStepContinuation(KernelModel):
     invocation_id: UUID
     correlation_id: UUID
     agent_id: NonEmptyStr
-    conversation_id: NonEmptyStr
     output_boundary: ModelOutputBoundary
     status: ModelStepContinuationStatus = ModelStepContinuationStatus.READY
     reconciliation: ModelStepReconciliation | None = None
@@ -424,7 +448,7 @@ class ModelStepContinuation(KernelModel):
         if checkpoint is not None and (
             checkpoint.continuation_id != self.continuation_id
             or checkpoint.invocation_id != self.invocation_id
-            or checkpoint.conversation_id != self.conversation_id
+            or checkpoint.chat_id != self.chat_id
         ):
             raise ValueError(
                 "model-step checkpoint identity does not match continuation",
@@ -434,7 +458,7 @@ class ModelStepContinuation(KernelModel):
             if (
                 authorization.continuation_id != self.continuation_id
                 or authorization.invocation_id != self.invocation_id
-                or authorization.conversation_id != self.conversation_id
+                or authorization.chat_id != self.chat_id
             ):
                 raise ValueError(
                     "model-step retry authorization identity mismatch",
@@ -452,7 +476,7 @@ class ModelStepContinuation(KernelModel):
         return self
 
 
-class ModelResourceWait(KernelModel):
+class ModelResourceWait(_ChatIdentity):
     """Content-free durable wait created by a failed model attempt."""
 
     wait_id: UUID
@@ -460,7 +484,6 @@ class ModelResourceWait(KernelModel):
     invocation_id: UUID
     correlation_id: UUID
     agent_id: NonEmptyStr
-    conversation_id: NonEmptyStr
     provider_id: NonEmptyStr | None = None
     model_id: NonEmptyStr | None = None
     failure_class: ModelFailureClass
@@ -512,8 +535,9 @@ class ModelResourceWait(KernelModel):
         invocation_id: UUID,
         correlation_id: UUID,
         agent_id: str,
-        conversation_id: str,
         failure_class: ModelFailureClass,
+        chat_id: str | None = None,
+        conversation_id: str | None = None,
         provider_id: str | None = None,
         model_id: str | None = None,
         retry_delay_seconds: float = 60,
@@ -522,6 +546,13 @@ class ModelResourceWait(KernelModel):
         """Build the default Lite wait without provider payloads."""
         if retry_delay_seconds < 1:
             raise ValueError("resource retry delay must be positive")
+        if chat_id and conversation_id and chat_id != conversation_id:
+            raise ValueError(
+                "chat_id and conversation_id must identify one Chat",
+            )
+        owner = chat_id or conversation_id
+        if owner is None or not owner.strip():
+            raise ValueError("chat_id cannot be empty")
         created_at = created_at or utc_now()
         timed = failure_class is not ModelFailureClass.QUOTA_EXHAUSTED
         return cls(
@@ -530,7 +561,7 @@ class ModelResourceWait(KernelModel):
             invocation_id=invocation_id,
             correlation_id=correlation_id,
             agent_id=agent_id,
-            conversation_id=conversation_id,
+            chat_id=owner,
             provider_id=provider_id,
             model_id=model_id,
             failure_class=failure_class,
@@ -549,12 +580,11 @@ class ModelResourceWait(KernelModel):
         )
 
 
-class ConversationContinuation(KernelModel):
+class ConversationContinuation(_ChatIdentity):
     """Content-free outbox entry that creates a later conversation turn."""
 
     interaction_id: UUID
     agent_id: NonEmptyStr
-    conversation_id: NonEmptyStr
     response_revision: int = Field(ge=2)
     status: ContinuationDispatchStatus = ContinuationDispatchStatus.READY
     submission_id: UUID | None = None
@@ -607,17 +637,13 @@ class ContinuationRef(KernelModel):
         return self
 
 
-class WaitCondition(KernelModel):
+class WaitCondition(_ChatIdentity):
     """One durable blocker projected from an authoritative source fact."""
 
     condition_id: UUID
     kind: WaitConditionKind
     status: WaitConditionStatus
     agent_id: NonEmptyStr
-    chat_id: NonEmptyStr = Field(
-        validation_alias=AliasChoices("chat_id", "conversation_id"),
-        description="Owning ChatSpec.id",
-    )
     source_type: NonEmptyStr
     source_id: UUID
     policy_source_id: UUID | None = None
@@ -626,11 +652,6 @@ class WaitCondition(KernelModel):
     created_at: AwareDatetime
     not_before: AwareDatetime | None = None
     resolved_at: AwareDatetime | None = None
-
-    @property
-    def conversation_id(self) -> str:
-        """Return the deprecated Python alias during migration."""
-        return self.chat_id
 
     @model_validator(mode="after")
     def validate_terminal_time(self) -> Self:

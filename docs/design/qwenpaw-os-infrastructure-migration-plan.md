@@ -631,6 +631,14 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
   - [x] Rate-limit timer 已通过真实强制进程终止验收：第一进程提交 Wait 后退出，
     第二进程恢复 waiting 与剩余 timer，第三进程到期后以原 Chat/correlation 绑定唯一
     continuation Submission。浏览器端真实 429 故障注入仍是独立未完成门禁。
+  - [x] Durable Wait/Recovery 公共身份已统一：`ConversationContinuation`、
+    `ModelResourceWait`、`ModelStepContinuation`、Model Step context/retry checkpoint、
+    Harness recovery checkpoint 与 `WaitCondition` 共用私有 `_ChatIdentity` 基类，新
+    JSON/schema 只输出 `chat_id = ChatSpec.id`，旧 SQLite 列和 checkpoint JSON 继续
+    兼容读取，冲突双身份失败关闭。SQLite 表、Port 查询参数和私有文件路径仍属于
+    Adapter，不要求数据迁移。当前四个本地 Workspace 的恢复表均为空，没有可用在线
+    历史样本；跨重启、timer、partial stream、Action reconciliation、显式重试授权、
+    Harness 与 Interaction continuation 由 85 项定点测试覆盖。
 - [ ] 把 WebSocket 增量续传、sticky route 和 HTTP fallback 保持为 Provider
   Adapter capability；严格验证 response identity/prefix，失败时回退持久上下文重建，
   Kernel 不感知具体传输。

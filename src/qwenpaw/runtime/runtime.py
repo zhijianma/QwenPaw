@@ -1127,7 +1127,7 @@ class Runtime:
                 ),
                 continuation_id=continuation.continuation_id,
                 invocation_id=continuation.invocation_id,
-                conversation_id=continuation.conversation_id,
+                chat_id=continuation.chat_id,
                 source_submission_id=source_submission_id,
                 action_evidence_digest=evidence_digest,
                 action_count=len(committed_items),

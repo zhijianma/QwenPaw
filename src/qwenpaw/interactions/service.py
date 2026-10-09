@@ -588,7 +588,7 @@ class InteractionService:
             kind=kind,
             status=status,
             agent_id=request.agent_id,
-            conversation_id=request.conversation_id,
+            chat_id=request.chat_id,
             source_type="qwenpaw.interaction",
             source_id=request.interaction_id,
             policy_source_id=request.source_id,

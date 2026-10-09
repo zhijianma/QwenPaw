@@ -108,7 +108,7 @@ def build_harness_recovery_checkpoint(
             f"harness-recovery-context:{backend}",
         ),
         invocation_id=invocation_id,
-        conversation_id=conversation_id,
+        chat_id=conversation_id,
         source_submission_id=source_submission_id,
         backend=backend,
         provider_context_digest=_digest(

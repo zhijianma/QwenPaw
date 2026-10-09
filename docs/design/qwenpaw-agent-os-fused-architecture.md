@@ -642,6 +642,9 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
     继承 correlation 并创建新 Invocation；重启与 enqueue/mark 崩溃窗口保持幂等。
   - [x] Resource Wait 与 bounded Model Step continuation 已跨进程恢复；partial output
     不进入下一次上下文，Stop / Interrupt、崩溃窗口与恢复预算均有持久化边界。
+    Interaction、Model Step、Resource Wait 与 Harness recovery 的 durable contract
+    共用 `chat_id = ChatSpec.id`；旧 `conversation_id` 只作为 SQLite/checkpoint
+    恢复输入和 Python 兼容属性，不再由新 JSON 或插件 SDK 产生。
   - [x] 成功 Action 不重做，uncertain Action 必须先对账或取得显式授权；当前已经
     持久化 pending / uncertain / durable-context 三类 assessment；同步 terminal Action
     与同 Invocation 内进入上下文的后台完成 hint，已通过 provider-neutral

@@ -316,7 +316,7 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
             raise ValueError("resource wait attempt identity mismatch")
         if attempt.invocation_id != result.invocation_id:
             raise ValueError("resource wait invocation identity mismatch")
-        if not attempt.conversation_id:
+        if not attempt.chat_id:
             return None
         wait = ModelResourceWait.for_model_failure(
             wait_id=uuid5(attempt.attempt_id, "model-resource-wait"),
@@ -324,7 +324,7 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
             invocation_id=attempt.invocation_id,
             correlation_id=attempt.correlation_id,
             agent_id=self.agent_id,
-            conversation_id=attempt.conversation_id,
+            chat_id=attempt.chat_id,
             provider_id=attempt.provider_id,
             model_id=attempt.model_id,
             failure_class=result.failure_class,
@@ -371,7 +371,7 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
             raise ValueError("model-step attempt identity mismatch")
         if attempt.invocation_id != result.invocation_id:
             raise ValueError("model-step invocation identity mismatch")
-        if not attempt.conversation_id:
+        if not attempt.chat_id:
             return None
         continuation = ModelStepContinuation(
             continuation_id=uuid5(
@@ -382,7 +382,7 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
             invocation_id=attempt.invocation_id,
             correlation_id=attempt.correlation_id,
             agent_id=self.agent_id,
-            conversation_id=attempt.conversation_id,
+            chat_id=attempt.chat_id,
             output_boundary=result.output_boundary,
             created_at=result.completed_at,
             updated_at=result.completed_at,
@@ -414,7 +414,7 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
                     "invocation_id",
                     "correlation_id",
                     "agent_id",
-                    "conversation_id",
+                    "chat_id",
                     "output_boundary",
                     "created_at",
                 )
@@ -470,7 +470,7 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
                     "invocation_id",
                     "correlation_id",
                     "agent_id",
-                    "conversation_id",
+                    "chat_id",
                     "failure_class",
                     "trigger",
                     "not_before",
@@ -923,7 +923,7 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
             if (
                 checkpoint.continuation_id != current.continuation_id
                 or checkpoint.invocation_id != current.invocation_id
-                or checkpoint.conversation_id != current.conversation_id
+                or checkpoint.chat_id != current.chat_id
             ):
                 raise ModelResourceWaitConflictError(
                     "model-step context checkpoint identity mismatch",
@@ -1004,7 +1004,7 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
             if (
                 authorization.continuation_id != current.continuation_id
                 or authorization.invocation_id != current.invocation_id
-                or authorization.conversation_id != current.conversation_id
+                or authorization.chat_id != current.chat_id
             ):
                 raise ModelResourceWaitConflictError(
                     "model-step retry authorization identity mismatch",
@@ -1338,7 +1338,7 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
                 else WaitConditionStatus.WAITING
             ),
             agent_id=wait.agent_id,
-            conversation_id=wait.conversation_id,
+            chat_id=wait.chat_id,
             source_type="qwenpaw.model-resource",
             source_id=wait.attempt_id,
             continuation=ContinuationRef(
@@ -1379,7 +1379,7 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
             str(wait.invocation_id),
             str(wait.correlation_id),
             wait.agent_id,
-            wait.conversation_id,
+            wait.chat_id,
             wait.provider_id,
             wait.model_id,
             wait.failure_class.value,
@@ -1420,7 +1420,7 @@ class ModelResourceWaitService:  # pylint: disable=too-many-public-methods
             str(continuation.invocation_id),
             str(continuation.correlation_id),
             continuation.agent_id,
-            continuation.conversation_id,
+            continuation.chat_id,
             continuation.output_boundary.value,
             continuation.status.value,
             (
