@@ -132,8 +132,12 @@ Console renders these states after streaming and after message-history reload;
 it never formats an unavailable call as `0 tok`.
 
 Retry and fallback are separate attempts and separate calls. Multiple calls in
-one tool loop share the Invocation turn. Composite public keys remain
-collision-safe JSON tuples until the API moves to structured rows.
+one tool loop share the Invocation turn. Ownership maps use collision-safe JSON
+tuple keys and structured rows are canonical. Model maps retain the readable
+`provider:model` key when it is unique; if two distinct Provider/Model pairs
+would produce the same string, every colliding pair uses an exact JSON tuple
+key. Clients must render the explicit `provider_id` and `model` fields instead
+of parsing or displaying either compatibility key.
 
 The persisted Chat turn snapshot keeps aggregate input/output totals for
 compact rendering and a `model_routes` breakdown keyed by actual

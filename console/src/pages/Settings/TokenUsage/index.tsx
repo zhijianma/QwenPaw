@@ -165,7 +165,9 @@ function TokenUsagePage() {
     if (!aggregatedData?.by_model) return [];
     return Object.entries(aggregatedData.by_model).map(([key, stats]) => ({
       key,
-      model: key,
+      model: stats.provider_id
+        ? `${stats.provider_id} / ${stats.model}`
+        : stats.model,
       prompt_tokens: stats.prompt_tokens,
       completion_tokens: stats.completion_tokens,
       cache_read_tokens: stats.cache_read_tokens,

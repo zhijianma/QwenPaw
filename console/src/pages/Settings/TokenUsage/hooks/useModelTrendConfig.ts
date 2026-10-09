@@ -32,9 +32,16 @@ export function useModelTrendConfig({
 
     const isDarkMode = isDark;
 
-    const allModelKeys = new Set<string>();
+    const modelLabels = new Map<string, string>();
     Object.values(byDateModel).forEach((modelMap) => {
-      Object.keys(modelMap).forEach((key) => allModelKeys.add(key));
+      Object.entries(modelMap).forEach(([key, stats]) => {
+        modelLabels.set(
+          key,
+          stats.provider_id
+            ? `${stats.provider_id} / ${stats.model}`
+            : stats.model,
+        );
+      });
     });
 
     const allDates: string[] = [];
@@ -52,10 +59,10 @@ export function useModelTrendConfig({
 
     allDates.forEach((date) => {
       const dayData = byDateModel[date] || {};
-      allModelKeys.forEach((modelKey) => {
+      modelLabels.forEach((modelLabel, modelKey) => {
         chartData.push({
           date,
-          model: modelKey,
+          model: modelLabel,
           value: dayData[modelKey]?.prompt_tokens || 0,
         });
       });

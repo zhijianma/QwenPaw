@@ -396,10 +396,10 @@ describe("TokenUsagePage", () => {
     );
     render(<TokenUsagePage />);
     await waitFor(() => expect(capturedProps.tables).toBeTruthy());
-    // Model rows are keyed provider:model.
+    // Model labels use explicit route fields instead of opaque map keys.
     expect(
       capturedProps.tables.byModelData.map((r: any) => r.model).sort(),
-    ).toEqual(["anthropic:claude", "openai:gpt-4o"]);
+    ).toEqual(["anthropic / claude", "openai / gpt-4o"]);
     // The named agent resolves through the store; the null agent id is
     // labelled unattributed; rows sort by total tokens descending.
     expect(capturedProps.tables.byAgentData).toEqual([
@@ -429,6 +429,36 @@ describe("TokenUsagePage", () => {
         turn: "turn-a",
       }),
     ]);
+  });
+
+  it("renders colliding model keys from explicit route fields", async () => {
+    const summary = makeSummary([makeRecord()]);
+    const stats = Object.values(summary.by_model)[0];
+    const dayjs = (await import("dayjs")).default;
+    summary.by_date_model = {
+      [dayjs().format("YYYY-MM-DD")]: {
+        '["a","b:c"]': {
+          ...stats,
+          provider_id: "a",
+          model: "b:c",
+        },
+        '["a:b","c"]': {
+          ...stats,
+          provider_id: "a:b",
+          model: "c",
+        },
+      },
+    };
+    apiMocks.getTokenUsage.mockResolvedValue(summary);
+
+    render(<TokenUsagePage />);
+    await waitFor(() => expect(capturedProps.modelTrend).toBeTruthy());
+
+    const activeSeries = capturedProps.modelTrend.chartConfig.data
+      .filter((row: { value: number }) => row.value > 0)
+      .map((row: { model: string }) => row.model)
+      .sort();
+    expect(activeSeries).toEqual(["a / b:c", "a:b / c"]);
   });
 
   it("falls back to the agent id when the store has no profile", async () => {

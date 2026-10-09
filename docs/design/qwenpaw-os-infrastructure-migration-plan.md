@@ -1282,6 +1282,11 @@ Cron 不形成独立审批或产物事实源。
       不同 Agent 下相同 Chat/Turn ID 仍严格隔离。2026-10-10 真实 Lite 数据的
       3179 次调用在日期、模型、Agent、Chat、Turn 五种聚合上的 call sum 均与全局
       完全相等；固定 Chat 的两条实际模型记录只返回 `chat_id`。
+    - [x] Provider/Model 聚合不再直接以 `provider:model` 作为内部归并身份；领域层使用
+      精确二元组，普通 key 保持兼容，只有两条实际路由发生分隔符碰撞时才切换为 JSON
+      tuple key。Console 从 `provider_id/model` 字段渲染标签，不解析兼容 key。碰撞路由
+      在同日与跨日期均保留独立总量。2026-10-10 当前真实查询的 71 次调用和 2,510,233
+      个输入 Token 在模型、日期、Agent、Chat、Turn 五个切面均与全局完全对账。
     - [x] Token Usage Summary 已从单一 JSON 数据源切换为 Model Call usage 的可重建
       Lite 投影。SQLite 只保存内容无关的派生字段，以 `attempt_id` 幂等；应用启动扫描
       全部已配置 Agent Workspace 并原子 rebuild。首次初始化冻结下一 UTC 日为 legacy

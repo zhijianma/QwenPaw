@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from collections.abc import Sequence
 
 from .models import (
@@ -19,12 +20,34 @@ from .models import (
 )
 
 _UNATTRIBUTED_SCOPE = "__unattributed__"
+_ModelIdentity = tuple[str, str]
 
 
 def _scope_key(*parts: str | None) -> str:
     """Build a collision-free compatibility key for one ownership scope."""
     normalized = [part or _UNATTRIBUTED_SCOPE for part in parts]
     return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
+
+
+def _legacy_model_key(identity: _ModelIdentity) -> str:
+    """Return the existing readable key for one provider/model route."""
+    provider_id, model = identity
+    return f"{provider_id}:{model}" if provider_id else model
+
+
+def _model_keys(
+    identities: Sequence[_ModelIdentity],
+) -> dict[_ModelIdentity, str]:
+    """Keep readable keys unless two routes would collapse into one key."""
+    legacy_counts = Counter(_legacy_model_key(item) for item in identities)
+    return {
+        identity: (
+            json.dumps(identity, ensure_ascii=False, separators=(",", ":"))
+            if legacy_counts[_legacy_model_key(identity)] > 1
+            else _legacy_model_key(identity)
+        )
+        for identity in identities
+    }
 
 
 def _new_stats(**identity: str | None) -> dict:
@@ -89,27 +112,23 @@ def summarize_usage(
 ) -> TokenUsageSummary:
     """Aggregate one filtered record set across every public dimension."""
     total_stats = _new_stats()
-    by_model_raw: dict[str, dict] = {}
+    by_model_raw: dict[_ModelIdentity, dict] = {}
     by_date_raw: dict[str, dict] = {}
-    by_date_model_raw: dict[str, dict[str, dict]] = {}
+    by_date_model_raw: dict[str, dict[_ModelIdentity, dict]] = {}
     by_agent_raw: dict[str, dict] = {}
     by_chat_raw: dict[str, dict] = {}
     by_turn_raw: dict[str, dict] = {}
 
     for record in records:
         _add_stats(total_stats, record)
-        model_key = (
-            f"{record.provider_id}:{record.model}"
-            if record.provider_id
-            else record.model
-        )
-        model_identity = {
+        model_key = (record.provider_id, record.model)
+        model_fields = {
             "provider_id": record.provider_id,
             "model": record.model,
         }
         by_model = by_model_raw.setdefault(
             model_key,
-            _new_stats(**model_identity),
+            _new_stats(**model_fields),
         )
         _add_stats(by_model, record)
 
@@ -122,7 +141,7 @@ def summarize_usage(
         date_models = by_date_model_raw.setdefault(record.date, {})
         by_date_model = date_models.setdefault(
             model_key,
-            _new_stats(**model_identity),
+            _new_stats(**model_fields),
         )
         _add_stats(by_date_model, record)
 
@@ -170,6 +189,7 @@ def summarize_usage(
         key: TokenUsageByTurn.model_validate(value)
         for key, value in sorted(by_turn_raw.items())
     }
+    model_keys = _model_keys(tuple(by_model_raw))
     return TokenUsageSummary(
         total_prompt_tokens=total_stats["prompt_tokens"],
         total_completion_tokens=total_stats["completion_tokens"],
@@ -198,8 +218,8 @@ def summarize_usage(
         usage_observed_calls=total_stats["usage_observed_calls"],
         usage_unobserved_calls=total_stats["usage_unobserved_calls"],
         by_model={
-            key: TokenUsageByModel.model_validate(value)
-            for key, value in sorted(by_model_raw.items())
+            model_keys[identity]: TokenUsageByModel.model_validate(value)
+            for identity, value in sorted(by_model_raw.items())
         },
         by_date={
             key: TokenUsageStats.model_validate(value)
@@ -207,8 +227,10 @@ def summarize_usage(
         },
         by_date_model={
             date_key: {
-                model_key: TokenUsageByDateModel.model_validate(value)
-                for model_key, value in sorted(models.items())
+                model_keys[identity]: TokenUsageByDateModel.model_validate(
+                    value,
+                )
+                for identity, value in sorted(models.items())
             }
             for date_key, models in sorted(by_date_model_raw.items())
         },

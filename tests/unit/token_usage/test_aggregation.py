@@ -86,3 +86,40 @@ def test_summary_keeps_unobserved_calls_in_every_scope() -> None:
     assert summary.scopes.agents[0].usage_unobserved_calls == 1
     assert summary.scopes.chats[0].usage_unobserved_calls == 1
     assert summary.scopes.turns[0].usage_unobserved_calls == 1
+
+
+def test_summary_keeps_colliding_provider_model_routes_distinct() -> None:
+    first = _record(
+        agent_id="agent-a",
+        chat_id="chat-a",
+        turn_id="turn-a",
+        input_tokens=10,
+        context_window_tokens=100,
+    ).model_copy(update={"provider_id": "a:b", "model": "c"})
+    second = _record(
+        agent_id="agent-a",
+        chat_id="chat-a",
+        turn_id="turn-b",
+        input_tokens=20,
+        context_window_tokens=100,
+    ).model_copy(update={"provider_id": "a", "model": "b:c"})
+    next_day = first.model_copy(
+        update={
+            "date": "2026-10-10",
+            "turn_id": "turn-c",
+            "prompt_tokens": 30,
+        },
+    )
+
+    summary = summarize_usage([first, second, next_day])
+
+    assert set(summary.by_model) == {'["a","b:c"]', '["a:b","c"]'}
+    assert {
+        (row.provider_id, row.model, row.prompt_tokens)
+        for row in summary.by_model.values()
+    } == {("a", "b:c", 20), ("a:b", "c", 40)}
+    assert set(summary.by_date_model["2026-10-09"]) == set(summary.by_model)
+    assert set(summary.by_date_model["2026-10-10"]) == {'["a:b","c"]'}
+    assert sum(
+        row.prompt_tokens for row in summary.by_model.values()
+    ) == summary.total_prompt_tokens
