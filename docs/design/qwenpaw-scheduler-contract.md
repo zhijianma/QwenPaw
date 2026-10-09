@@ -1,7 +1,7 @@
 # QwenPaw Scheduler Contract
 
 - 状态：Kernel API、公开 SDK、Lite SQLite Store、system Contribution、
-  Task/Service Dispatcher，以及 Cron/Heartbeat/Service Cron 的可无损
+  Task/Service/Delivery Dispatcher，以及 Cron/Heartbeat/Service Cron 的可无损
   Trigger/Delivery 迁移已实现；其余旧 Cron 类型保留显式兼容路径
 - 产品基线：OS / Chat-first；Task Workbench 页面继续后置
 - 非目标：在 Scheduler 中复制 Task Budget、Approval、Artifact 或 Delivery 状态机
@@ -39,7 +39,8 @@ Task 的目标、预算、重试副作用、审批、取消、Artifact、Evidenc
 
 `work_kind=task/service/delivery` 是 Host 路由边界，默认 `task` 以保持旧插件兼容。
 `ScheduledTaskDispatcher` 对非 Task 失败关闭；Service callback 由专用 Host Dispatcher
-执行，不能借用虚假 Task ID。`delivery` 只冻结领域位置，尚未迁移 text-only Cron。
+执行，不能借用虚假 Task ID。固定文本由 Delivery Dispatcher 直接投递，也不创建
+Task。
 
 可选 `conversation_id` 是稳定 Chat 绑定，必须来自已有 `ChatSpec.id`。它通过
 `RuntimeLaunchConfig` 进入 Task Runtime；未绑定的后台 Schedule 保持为空。Scheduler
@@ -132,8 +133,8 @@ Cursor Store 是 Host-only Port，不从 Plugin SDK 导出；Scheduler Provider 
    手动触发始终使用独立键。
 5. [已完成：final/silent] Agent Cron 将 Fire 转成 `TaskSource.SCHEDULE` 的
    Task/Run，不再调用 `workspace.stream_query()`。创建、更新、暂停、恢复、删除与
-   Workspace 启动恢复也会在首次 Fire 前同步 durable catalog；stream/text-only
-   仍属于具名兼容路径。
+   Workspace 启动恢复也会在首次 Fire 前同步 durable catalog；stream 仍属于具名
+   兼容路径。
 6. [已完成] Heartbeat 使用同一 Port；`DeliveryPolicy.suppress_exact_text` 将
    `HEARTBEAT_OK` 表达为“保留 Task 事实但不产生 Delivery/Inbox”。
 7. [已完成：基础设施] Host-owned durable trigger worker 按 Agent 有界读取 due
@@ -149,27 +150,31 @@ Cursor Store 是 Host-only Port，不从 Plugin SDK 导出；Scheduler Provider 
    `completion_ref`，异常写 failed，进程崩溃留下的过期 lease 标为
    `lease_expired` 且不自动重放不确定副作用。callback registry 仍由 Host 在重启时
    从 service 声明重建，Python callback 不进入 Kernel 或 SQLite。
-9. 旧 text-only Channel 定时发送先保留兼容 Adapter；迁移完成后再设弃用门槛。
+9. [已完成：text-only] 固定文本使用 `work_kind=delivery`。Fire 先绑定稳定
+   `delivery_id`，再由 DeliveryAttempt 执行外部发送；进程重启可从绑定结果继续，适配器
+   异常记为 `uncertain` 且不自动重复可能已经发生的发送。它不创建 Conversation、Task
+   或 Run。
 
 HTTP Task、Cron 与 Heartbeat 在同一进程中按 Capability Registry 复用同一个
 `TaskApplicationHost`。因此三类入口共享 Workspace TaskService、Orchestrator 和
 Supervisor；Host 在 generation 更新后刷新新事件使用的 generation，但已固定的 Run
 仍由各自 lease 保持原版本。
 
-当前 final/silent agent Cron（包含 per-job model）、repeating-once 与 Heartbeat
+当前 final/silent agent Cron（包含 per-job model）、text-only、repeating-once 与 Heartbeat
 已切换到 Dispatcher。repeating-once 映射为带 `start_at/end_at` 的 interval；
 `repeat_end_type=count/until/never` 均保留原语义。`tool_safety=True` 也已进入
 Dispatcher：Definition 使用 AUTO Approval，审批 deadline 明确短于 attempt deadline，
 审批请求和异常进入 Delivery/Inbox，silent job 不投递普通 Result。旧 Cron
-`dispatch.mode=stream` 与 text-only 仍走兼容路径。其余类型只有在公共契约能无损
+`dispatch.mode=stream` 仍走兼容路径。其余类型只有在公共契约能无损
 表达后才能迁移，禁止为了消除旧入口而丢失实时投递或审批语义。
 
 每个旧 Cron 声明现在具有结构化 `CronRuntimeDecision`。Job 详情在首次执行前返回
-当前判定；执行时 `CronManager` 使用同一个判定选择 `durable_task` 或
-`legacy_executor`，并把判定保存到最近状态和 `CronExecutionRecord`。稳定原因码区分
-text-only、尚未完成外部验收的 stream、缺失 request、无效模型选择和未安装
-Runtime。旧的 `repeating_once_unsupported` 与 `interactive_tool_safety` 原因码只为
-读取历史记录保留，新判定不再产生。旧的仅实现 `supports()` 的宿主仍可运行，
+当前判定；执行时 `CronManager` 使用同一个判定选择 `durable_task`、
+`durable_delivery` 或 `legacy_executor`，并把判定保存到最近状态和
+`CronExecutionRecord`。稳定原因码区分尚未完成外部验收的 stream、缺失 request、
+无效模型选择和未安装 Runtime。旧的 `text_delivery_only`、
+`repeating_once_unsupported` 与 `interactive_tool_safety` 原因码只为读取历史记录保留，
+新判定不再产生。旧的仅实现 `supports()` 的宿主仍可运行，
 但会明确返回 `runtime_decision_unavailable` 或 `runtime_declined`，不能伪装成已完成
 迁移。每个 fallback decision 都携带删除门槛，服务日志同时记录原因码。
 
@@ -191,7 +196,7 @@ disabled 并移除 APScheduler job。切换到 legacy path 时会主动删除确
 schedule definition，但不会删除既有 Fire/Lease 历史。final/silent Agent Cron、
 Heartbeat 与 service Cron 已由
 独立 durable polling lifecycle 消费 Cursor，不再向 APScheduler 注册同名 job；
-text-only 与 stream job 仍保留原 APScheduler 兼容路径，因此父
+stream job 仍保留原 APScheduler 兼容路径，因此父
 迁移项尚未完成。
 
 ## 5. 验收门禁
@@ -204,6 +209,8 @@ text-only 与 stream job 仍保留原 APScheduler 兼容路径，因此父
 - Cron 与 Heartbeat 均产生 `TaskSource.SCHEDULE` 和统一 Runtime Projection。
 - Service Cron 不创建伪 Task；并发 occurrence 复用同一 Fire Lease，成功绑定
   `completion_ref`，失败与过期保留终态证据。
+- Text Cron 不创建伪 Task；Fire 绑定稳定 Delivery，重启和重复触发不会重复发送，
+  失败与不确定结果由 DeliveryReceipt 保留。
 - Inbox 已读、Delivery 失败或重试不改写 Task/Run/Artifact/Evidence 事实。
 
 ## 6. Lite SQLite Store

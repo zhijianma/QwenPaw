@@ -838,8 +838,10 @@ Invocation，新 Invocation 自动使用新 generation。
     APScheduler，并通过新 Runtime 实例恢复旧 Cursor。workspace service Cron 也已
     迁入同一 catalog/cursor worker：回调不伪装成 Task，每次 occurrence 先 claim
     可续租 Fire Lease，成功写互斥 `completion_ref`，异常或进程过期保留失败事实且
-    不重放不确定副作用；callback registry 在重启时从声明重建。text-only 与 stream
-    job 暂时继续走 APScheduler，因此父项保持未完成。
+    不重放不确定副作用；callback registry 在重启时从声明重建。text-only job 也已
+    迁为 `work_kind=delivery`：Fire 先绑定稳定 Delivery ID，再执行独立 DeliveryAttempt，
+    重启可恢复且不创建伪 Task。stream job 暂时继续走 APScheduler，因此父项保持
+    未完成。
   - [x] APScheduler Trigger Adapter 为已迁移 Cron 与 Heartbeat 保存真实
     `scheduled_for` 并生成稳定 Fire 幂等键；手动触发使用独立操作键，不与定时槽
     竞争。尚未迁移的 Cron 类型继续走显式兼容路径。

@@ -725,8 +725,10 @@ must create `TaskSource.SCHEDULE` work through the host's Task application
 boundary instead of calling a Chat Runtime directly. Host-owned `SERVICE` work
 binds the completed Lease to `completion_ref` rather than inventing a Task ID;
 third-party Providers persist the same contract but never receive Python
-callbacks. Task budget, approval, artifacts, evidence, and delivery remain
-outside the Scheduler.
+callbacks. `DELIVERY` schedules bind a stable Delivery ID before an adapter is
+invoked; adapter execution and receipts remain owned by the Delivery Slot, not
+the Scheduler. Task budget, approval, artifacts, and evidence remain outside
+the Scheduler.
 `schedule_id` is Agent-scoped: definitions and fires both carry `agent_id`,
 and the idempotency domain is
 `agent_id + schedule_id + idempotency_key`. Implementations must never bind a

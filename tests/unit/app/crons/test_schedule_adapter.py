@@ -9,7 +9,9 @@ from qwenpaw.app.crons.conversation_binding import CronConversationBinding
 from qwenpaw.app.crons.schedule_adapter import (
     CronScheduleAdapter,
     CronScheduleMigrationError,
+    TextDeliveryScheduleAdapter,
 )
+from qwenpaw.kernel import ScheduleWorkKind
 from qwenpaw.app.crons.models import CronJobRequest, ScheduleSpec
 from tests.unit.app.conftest import make_cron_job_spec
 
@@ -190,6 +192,32 @@ def test_text_job_is_not_misrepresented_as_agent_task() -> None:
             agent_id="default",
             binding=_binding(),
         )
+
+
+def test_text_job_maps_to_delivery_schedule_without_conversation() -> None:
+    job = make_cron_job_spec(
+        job_id="text",
+        task_type="text",
+        text="Planned maintenance",
+    )
+    job.dispatch.meta = {
+        "thread_id": "thread-1",
+        "session_id": "must-not-leak",
+        "user_id": "must-not-leak",
+    }
+
+    definition = TextDeliveryScheduleAdapter().convert(
+        job,
+        agent_id="default",
+    )
+
+    assert definition.work_kind is ScheduleWorkKind.DELIVERY
+    assert definition.conversation_id is None
+    assert definition.metadata["delivery_text"] == "Planned maintenance"
+    destination = definition.metadata["delivery_destination"]
+    assert destination["metadata"] == {
+        "channel_meta": {"thread_id": "thread-1"},
+    }
 
 
 @pytest.mark.parametrize(

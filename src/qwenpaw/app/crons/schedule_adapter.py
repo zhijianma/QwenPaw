@@ -21,6 +21,7 @@ from ...kernel import (
     ModelSelection,
     ScheduleDefinition,
     ScheduleTrigger,
+    ScheduleWorkKind,
     TimeoutPolicy,
 )
 from ...tasks.system_contributions import (
@@ -113,6 +114,91 @@ def cron_schedule_id(agent_id: str, job_id: str) -> str:
     return f"qwenpaw.legacy-cron.job-{digest}"
 
 
+def _schedule_trigger(job: CronJobSpec) -> ScheduleTrigger:
+    """Translate the legacy time shape without execution semantics."""
+    if job.schedule.type == "cron":
+        return ScheduleTrigger(
+            kind="cron",
+            timezone=job.schedule.timezone,
+            cron=job.schedule.cron,
+        )
+    if job.schedule.repeat_every_days is None:
+        return ScheduleTrigger(
+            kind="once",
+            timezone=job.schedule.timezone,
+            run_at=job.schedule.run_at,
+        )
+    assert job.schedule.run_at is not None
+    end_at = job.schedule.repeat_until
+    if (
+        job.schedule.repeat_end_type == "count"
+        and job.schedule.repeat_count is not None
+    ):
+        end_at = job.schedule.run_at + timedelta(
+            days=(
+                job.schedule.repeat_every_days
+                * (job.schedule.repeat_count - 1)
+            ),
+        )
+    return ScheduleTrigger(
+        kind="interval",
+        timezone=job.schedule.timezone,
+        interval_seconds=(job.schedule.repeat_every_days * 24 * 60 * 60),
+        start_at=job.schedule.run_at,
+        end_at=end_at,
+    )
+
+
+class TextDeliveryScheduleAdapter:
+    """Translate fixed text into a durable Delivery schedule."""
+
+    def convert(
+        self,
+        job: CronJobSpec,
+        *,
+        agent_id: str,
+    ) -> ScheduleDefinition:
+        """Return a non-Task schedule with an adapter-owned destination."""
+        if job.id is None:
+            raise CronScheduleMigrationError("Cron job has no stable ID")
+        if job.task_type != "text" or not job.text:
+            raise CronScheduleMigrationError(
+                "Text Delivery schedule requires fixed text",
+            )
+        channel_meta = {
+            key: value
+            for key, value in dict(job.dispatch.meta or {}).items()
+            if key not in {"session_id", "user_id"}
+        }
+        destination = DeliveryDestination(
+            adapter_id=SYSTEM_CHANNEL_DELIVERY_ID,
+            address=encode_channel_address(
+                channel=job.dispatch.channel,
+                user_id=job.dispatch.target.user_id,
+                transport_context=job.dispatch.target.session_id,
+            ),
+            metadata={"channel_meta": channel_meta},
+        )
+        return ScheduleDefinition(
+            schedule_id=cron_schedule_id(agent_id, job.id),
+            agent_id=agent_id,
+            name=job.name,
+            objective="Deliver fixed text to a configured destination.",
+            trigger=_schedule_trigger(job),
+            work_kind=ScheduleWorkKind.DELIVERY,
+            runner_id="qwenpaw.system.crons.text-delivery",
+            enabled=job.enabled,
+            max_concurrency=job.runtime.max_concurrency,
+            misfire_grace_seconds=job.runtime.misfire_grace_seconds,
+            metadata={
+                "legacy_cron_job_id": job.id,
+                "delivery_destination": destination.model_dump(mode="json"),
+                "delivery_text": job.text.strip(),
+                "source": "legacy_cron_text_delivery",
+            },
+        )
+
+
 class CronScheduleAdapter:
     """Produce one loss-aware Kernel schedule from a verified binding."""
 
@@ -130,41 +216,6 @@ class CronScheduleAdapter:
             raise CronScheduleMigrationError(
                 "text Cron jobs belong to Delivery, not Task Runtime",
             )
-        if job.schedule.type == "cron":
-            trigger = ScheduleTrigger(
-                kind="cron",
-                timezone=job.schedule.timezone,
-                cron=job.schedule.cron,
-            )
-        elif job.schedule.repeat_every_days is None:
-            trigger = ScheduleTrigger(
-                kind="once",
-                timezone=job.schedule.timezone,
-                run_at=job.schedule.run_at,
-            )
-        else:
-            assert job.schedule.run_at is not None
-            end_at = job.schedule.repeat_until
-            if (
-                job.schedule.repeat_end_type == "count"
-                and job.schedule.repeat_count is not None
-            ):
-                end_at = job.schedule.run_at + timedelta(
-                    days=(
-                        job.schedule.repeat_every_days
-                        * (job.schedule.repeat_count - 1)
-                    ),
-                )
-            trigger = ScheduleTrigger(
-                kind="interval",
-                timezone=job.schedule.timezone,
-                interval_seconds=(
-                    job.schedule.repeat_every_days * 24 * 60 * 60
-                ),
-                start_at=job.schedule.run_at,
-                end_at=end_at,
-            )
-
         objective = _objective(job)
         mode = (
             DeliveryMode.SILENT
@@ -227,7 +278,7 @@ class CronScheduleAdapter:
             conversation_id=binding.conversation_id,
             name=job.name,
             objective=objective,
-            trigger=trigger,
+            trigger=_schedule_trigger(job),
             planner_id=SYSTEM_BASIC_PLANNER_ID,
             runner_id=SYSTEM_CONSOLE_RUNNER_ID,
             strategy_id=SYSTEM_DEFAULT_STRATEGY_ID,

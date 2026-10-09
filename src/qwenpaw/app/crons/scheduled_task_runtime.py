@@ -19,18 +19,25 @@ from ...delivery import (
 )
 from ...inbox import SQLiteInboxProjectionStore
 from ...kernel import (
+    DeliveryAttemptStatus,
+    DeliveryDestination,
     DeliveryKind,
     DeliveryMode,
     DeliveryPolicy,
+    DeliveryRequest,
     ScheduleDefinition,
+    ScheduleFire,
     ScheduleTriggerCursor,
     TaskStatus,
 )
 from ...scheduling import (
     ScheduleDispatchResult,
+    ScheduleDispatchAccountingError,
+    ScheduleDispatchDisposition,
     ScheduleOccurrenceHandler,
     ScheduleTriggerTickReport,
     ScheduledTaskDispatcher,
+    ScheduledDeliveryDispatcher,
     ScheduledServiceCallbackDispatcher,
     ServiceScheduleDispatchResult,
 )
@@ -124,6 +131,75 @@ class LiteScheduledTaskRuntime:  # pylint: disable=too-few-public-methods
             owner_id=owner_id,
             callback=callback,
         )
+
+    async def execute_text_delivery(
+        self,
+        definition: ScheduleDefinition,
+        *,
+        scheduled_for: datetime,
+        idempotency_key: str,
+        owner_id: str,
+    ) -> dict[str, Any]:
+        """Materialize and deliver fixed text without creating a Task."""
+        bindings, _dispatcher = await self._dependencies()
+        destination = DeliveryDestination.model_validate(
+            definition.metadata.get("delivery_destination"),
+        )
+        text = definition.metadata.get("delivery_text")
+        if not isinstance(text, str) or not text:
+            raise ValueError("text Delivery schedule has no payload")
+
+        def request_factory(fire: ScheduleFire) -> DeliveryRequest:
+            fire_id = fire.fire_id
+            if fire_id is None:  # pragma: no cover - Kernel validator
+                raise ValueError("schedule fire has no stable identity")
+            return DeliveryRequest(
+                source_event_id=fire_id,
+                idempotency_key=f"schedule-delivery:{fire_id}",
+                agent_id=definition.agent_id,
+                registry_generation=fire.registry_generation,
+                kind=DeliveryKind.RESULT,
+                mode=DeliveryMode.FINAL,
+                destination=destination,
+                payload={"text": text},
+            )
+
+        result = await ScheduledDeliveryDispatcher(
+            capability_resolver=bindings.runtime.capability_resolver,
+            delivery_projection=SQLiteDeliveryProjectionStore(
+                self._data_path("delivery.db"),
+            ),
+            scheduler_host=SchedulerStoreHost(self._store()),
+        ).dispatch(
+            definition,
+            scheduled_for=scheduled_for,
+            idempotency_key=idempotency_key,
+            owner_id=owner_id,
+            request_factory=request_factory,
+        )
+        if (
+            result.disposition is ScheduleDispatchDisposition.OWNED_ELSEWHERE
+            or result.delivery is None
+        ):
+            raise ScheduleDispatchAccountingError(
+                "scheduled Delivery has not reached terminal evidence",
+            )
+        attempt = result.delivery.attempt
+        failed = attempt.status in {
+            DeliveryAttemptStatus.FAILED,
+            DeliveryAttemptStatus.UNCERTAIN,
+        }
+        receipt = attempt.receipt
+        return {
+            "task_type": "text",
+            "run_id": None,
+            "final_text": text,
+            "delivery_id": str(attempt.delivery_id),
+            "delivery_status": "failed" if failed else "success",
+            "delivery_error": (
+                receipt.error_code if failed and receipt is not None else None
+            ),
+        }
 
     async def upsert_definition(
         self,

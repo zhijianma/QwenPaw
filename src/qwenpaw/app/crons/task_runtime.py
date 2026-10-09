@@ -19,6 +19,7 @@ from .models import (
 from .schedule_adapter import (
     CronScheduleAdapter,
     CronScheduleMigrationError,
+    TextDeliveryScheduleAdapter,
     cron_model_selection,
     cron_schedule_id,
 )
@@ -57,10 +58,13 @@ class LiteCronTaskRuntime:
     ) -> CronRuntimeDecision:
         """Return a stable, actionable migration decision for one job."""
         if job.task_type != "agent":
-            return self._legacy_decision(
-                CronRuntimeDecisionCode.TEXT_DELIVERY_ONLY,
-                "Text-only Cron is a Delivery schedule, not a Task run.",
-                "Add a durable text Delivery schedule contract.",
+            return CronRuntimeDecision(
+                path=CronRuntimePath.DURABLE_DELIVERY,
+                reason_code=CronRuntimeDecisionCode.MIGRATED,
+                reason=(
+                    "The fixed text is represented by Scheduler and "
+                    "Delivery without creating a Task."
+                ),
             )
         if job.request is None:
             return self._legacy_decision(
@@ -100,18 +104,24 @@ class LiteCronTaskRuntime:
         if not self.supports(job):
             await self.remove(job)
             return None
-        binding = await CronConversationBinder(self._workspace).bind(
-            job,
-            session_id=cron_session_id_for_job(job),
-            required=True,
-        )
-        if binding is None:  # pragma: no cover - strict Binder invariant
-            raise RuntimeError("Cron Conversation binding is missing")
-        definition = CronScheduleAdapter().convert(
-            job,
-            agent_id=self._workspace.agent_id,
-            binding=binding,
-        )
+        if job.task_type == "text":
+            definition = TextDeliveryScheduleAdapter().convert(
+                job,
+                agent_id=self._workspace.agent_id,
+            )
+        else:
+            binding = await CronConversationBinder(self._workspace).bind(
+                job,
+                session_id=cron_session_id_for_job(job),
+                required=True,
+            )
+            if binding is None:  # pragma: no cover - strict invariant
+                raise RuntimeError("Cron Conversation binding is missing")
+            definition = CronScheduleAdapter().convert(
+                job,
+                agent_id=self._workspace.agent_id,
+                binding=binding,
+            )
         await self._scheduled.upsert_definition(definition)
         return await self._scheduled.next_fire_at(
             agent_id=definition.agent_id,
@@ -140,6 +150,22 @@ class LiteCronTaskRuntime:
         """Wait for terminal Task facts and durable Delivery receipts."""
         if not self.supports(job):
             raise ValueError("Cron job is not losslessly migratable")
+        fire_key = (
+            f"scheduled:{job.id}:{scheduled_for.isoformat()}"
+            if trigger == "scheduled"
+            else f"manual:{job.id}:{uuid4()}"
+        )
+        if job.task_type == "text":
+            definition = TextDeliveryScheduleAdapter().convert(
+                job,
+                agent_id=self._workspace.agent_id,
+            )
+            return await self._scheduled.execute_text_delivery(
+                definition,
+                scheduled_for=scheduled_for,
+                idempotency_key=fire_key,
+                owner_id=f"cron-delivery:{self._workspace.agent_id}:{uuid4()}",
+            )
         binding = await CronConversationBinder(self._workspace).bind(
             job,
             session_id=cron_session_id_for_job(job),
@@ -151,11 +177,6 @@ class LiteCronTaskRuntime:
             job,
             agent_id=self._workspace.agent_id,
             binding=binding,
-        )
-        fire_key = (
-            f"scheduled:{job.id}:{scheduled_for.isoformat()}"
-            if trigger == "scheduled"
-            else f"manual:{job.id}:{uuid4()}"
         )
         return await self._scheduled.execute(
             definition,

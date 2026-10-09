@@ -287,6 +287,7 @@ class CronRuntimePath(str, Enum):
     """Execution path selected for one legacy Cron declaration."""
 
     DURABLE_TASK = "durable_task"
+    DURABLE_DELIVERY = "durable_delivery"
     LEGACY_EXECUTOR = "legacy_executor"
 
 
@@ -315,8 +316,11 @@ class CronRuntimeDecision(BaseModel):
 
     @property
     def uses_durable_runtime(self) -> bool:
-        """Return whether execution must enter Scheduler and Task."""
-        return self.path is CronRuntimePath.DURABLE_TASK
+        """Return whether execution enters a durable Schedule pipeline."""
+        return self.path in {
+            CronRuntimePath.DURABLE_TASK,
+            CronRuntimePath.DURABLE_DELIVERY,
+        }
 
 
 class CronJobState(BaseModel):

@@ -12,6 +12,10 @@ from qwenpaw.kernel import (
     CapabilityBundle,
     CapabilityContribution,
     CapabilityProviderKind,
+    DeliveryDestination,
+    DeliveryKind,
+    DeliveryMode,
+    DeliveryRequest,
     ModelSelection,
     PlanStep,
     RunnerSignal,
@@ -29,11 +33,13 @@ from qwenpaw.scheduling import (
     ServiceScheduleDispatchDisposition,
     ScheduleTriggerDisposition,
     ScheduledServiceCallbackDispatcher,
+    ScheduledDeliveryDispatcher,
     ScheduledTaskDispatcher,
     SQLiteSchedulerStore,
     first_schedule_fire_at,
     schedule_definition_hash,
 )
+from qwenpaw.delivery import SQLiteDeliveryProjectionStore
 from qwenpaw.tasks.application import TaskApplicationService
 from qwenpaw.tasks.ledger import SQLiteExecutionLedger
 from qwenpaw.tasks.runtime import (
@@ -81,6 +87,23 @@ class _Strategy:
             model="qwen-max",
         )
         return {"mode": "scheduled"}
+
+
+class _BlockingDeliveryAdapter:
+    adapter_id = "schedule-delivery-test.delivery"
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.calls = 0
+
+    def supports(self, _request) -> bool:
+        return True
+
+    async def deliver(self, _request, *, attempt: int):
+        del attempt
+        self.calls += 1
+        self.started.set()
+        await asyncio.Event().wait()
 
 
 class _FailOnceOrchestrator:
@@ -134,6 +157,26 @@ def _bundle() -> CapabilityBundle:
                 contribution_id="strategy",
                 slot="strategy",
                 entrypoint="tests.schedule:strategy",
+            ),
+        ),
+    )
+
+
+def _delivery_bundle() -> CapabilityBundle:
+    return CapabilityBundle(
+        provider_id="schedule-delivery-test",
+        provider_kind=CapabilityProviderKind.SYSTEM,
+        version="1.0.0",
+        contributions=(
+            CapabilityContribution(
+                contribution_id="scheduler",
+                slot="scheduler",
+                entrypoint="tests.schedule:scheduler",
+            ),
+            CapabilityContribution(
+                contribution_id="delivery",
+                slot="delivery.adapter",
+                entrypoint="tests.schedule:delivery",
             ),
         ),
     )
@@ -201,6 +244,77 @@ async def test_service_dispatcher_renews_lease_during_long_callback(
 
     assert result.disposition is ServiceScheduleDispatchDisposition.EXECUTED
     assert result.lease.revision >= 3
+
+
+@pytest.mark.asyncio
+async def test_delivery_dispatcher_recovers_cancelled_attempt_as_uncertain(
+    tmp_path: Path,
+) -> None:
+    """A restart does not resend an expired attempt with unknown outcome."""
+    scheduler = SQLiteSchedulerStore(tmp_path / "scheduler.db")
+    deliveries = SQLiteDeliveryProjectionStore(tmp_path / "delivery.db")
+    adapter = _BlockingDeliveryAdapter()
+    registry = GenerationRegistry()
+    await registry.activate_bundle(
+        _delivery_bundle(),
+        lambda declaration: (
+            scheduler
+            if declaration.contribution_id == "scheduler"
+            else adapter
+        ),
+    )
+    definition = _definition().model_copy(
+        update={"work_kind": ScheduleWorkKind.DELIVERY},
+    )
+    scheduled_for = datetime.now(timezone.utc)
+
+    def request_factory(fire) -> DeliveryRequest:
+        return DeliveryRequest(
+            source_event_id=fire.fire_id,
+            idempotency_key=f"delivery:{fire.fire_id}",
+            agent_id=fire.agent_id,
+            registry_generation=fire.registry_generation,
+            kind=DeliveryKind.RESULT,
+            mode=DeliveryMode.FINAL,
+            destination=DeliveryDestination(
+                adapter_id=adapter.adapter_id,
+                address="test-address",
+            ),
+            payload={"text": "hello"},
+        )
+
+    dispatcher = ScheduledDeliveryDispatcher(
+        capability_resolver=registry,
+        delivery_projection=deliveries,
+        scheduler_capability_id="schedule-delivery-test.scheduler",
+        lease_seconds=0.03,
+    )
+    interrupted = asyncio.create_task(
+        dispatcher.dispatch(
+            definition,
+            scheduled_for=scheduled_for,
+            idempotency_key="delivery:restart",
+            owner_id="worker.first",
+            request_factory=request_factory,
+        ),
+    )
+    await adapter.started.wait()
+    interrupted.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await interrupted
+    await asyncio.sleep(0.04)
+
+    recovered = await dispatcher.dispatch(
+        definition,
+        scheduled_for=scheduled_for,
+        idempotency_key="delivery:restart",
+        owner_id="worker.restarted",
+        request_factory=request_factory,
+    )
+
+    assert recovered.delivery is not None
+    assert recovered.delivery.attempt.status.value == "uncertain"
+    assert adapter.calls == 1
 
 
 @pytest.mark.asyncio

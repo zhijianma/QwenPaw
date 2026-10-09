@@ -56,6 +56,12 @@ class _ChannelManager:
         self.deliveries.append(kwargs)
 
 
+class _FailingChannelManager(_ChannelManager):
+    async def send_event(self, **kwargs) -> None:
+        self.deliveries.append(kwargs)
+        raise RuntimeError("channel disconnected after send")
+
+
 class _ChatManager:
     async def get_or_create_chat(self, **kwargs):
         return SimpleNamespace(id="chat-daily", **kwargs)
@@ -189,7 +195,6 @@ def test_lite_cron_runtime_explains_each_compatibility_path(
 
     expected = {
         CronRuntimeDecisionCode.MIGRATED: migrated,
-        CronRuntimeDecisionCode.TEXT_DELIVERY_ONLY: text,
         CronRuntimeDecisionCode.STREAM_DELIVERY_UNVERIFIED: stream,
         CronRuntimeDecisionCode.AGENT_REQUEST_MISSING: missing_request,
         CronRuntimeDecisionCode.MODEL_SELECTION_INVALID: invalid_model,
@@ -205,6 +210,10 @@ def test_lite_cron_runtime_explains_each_compatibility_path(
         assert runtime.supports(job) is decision.uses_durable_runtime
         if not decision.uses_durable_runtime:
             assert decision.removal_gates
+    text_decision = runtime.decision(text)
+    assert text_decision.reason_code is CronRuntimeDecisionCode.MIGRATED
+    assert text_decision.path is CronRuntimePath.DURABLE_DELIVERY
+    assert runtime.supports(text)
     repeating_decision = runtime.decision(repeating)
     assert repeating_decision.reason_code is CronRuntimeDecisionCode.MIGRATED
     assert repeating_decision.uses_durable_runtime
@@ -318,6 +327,102 @@ async def test_durable_trigger_runs_real_task_and_advances_once_cursor(
     )
     assert replay.outcomes == ()
     assert len(executions) == 1
+
+
+@pytest.mark.asyncio
+async def test_durable_text_delivery_replays_without_creating_task(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Fixed text uses Fire and Delivery facts without a synthetic Task."""
+    monkeypatch.setattr("qwenpaw.constant.WORKING_DIR", tmp_path)
+    channels = _ChannelManager()
+    workspace = SimpleNamespace(
+        agent_id="default",
+        workspace_dir=tmp_path,
+        capability_registry=GenerationRegistry(),
+        channel_manager=channels,
+    )
+    scheduled_for = datetime(2030, 1, 1, tzinfo=timezone.utc)
+    job = make_cron_job_spec(
+        job_id="text-once",
+        task_type="text",
+        text="Maintenance starts now",
+    )
+    job.schedule = ScheduleSpec(type="once", run_at=scheduled_for)
+    runtime = LiteCronTaskRuntime(workspace)
+
+    await runtime.synchronize(job)
+    restarted = LiteCronTaskRuntime(workspace)
+    executions = []
+
+    async def execute(_definition, occurrence: datetime) -> None:
+        executions.append(
+            await restarted.execute(
+                job,
+                trigger="scheduled",
+                scheduled_for=occurrence,
+            ),
+        )
+
+    report = await restarted.run_due(
+        now=scheduled_for,
+        execute=execute,
+    )
+    [result] = executions
+    replay = await restarted.execute(
+        job,
+        trigger="scheduled",
+        scheduled_for=scheduled_for,
+    )
+
+    assert report.outcomes[0].disposition.value == "dispatched"
+    assert report.outcomes[0].next_fire_at is None
+    assert result["delivery_status"] == "success"
+    assert replay["delivery_id"] == result["delivery_id"]
+    assert len(channels.deliveries) == 1
+    assert not await task_service_for_workspace(workspace).list_tasks()
+
+
+@pytest.mark.asyncio
+async def test_durable_text_delivery_persists_uncertain_send_once(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Adapter exceptions become terminal uncertainty and are not resent."""
+    monkeypatch.setattr("qwenpaw.constant.WORKING_DIR", tmp_path)
+    channels = _FailingChannelManager()
+    workspace = SimpleNamespace(
+        agent_id="default",
+        workspace_dir=tmp_path,
+        capability_registry=GenerationRegistry(),
+        channel_manager=channels,
+    )
+    scheduled_for = datetime(2030, 1, 1, tzinfo=timezone.utc)
+    job = make_cron_job_spec(
+        job_id="text-uncertain",
+        task_type="text",
+        text="Potentially delivered",
+    )
+    job.schedule = ScheduleSpec(type="once", run_at=scheduled_for)
+    runtime = LiteCronTaskRuntime(workspace)
+
+    await runtime.synchronize(job)
+    result = await runtime.execute(
+        job,
+        trigger="scheduled",
+        scheduled_for=scheduled_for,
+    )
+    replay = await runtime.execute(
+        job,
+        trigger="scheduled",
+        scheduled_for=scheduled_for,
+    )
+
+    assert result["delivery_status"] == "failed"
+    assert result["delivery_error"] == "RuntimeError"
+    assert replay["delivery_id"] == result["delivery_id"]
+    assert len(channels.deliveries) == 1
 
 
 @pytest.mark.asyncio

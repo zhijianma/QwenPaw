@@ -10,6 +10,11 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 
+from ..delivery import (
+    DeliveryDispatchDisposition,
+    DeliveryDispatchResult,
+    DeliveryDispatcher,
+)
 from ..kernel import (
     ApprovalLevel,
     ModelSelection,
@@ -21,6 +26,8 @@ from ..kernel import (
     ScheduleLeaseStatus,
     ScheduleTriggerCursorStore,
     ScheduleWorkKind,
+    DeliveryProjectionPort,
+    DeliveryRequest,
     SchedulerHost,
     SchedulerPort,
     SchedulerProvider,
@@ -68,6 +75,15 @@ class ServiceScheduleDispatchResult:
 
     lease: ScheduleLease
     disposition: ServiceScheduleDispatchDisposition
+
+
+@dataclass(frozen=True, slots=True)
+class DeliveryScheduleDispatchResult:
+    """Schedule admission plus its durable Delivery attempt."""
+
+    lease: ScheduleLease
+    delivery: DeliveryDispatchResult | None
+    disposition: ScheduleDispatchDisposition
 
 
 @dataclass(frozen=True, slots=True)
@@ -517,6 +533,143 @@ class ScheduledServiceCallbackDispatcher:
                 lease=completed,
                 disposition=ServiceScheduleDispatchDisposition.EXECUTED,
             )
+        finally:
+            await generation_lease.close()
+
+
+class ScheduledDeliveryDispatcher:
+    """Materialize one stable Delivery from a durable Schedule Fire."""
+
+    def __init__(
+        self,
+        *,
+        capability_resolver: CapabilityResolver,
+        delivery_projection: DeliveryProjectionPort,
+        scheduler_capability_id: str = DEFAULT_SCHEDULER_CAPABILITY_ID,
+        scheduler_host: SchedulerHost | None = None,
+        lease_seconds: float = 30.0,
+    ) -> None:
+        if lease_seconds <= 0:
+            raise ValueError("schedule lease duration must be positive")
+        self._capability_resolver = capability_resolver
+        self._delivery_projection = delivery_projection
+        self._scheduler_capability_id = scheduler_capability_id
+        self._scheduler_host = scheduler_host
+        self._lease_seconds = lease_seconds
+
+    async def dispatch(
+        self,
+        definition: ScheduleDefinition,
+        *,
+        scheduled_for: datetime,
+        idempotency_key: str,
+        owner_id: str,
+        request_factory: Callable[[ScheduleFire], DeliveryRequest],
+    ) -> DeliveryScheduleDispatchResult:
+        """Bind the Fire before executing its independently durable send."""
+        if definition.work_kind is not ScheduleWorkKind.DELIVERY:
+            raise ValueError(
+                "ScheduledDeliveryDispatcher accepts delivery schedules only",
+            )
+        generation_lease = await self._capability_resolver.pin()
+        claimed: ScheduleLease | None = None
+        try:
+            scheduler = await _resolve_scheduler(
+                generation_lease,
+                capability_id=self._scheduler_capability_id,
+                scheduler_host=self._scheduler_host,
+            )
+            fire = ScheduleFire(
+                agent_id=definition.agent_id,
+                schedule_id=definition.schedule_id,
+                registry_generation=generation_lease.generation,
+                scheduled_for=scheduled_for,
+                idempotency_key=idempotency_key,
+            )
+            await scheduler.upsert(definition)
+            lease = await scheduler.claim(
+                fire,
+                owner_id=owner_id,
+                lease_seconds=self._lease_seconds,
+            )
+            claimed = lease
+            if lease.status is ScheduleLeaseStatus.CLAIMED:
+                if lease.owner_id != owner_id:
+                    return DeliveryScheduleDispatchResult(
+                        lease=lease,
+                        delivery=None,
+                        disposition=(
+                            ScheduleDispatchDisposition.OWNED_ELSEWHERE
+                        ),
+                    )
+                request = request_factory(lease.fire)
+                delivery_id = request.delivery_id
+                if delivery_id is None:  # pragma: no cover - validator
+                    raise ValueError("delivery request has no stable identity")
+                lease = await scheduler.complete(
+                    lease.lease_id,
+                    owner_id=owner_id,
+                    expected_revision=lease.revision,
+                    completion_ref=f"delivery:{delivery_id}",
+                )
+                claimed = lease
+                disposition = ScheduleDispatchDisposition.STARTED
+            else:
+                if lease.completion_ref is None:
+                    return DeliveryScheduleDispatchResult(
+                        lease=lease,
+                        delivery=None,
+                        disposition=ScheduleDispatchDisposition.REPLAYED,
+                    )
+                request = request_factory(lease.fire)
+                expected_ref = f"delivery:{request.delivery_id}"
+                if lease.completion_ref != expected_ref:
+                    raise ValueError(
+                        "schedule completion does not match Delivery identity",
+                    )
+                disposition = ScheduleDispatchDisposition.REPLAYED
+            await self._delivery_projection.recover_expired(
+                agent_id=request.agent_id,
+                now=datetime.now(scheduled_for.tzinfo),
+            )
+            delivery = await DeliveryDispatcher(
+                projection=self._delivery_projection,
+                capability_resolver=self._capability_resolver,
+                lease_seconds=self._lease_seconds,
+            ).dispatch(
+                request,
+                attempt=1,
+                owner_id=owner_id,
+            )
+            if (
+                delivery.disposition
+                is DeliveryDispatchDisposition.OWNED_ELSEWHERE
+            ):
+                disposition = ScheduleDispatchDisposition.OWNED_ELSEWHERE
+            return DeliveryScheduleDispatchResult(
+                lease=lease,
+                delivery=delivery,
+                disposition=disposition,
+            )
+        except Exception as error:
+            if (
+                claimed is not None
+                and claimed.status is ScheduleLeaseStatus.CLAIMED
+                and claimed.owner_id == owner_id
+            ):
+                try:
+                    await scheduler.fail(
+                        claimed.lease_id,
+                        owner_id=owner_id,
+                        expected_revision=claimed.revision,
+                        error_code=type(error).__name__,
+                    )
+                except Exception as accounting_error:
+                    raise ScheduleDispatchAccountingError(
+                        "delivery schedule materialization failure was not "
+                        "persisted",
+                    ) from accounting_error
+            raise
         finally:
             await generation_lease.close()
 

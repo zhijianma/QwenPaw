@@ -120,10 +120,11 @@ Artifact Ready。
 3. [已完成] system Channel Adapter 把 opaque address 映射到旧
    channel/user/transport context 参数；映射只存在于兼容层。Adapter 接受 final
    Result 以及 stream 的 completed Reply/Tool Activity Message，不接受原始 delta。
-4. [部分完成] final/silent agent Cron 与 Heartbeat 使用同一
-   Projector/Adapter；stream 的公共文本、工具事件与媒体 Artifact 基础已完成，旧
-   `CronExecutor` 仍承接等待真实 Channel 验收的 stream、text-only 和其他不能无损
-   表达的迁移期回退。
+4. [部分完成] final/silent agent Cron、Heartbeat 与 text-only Cron 使用同一
+   Delivery Store/Adapter；text-only Fire 先绑定稳定 Delivery ID，不经过 Task
+   Projector。stream 的公共文本、工具事件与媒体 Artifact 基础已完成，旧
+   `CronExecutor` 仅继续承接等待真实 Channel 验收的 stream 和其他不能无损表达的
+   迁移期回退。
 5. Inbox 读取 Receipt/Projection；标记已读不会删除或更新源 Task 事件。
 
 Lite 已实现 `InboxProjectionPort` 与 SQLite Store，并由 `TaskDeliveryWorker` 在 Receipt
