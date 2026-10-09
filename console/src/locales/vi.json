@@ -1680,6 +1680,9 @@
     "unattributed": "Chưa gán",
     "cacheRead": "Token trúng bộ nhớ đệm",
     "cacheHitRate": "Tỷ lệ trúng bộ nhớ đệm",
+    "contextUsage": "Mức dùng ngữ cảnh có trọng số",
+    "maxContextUsage": "Mức dùng ngữ cảnh cao nhất",
+    "nearCompaction": "Lượt gọi gần ngưỡng nén",
     "noData": "Chưa có dữ liệu",
     "period": "Khoảng thời gian"
   },

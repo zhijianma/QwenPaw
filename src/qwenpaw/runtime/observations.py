@@ -210,6 +210,8 @@ def _model_observations(
             "attempt_index": attempt.attempt_index,
             "provider_id": attempt.provider_id,
             "model_id": attempt.model_id,
+            "context_window_tokens": attempt.context_window_tokens,
+            "compaction_threshold": attempt.compaction_threshold,
             "adapter_id": attempt.adapter_id,
             "adapter_version": attempt.adapter_version,
             "formatter_id": attempt.formatter_id,

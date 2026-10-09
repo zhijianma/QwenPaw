@@ -326,9 +326,22 @@ class TokenRecordingModelWrapper(ChatModelBase):
         formatter_id, formatter_version = _component_identity(
             getattr(self._model, "formatter", None),
         )
+        context_window_tokens = int(
+            getattr(self._model, "context_size", 0) or 0,
+        )
+        compaction_threshold = self._compact_threshold
+        if (
+            compaction_threshold is not None
+            and not 0 < compaction_threshold <= 1
+        ):
+            compaction_threshold = None
         return await begin_current_model_attempt(
             provider_id=self._provider_id,
             model_id=str(self.model),
+            context_window_tokens=(
+                context_window_tokens if context_window_tokens > 0 else None
+            ),
+            compaction_threshold=compaction_threshold,
             adapter_id=adapter_id or type(self._model).__qualname__,
             adapter_version=adapter_version,
             formatter_id=formatter_id,

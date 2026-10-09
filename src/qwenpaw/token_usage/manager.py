@@ -43,6 +43,12 @@ class TokenUsageStats(BaseModel):
     cache_write_tokens: int = Field(0, ge=0)
     cache_eligible_input_tokens: int = Field(0, ge=0)
     cache_observed_calls: int = Field(0, ge=0)
+    context_input_tokens: int = Field(0, ge=0)
+    context_window_tokens: int = Field(0, ge=0)
+    context_observed_calls: int = Field(0, ge=0)
+    near_compaction_calls: int = Field(0, ge=0)
+    context_usage_ratio: Optional[float] = Field(None, ge=0)
+    max_context_usage_ratio: Optional[float] = Field(None, ge=0)
     call_count: int = Field(0, ge=0)
 
 
@@ -114,6 +120,12 @@ class TokenUsageSummary(BaseModel):
     total_cache_eligible_input_tokens: int = Field(0, ge=0)
     cache_observed_calls: int = Field(0, ge=0)
     cache_hit_rate: Optional[float] = Field(None, ge=0, le=100)
+    total_context_input_tokens: int = Field(0, ge=0)
+    total_context_window_tokens: int = Field(0, ge=0)
+    context_observed_calls: int = Field(0, ge=0)
+    near_compaction_calls: int = Field(0, ge=0)
+    context_usage_ratio: Optional[float] = Field(None, ge=0)
+    max_context_usage_ratio: Optional[float] = Field(None, ge=0)
     total_calls: int = Field(0, ge=0)
     by_model: dict[str, TokenUsageByModel] = Field(
         default_factory=dict,
@@ -160,6 +172,12 @@ def _new_stats(**identity: str | None) -> dict:
         "cache_write_tokens": 0,
         "cache_eligible_input_tokens": 0,
         "cache_observed_calls": 0,
+        "context_input_tokens": 0,
+        "context_window_tokens": 0,
+        "context_observed_calls": 0,
+        "near_compaction_calls": 0,
+        "context_usage_ratio": None,
+        "max_context_usage_ratio": None,
         "call_count": 0,
     }
 
@@ -172,6 +190,24 @@ def _add_stats(target: dict, record: TokenUsageRecord) -> None:
     target["cache_write_tokens"] += record.cache_write_tokens
     target["cache_eligible_input_tokens"] += record.cache_eligible_input_tokens
     target["cache_observed_calls"] += record.cache_observed_calls
+    target["context_input_tokens"] += record.context_input_tokens
+    target["context_window_tokens"] += record.context_window_tokens
+    target["context_observed_calls"] += record.context_observed_calls
+    target["near_compaction_calls"] += record.near_compaction_calls
+    target["context_usage_ratio"] = (
+        target["context_input_tokens"] / target["context_window_tokens"] * 100
+        if target["context_window_tokens"] > 0
+        else None
+    )
+    maxima = (
+        target.get("max_context_usage_ratio"),
+        record.max_context_usage_ratio,
+    )
+    target["max_context_usage_ratio"] = (
+        max(value for value in maxima if value is not None)
+        if any(value is not None for value in maxima)
+        else None
+    )
     target["call_count"] += record.call_count
 
 
@@ -198,6 +234,35 @@ def _matches_filters(
             or conversation_id == expected_conversation,
             expected_turn is None or turn_id == expected_turn,
         ),
+    )
+
+
+def _record_identity(record: TokenUsageRecord) -> tuple[str | None, ...]:
+    """Return the exact aggregation identity shared by both projections."""
+    return (
+        record.date,
+        record.agent_id,
+        record.conversation_id,
+        record.turn_id,
+        record.provider_id,
+        record.model,
+    )
+
+
+def _overlay_context_stats(
+    legacy: TokenUsageRecord,
+    shadow: TokenUsageRecord,
+) -> TokenUsageRecord:
+    """Add fact-derived context fields without duplicating token totals."""
+    return legacy.model_copy(
+        update={
+            "context_input_tokens": shadow.context_input_tokens,
+            "context_window_tokens": shadow.context_window_tokens,
+            "context_observed_calls": shadow.context_observed_calls,
+            "near_compaction_calls": shadow.near_compaction_calls,
+            "context_usage_ratio": shadow.context_usage_ratio,
+            "max_context_usage_ratio": shadow.max_context_usage_ratio,
+        },
     )
 
 
@@ -456,13 +521,7 @@ class TokenUsageManager:
             turn_id,
         )
 
-        total_prompt = 0
-        total_completion = 0
-        total_cache_read = 0
-        total_cache_write = 0
-        total_cache_eligible = 0
-        cache_observed_calls = 0
-        total_calls = 0
+        total_stats = _new_stats()
         by_model_raw: dict[str, dict] = {}
         by_date_raw: dict[str, dict] = {}
         by_date_model_raw: dict[str, dict[str, dict]] = {}
@@ -471,16 +530,7 @@ class TokenUsageManager:
         by_turn_raw: dict[str, dict] = {}
 
         for r in records:
-            pt = r.prompt_tokens
-            ct = r.completion_tokens
-            calls = r.call_count
-            total_prompt += pt
-            total_completion += ct
-            total_cache_read += r.cache_read_tokens
-            total_cache_write += r.cache_write_tokens
-            total_cache_eligible += r.cache_eligible_input_tokens
-            cache_observed_calls += r.cache_observed_calls
-            total_calls += calls
+            _add_stats(total_stats, r)
 
             # Aggregate by model
             model_key = (
@@ -543,18 +593,28 @@ class TokenUsageManager:
             _add_stats(bt, r)
 
         return TokenUsageSummary(
-            total_prompt_tokens=total_prompt,
-            total_completion_tokens=total_completion,
-            total_cache_read_tokens=total_cache_read,
-            total_cache_write_tokens=total_cache_write,
-            total_cache_eligible_input_tokens=total_cache_eligible,
-            cache_observed_calls=cache_observed_calls,
+            total_prompt_tokens=total_stats["prompt_tokens"],
+            total_completion_tokens=total_stats["completion_tokens"],
+            total_cache_read_tokens=total_stats["cache_read_tokens"],
+            total_cache_write_tokens=total_stats["cache_write_tokens"],
+            total_cache_eligible_input_tokens=(
+                total_stats["cache_eligible_input_tokens"]
+            ),
+            cache_observed_calls=total_stats["cache_observed_calls"],
             cache_hit_rate=(
-                total_cache_read / total_cache_eligible * 100
-                if total_cache_eligible > 0
+                total_stats["cache_read_tokens"]
+                / total_stats["cache_eligible_input_tokens"]
+                * 100
+                if total_stats["cache_eligible_input_tokens"] > 0
                 else None
             ),
-            total_calls=total_calls,
+            total_context_input_tokens=total_stats["context_input_tokens"],
+            total_context_window_tokens=total_stats["context_window_tokens"],
+            context_observed_calls=total_stats["context_observed_calls"],
+            near_compaction_calls=total_stats["near_compaction_calls"],
+            context_usage_ratio=total_stats["context_usage_ratio"],
+            max_context_usage_ratio=total_stats["max_context_usage_ratio"],
+            total_calls=total_stats["call_count"],
             by_model={
                 k: TokenUsageByModel.model_validate(v)
                 for k, v in sorted(by_model_raw.items())
@@ -651,14 +711,33 @@ class TokenUsageManager:
             agent_id=agent_id,
             conversation_id=conversation_id,
             turn_id=turn_id,
+            include_shadow=True,
         )
-        legacy = [
-            record
-            for record in legacy
+        shadow_by_identity = {
+            _record_identity(record): record
+            for record in projected
             if date.fromisoformat(record.date) < cutover
-            or (record.conversation_id is None and record.turn_id is None)
+        }
+        compatible: list[TokenUsageRecord] = []
+        for record in legacy:
+            before_cutover = date.fromisoformat(record.date) < cutover
+            unscoped = (
+                record.conversation_id is None and record.turn_id is None
+            )
+            if not before_cutover and not unscoped:
+                continue
+            shadow = shadow_by_identity.get(_record_identity(record))
+            compatible.append(
+                _overlay_context_stats(record, shadow)
+                if before_cutover and shadow is not None
+                else record,
+            )
+        projected = [
+            record
+            for record in projected
+            if date.fromisoformat(record.date) >= cutover
         ]
-        return [*legacy, *projected]
+        return [*compatible, *projected]
 
     @classmethod
     def get_instance(cls) -> "TokenUsageManager":

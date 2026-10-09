@@ -976,6 +976,25 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   `234 passed`；应用启动与 Token Usage API 定点测试 `19 passed`。Python 文件级
   mypy、Black、Flake8、Pylint 通过。Task 页面没有改动。
 
+### 2026-10-09 Context Window 多级统计
+
+- `ModelCallAttempt` 新增向后兼容的 `context_window_tokens` 与
+  `compaction_threshold`；Wrapper 从实际 Adapter/Model 在网络请求前固化，不读取
+  前端配置猜测。Observation 同步公开这两个内容无关事实。
+- Context 有效输入在缓存语义已验证时使用 `cache_eligible_input_tokens`，否则使用
+  Provider `input_tokens`。统一 Usage Projection 为 global、Agent、`ChatSpec.id`、
+  Invocation turn、UTC 日期与实际 Provider/Model 输出加权占用、单次峰值、可观测
+  调用数和达到当次压缩阈值的调用数。
+- 旧 `token_usage_projection.sqlite3` 自动增加 nullable columns；历史 Attempt 缺少
+  window 时保持不可观测。cutover 前查询把事实投影的 Context 字段覆盖到完全相同的
+  legacy scope row，Token/Calls 仍只取 JSON，所以新指标立即可见且不重复计数。
+- Console Token Usage 的总览卡片和五类表格已显示加权占用、峰值与临近压缩调用；
+  中英日俄葡越印尼七种 locale 已补齐。Chat 当前上下文继续显示 `local_estimate`，不
+  混入跨范围 Provider 统计。Task 页面没有改动。
+- 定点验证：领域模型、Model Call、Observation、Projection、Usage Manager 与
+  Agent 聚合 `124 passed`；启动及 Token Usage/Console Metadata API `19 passed`；
+  Console Token Usage 与 i18n `22 passed`。
+
 ### 2026-10-09 Model Recovery Kernel Contract
 
 - `ModelRecoveryDecision` 已从 Provider 私有 dataclass 提升为 Kernel 不可变领域模型；

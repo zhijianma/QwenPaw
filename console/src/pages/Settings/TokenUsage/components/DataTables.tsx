@@ -9,6 +9,9 @@ interface TokenRow {
   completion_tokens: number;
   cache_read_tokens: number;
   cache_eligible_input_tokens: number;
+  context_usage_ratio: number | null;
+  max_context_usage_ratio: number | null;
+  near_compaction_calls: number;
   call_count: number;
 }
 
@@ -54,6 +57,9 @@ function tokenStatColumns<T extends TokenRow>(titles: {
   total: string;
   cacheRead: string;
   cacheHitRate: string;
+  contextUsage: string;
+  maxContextUsage: string;
+  nearCompaction: string;
   calls: string;
 }) {
   return [
@@ -86,6 +92,29 @@ function tokenStatColumns<T extends TokenRow>(titles: {
           -1) -
         (cacheHitRate(b.cache_read_tokens, b.cache_eligible_input_tokens) ??
           -1),
+    },
+    {
+      title: titles.contextUsage,
+      dataIndex: "context_usage_ratio",
+      key: "context_usage_ratio",
+      render: (v: number | null) => formatPercent(v),
+      sorter: (a: T, b: T) =>
+        (a.context_usage_ratio ?? -1) - (b.context_usage_ratio ?? -1),
+    },
+    {
+      title: titles.maxContextUsage,
+      dataIndex: "max_context_usage_ratio",
+      key: "max_context_usage_ratio",
+      render: (v: number | null) => formatPercent(v),
+      sorter: (a: T, b: T) =>
+        (a.max_context_usage_ratio ?? -1) - (b.max_context_usage_ratio ?? -1),
+    },
+    {
+      title: titles.nearCompaction,
+      dataIndex: "near_compaction_calls",
+      key: "near_compaction_calls",
+      render: (v: number) => formatCompact(v),
+      sorter: (a: T, b: T) => a.near_compaction_calls - b.near_compaction_calls,
     },
     {
       title: titles.completion,
@@ -128,6 +157,9 @@ export function DataTables({
     total: t("tokenUsage.totalTokens"),
     cacheRead: t("tokenUsage.cacheRead"),
     cacheHitRate: t("tokenUsage.cacheHitRate"),
+    contextUsage: t("tokenUsage.contextUsage"),
+    maxContextUsage: t("tokenUsage.maxContextUsage"),
+    nearCompaction: t("tokenUsage.nearCompaction"),
     calls: t("tokenUsage.totalCalls"),
   };
 

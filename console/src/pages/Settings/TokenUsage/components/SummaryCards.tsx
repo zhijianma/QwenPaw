@@ -10,6 +10,9 @@ interface SummaryCardsProps {
   totalCompletionTokens: number;
   totalCacheReadTokens: number;
   totalCacheEligibleInputTokens: number;
+  contextUsageRatio: number | null;
+  maxContextUsageRatio: number | null;
+  nearCompactionCalls: number;
 }
 
 export function SummaryCards({
@@ -18,6 +21,9 @@ export function SummaryCards({
   totalCompletionTokens,
   totalCacheReadTokens,
   totalCacheEligibleInputTokens,
+  contextUsageRatio,
+  maxContextUsageRatio,
+  nearCompactionCalls,
 }: SummaryCardsProps) {
   const { t } = useTranslation();
   const hitRate = cacheHitRate(
@@ -30,6 +36,26 @@ export function SummaryCards({
       <Card className={styles.card}>
         <div className={styles.cardValue}>{formatCompact(totalCalls)}</div>
         <div className={styles.cardLabel}>{t("tokenUsage.totalCalls")}</div>
+      </Card>
+      <Card className={styles.card}>
+        <div className={styles.cardValue}>
+          {formatPercent(contextUsageRatio)}
+        </div>
+        <div className={styles.cardLabel}>{t("tokenUsage.contextUsage")}</div>
+      </Card>
+      <Card className={styles.card}>
+        <div className={styles.cardValue}>
+          {formatPercent(maxContextUsageRatio)}
+        </div>
+        <div className={styles.cardLabel}>
+          {t("tokenUsage.maxContextUsage")}
+        </div>
+      </Card>
+      <Card className={styles.card}>
+        <div className={styles.cardValue}>
+          {formatCompact(nearCompactionCalls)}
+        </div>
+        <div className={styles.cardLabel}>{t("tokenUsage.nearCompaction")}</div>
       </Card>
       <Card className={styles.card}>
         <div className={styles.cardValue}>

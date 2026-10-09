@@ -159,6 +159,12 @@ function makeRecord(overrides: Record<string, unknown> = {}) {
     cache_write_tokens: 2,
     cache_eligible_input_tokens: 20,
     cache_observed_calls: 1,
+    context_input_tokens: 100,
+    context_window_tokens: 200,
+    context_observed_calls: 1,
+    near_compaction_calls: 0,
+    context_usage_ratio: 50,
+    max_context_usage_ratio: 50,
     call_count: 3,
     agent_id: "agent-a",
     conversation_id: "chat-a",
@@ -178,6 +184,14 @@ function makeSummary(records: ReturnType<typeof makeRecord>[]) {
         acc.cache_eligible_input_tokens + record.cache_eligible_input_tokens,
       cache_observed_calls:
         acc.cache_observed_calls + record.cache_observed_calls,
+      context_input_tokens:
+        acc.context_input_tokens + record.context_input_tokens,
+      context_window_tokens:
+        acc.context_window_tokens + record.context_window_tokens,
+      context_observed_calls:
+        acc.context_observed_calls + record.context_observed_calls,
+      near_compaction_calls:
+        acc.near_compaction_calls + record.near_compaction_calls,
       call_count: acc.call_count + record.call_count,
     }),
     {
@@ -187,6 +201,10 @@ function makeSummary(records: ReturnType<typeof makeRecord>[]) {
       cache_write_tokens: 0,
       cache_eligible_input_tokens: 0,
       cache_observed_calls: 0,
+      context_input_tokens: 0,
+      context_window_tokens: 0,
+      context_observed_calls: 0,
+      near_compaction_calls: 0,
       call_count: 0,
     },
   );
@@ -197,6 +215,12 @@ function makeSummary(records: ReturnType<typeof makeRecord>[]) {
     cache_write_tokens: record.cache_write_tokens,
     cache_eligible_input_tokens: record.cache_eligible_input_tokens,
     cache_observed_calls: record.cache_observed_calls,
+    context_input_tokens: record.context_input_tokens,
+    context_window_tokens: record.context_window_tokens,
+    context_observed_calls: record.context_observed_calls,
+    near_compaction_calls: record.near_compaction_calls,
+    context_usage_ratio: record.context_usage_ratio,
+    max_context_usage_ratio: record.max_context_usage_ratio,
     call_count: record.call_count,
   });
   return {
@@ -207,6 +231,15 @@ function makeSummary(records: ReturnType<typeof makeRecord>[]) {
     total_cache_eligible_input_tokens: totals.cache_eligible_input_tokens,
     cache_observed_calls: totals.cache_observed_calls,
     cache_hit_rate: null,
+    total_context_input_tokens: totals.context_input_tokens,
+    total_context_window_tokens: totals.context_window_tokens,
+    context_observed_calls: totals.context_observed_calls,
+    near_compaction_calls: totals.near_compaction_calls,
+    context_usage_ratio:
+      totals.context_window_tokens > 0
+        ? (totals.context_input_tokens / totals.context_window_tokens) * 100
+        : null,
+    max_context_usage_ratio: records.length > 0 ? 50 : null,
     total_calls: totals.call_count,
     by_model: Object.fromEntries(
       records.map((record) => [
@@ -292,6 +325,9 @@ describe("TokenUsagePage", () => {
       totalCompletionTokens: 50,
       totalCacheReadTokens: 10,
       totalCacheEligibleInputTokens: 20,
+      contextUsageRatio: 50,
+      maxContextUsageRatio: 50,
+      nearCompactionCalls: 0,
     });
     expect(screen.getByTestId("data-tables")).toBeInTheDocument();
     expect(screen.getByTestId("model-trend-chart")).toBeInTheDocument();

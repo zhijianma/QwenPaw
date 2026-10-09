@@ -2008,6 +2008,13 @@ class ModelCallAttempt(KernelModel):
     attempt_index: int = Field(ge=1)
     provider_id: NonEmptyStr
     model_id: NonEmptyStr
+    context_window_tokens: int | None = Field(default=None, gt=0)
+    compaction_threshold: float | None = Field(
+        default=None,
+        gt=0,
+        le=1,
+        allow_inf_nan=False,
+    )
     adapter_id: NonEmptyStr | None = None
     adapter_version: NonEmptyStr | None = None
     formatter_id: NonEmptyStr | None = None

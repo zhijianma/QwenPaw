@@ -302,6 +302,8 @@ class ModelCallSession:
         adapter_version: str | None,
         formatter_id: str | None,
         formatter_version: str | None,
+        context_window_tokens: int | None = None,
+        compaction_threshold: float | None = None,
     ) -> ModelCallAttempt:
         """Persist one actual provider attempt before network dispatch."""
         self._attempt_index += 1
@@ -360,6 +362,8 @@ class ModelCallSession:
             attempt_index=route.attempt_index,
             provider_id=provider_id,
             model_id=model_id,
+            context_window_tokens=context_window_tokens,
+            compaction_threshold=compaction_threshold,
             adapter_id=adapter_id,
             adapter_version=adapter_version,
             formatter_id=formatter_id,
@@ -493,6 +497,8 @@ async def begin_current_model_attempt(
     *,
     provider_id: str,
     model_id: str,
+    context_window_tokens: int | None,
+    compaction_threshold: float | None,
     adapter_id: str,
     adapter_version: str | None,
     formatter_id: str | None,
@@ -505,6 +511,8 @@ async def begin_current_model_attempt(
     return await session.begin(
         provider_id=provider_id,
         model_id=model_id,
+        context_window_tokens=context_window_tokens,
+        compaction_threshold=compaction_threshold,
         adapter_id=adapter_id,
         adapter_version=adapter_version,
         formatter_id=formatter_id,

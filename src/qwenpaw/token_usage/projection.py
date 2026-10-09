@@ -63,6 +63,8 @@ class LiteUsageProjection:
                 turn_id TEXT NOT NULL,
                 provider_id TEXT NOT NULL,
                 model_id TEXT NOT NULL,
+                context_window_tokens INTEGER,
+                compaction_threshold REAL,
                 input_tokens INTEGER NOT NULL,
                 output_tokens INTEGER NOT NULL,
                 cache_read_tokens INTEGER NOT NULL,
@@ -83,8 +85,37 @@ class LiteUsageProjection:
             );
             """,
         )
+        self._ensure_column(
+            connection,
+            "context_window_tokens",
+            "INTEGER",
+        )
+        self._ensure_column(
+            connection,
+            "compaction_threshold",
+            "REAL",
+        )
         self._ensure_cutover(connection)
         return connection
+
+    @staticmethod
+    def _ensure_column(
+        connection: sqlite3.Connection,
+        column: str,
+        declaration: str,
+    ) -> None:
+        """Add one nullable projection column for an existing Lite index."""
+        columns = {
+            str(row["name"])
+            for row in connection.execute(
+                "PRAGMA table_info(model_usage_attempts)",
+            ).fetchall()
+        }
+        if column not in columns:
+            connection.execute(
+                f"ALTER TABLE model_usage_attempts "
+                f"ADD COLUMN {column} {declaration}",
+            )
 
     def _ensure_cutover(self, connection: sqlite3.Connection) -> date:
         row = connection.execute(
@@ -124,6 +155,8 @@ class LiteUsageProjection:
             str(attempt.invocation_id),
             attempt.provider_id,
             attempt.model_id,
+            attempt.context_window_tokens,
+            attempt.compaction_threshold,
             result.input_tokens,
             result.output_tokens,
             result.cache_read_tokens,
@@ -149,10 +182,13 @@ class LiteUsageProjection:
                 INSERT OR IGNORE INTO model_usage_attempts (
                     attempt_id, completed_at, usage_date, agent_id,
                     conversation_id, turn_id, provider_id, model_id,
+                    context_window_tokens, compaction_threshold,
                     input_tokens, output_tokens, cache_read_tokens,
                     cache_write_tokens, cache_eligible_input_tokens,
                     cache_observed, cost_micros, cost_unknown
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
                 """,
                 values,
             )
@@ -160,6 +196,7 @@ class LiteUsageProjection:
                 """
                 SELECT attempt_id, completed_at, usage_date, agent_id,
                        conversation_id, turn_id, provider_id, model_id,
+                       context_window_tokens, compaction_threshold,
                        input_tokens, output_tokens, cache_read_tokens,
                        cache_write_tokens, cache_eligible_input_tokens,
                        cache_observed, cost_micros, cost_unknown
@@ -211,6 +248,7 @@ class LiteUsageProjection:
         agent_id: str | None,
         conversation_id: str | None,
         turn_id: str | None,
+        include_shadow: bool,
     ) -> tuple[date, list[TokenUsageRecord]]:
         with self._connect() as connection:
             cutover = self._ensure_cutover(connection)
@@ -221,7 +259,11 @@ class LiteUsageProjection:
                 ORDER BY usage_date, attempt_id
                 """,
                 (
-                    max(start_date, cutover).isoformat(),
+                    (
+                        start_date
+                        if include_shadow
+                        else max(start_date, cutover)
+                    ).isoformat(),
                     end_date.isoformat(),
                 ),
             ).fetchall()
@@ -245,6 +287,42 @@ class LiteUsageProjection:
                 row["model_id"],
             )
             current = grouped.get(key)
+            context_window = int(row["context_window_tokens"] or 0)
+            context_input = (
+                (
+                    int(row["cache_eligible_input_tokens"])
+                    if bool(row["cache_observed"])
+                    else int(row["input_tokens"])
+                )
+                if context_window > 0
+                else 0
+            )
+            context_ratio = (
+                context_input / context_window * 100
+                if context_window > 0
+                else None
+            )
+            current_context_input = (
+                current.context_input_tokens if current else 0
+            )
+            current_context_window = (
+                current.context_window_tokens if current else 0
+            )
+            total_context_input = current_context_input + context_input
+            total_context_window = current_context_window + context_window
+            current_max = current.max_context_usage_ratio if current else None
+            maxima = (current_max, context_ratio)
+            max_context_ratio = (
+                max(value for value in maxima if value is not None)
+                if any(value is not None for value in maxima)
+                else None
+            )
+            threshold = row["compaction_threshold"]
+            near_compaction = int(
+                context_ratio is not None
+                and threshold is not None
+                and context_ratio >= float(threshold) * 100,
+            )
             grouped[key] = TokenUsageRecord(
                 date=str(row["usage_date"]),
                 provider_id=str(row["provider_id"]),
@@ -273,6 +351,22 @@ class LiteUsageProjection:
                     (current.cache_observed_calls if current else 0)
                     + int(row["cache_observed"])
                 ),
+                context_input_tokens=total_context_input,
+                context_window_tokens=total_context_window,
+                context_observed_calls=(
+                    (current.context_observed_calls if current else 0)
+                    + int(context_window > 0)
+                ),
+                near_compaction_calls=(
+                    (current.near_compaction_calls if current else 0)
+                    + near_compaction
+                ),
+                context_usage_ratio=(
+                    total_context_input / total_context_window * 100
+                    if total_context_window > 0
+                    else None
+                ),
+                max_context_usage_ratio=max_context_ratio,
                 call_count=(current.call_count if current else 0) + 1,
                 agent_id=row["agent_id"],
                 conversation_id=row["conversation_id"],
@@ -290,6 +384,7 @@ class LiteUsageProjection:
         agent_id: str | None = None,
         conversation_id: str | None = None,
         turn_id: str | None = None,
+        include_shadow: bool = False,
     ) -> tuple[date, list[TokenUsageRecord]]:
         """Return post-cutover rows and the immutable cutover date."""
         return await run_sync_io(
@@ -301,6 +396,7 @@ class LiteUsageProjection:
             agent_id,
             conversation_id,
             turn_id,
+            include_shadow,
         )
 
     def _status_sync(self) -> UsageProjectionStatus:
@@ -352,10 +448,13 @@ class LiteUsageProjection:
                 INSERT INTO model_usage_attempts (
                     attempt_id, completed_at, usage_date, agent_id,
                     conversation_id, turn_id, provider_id, model_id,
+                    context_window_tokens, compaction_threshold,
                     input_tokens, output_tokens, cache_read_tokens,
                     cache_write_tokens, cache_eligible_input_tokens,
                     cache_observed, cost_micros, cost_unknown
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
                 """,
                 values,
             )

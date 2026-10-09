@@ -19,6 +19,12 @@ export interface DateTokenRow {
   cache_write_tokens: number;
   cache_eligible_input_tokens: number;
   cache_observed_calls: number;
+  context_input_tokens: number;
+  context_window_tokens: number;
+  context_observed_calls: number;
+  near_compaction_calls: number;
+  context_usage_ratio: number | null;
+  max_context_usage_ratio: number | null;
   call_count: number;
 }
 
@@ -29,6 +35,12 @@ export interface DateTokenStats {
   cache_write_tokens: number;
   cache_eligible_input_tokens: number;
   cache_observed_calls: number;
+  context_input_tokens: number;
+  context_window_tokens: number;
+  context_observed_calls: number;
+  near_compaction_calls: number;
+  context_usage_ratio: number | null;
+  max_context_usage_ratio: number | null;
   call_count: number;
 }
 
@@ -50,6 +62,12 @@ export function buildByDateRows(
       cache_write_tokens: stats.cache_write_tokens,
       cache_eligible_input_tokens: stats.cache_eligible_input_tokens,
       cache_observed_calls: stats.cache_observed_calls,
+      context_input_tokens: stats.context_input_tokens,
+      context_window_tokens: stats.context_window_tokens,
+      context_observed_calls: stats.context_observed_calls,
+      near_compaction_calls: stats.near_compaction_calls,
+      context_usage_ratio: stats.context_usage_ratio,
+      max_context_usage_ratio: stats.max_context_usage_ratio,
       call_count: stats.call_count,
     }))
     .sort((a, b) => b.date.localeCompare(a.date));

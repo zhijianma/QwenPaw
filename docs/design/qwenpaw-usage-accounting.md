@@ -65,6 +65,28 @@ Retry and fallback are separate attempts and separate calls. Multiple calls in
 one tool loop share the Invocation turn. Composite public keys remain
 collision-safe JSON tuples until the API moves to structured rows.
 
+### Context-window statistics
+
+Context utilization is a Model Call fact, not a scan of message content. Each
+Attempt records the actual model's context window and active compaction
+threshold. Its effective context input is:
+
+- cache-eligible input when the Adapter's cache semantics are verified;
+- otherwise the Provider-reported input tokens.
+
+Every global/Agent/Chat/Turn/date/model aggregate exposes:
+
+- weighted utilization: sum of effective context input divided by sum of
+  observed context windows;
+- peak utilization: the largest single-call ratio in the range;
+- observed calls: calls with a known positive context window;
+- near-compaction calls: calls at or above their own configured threshold.
+
+Unknown historical windows remain unobserved and render as unavailable, never
+as `0%`. The post-turn character estimate remains useful for the live Chat
+indicator, but is labelled `local_estimate` and does not enter cross-scope
+Provider statistics.
+
 ## 5. Legacy cutover
 
 The existing JSON file contains already-aggregated rows and has no attempt ID.
@@ -82,6 +104,10 @@ double count. The read switch therefore requires all of the following:
 6. dual-write before the cutover as a bounded structural shadow period; stop
    attributed JSON writes after it. Unscoped compatibility writes remain in
    JSON and cannot overlap a Model Call attempt.
+
+During the pre-cutover shadow period, queries may overlay fact-derived context
+fields onto an exact legacy aggregation identity. Token and call totals still
+come from JSON, so the overlay cannot double count them.
 
 No direct date-level addition is allowed. The query removes attributed JSON
 rows on and after cutover before adding projected rows. Records that predate

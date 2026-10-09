@@ -271,7 +271,11 @@ async def test_token_wrapper_records_actual_provider_attempt(
         content=[TextBlock(text="ok")],
         is_last=True,
     )
-    wrapper = TokenRecordingModelWrapper("provider-a", provider)
+    wrapper = TokenRecordingModelWrapper(
+        "provider-a",
+        provider,
+        compact_threshold=0.8,
+    )
 
     response = await call_with_model_session(
         session,
@@ -282,6 +286,8 @@ async def test_token_wrapper_records_actual_provider_attempt(
     assert response.content[0].text == "ok"
     assert record.attempt.provider_id == "provider-a"
     assert record.attempt.model_id == "model-a"
+    assert record.attempt.context_window_tokens == 32_768
+    assert record.attempt.compaction_threshold == 0.8
     assert record.attempt.adapter_id is not None
     assert record.attempt.adapter_version is None
     assert record.attempt.formatter_id == "builtins.object"

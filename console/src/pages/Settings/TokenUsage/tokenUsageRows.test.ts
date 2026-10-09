@@ -15,6 +15,12 @@ describe("buildByDateRows (#3368)", () => {
     cache_write_tokens: 0,
     cache_eligible_input_tokens: 0,
     cache_observed_calls: 0,
+    context_input_tokens: 0,
+    context_window_tokens: 0,
+    context_observed_calls: 0,
+    near_compaction_calls: 0,
+    context_usage_ratio: null,
+    max_context_usage_ratio: null,
     call_count: n,
   });
 
@@ -60,6 +66,12 @@ describe("buildByDateRows (#3368)", () => {
         cache_write_tokens: 2,
         cache_eligible_input_tokens: 10,
         cache_observed_calls: 1,
+        context_input_tokens: 8,
+        context_window_tokens: 16,
+        context_observed_calls: 1,
+        near_compaction_calls: 0,
+        context_usage_ratio: 50,
+        max_context_usage_ratio: 50,
         call_count: 5,
       },
     });
@@ -74,6 +86,12 @@ describe("buildByDateRows (#3368)", () => {
         cache_write_tokens: 2,
         cache_eligible_input_tokens: 10,
         cache_observed_calls: 1,
+        context_input_tokens: 8,
+        context_window_tokens: 16,
+        context_observed_calls: 1,
+        near_compaction_calls: 0,
+        context_usage_ratio: 50,
+        max_context_usage_ratio: 50,
         call_count: 5,
       },
     ]);

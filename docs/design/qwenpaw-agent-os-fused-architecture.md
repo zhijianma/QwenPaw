@@ -583,6 +583,12 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
     水位前读取 legacy JSON，水位后有 Chat/Turn 归属的调用只读事实投影，无 Attempt
     的兼容调用仍可读取。`/api/token-usage/projection` 公开无内容的水位、索引量和最后
     rebuild 状态。旧聚合记录继续可读，但不伪造历史上不存在的 chat/turn 归属。
+  - [x] Context Window 统计不扫描消息正文：Attempt 记录实际模型 window 和当次
+    compaction threshold，Result 提供 Provider input/cache usage。投影在 global、Agent、
+    Chat、Invocation turn、日期和实际模型层统一计算加权占用、单次峰值、可观测调用及
+    临近压缩调用。缓存语义可验证时用 cache-eligible input，否则用 Provider input；
+    旧调用缺 window 时保持不可观测，不伪造 `0%`。Chat 的 `local_estimate` 只服务当前
+    上下文指示器，不混入跨范围 Provider 统计。
 - [x] 将 Chat 运行模型从隐含的一问一答升级为 Conversation Execution Chain：
   `Submission` 是输入，`Invocation` 是一次运行尝试，`correlation_id` 贯穿同一意图
   的多次等待与恢复；短问答继续使用单 Invocation 快速路径。

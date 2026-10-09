@@ -170,6 +170,9 @@ function TokenUsagePage() {
       completion_tokens: stats.completion_tokens,
       cache_read_tokens: stats.cache_read_tokens,
       cache_eligible_input_tokens: stats.cache_eligible_input_tokens,
+      context_usage_ratio: stats.context_usage_ratio,
+      max_context_usage_ratio: stats.max_context_usage_ratio,
+      near_compaction_calls: stats.near_compaction_calls,
       call_count: stats.call_count,
     }));
   }, [aggregatedData?.by_model]);
@@ -197,6 +200,9 @@ function TokenUsagePage() {
           completion_tokens: stats.completion_tokens,
           cache_read_tokens: stats.cache_read_tokens,
           cache_eligible_input_tokens: stats.cache_eligible_input_tokens,
+          context_usage_ratio: stats.context_usage_ratio,
+          max_context_usage_ratio: stats.max_context_usage_ratio,
+          near_compaction_calls: stats.near_compaction_calls,
           call_count: stats.call_count,
         };
       })
@@ -227,6 +233,9 @@ function TokenUsagePage() {
           completion_tokens: stats.completion_tokens,
           cache_read_tokens: stats.cache_read_tokens,
           cache_eligible_input_tokens: stats.cache_eligible_input_tokens,
+          context_usage_ratio: stats.context_usage_ratio,
+          max_context_usage_ratio: stats.max_context_usage_ratio,
+          near_compaction_calls: stats.near_compaction_calls,
           call_count: stats.call_count,
         };
       })
@@ -258,6 +267,9 @@ function TokenUsagePage() {
           completion_tokens: stats.completion_tokens,
           cache_read_tokens: stats.cache_read_tokens,
           cache_eligible_input_tokens: stats.cache_eligible_input_tokens,
+          context_usage_ratio: stats.context_usage_ratio,
+          max_context_usage_ratio: stats.max_context_usage_ratio,
+          near_compaction_calls: stats.near_compaction_calls,
           call_count: stats.call_count,
         };
       })
@@ -320,6 +332,9 @@ function TokenUsagePage() {
                 totalCacheEligibleInputTokens={
                   aggregatedData.total_cache_eligible_input_tokens
                 }
+                contextUsageRatio={aggregatedData.context_usage_ratio}
+                maxContextUsageRatio={aggregatedData.max_context_usage_ratio}
+                nearCompactionCalls={aggregatedData.near_compaction_calls}
               />
             )}
 

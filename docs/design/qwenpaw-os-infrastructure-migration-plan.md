@@ -1136,6 +1136,11 @@ Cron 不形成独立审批或产物事实源。
       cutover：新代码在水位前双写作 shadow，水位后停止有归属的 JSON 写入；查询过滤
       水位后的有归属 legacy row 后再合并投影，因此不按日期直接相加或双算。诊断 API
       返回 cutover、索引量、最后 rebuild 时间与条数，不暴露 Prompt 或消息。
+    - [x] 同一 Summary/Details 契约已加入 Context Window 事实统计：Model Call Attempt
+      固化实际 context window 与 compaction threshold；投影按缓存语义选择有效输入，
+      并为 global/Agent/Chat/turn/date/model 输出加权利用率、峰值、可观测调用和临近
+      压缩调用。水位前 shadow 只覆盖 Context 字段，Token/Calls 仍取 legacy JSON，
+      因而不会双算；旧 SQLite 自动增加 nullable context columns。
     - [ ] Workstation / Hub 的健康度、成本和数据边界动态路由仍待实现。Lite 当前
       继续使用确定性主模型与显式 fallback 顺序，不静默切换。
   - [ ] Run Completion、Verification 与业务 Outcome 分层；当前已阻止 Invocation
