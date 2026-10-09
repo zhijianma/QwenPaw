@@ -919,8 +919,13 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - turn 当前稳定定义为 OS Invocation；工具循环的多次调用同属一 turn，retry/fallback
   可按实际 Provider/Model 分行。后续若 Kernel 显式冻结 Submission ID 到
   InvocationScope 的关系，可增加 submission 投影，但不以 `session_id` 代替。
+- Console Token Usage 已将同一明细投影为全局摘要及 Agent、Chat、Turn、日期、模型
+  五个切面。Chat/Turn 使用包含 Agent 的复合键；旧记录即使没有 Chat/Turn，也只在
+  各自 Agent 内显示为“未归属”，不会跨 Agent 合并或伪造历史归属。
 - 本切片后端 token/turn 定点测试 `96 passed`，前端 Chat/API 定点测试
-  `60 passed`；Task 页面没有改动。
+  `60 passed`；统计页新增聚合与页面定点测试 `19 passed`。真实统计页已验证五个切面，
+  新 Turn 的端到端 usage 验收被既有 `workspace-driver` Tool Catalog 超限门禁阻断，
+  未误判为 token 统计失败；Task 页面没有改动。
 
 ### 2026-10-09 Model Recovery Kernel Contract
 

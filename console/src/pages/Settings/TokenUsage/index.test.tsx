@@ -160,6 +160,8 @@ function makeRecord(overrides: Record<string, unknown> = {}) {
     cache_observed_calls: 1,
     call_count: 3,
     agent_id: "agent-a",
+    conversation_id: "chat-a",
+    turn_id: "turn-a",
     ...overrides,
   };
 }
@@ -221,6 +223,25 @@ describe("TokenUsagePage", () => {
     expect(capturedProps.tables.byAgentData).toEqual([
       expect.objectContaining({ agent: "Agent A" }),
       expect.objectContaining({ agent: "tokenUsage.unattributed" }),
+    ]);
+    expect(capturedProps.tables.byChatData).toEqual([
+      expect.objectContaining({ agent: "Agent A", chat: "chat-a" }),
+      expect.objectContaining({
+        agent: "tokenUsage.unattributed",
+        chat: "chat-a",
+      }),
+    ]);
+    expect(capturedProps.tables.byTurnData).toEqual([
+      expect.objectContaining({
+        agent: "Agent A",
+        chat: "chat-a",
+        turn: "turn-a",
+      }),
+      expect.objectContaining({
+        agent: "tokenUsage.unattributed",
+        chat: "chat-a",
+        turn: "turn-a",
+      }),
     ]);
   });
 

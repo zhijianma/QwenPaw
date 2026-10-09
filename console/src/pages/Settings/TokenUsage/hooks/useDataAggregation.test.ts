@@ -43,4 +43,82 @@ describe("useDataAggregation cache usage", () => {
       ),
     ).toBe(54);
   });
+
+  it("keeps agent, chat, and turn ownership as separate scopes", () => {
+    const base = {
+      date: "2026-10-09",
+      provider_id: "dashscope",
+      model: "qwen-max",
+      completion_tokens: 5,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      cache_eligible_input_tokens: 0,
+      cache_observed_calls: 0,
+      call_count: 1,
+    };
+    const { result } = renderHook(() =>
+      useDataAggregation([
+        {
+          ...base,
+          prompt_tokens: 10,
+          agent_id: "agent-a",
+          conversation_id: "chat-shared",
+          turn_id: "turn-shared",
+        },
+        {
+          ...base,
+          prompt_tokens: 20,
+          agent_id: "agent-b",
+          conversation_id: "chat-shared",
+          turn_id: "turn-shared",
+        },
+        {
+          ...base,
+          prompt_tokens: 30,
+          agent_id: null,
+          conversation_id: null,
+          turn_id: null,
+        },
+        {
+          ...base,
+          prompt_tokens: 40,
+          agent_id: "agent-b",
+          conversation_id: null,
+          turn_id: null,
+        },
+      ]),
+    );
+
+    expect(Object.values(result.current?.by_chat ?? {})).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ agent_id: "agent-a", prompt_tokens: 10 }),
+        expect.objectContaining({ agent_id: "agent-b", prompt_tokens: 20 }),
+        expect.objectContaining({
+          conversation_id: "",
+          prompt_tokens: 30,
+        }),
+        expect.objectContaining({
+          agent_id: "agent-b",
+          conversation_id: "",
+          prompt_tokens: 40,
+        }),
+      ]),
+    );
+    expect(Object.values(result.current?.by_chat ?? {})).toHaveLength(4);
+    expect(Object.values(result.current?.by_turn ?? {})).toHaveLength(4);
+    expect(Object.values(result.current?.by_turn ?? {})).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          agent_id: "agent-a",
+          conversation_id: "chat-shared",
+          turn_id: "turn-shared",
+        }),
+        expect.objectContaining({
+          agent_id: "agent-b",
+          conversation_id: "chat-shared",
+          turn_id: "turn-shared",
+        }),
+      ]),
+    );
+  });
 });

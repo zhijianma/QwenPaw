@@ -182,13 +182,12 @@ function TokenUsagePage() {
     return Object.entries(aggregatedData.by_agent)
       .map(([key, stats]) => {
         const agentId = stats.agent_id;
-        let agent: string;
-        if (!agentId) {
-          agent = t("tokenUsage.unattributed");
-        } else {
-          const profile = agentsById.get(agentId);
-          agent = profile ? getAgentDisplayName(profile, t) : agentId;
-        }
+        const profile = agentId ? agentsById.get(agentId) : undefined;
+        const agent = !agentId
+          ? t("tokenUsage.unattributed")
+          : profile
+          ? getAgentDisplayName(profile, t)
+          : agentId;
         return {
           key,
           agent,
@@ -206,6 +205,67 @@ function TokenUsagePage() {
           (a.prompt_tokens + a.completion_tokens),
       );
   }, [aggregatedData?.by_agent, agentsById, t]);
+
+  const byChatData = useMemo(() => {
+    if (!aggregatedData?.by_chat) return [];
+    return Object.entries(aggregatedData.by_chat)
+      .map(([key, stats]) => {
+        const profile = stats.agent_id
+          ? agentsById.get(stats.agent_id)
+          : undefined;
+        return {
+          key,
+          agent: !stats.agent_id
+            ? t("tokenUsage.unattributed")
+            : profile
+            ? getAgentDisplayName(profile, t)
+            : stats.agent_id,
+          chat: stats.conversation_id || t("tokenUsage.unattributed"),
+          prompt_tokens: stats.prompt_tokens,
+          completion_tokens: stats.completion_tokens,
+          cache_read_tokens: stats.cache_read_tokens,
+          cache_eligible_input_tokens: stats.cache_eligible_input_tokens,
+          call_count: stats.call_count,
+        };
+      })
+      .sort(
+        (a, b) =>
+          b.prompt_tokens +
+          b.completion_tokens -
+          (a.prompt_tokens + a.completion_tokens),
+      );
+  }, [aggregatedData?.by_chat, agentsById, t]);
+
+  const byTurnData = useMemo(() => {
+    if (!aggregatedData?.by_turn) return [];
+    return Object.entries(aggregatedData.by_turn)
+      .map(([key, stats]) => {
+        const profile = stats.agent_id
+          ? agentsById.get(stats.agent_id)
+          : undefined;
+        return {
+          key,
+          agent: !stats.agent_id
+            ? t("tokenUsage.unattributed")
+            : profile
+            ? getAgentDisplayName(profile, t)
+            : stats.agent_id,
+          chat: stats.conversation_id || t("tokenUsage.unattributed"),
+          turn: stats.turn_id || t("tokenUsage.unattributed"),
+          prompt_tokens: stats.prompt_tokens,
+          completion_tokens: stats.completion_tokens,
+          cache_read_tokens: stats.cache_read_tokens,
+          cache_eligible_input_tokens: stats.cache_eligible_input_tokens,
+          call_count: stats.call_count,
+        };
+      })
+      .sort(
+        (a, b) =>
+          b.prompt_tokens +
+          b.completion_tokens -
+          (a.prompt_tokens + a.completion_tokens),
+      );
+  }, [aggregatedData?.by_turn, agentsById, t]);
 
   const tablesEmpty = byModelData.length === 0 && byDateData.length === 0;
 
@@ -305,6 +365,8 @@ function TokenUsagePage() {
               byModelData={byModelData}
               byDateData={byDateData}
               byAgentData={byAgentData}
+              byChatData={byChatData}
+              byTurnData={byTurnData}
             />
           ))}
       </div>
