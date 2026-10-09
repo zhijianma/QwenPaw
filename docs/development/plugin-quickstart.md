@@ -452,6 +452,11 @@ ownership and use `session_id` only when adapting a legacy transport or
 persistence implementation. `conversation_id` remains a deprecated read-only
 Python alias; new plugin code and serialized contracts must not emit it.
 
+The same rule applies to `CapabilityLockManifest`: public JSON and schemas
+emit only `chat_id`. The Host may read historical manifests containing
+`conversation_id`, but plugins must treat the lock as immutable and must not
+recalculate, rewrite, or depend on its internal v1 hash encoding.
+
 Conversation branching follows the same identity rule. The public SDK exports
 `ConversationForkCommand`, `ConversationForkOrigin`,
 `ConversationForkResult`, and `ConversationForkPort`. A host-provided Port

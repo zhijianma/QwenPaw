@@ -375,6 +375,11 @@ Receipt、Queue、Execution Chain 与 Runtime Projection 公共 Kernel/HTTP 合�
 canonical 参数，并在生成 Scope 前完成兼容归一化。
 Provider-owned `AgentModeState` 与可观测 `CompactionRecord` 也沿用同一公共身份；
 SQLite 列、owner hash 和 Store 查询参数仍是 Adapter 私有兼容面，不要求数据迁移。
+Invocation 的 `CapabilityLockManifest` 同样只公开 `chat_id = ChatSpec.id`，Compiler、
+Store 与 Chat 只读 API 共同使用这一名称。为了维持已经持久化的 v1 Lock 的不可变
+证据字节，manifest hash 的内部历史键名仍固定为 `conversation_id`；这只是 v1 哈希
+编码细节，不属于公共 schema。旧 Lock JSON 可原样恢复，owner hash、lock ID 与
+manifest hash 均不得因字段迁移而变化。
 Outcome 与 Observation 等嵌套权威事实按各自合同独立迁移，不能因为被 Runtime
 Projection 引用就隐式改写其 schema。Outcome 声明与事实、RuntimeObservation 和
 ConversationTrajectoryPage 公共合同均已使用 `chat_id`；历史输入继续兼容

@@ -1382,6 +1382,13 @@ Cron 不形成独立审批或产物事实源。
     descriptor 编译并 `0600` append-once 持久化；InvocationScope 与 ContextManifest
     引用同一 lock ID/hash，冲突失败关闭。Chat 只读 API 可审计 Lock 与 Context 的
     对齐关系；不持久化实现、配置值或 Secret。
+    `CapabilityLockManifest`、Compiler、Store 与 Chat API 已统一使用
+    `chat_id = ChatSpec.id`；旧 `conversation_id` 仅作为历史 JSON 输入、只读 Python
+    属性和 Store 适配方法保留，冲突双身份失败关闭。v1 manifest hash 的内部历史键名
+    刻意不变，以保持不可变证据字节稳定。仓库中 40 份迁移前真实 Lock 已全部原样恢复，
+    公共输出只含 `chat_id`，lock ID、owner hash 与 manifest hash 均无需重写。
+    2026-10-10 固定 Chat `1ee31988-b37a-48b9-b6ce-423c52f6a3a9` 的真实只读 API
+    返回最近 5 份 Lock，均只包含同一 `chat_id`，未泄漏 `conversation_id`。
   - [x] Lite Registry 为 system/plugin provider 生成同构、内容寻址的 `stable`
     release tag；tag 展开 descriptor hash。替换版本可使用 expected release hash
     fencing 做 provider 级一次性回滚，回滚发布新的单调 generation、保留无关 provider

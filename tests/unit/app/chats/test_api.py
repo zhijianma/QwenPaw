@@ -336,7 +336,7 @@ async def test_list_chat_capability_locks_returns_owned_releases(
         invocation_id=invocation_id,
         correlation_id=invocation_id,
         agent_id="default",
-        conversation_id=chat_id,
+        chat_id=chat_id,
         registry_generation=7,
         releases=releases,
     )

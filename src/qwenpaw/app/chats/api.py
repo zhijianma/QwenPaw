@@ -1648,7 +1648,7 @@ async def list_chat_capability_locks(
         )
     manifests = await lite_capability_lock_store(
         Path(workspace.workspace_dir),
-    ).list_for_conversation(
+    ).list_for_chat(
         chat_id,
         limit=limit,
     )

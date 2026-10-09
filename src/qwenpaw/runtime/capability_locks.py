@@ -71,7 +71,7 @@ class CapabilityLockCompiler:
             invocation_id=scope.invocation_id,
             correlation_id=scope.correlation_id or scope.invocation_id,
             agent_id=scope.agent_id,
-            conversation_id=scope.chat_id,
+            chat_id=scope.chat_id,
             registry_epoch_id=scope.registry_epoch_id,
             registry_generation=scope.registry_generation,
             releases=tuple(releases),
@@ -91,9 +91,7 @@ class FilesystemCapabilityLockStore:
         return hashlib.sha256(owner.encode("utf-8")).hexdigest()
 
     def _path(self, manifest: CapabilityLockManifest) -> Path:
-        owner = manifest.conversation_id or (
-            f"invocation:{manifest.invocation_id}"
-        )
+        owner = manifest.chat_id or (f"invocation:{manifest.invocation_id}")
         return (
             self._root
             / self._owner_key(owner)
@@ -132,10 +130,10 @@ class FilesystemCapabilityLockStore:
 
     def _list_sync(
         self,
-        conversation_id: str,
+        chat_id: str,
         limit: int,
     ) -> list[CapabilityLockManifest]:
-        root = self._root / self._owner_key(conversation_id)
+        root = self._root / self._owner_key(chat_id)
         manifests = [
             CapabilityLockManifest.model_validate(
                 json.loads(path.read_text(encoding="utf-8")),
@@ -145,22 +143,31 @@ class FilesystemCapabilityLockStore:
         manifests.sort(key=lambda item: item.created_at, reverse=True)
         return manifests[:limit]
 
+    async def list_for_chat(
+        self,
+        chat_id: str,
+        *,
+        limit: int = 100,
+    ) -> Sequence[CapabilityLockManifest]:
+        """Return newest Invocation locks for one ChatSpec identity."""
+        if not chat_id.strip():
+            raise ValueError("chat_id cannot be empty")
+        if limit < 1 or limit > 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        return await run_sync_io(
+            self._list_sync,
+            chat_id,
+            limit,
+        )
+
     async def list_for_conversation(
         self,
         conversation_id: str,
         *,
         limit: int = 100,
     ) -> Sequence[CapabilityLockManifest]:
-        """Return newest Invocation locks for one ChatSpec identity."""
-        if not conversation_id.strip():
-            raise ValueError("conversation_id cannot be empty")
-        if limit < 1 or limit > 1000:
-            raise ValueError("limit must be between 1 and 1000")
-        return await run_sync_io(
-            self._list_sync,
-            conversation_id,
-            limit,
-        )
+        """Compatibility adapter for the pre-ChatSpec Store API."""
+        return await self.list_for_chat(conversation_id, limit=limit)
 
 
 def lite_capability_lock_store(

@@ -5,10 +5,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from typing import Annotated, Literal, Self
 from uuid import UUID, uuid5
 
-from pydantic import AwareDatetime, Field, StringConstraints, model_validator
+from pydantic import (
+    AliasChoices,
+    AwareDatetime,
+    Field,
+    StringConstraints,
+    model_validator,
+)
 
 from .models import (
     CapabilityProviderKind,
@@ -23,6 +30,20 @@ Sha256Digest = Annotated[
     str,
     StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$"),
 ]
+
+
+def _canonical_chat_id(
+    chat_id: str | None,
+    conversation_id: str | None,
+) -> str | None:
+    """Resolve ChatSpec.id while accepting the deprecated identity."""
+    if (
+        chat_id is not None
+        and conversation_id is not None
+        and chat_id != conversation_id
+    ):
+        raise ValueError("chat_id and conversation_id must identify one Chat")
+    return chat_id if chat_id is not None else conversation_id
 
 
 class CapabilityRelease(KernelModel):
@@ -52,7 +73,11 @@ class CapabilityLockManifest(KernelModel):
     invocation_id: UUID
     correlation_id: UUID
     agent_id: NonEmptyStr
-    conversation_id: NonEmptyStr | None = None
+    chat_id: NonEmptyStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("chat_id", "conversation_id"),
+        description="Owning ChatSpec.id",
+    )
     registry_epoch_id: UUID | None = None
     registry_generation: int = Field(ge=1)
     releases: tuple[CapabilityRelease, ...] = Field(min_length=1)
@@ -66,18 +91,20 @@ class CapabilityLockManifest(KernelModel):
         invocation_id: UUID,
         correlation_id: UUID,
         agent_id: str,
-        conversation_id: str | None,
         registry_generation: int,
         releases: tuple[CapabilityRelease, ...],
+        chat_id: str | None = None,
+        conversation_id: str | None = None,
         registry_epoch_id: UUID | None = None,
     ) -> Self:
         """Build one deterministic, self-verifying Invocation lock."""
+        resolved_chat_id = _canonical_chat_id(chat_id, conversation_id)
         return cls(
             lock_id=uuid5(invocation_id, "capability-lock:v1"),
             invocation_id=invocation_id,
             correlation_id=correlation_id,
             agent_id=agent_id,
-            conversation_id=conversation_id,
+            chat_id=resolved_chat_id,
             registry_epoch_id=registry_epoch_id,
             registry_generation=registry_generation,
             releases=releases,
@@ -85,7 +112,7 @@ class CapabilityLockManifest(KernelModel):
                 invocation_id=invocation_id,
                 correlation_id=correlation_id,
                 agent_id=agent_id,
-                conversation_id=conversation_id,
+                chat_id=resolved_chat_id,
                 registry_epoch_id=registry_epoch_id,
                 registry_generation=registry_generation,
                 releases=releases,
@@ -98,21 +125,22 @@ class CapabilityLockManifest(KernelModel):
         invocation_id: UUID,
         correlation_id: UUID,
         agent_id: str,
-        conversation_id: str | None,
         registry_generation: int,
         releases: tuple[CapabilityRelease, ...],
+        chat_id: str | None = None,
+        conversation_id: str | None = None,
         registry_epoch_id: UUID | None = None,
     ) -> str:
         """Hash stable identity and selected releases, excluding time."""
+        resolved_chat_id = _canonical_chat_id(chat_id, conversation_id)
         identity = {
             "invocation_id": str(invocation_id),
             "correlation_id": str(correlation_id),
             "agent_id": agent_id,
-            "conversation_id": conversation_id,
+            # Keep the v1 hash bytes stable for historical immutable locks.
+            "conversation_id": resolved_chat_id,
             "registry_generation": registry_generation,
-            "releases": [
-                item.model_dump(mode="json") for item in releases
-            ],
+            "releases": [item.model_dump(mode="json") for item in releases],
         }
         if registry_epoch_id is not None:
             identity["registry_epoch_id"] = str(registry_epoch_id)
@@ -123,6 +151,22 @@ class CapabilityLockManifest(KernelModel):
             sort_keys=True,
         ).encode("utf-8")
         return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_chat_identity(cls, value: object) -> object:
+        """Reject ambiguous canonical and legacy Chat identities."""
+        if isinstance(value, Mapping):
+            _canonical_chat_id(
+                value.get("chat_id"),
+                value.get("conversation_id"),
+            )
+        return value
+
+    @property
+    def conversation_id(self) -> str | None:
+        """Return the deprecated Python alias during migration."""
+        return self.chat_id
 
     @model_validator(mode="after")
     def validate_releases(self) -> Self:
@@ -140,7 +184,7 @@ class CapabilityLockManifest(KernelModel):
             invocation_id=self.invocation_id,
             correlation_id=self.correlation_id,
             agent_id=self.agent_id,
-            conversation_id=self.conversation_id,
+            chat_id=self.chat_id,
             registry_epoch_id=self.registry_epoch_id,
             registry_generation=self.registry_generation,
             releases=self.releases,
