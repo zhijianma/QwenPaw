@@ -709,6 +709,9 @@ cannot overwrite a newer revision. Each value is limited to 64 KiB. The SDK
 does not export the backing Store: never open `.qwenpaw/lite/mode-state.db` or
 `.qwenpaw/lite/goals.db` directly from a plugin. Domain-specific Goal outcome
 state remains in `GoalExecutionStore`; generic Mode State does not replace it.
+`AgentModeState.chat_id` is the only serialized Chat identity. Historical
+payloads may still be read through the deprecated `conversation_id` alias, but
+new plugins must neither construct nor emit that field.
 
 `reset_conversation()` must call `clear_state()` for every known state key.
 Clear writes an empty value and advances revision instead of deleting the row,

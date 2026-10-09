@@ -657,7 +657,7 @@ async def test_pages_order_same_time_cross_source_without_duplicates(
     await lite_compaction_store(tmp_path).append(
         CompactionRecord(
             agent_id="default",
-            conversation_id=conversation_id,
+            chat_id=conversation_id,
             invocation_id=uuid4(),
             registry_generation=4,
             strategy_id="qwenpaw.context.scroll",
@@ -701,7 +701,7 @@ async def test_page_rejects_cursor_from_another_conversation(
     await lite_compaction_store(tmp_path).append(
         CompactionRecord(
             agent_id="default",
-            conversation_id="chat-owner-a",
+            chat_id="chat-owner-a",
             invocation_id=uuid4(),
             registry_generation=2,
             strategy_id="qwenpaw.context.scroll",
@@ -718,7 +718,7 @@ async def test_page_rejects_cursor_from_another_conversation(
     await lite_compaction_store(tmp_path).append(
         CompactionRecord(
             agent_id="default",
-            conversation_id="chat-owner-a",
+            chat_id="chat-owner-a",
             invocation_id=uuid4(),
             registry_generation=2,
             strategy_id="qwenpaw.context.scroll",
@@ -756,7 +756,7 @@ async def test_pagination_is_not_limited_to_first_thousand_sources(
     records = tuple(
         CompactionRecord(
             agent_id="default",
-            conversation_id=conversation_id,
+            chat_id=conversation_id,
             invocation_id=uuid4(),
             registry_generation=2,
             strategy_id="qwenpaw.context.scroll",
@@ -1064,7 +1064,7 @@ async def test_compaction_projects_content_free_evidence(tmp_path) -> None:
     now = datetime.now(timezone.utc)
     record = CompactionRecord(
         agent_id="default",
-        conversation_id=conversation_id,
+        chat_id=conversation_id,
         invocation_id=uuid4(),
         correlation_id=uuid4(),
         registry_generation=9,

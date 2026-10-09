@@ -78,7 +78,7 @@ class FilesystemCompactionStore(CompactionStore):
     def _record_path(self, record: CompactionRecord) -> Path:
         return (
             self._root
-            / self._owner_key(record.conversation_id)
+            / self._owner_key(record.chat_id)
             / str(record.invocation_id)
             / f"{record.compaction_id}.json"
         )
@@ -251,7 +251,7 @@ class RuntimeCompactionRecorder:
         assert scope.chat_id is not None
         return CompactionRecord(
             agent_id=scope.agent_id,
-            conversation_id=scope.chat_id,
+            chat_id=scope.chat_id,
             invocation_id=scope.invocation_id,
             correlation_id=scope.correlation_id,
             registry_generation=scope.registry_generation,

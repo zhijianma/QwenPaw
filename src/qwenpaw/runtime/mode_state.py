@@ -150,7 +150,7 @@ class SQLiteAgentModeStateStore:
                 (
                     state.provider_id,
                     state.agent_id,
-                    state.conversation_id,
+                    state.chat_id,
                     state.state_key,
                 ),
             ).fetchone()
@@ -193,7 +193,7 @@ class SQLiteAgentModeStateStore:
                 (
                     persisted.provider_id,
                     persisted.agent_id,
-                    persisted.conversation_id,
+                    persisted.chat_id,
                     persisted.state_key,
                     persisted.revision,
                     persisted.model_dump_json(),

@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import json
+import sqlite3
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -26,12 +28,12 @@ def _scope(
     tmp_path,
     *,
     generation=1,
-    conversation_id="chat-a",
+    chat_id="chat-a",
     registry_epoch_id=None,
 ):
     return InvocationScope(
         agent_id="default",
-        conversation_id=conversation_id,
+        chat_id=chat_id,
         session_id="transport-a",
         root_agent_id="default",
         root_session_id="transport-a",
@@ -50,7 +52,7 @@ async def test_mode_state_store_enforces_cas_and_namespace_isolation(
         AgentModeState(
             provider_id="example.mode-a",
             agent_id="default",
-            conversation_id="chat-a",
+            chat_id="chat-a",
             value={"step": 1},
             writer_registry_epoch_id=uuid4(),
             writer_generation=1,
@@ -103,6 +105,52 @@ async def test_mode_state_store_enforces_cas_and_namespace_isolation(
             first.model_copy(update={"value": {"step": 2}}),
             expected_revision=0,
         )
+
+
+@pytest.mark.asyncio
+async def test_mode_state_store_reads_legacy_json_and_writes_canonical(
+    tmp_path,
+) -> None:
+    database_path = tmp_path / "mode-state.db"
+    store = SQLiteAgentModeStateStore(database_path)
+    owner = {
+        "provider_id": "example.mode",
+        "agent_id": "default",
+        "conversation_id": "chat-a",
+        "state_key": "default",
+    }
+    assert await store.read(**owner) is None
+    state = AgentModeState(
+        provider_id="example.mode",
+        agent_id="default",
+        chat_id="chat-a",
+        value={"step": 1},
+        writer_registry_epoch_id=uuid4(),
+        writer_generation=1,
+    )
+    legacy = state.model_dump(mode="json")
+    legacy["conversation_id"] = legacy.pop("chat_id")
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "INSERT INTO agent_mode_state ("
+            "provider_id, agent_id, conversation_id, state_key, "
+            "revision, model_json) VALUES (?, ?, ?, ?, ?, ?)",
+            (*owner.values(), 0, json.dumps(legacy)),
+        )
+
+    restored = await store.read(**owner)
+    assert restored is not None
+    assert restored.chat_id == "chat-a"
+    persisted = await store.write(restored, expected_revision=0)
+    assert persisted.revision == 1
+    with sqlite3.connect(database_path) as connection:
+        raw = json.loads(
+            connection.execute(
+                "SELECT model_json FROM agent_mode_state",
+            ).fetchone()[0],
+        )
+    assert raw["chat_id"] == "chat-a"
+    assert "conversation_id" not in raw
 
 
 @pytest.mark.asyncio
@@ -245,7 +293,7 @@ def test_mode_state_rejects_oversized_payload() -> None:
         AgentModeState(
             provider_id="example.mode",
             agent_id="default",
-            conversation_id="chat-a",
+            chat_id="chat-a",
             value={"data": "x" * MAX_MODE_STATE_BYTES},
             writer_registry_epoch_id=uuid4(),
             writer_generation=1,

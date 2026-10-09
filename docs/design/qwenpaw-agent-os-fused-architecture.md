@@ -373,6 +373,8 @@ Receipt、Queue、Execution Chain 与 Runtime Projection 公共 Kernel/HTTP 合�
 `session_id` 继续表示传输上下文，不能作为 Chat ownership fallback。旧插件构造参数
 仍可读取，冲突双身份失败关闭；`RuntimeAssemblyFactory.open()` 对新调用者使用同一
 canonical 参数，并在生成 Scope 前完成兼容归一化。
+Provider-owned `AgentModeState` 与可观测 `CompactionRecord` 也沿用同一公共身份；
+SQLite 列、owner hash 和 Store 查询参数仍是 Adapter 私有兼容面，不要求数据迁移。
 Outcome 与 Observation 等嵌套权威事实按各自合同独立迁移，不能因为被 Runtime
 Projection 引用就隐式改写其 schema。Outcome 声明与事实、RuntimeObservation 和
 ConversationTrajectoryPage 公共合同均已使用 `chat_id`；历史输入继续兼容

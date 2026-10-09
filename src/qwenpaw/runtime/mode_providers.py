@@ -56,7 +56,7 @@ class _BoundAgentModeState:
         state = AgentModeState(
             provider_id=self.provider_id,
             agent_id=self.scope.agent_id,
-            conversation_id=self._conversation_id(),
+            chat_id=self._conversation_id(),
             state_key=state_key,
             value=value,
             state_schema_version=state_schema_version,

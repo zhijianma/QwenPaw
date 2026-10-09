@@ -775,7 +775,7 @@ def _compaction_observation(record: CompactionRecord) -> RuntimeObservation:
             source_type="qwenpaw.context.compaction",
             source_id=str(record.compaction_id),
         ),
-        chat_id=record.conversation_id,
+        chat_id=record.chat_id,
         invocation_id=record.invocation_id,
         correlation_id=record.correlation_id,
         registry_generation=record.registry_generation,

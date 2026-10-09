@@ -401,6 +401,12 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     `RuntimeLaunchConfig/RuntimeContext` 按当前冻结范围后置，未借机开发 Task 页面。
     2026-10-10 固定 Chat 在 `/clear` 后真实返回 `INVOCATION_CHAT_ID_OK`；最新 Route、
     Attempt、Result 共用同一 Invocation 和 `ChatSpec.id`，HTTP 三层均只输出 `chat_id`。
+  - [x] Plugin SDK 的 `AgentModeState` 与 Kernel `CompactionRecord` 已统一输出
+    `chat_id = ChatSpec.id`，冲突双身份失败关闭；Mode SQLite 列、Compaction owner
+    hash 与 Store 查询参数继续作为 Adapter 内部兼容面。Runtime 新写入、Observation
+    投影和幂等比较均先使用 canonical 领域对象，历史 JSON 不要求重写。当前配置的六个
+    Workspace 尚无 Mode State/Compaction 历史记录，因此兼容性由 legacy payload 与
+    Store 定点测试覆盖，不伪造在线样本。公共 Kernel 旧字段模型由 9 个降至 7 个。
   - [x] Chat Runtime 由权威 Submission 与 Interaction 按 correlation 派生有界
     `ConversationExecutionChain`；同一意图跨 Invocation 保留完整因果身份。一次
     Submission `succeeded` 后仅进入 `inactive`，绝不伪装业务 `completed`；阻塞
