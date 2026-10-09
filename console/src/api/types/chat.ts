@@ -185,7 +185,7 @@ export interface RuntimeObservation {
   source: { source_type: string; source_id: string };
   task_id?: string | null;
   run_id?: string | null;
-  conversation_id?: string | null;
+  chat_id?: string | null;
   invocation_id?: string | null;
   correlation_id?: string | null;
   registry_generation?: number | null;
@@ -209,7 +209,7 @@ export type ConversationOutcomeStatus =
 export interface ConversationOutcome {
   outcome_id: string;
   agent_id: string;
-  conversation_id: string;
+  chat_id: string;
   correlation_id: string;
   status: ConversationOutcomeStatus;
   producer_id: string;

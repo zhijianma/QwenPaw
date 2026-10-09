@@ -552,9 +552,9 @@ class ConversationRuntimeProjection(_ChatIdentity):
                 "runtime projection execution chains must be unique",
             )
         for observation in self.activity.items:
-            if observation.conversation_id != self.chat_id:
+            if observation.chat_id != self.chat_id:
                 raise ValueError(
-                    "runtime projection activity conversation_id mismatch",
+                    "runtime projection activity chat_id mismatch",
                 )
         return self
 

@@ -32,10 +32,10 @@ describe("streamRuntimeProjection", () => {
   it("parses chunked snapshots and returns the latest cursor", async () => {
     const snapshot = {
       agent_id: "agent-1",
-      conversation_id: "chat-1",
+      chat_id: "chat-1",
       queue: {
         agent_id: "agent-1",
-        conversation_id: "chat-1",
+        chat_id: "chat-1",
         revision: 2,
         active_submission_id: null,
         submissions: [],

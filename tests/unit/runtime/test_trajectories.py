@@ -119,6 +119,9 @@ async def test_trajectory_replays_outcome_supersession_in_order(
         correlation_id=correlation_id,
     )
 
+    payload = page.model_dump(mode="json")
+    assert payload["chat_id"] == "chat-1"
+    assert "conversation_id" not in payload
     assert [item.category for item in page.items] == [
         ObservationCategory.ACTION,
         ObservationCategory.OUTCOME,

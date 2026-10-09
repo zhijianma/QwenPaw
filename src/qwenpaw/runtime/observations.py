@@ -154,7 +154,7 @@ def _model_observations(
     attempt = record.attempt
     common = {
         "category": ObservationCategory.MODEL,
-        "conversation_id": attempt.conversation_id,
+        "chat_id": attempt.chat_id,
         "invocation_id": attempt.invocation_id,
         "correlation_id": attempt.correlation_id,
         "registry_generation": attempt.registry_generation,
@@ -322,7 +322,7 @@ def _model_step_observation(
             source_type="qwenpaw.model.step-continuation",
             source_id=str(continuation.continuation_id),
         ),
-        conversation_id=continuation.conversation_id,
+        chat_id=continuation.conversation_id,
         invocation_id=continuation.invocation_id,
         correlation_id=continuation.correlation_id,
         title="Partial model step recovery",
@@ -400,7 +400,7 @@ def _model_resource_wait_observation(
             source_type="qwenpaw.model.resource-wait",
             source_id=str(wait.wait_id),
         ),
-        conversation_id=wait.conversation_id,
+        chat_id=wait.conversation_id,
         invocation_id=wait.invocation_id,
         correlation_id=wait.correlation_id,
         title="Model resource recovery",
@@ -432,7 +432,7 @@ def _action_observations(
         return ()
     common = {
         "category": ObservationCategory.ACTION,
-        "conversation_id": request.conversation_id,
+        "chat_id": request.chat_id,
         "invocation_id": request.invocation_id,
         "correlation_id": request.correlation_id,
         "registry_generation": request.registry_generation,
@@ -489,7 +489,7 @@ def _action_observations(
             source_type="qwenpaw.action.policy-decision",
             source_id=str(request.action_id),
         ),
-        conversation_id=request.conversation_id,
+        chat_id=request.chat_id,
         invocation_id=request.invocation_id,
         correlation_id=request.correlation_id,
         registry_generation=request.registry_generation,
@@ -596,7 +596,7 @@ def _interaction_observations(
     request = record.request
     common = {
         "category": ObservationCategory.HITL,
-        "conversation_id": request.conversation_id,
+        "chat_id": request.chat_id,
         "invocation_id": request.invocation_id,
         "correlation_id": request.correlation_id,
         "registry_generation": None,
@@ -694,7 +694,7 @@ def _control_observations(
             correlation_id = ordered_correlations.pop()
     common = {
         "category": _control_category(command.kind),
-        "conversation_id": command.conversation_id,
+        "chat_id": command.chat_id,
         "invocation_id": command.target_invocation_id,
         "correlation_id": correlation_id,
         "registry_generation": None,
@@ -775,7 +775,7 @@ def _compaction_observation(record: CompactionRecord) -> RuntimeObservation:
             source_type="qwenpaw.context.compaction",
             source_id=str(record.compaction_id),
         ),
-        conversation_id=record.conversation_id,
+        chat_id=record.conversation_id,
         invocation_id=record.invocation_id,
         correlation_id=record.correlation_id,
         registry_generation=record.registry_generation,
@@ -820,7 +820,7 @@ def _verification_observation(
         ),
         task_id=record.task_id,
         run_id=record.run_id,
-        conversation_id=conversation_id,
+        chat_id=conversation_id,
         invocation_id=record.invocation_id,
         correlation_id=record.correlation_id,
         registry_generation=record.registry_generation,
@@ -862,7 +862,7 @@ def _task_artifact_observation(
         ),
         task_id=record.task_id,
         run_id=record.run_id,
-        conversation_id=conversation_id,
+        chat_id=conversation_id,
         correlation_id=record.correlation_id,
         title="Task artifact registered",
         facts={
@@ -905,7 +905,7 @@ def _task_evidence_observation(
         ),
         task_id=record.task_id,
         run_id=record.run_id,
-        conversation_id=conversation_id,
+        chat_id=conversation_id,
         correlation_id=record.correlation_id,
         title="Task evidence registered",
         facts={
@@ -946,7 +946,7 @@ def _submission_observations(
             source_type="qwenpaw.control.submission",
             source_id=str(submission.submission_id),
         ),
-        conversation_id=submission.conversation_id,
+        chat_id=submission.chat_id,
         correlation_id=submission.correlation_id,
         title="Conversation input accepted",
         facts={
@@ -976,7 +976,7 @@ def _submission_observations(
             source_type="qwenpaw.control.submission",
             source_id=str(submission.submission_id),
         ),
-        conversation_id=submission.conversation_id,
+        chat_id=submission.chat_id,
         invocation_id=submission.invocation_id,
         correlation_id=submission.correlation_id,
         title="Conversation execution completed",
@@ -1000,7 +1000,7 @@ def _conversation_artifact_observations(
     record: ConversationArtifactRecord,
 ) -> tuple[RuntimeObservation, RuntimeObservation]:
     common = {
-        "conversation_id": record.conversation_id,
+        "chat_id": record.conversation_id,
         "invocation_id": record.invocation_id,
         "correlation_id": record.correlation_id,
         "registry_generation": record.registry_generation,

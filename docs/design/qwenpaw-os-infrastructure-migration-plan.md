@@ -291,8 +291,8 @@ Workbench。前端只能提交命令、订阅事件和展示服务端投影；�
     `ConversationRuntimeProjection` 公共合同已统一使用
     `chat_id = ChatSpec.id`。旧 SQLite 行与 dispatcher 继续通过只读 Python
     `conversation_id` 属性工作；HTTP、SSE 与 Console 新类型只产生 `chat_id`。
-    嵌套 Outcome / Observation 是独立事实合同，按各自迁移切片处理；Outcome 已完成，
-    Observation 仍保留在后续独立切片。
+    嵌套 Outcome / Observation 是独立事实合同，已按各自迁移切片完成；两者的新
+    JSON/OpenAPI/Console 类型均只输出 `chat_id`，不依赖外层 Projection 隐式改写。
   - [x] `InvocationScope.conversation_id` 已冻结为可空的一等 `ChatSpec.id`；Chat
     Adapter 在装配时只写入一次，Memory Host、Interaction 和控制面从固定 Scope
     传播。没有 Conversation 的 transport 保持 `None`，禁止回退到 `session_id`。
@@ -1157,6 +1157,12 @@ Cron 不形成独立审批或产物事实源。
       `GET /api/chats/{ChatSpec.id}/observations?limit=` 已接入；固定 Chat 的真实
       查询在同一时间线返回 11 条 MODEL 和 9 条 ACTION（limit=20），覆盖 policy、
       execution、intent、evidence，且 Action 结果保留 Artifact/Evidence 引用。
+    - [x] `RuntimeObservation` 与 correlation-scoped
+      `ConversationTrajectoryPage` 的公共身份已统一为 `chat_id = ChatSpec.id`；旧
+      `conversation_id` 仅作为读取输入和只读 Python 属性兼容。Observation 派生索引、
+      owner hash、水位与游标格式保持不变，无需迁移事实表。2026-10-10 当前固定 Chat
+      从原权威记录恢复最近 50 条 activity，根投影及每条 observation 均只输出同一
+      `chat_id`，旧字段计数为 0；公开 schema、旧数据恢复和冲突身份拒绝由定点测试覆盖。
     - [x] `InteractionRecord` 冻结 request + optional resolution 历史契约，
       独立只读 `InteractionHistoryPort` 可按 Agent 与 `ChatSpec.id` 查询所有状态，
       不扩张或破坏既有运行交互 Port；Approval、User Input、Suggestion 统一派生 HITL

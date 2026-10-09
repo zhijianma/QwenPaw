@@ -48,7 +48,7 @@ function observation(updates: Partial<RuntimeObservation>): RuntimeObservation {
       source_type: "qwenpaw.action.request",
       source_id: "00000000-0000-0000-0000-000000000123",
     },
-    conversation_id: "chat-1",
+    chat_id: "chat-1",
     invocation_id: "invocation-1",
     correlation_id: "correlation-1",
     registry_generation: 4,

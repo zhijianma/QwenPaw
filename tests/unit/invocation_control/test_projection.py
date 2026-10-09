@@ -171,11 +171,11 @@ async def test_projection_cursor_tracks_semantic_activity(tmp_path) -> None:
         limit=50,
     )
     foreign = observation.model_copy(
-        update={"conversation_id": "chat-2"},
+        update={"chat_id": "chat-2"},
     )
     with pytest.raises(
         ValidationError,
-        match="activity conversation_id mismatch",
+        match="activity chat_id mismatch",
     ):
         ConversationRuntimeProjection(
             agent_id="default",

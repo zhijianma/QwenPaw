@@ -50,7 +50,7 @@ def _outcome_observation(
         ),
         task_id=outcome.task_id,
         run_id=outcome.run_id,
-        conversation_id=outcome.chat_id,
+        chat_id=outcome.chat_id,
         invocation_id=outcome.invocation_id,
         correlation_id=outcome.correlation_id,
         registry_generation=outcome.registry_generation,
@@ -104,7 +104,7 @@ class ConversationTrajectoryProjection:
         selected = [
             item
             for item in observations
-            if item.conversation_id == conversation_id
+            if item.chat_id == conversation_id
             and item.correlation_id == correlation_id
         ]
         selected.extend(
@@ -153,7 +153,7 @@ class ConversationTrajectoryProjection:
                 "trajectory index references unavailable source facts",
             )
         return ConversationTrajectoryPage(
-            conversation_id=conversation_id,
+            chat_id=conversation_id,
             correlation_id=correlation_id,
             items=tuple(by_id[item.observation_id] for item in entries),
             next_cursor=next_cursor,

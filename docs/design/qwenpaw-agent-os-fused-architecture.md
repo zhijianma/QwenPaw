@@ -370,8 +370,9 @@ Receipt、Queue、Execution Chain 与 Runtime Projection 公共 Kernel/HTTP 合�
 `chat_id`。持久化适配器仍可读取旧 `conversation_id`，SDK 也暂时保留只读 Python
 属性，但新 JSON、SSE、Console 类型与插件代码不得继续产生第二个 Chat 身份名称。
 Outcome 与 Observation 等嵌套权威事实按各自合同独立迁移，不能因为被 Runtime
-Projection 引用就隐式改写其 schema。Outcome 声明与事实合同现已使用 `chat_id`；
-Observation 仍作为下一独立迁移边界。
+Projection 引用就隐式改写其 schema。Outcome 声明与事实、RuntimeObservation 和
+ConversationTrajectoryPage 公共合同均已使用 `chat_id`；历史输入继续兼容
+`conversation_id`，Observation 的派生索引、owner hash 与游标格式不变。
 
 Chat Runtime 已按 `correlation_id` 从权威 Submission 与 Interaction 派生
 `ConversationExecutionChain`：同一意图的多次 Submission / Invocation 保持一个执行
@@ -585,6 +586,8 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
   Lite 通过只保存 source pointer 的派生索引提供固定水位分页；不透明游标绑定
   `ChatSpec.id`、首屏 `indexed_sequence` 和最后排序键。翻页期间新增或后补的
   Evidence 不进入旧快照，且权威事实仍从原 Store 动态投影，不形成第二份事实库。
+  Observation 与 Trajectory Page 的公共 JSON 只使用 `chat_id = ChatSpec.id`；旧
+  `conversation_id` 只在恢复输入和 Python 兼容属性中保留，不改变索引与游标所有权。
 - [x] 冻结 `ModelCallAttempt` / `RouteDecision` / `ModelCallResult` 和 Store Port；
   Lite 已在真实 Provider 网络边界记录直连、同模型重试、跨模型 fallback、overflow
   retry、流式成功/取消/失败和 usage，并提供 Chat-owned 只读查询。Route 区分逻辑

@@ -4,11 +4,18 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from enum import Enum
 from typing import Literal, Self
 from uuid import UUID
 
-from pydantic import AwareDatetime, Field, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    AwareDatetime,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from .events import assert_payload_safe
 from .models import JsonObject, KernelModel, NamespacedId, NonEmptyStr
@@ -84,7 +91,11 @@ class RuntimeObservation(KernelModel):
     source: ObservationSource
     task_id: UUID | None = None
     run_id: UUID | None = None
-    conversation_id: NonEmptyStr | None = None
+    chat_id: NonEmptyStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("chat_id", "conversation_id"),
+        description="Owning ChatSpec.id when the observation is Chat-scoped",
+    )
     invocation_id: UUID | None = None
     correlation_id: UUID | None = None
     registry_generation: int | None = Field(default=None, ge=1)
@@ -95,11 +106,29 @@ class RuntimeObservation(KernelModel):
     @model_validator(mode="after")
     def validate_owner(self) -> Self:
         """Require a Task or Conversation ownership boundary."""
-        if self.task_id is None and self.conversation_id is None:
+        if self.task_id is None and self.chat_id is None:
             raise ValueError("observation requires a task or conversation")
         if self.run_id is not None and self.task_id is None:
             raise ValueError("run-scoped observation requires a task")
         return self
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_chat_identity(cls, value: object) -> object:
+        """Reject ambiguous canonical and legacy Chat identities."""
+        if isinstance(value, Mapping):
+            chat_id = value.get("chat_id")
+            conversation_id = value.get("conversation_id")
+            if chat_id and conversation_id and chat_id != conversation_id:
+                raise ValueError(
+                    "chat_id and conversation_id must identify one Chat",
+                )
+        return value
+
+    @property
+    def conversation_id(self) -> str | None:
+        """Return the deprecated Python alias during migration."""
+        return self.chat_id
 
     @field_validator("facts")
     @classmethod
@@ -135,10 +164,31 @@ class ConversationTrajectoryPage(KernelModel):
         default="qwenpaw.conversation-trajectory-page.v1",
         alias="schema",
     )
-    conversation_id: NonEmptyStr
+    chat_id: NonEmptyStr = Field(
+        validation_alias=AliasChoices("chat_id", "conversation_id"),
+        description="Owning ChatSpec.id",
+    )
     correlation_id: UUID
     items: tuple[RuntimeObservation, ...] = ()
     next_cursor: NonEmptyStr | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_chat_identity(cls, value: object) -> object:
+        """Reject ambiguous canonical and legacy Chat identities."""
+        if isinstance(value, Mapping):
+            chat_id = value.get("chat_id")
+            conversation_id = value.get("conversation_id")
+            if chat_id and conversation_id and chat_id != conversation_id:
+                raise ValueError(
+                    "chat_id and conversation_id must identify one Chat",
+                )
+        return value
+
+    @property
+    def conversation_id(self) -> str:
+        """Return the deprecated Python alias during migration."""
+        return self.chat_id
 
 
 __all__ = [
