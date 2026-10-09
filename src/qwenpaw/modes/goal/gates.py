@@ -35,8 +35,9 @@ def _update_goal_tokens(
 ) -> None:
     """Accumulate token usage from model wrapper."""
     try:
-        from ...token_usage.model_wrapper import (
-            TokenRecordingModelWrapper,
+        from ...app.agent_context import get_current_invocation_id
+        from ...token_usage.turn_accumulator import (
+            get_turn_usage_accumulator,
         )
 
         agent = ctx.get("agent") if isinstance(ctx, dict) else None
@@ -46,12 +47,10 @@ def _update_goal_tokens(
         sid = rc.get("session_id", "")
         if not sid:
             return
-        store = getattr(
-            TokenRecordingModelWrapper,
-            "_usage_by_session",
-            {},
+        usage = get_turn_usage_accumulator().peek(
+            sid,
+            invocation_id=get_current_invocation_id(),
         )
-        usage = store.get(sid)
         if usage:
             session.tokens_used = usage.get(
                 "total_tokens",

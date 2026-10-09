@@ -29,6 +29,11 @@ _current_session_id: ContextVar[Optional[str]] = ContextVar(
     default=None,
 )
 
+_current_invocation_id: ContextVar[Optional[str]] = ContextVar(
+    "current_invocation_id",
+    default=None,
+)
+
 # Context variable to store current root session id for cross-session approval
 _current_root_session_id: ContextVar[Optional[str]] = ContextVar(
     "current_root_session_id",
@@ -365,6 +370,16 @@ def scoped_session_id(session_id: str) -> Iterator[None]:
 
 def get_current_session_id() -> Optional[str]:
     return _current_session_id.get()
+
+
+def set_current_invocation_id(invocation_id: str | None) -> None:
+    """Set the current OS invocation identity for turn-scoped services."""
+    _current_invocation_id.set(invocation_id)
+
+
+def get_current_invocation_id() -> Optional[str]:
+    """Return the current OS invocation identity when one is active."""
+    return _current_invocation_id.get()
 
 
 def set_current_root_session_id(root_session_id: Optional[str]) -> None:

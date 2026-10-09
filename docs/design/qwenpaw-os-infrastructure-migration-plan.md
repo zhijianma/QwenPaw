@@ -1183,6 +1183,9 @@ Cron 不形成独立审批或产物事实源。
     - [x] Chat Turn usage 对工具循环的同路由调用按 Provider/Model 合并并保留
       `call_count`；fallback 或中途切换路由时保存独立 `model_routes` 明细。Turn
       总量不再被误标为最后一个模型的用量，刷新后仍从消息 metadata 恢复同一明细。
+      活跃 Turn 的进程内累加已从 Model Wrapper 私有全局字典迁移为独立基础设施，
+      使用 `ChatSpec.id + invocation_id` 隔离；Loop Gate、Goal Gate、Chat 持久化与
+      SSE 只读公开快照接口，协议 `session_id` 仅保留窄兼容入口。
     - [x] Token Usage Summary 已成为服务端权威统计契约：同一查询同时返回全局、
       日期、实际 Provider/Model、日期×模型、Agent、`ChatSpec.id` 和 Invocation turn
       聚合。Console 不再下载明细并维护第二套页面私有聚合口径；`/details` 仅保留为

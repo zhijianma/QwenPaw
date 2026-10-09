@@ -1909,13 +1909,14 @@ class BaseChannel(ABC):
 
     @staticmethod
     def _clear_session_turn_usage(session_id: str) -> None:
-        """Drop any staged per-session usage (turn start / cancel / error)."""
+        """Drop staged usage for one Chat (turn start / cancel / error)."""
         if not session_id:
             return
-        import importlib
+        from ...token_usage.turn_accumulator import (
+            get_turn_usage_accumulator,
+        )
 
-        mod = importlib.import_module("qwenpaw.token_usage.model_wrapper")
-        mod.TokenRecordingModelWrapper.pop_usage_for_session(session_id)
+        get_turn_usage_accumulator().discard_chat(session_id)
 
     async def _commit_turn_usage(
         self,
@@ -1948,12 +1949,15 @@ class BaseChannel(ABC):
             )
             user_id = getattr(request, "user_id", "") or ""
             channel = getattr(request, "channel", "") or self.channel
+            from ...app.agent_context import get_current_invocation_id
+
             turn, ctx, agent_state = await turn_usage.resolve_turn_usage(
                 session_id=session_id,
                 agent_id=agent_id,
                 session=session,
                 user_id=user_id,
                 channel=channel,
+                invocation_id=get_current_invocation_id(),
             )
             if turn is None and ctx is None:
                 return []

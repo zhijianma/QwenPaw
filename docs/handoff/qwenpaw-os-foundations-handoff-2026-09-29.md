@@ -1014,6 +1014,21 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   Agent 聚合 `124 passed`；启动及 Token Usage/Console Metadata API `19 passed`；
   Console Token Usage 与 i18n `22 passed`。
 
+### 2026-10-09 Chat Turn Usage 累加器解耦
+
+- 保留 `ModelCallAttempt/Result → SQLite Projection` 作为全局、Agent、
+  `ChatSpec.id`、Invocation turn、日期和模型统计的唯一事实链；本切片不改变公开
+  Summary/Details API，也不引入第二套持久化事实。
+- 删除 `TokenRecordingModelWrapper._usage_by_session` 进程级私有字典。新增独立
+  `TurnUsageAccumulator`，以 `ChatSpec.id + invocation_id` 隔离活跃 Turn，同一 Turn
+  内继续累加多次 Model Call 与 `model_routes`，多个并发 Invocation 不会串账。
+- 请求生命周期新增当前 Invocation ContextVar；Token/Goal Loop Gate、Chat Turn
+  持久化和 SSE 改为只读累加器公开接口。ACP 等真实协议 Session 继续通过 Wrapper 的
+  窄兼容 adapter 读取，避免把 transport `session_id` 重新提升为领域主键。
+- 新增合并、并发隔离、无 Invocation 协议兼容和 Chat 整体清理测试。Token、Loop、
+  Retry/Fallback、ACP、全部 Channel、Hook 与 Goal 相关联合定点回归
+  `2992 passed, 1 skipped`；Task 页面没有改动。
+
 ### 2026-10-09 Model Transport Capability
 
 - Kernel 新增 Provider-neutral `ModelTransportContract`、Host-keyed HMAC Resume Evidence 与

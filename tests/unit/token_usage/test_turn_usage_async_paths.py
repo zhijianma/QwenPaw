@@ -160,9 +160,9 @@ class TestResolveTurnUsage:
     ):
         turn = {"prompt_tokens": 1, "completion_tokens": 2}
         monkeypatch.setattr(
-            "qwenpaw.token_usage.model_wrapper."
-            "TokenRecordingModelWrapper.pop_usage_for_session",
-            classmethod(lambda cls, sid: turn),
+            turn_usage.get_turn_usage_accumulator(),
+            "pop",
+            lambda _chat_id, *, invocation_id=None: turn,
         )
         got_turn, ctx, state = await turn_usage.resolve_turn_usage(
             session_id="s",
@@ -180,9 +180,9 @@ class TestResolveTurnUsage:
         monkeypatch: pytest.MonkeyPatch,
     ):
         monkeypatch.setattr(
-            "qwenpaw.token_usage.model_wrapper."
-            "TokenRecordingModelWrapper.pop_usage_for_session",
-            classmethod(lambda cls, sid: None),
+            turn_usage.get_turn_usage_accumulator(),
+            "pop",
+            lambda _chat_id, *, invocation_id=None: None,
         )
         monkeypatch.setattr(
             turn_usage,
@@ -206,9 +206,9 @@ class TestResolveTurnUsage:
     ):
         agent_state = SimpleNamespace()
         monkeypatch.setattr(
-            "qwenpaw.token_usage.model_wrapper."
-            "TokenRecordingModelWrapper.pop_usage_for_session",
-            classmethod(lambda cls, sid: None),
+            turn_usage.get_turn_usage_accumulator(),
+            "pop",
+            lambda _chat_id, *, invocation_id=None: None,
         )
         monkeypatch.setattr(
             turn_usage,
@@ -243,9 +243,9 @@ class TestResolveTurnUsage:
             "latest_assistant_tokens": 100,
         }
         monkeypatch.setattr(
-            "qwenpaw.token_usage.model_wrapper."
-            "TokenRecordingModelWrapper.pop_usage_for_session",
-            classmethod(lambda cls, sid: None),
+            turn_usage.get_turn_usage_accumulator(),
+            "pop",
+            lambda _chat_id, *, invocation_id=None: None,
         )
         monkeypatch.setattr(
             turn_usage,
@@ -293,9 +293,9 @@ class TestResolveTurnUsage:
             "latest_assistant_tokens": 90,
         }
         monkeypatch.setattr(
-            "qwenpaw.token_usage.model_wrapper."
-            "TokenRecordingModelWrapper.pop_usage_for_session",
-            classmethod(lambda cls, sid: recorded),
+            turn_usage.get_turn_usage_accumulator(),
+            "pop",
+            lambda _chat_id, *, invocation_id=None: recorded,
         )
         monkeypatch.setattr(
             turn_usage,

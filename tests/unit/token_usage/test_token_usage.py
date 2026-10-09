@@ -32,6 +32,9 @@ from qwenpaw.token_usage.model_wrapper import (
 )
 from qwenpaw.token_usage.storage import load_data, save_data_sync
 from qwenpaw.token_usage.turn_usage import add_session_cache_usage
+from qwenpaw.token_usage.turn_accumulator import (
+    get_turn_usage_accumulator,
+)
 
 _EMPTY_AGENT_KEY = "\x1f".join(("", "openai", "gpt-4"))
 _NAMED_AGENT_KEY = "\x1f".join(("bot-a", "openai", "gpt-4"))
@@ -75,8 +78,10 @@ def _isolate_token_usage_manager():
     """Isolate token usage manager singleton for each test."""
     # pylint: disable=protected-access
     TokenUsageManager._instance = None
+    get_turn_usage_accumulator().clear()
     yield
     TokenUsageManager._instance = None
+    get_turn_usage_accumulator().clear()
 
 
 # =============================================================================
@@ -1503,12 +1508,11 @@ class TestTokenRecordingModelWrapper:
         )
 
         # Clear any existing usage
-        TokenRecordingModelWrapper._usage_by_session.clear()
+        accumulator = get_turn_usage_accumulator()
+        accumulator.clear()
 
         # Add test usage
-        TokenRecordingModelWrapper._usage_by_session["test-session"] = {
-            "prompt_tokens": 100,
-        }
+        accumulator.record("test-session", {"prompt_tokens": 100})
 
         usage = TokenRecordingModelWrapper.pop_usage_for_session(
             "test-session",

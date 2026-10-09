@@ -26,6 +26,7 @@ from ..kernel.models import (
 from ..utils.model_response import safe_attr
 from .buffer import _UsageEvent
 from .manager import _usage_agent_id, get_token_usage_manager
+from .turn_accumulator import get_turn_usage_accumulator
 
 # AgentScope does not expose provider cache semantics through a public
 # capability API. These prefixes therefore depend on its concrete adapter MRO
@@ -116,8 +117,6 @@ def _cache_usage_metrics(
 
 class TokenRecordingModelWrapper(ChatModelBase):
     """Wraps a ChatModelBase to record token usage on each call."""
-
-    _usage_by_session: dict[str, dict[str, Any]] = {}
 
     def __init__(
         self,
@@ -500,80 +499,28 @@ class TokenRecordingModelWrapper(ChatModelBase):
 
     @classmethod
     def pop_usage_for_session(cls, session_id: str) -> dict[str, Any] | None:
-        return cls._usage_by_session.pop(session_id, None)
+        """Compatibility adapter for protocol callers keyed by session."""
+        return get_turn_usage_accumulator().pop(session_id)
 
     def _store_usage(self, usage: dict[str, Any] | None) -> None:
-        from ..app.agent_context import get_current_session_id
+        from ..app.agent_context import (
+            get_current_invocation_id,
+            get_current_session_id,
+        )
 
-        session_id = get_current_session_id()
-        if session_id and usage:
-            previous = TokenRecordingModelWrapper._usage_by_session.get(
-                session_id,
-            )
-            if previous is None:
-                TokenRecordingModelWrapper._usage_by_session[
-                    session_id
-                ] = usage
-                return
-            routes: dict[tuple[str, str], dict[str, Any]] = {}
-            for item in [
-                *previous.get("model_routes", []),
-                *usage.get("model_routes", []),
-            ]:
-                if not isinstance(item, dict):
-                    continue
-                route_key = (
-                    str(item.get("provider_id", "")),
-                    str(item.get("model_name", "")),
-                )
-                route = routes.setdefault(
-                    route_key,
-                    {
-                        "provider_id": route_key[0],
-                        "model_name": route_key[1],
-                        "prompt_tokens": 0,
-                        "completion_tokens": 0,
-                        "total_tokens": 0,
-                        "call_count": 0,
-                    },
-                )
-                route["prompt_tokens"] += int(
-                    item.get("prompt_tokens", 0) or 0,
-                )
-                route["completion_tokens"] += int(
-                    item.get("completion_tokens", 0) or 0,
-                )
-                route["total_tokens"] = (
-                    route["prompt_tokens"] + route["completion_tokens"]
-                )
-                route["call_count"] += int(item.get("call_count", 1) or 1)
-            usage["model_routes"] = list(routes.values())
-            for field_name in (
-                "prompt_tokens",
-                "completion_tokens",
-                "cache_read_tokens",
-                "cache_write_tokens",
-                "cache_eligible_input_tokens",
-            ):
-                usage[field_name] = int(
-                    previous.get(field_name, 0) or 0,
-                ) + int(
-                    usage.get(field_name, 0) or 0,
-                )
-            usage["total_tokens"] = (
-                usage["prompt_tokens"] + usage["completion_tokens"]
-            )
-            usage["cache_observed"] = bool(
-                previous.get("cache_observed", False)
-                or usage.get("cache_observed", False),
-            )
-            cache_eligible = usage["cache_eligible_input_tokens"]
-            usage["cache_hit_rate"] = (
-                usage["cache_read_tokens"] / cache_eligible * 100
-                if cache_eligible > 0
-                else None
-            )
-            TokenRecordingModelWrapper._usage_by_session[session_id] = usage
+        if not usage:
+            return
+        chat_id = str(usage.get("conversation_id") or "")
+        if not chat_id:
+            chat_id = get_current_session_id() or ""
+        invocation_id = str(usage.get("turn_id") or "")
+        if not invocation_id:
+            invocation_id = get_current_invocation_id() or ""
+        get_turn_usage_accumulator().record(
+            chat_id,
+            usage,
+            invocation_id=invocation_id or None,
+        )
 
     async def generate_structured_output(
         self,

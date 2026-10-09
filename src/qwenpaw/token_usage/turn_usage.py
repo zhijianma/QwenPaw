@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from .model_wrapper import TokenRecordingModelWrapper
+from .turn_accumulator import get_turn_usage_accumulator
 
 logger = logging.getLogger(__name__)
 
@@ -184,9 +184,13 @@ async def resolve_turn_usage(
     session: Any,
     user_id: str,
     channel: str,
+    invocation_id: str | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, Any | None]:
     """Resolve turn/ctx from provider usage + full agent-state estimate."""
-    turn = TokenRecordingModelWrapper.pop_usage_for_session(session_id)
+    turn = get_turn_usage_accumulator().pop(
+        session_id,
+        invocation_id=invocation_id,
+    )
     if session is None:
         return turn, None, None
 

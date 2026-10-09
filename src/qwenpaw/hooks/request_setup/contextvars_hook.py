@@ -69,6 +69,7 @@ class ContextVarsSetupHook(LifecycleHook):
             set_current_agent_id,
             set_current_approval_route,
             set_current_channel,
+            set_current_invocation_id,
             set_current_root_session_id,
             set_current_session_id as _set_app_session_id,
             set_current_user_id,
@@ -97,6 +98,9 @@ class ContextVarsSetupHook(LifecycleHook):
         from ...runtime.outcome_hosts import provider_outcome_host
 
         invocation = ctx.invocation_scope
+        set_current_invocation_id(
+            str(invocation.invocation_id) if invocation is not None else None,
+        )
         conversation_id = (
             invocation.conversation_id if invocation is not None else None
         )

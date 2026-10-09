@@ -92,17 +92,24 @@ class TokenBudgetGate(LoopGate):
 
     @staticmethod
     def _current_usage() -> dict[str, Any]:
-        """Read usage recorded for the current session."""
-        from ...app.agent_context import get_current_session_id
-        from ...token_usage.model_wrapper import TokenRecordingModelWrapper
+        """Read usage recorded for the current Chat turn."""
+        from ...app.agent_context import (
+            get_current_invocation_id,
+            get_current_session_id,
+        )
+        from ...token_usage.turn_accumulator import (
+            get_turn_usage_accumulator,
+        )
 
-        session_id = get_current_session_id()
-        if not session_id:
+        chat_id = get_current_session_id()
+        if not chat_id:
             return {}
-        # pylint: disable=protected-access
-        return TokenRecordingModelWrapper._usage_by_session.get(
-            session_id,
-            {},
+        return (
+            get_turn_usage_accumulator().peek(
+                chat_id,
+                invocation_id=get_current_invocation_id(),
+            )
+            or {}
         )
 
 

@@ -29,12 +29,19 @@ Agent
 | `ModelCallResult` | terminal status, provider-reported tokens, cache counters and cost | Immutable fact |
 | Task usage ledger | enforce one Task execution budget | Append-only execution fact |
 | Token Usage Summary | global/agent/chat/turn/date/model query | Rebuildable projection |
+| Live turn accumulator | isolate active Chat/Invocation deltas for gates and SSE | Process-local projection |
 | Chat message usage | render the completed turn after refresh | Snapshot projection |
 | legacy token JSON | preserve pre-cutover history and API continuity | Compatibility projection |
 
 Provider usage uses `provider_reported`. A local context estimate uses
 `local_estimate`; it may help explain context pressure but must not be added to
 provider billing totals.
+
+The live accumulator is not a fact store. It is keyed by `ChatSpec.id` and
+`invocation_id`, so simultaneous turns cannot merge. Model wrappers only emit
+normalized deltas; Loop Gates, Chat persistence and protocol adapters consume
+snapshots through its public API. A transport `session_id` may enter only
+through a compatibility adapter when no Chat/Invocation identity exists.
 
 ## 3. Write ordering
 
