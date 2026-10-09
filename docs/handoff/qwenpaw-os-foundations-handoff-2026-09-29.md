@@ -1254,6 +1254,22 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - Task 页面、前端与非必要 Task 后端均未修改。Scheduler 父迁移项仍因 stream Cron
   兼容路径保持未完成。
 
+### 2026-10-10 Token Usage 契约加固
+
+- `e3dc2c09` 将 Provider/Model 的内部聚合身份改为精确二元组。普通
+  `provider:model` key 保持兼容，只有真实分隔符碰撞时才为相关路由使用 JSON tuple；
+  Console 从显式 `provider_id/model` 字段渲染，不再解析兼容 key。同日与跨日期碰撞
+  回归已覆盖。
+- `86b8485e` 新增冻结的 `TurnUsageEvidence/TurnModelUsageRoute`，活跃累加器在 SSE
+  和消息持久化前校验总 Token、路由 Token、未观测调用以及
+  `provider_reported/local_estimate/partial/unavailable` 语义；对外继续返回稀疏字典，
+  保持旧插件和历史消息兼容。
+- 真实统计查询的 71 次调用与 2,510,233 input tokens 在模型、日期、Agent、Chat、
+  Turn 五个切面均与全局完全对账；默认 30 天 Console 已真实展示五类表格。
+- 固定 Chat 在 `/clear` 后返回 `TURN_USAGE_TYPED_OK`，显示 input 7 / output 110；刷新后
+  同一 117 Token 仍从消息 metadata 恢复。后端定点回归 76 + 109 + 34 项、前端 21 项
+  通过，Python/TypeScript/ESLint/Prettier 门禁通过。Task 页面未修改。
+
 ## 5. 钉钉文档归档清单
 
 ### 框架分析目录
