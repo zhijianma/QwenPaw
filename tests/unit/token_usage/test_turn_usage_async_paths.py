@@ -165,7 +165,7 @@ class TestResolveTurnUsage:
             lambda _chat_id, *, invocation_id=None: turn,
         )
         got_turn, ctx, state = await turn_usage.resolve_turn_usage(
-            session_id="s",
+            chat_id="s",
             agent_id="a",
             session=None,
             user_id="u",
@@ -190,7 +190,7 @@ class TestResolveTurnUsage:
             AsyncMock(return_value=None),
         )
         got_turn, ctx, state = await turn_usage.resolve_turn_usage(
-            session_id="s",
+            chat_id="s",
             agent_id="a",
             session=SimpleNamespace(),
             user_id="u",
@@ -221,7 +221,7 @@ class TestResolveTurnUsage:
             AsyncMock(return_value=None),
         )
         got_turn, ctx, state = await turn_usage.resolve_turn_usage(
-            session_id="s",
+            chat_id="s",
             agent_id="a",
             session=SimpleNamespace(),
             user_id="u",
@@ -259,7 +259,7 @@ class TestResolveTurnUsage:
         )
 
         got_turn, ctx, state = await turn_usage.resolve_turn_usage(
-            session_id="s",
+            chat_id="s",
             agent_id="a",
             session=SimpleNamespace(),
             user_id="u",
@@ -309,7 +309,7 @@ class TestResolveTurnUsage:
         )
 
         got_turn, _, _ = await turn_usage.resolve_turn_usage(
-            session_id="s",
+            chat_id="s",
             agent_id="a",
             session=SimpleNamespace(),
             user_id="u",
@@ -327,11 +327,42 @@ class TestResolveTurnUsage:
 
 
 class TestPersistTurnUsage:
-    async def test_no_turn_and_ctx_is_noop(self):
-        session = SimpleNamespace(update_session_state=AsyncMock())
+    async def test_session_compatibility_adapter_preserves_public_api(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        persist = AsyncMock()
+        monkeypatch.setattr(
+            turn_usage,
+            "persist_chat_turn_usage",
+            persist,
+        )
+        session = SimpleNamespace()
+
         await turn_usage.persist_turn_usage(
             session=session,
-            session_id="s",
+            session_id="legacy-session",
+            user_id="u",
+            channel="acp",
+            turn={"total_tokens": 5},
+            ctx=None,
+        )
+
+        persist.assert_awaited_once_with(
+            session=session,
+            chat_id="legacy-session",
+            user_id="u",
+            channel="acp",
+            turn={"total_tokens": 5},
+            ctx=None,
+            agent_state=None,
+        )
+
+    async def test_no_turn_and_ctx_is_noop(self):
+        session = SimpleNamespace(update_session_state=AsyncMock())
+        await turn_usage.persist_chat_turn_usage(
+            session=session,
+            chat_id="s",
             user_id="u",
             channel="console",
             turn=None,
@@ -344,9 +375,9 @@ class TestPersistTurnUsage:
             update_session_state=AsyncMock(),
             get_session_state_dict=AsyncMock(return_value=None),
         )
-        await turn_usage.persist_turn_usage(
+        await turn_usage.persist_chat_turn_usage(
             session=session,
-            session_id="s",
+            chat_id="s",
             user_id="u",
             channel="console",
             turn={"total_tokens": 1},
@@ -368,9 +399,9 @@ class TestPersistTurnUsage:
         )
         session = SimpleNamespace(update_session_state=AsyncMock())
 
-        await turn_usage.persist_turn_usage(
+        await turn_usage.persist_chat_turn_usage(
             session=session,
-            session_id="s",
+            chat_id="s",
             user_id="u",
             channel="console",
             turn={"total_tokens": 5},
@@ -399,9 +430,9 @@ class TestPersistTurnUsage:
         )
 
         # Must not raise.
-        await turn_usage.persist_turn_usage(
+        await turn_usage.persist_chat_turn_usage(
             session=session,
-            session_id="s",
+            chat_id="s",
             user_id="u",
             channel="console",
             turn={"total_tokens": 5},
@@ -416,9 +447,9 @@ class TestPersistTurnUsage:
         )
         session = SimpleNamespace(update_session_state=AsyncMock())
 
-        await turn_usage.persist_turn_usage(
+        await turn_usage.persist_chat_turn_usage(
             session=session,
-            session_id="s",
+            chat_id="s",
             user_id="u",
             channel="console",
             turn={"total_tokens": 5},
@@ -454,7 +485,7 @@ class TestLoadAgentState:
 
         result = await turn_usage._load_agent_state(
             session=session,
-            session_id="s",
+            chat_id="s",
             user_id="u",
             channel="console",
         )
@@ -466,7 +497,7 @@ class TestLoadAgentState:
         )
         result = await turn_usage._load_agent_state(
             session=session,
-            session_id="s",
+            chat_id="s",
             user_id="u",
             channel="console",
         )
@@ -480,7 +511,7 @@ class TestLoadAgentState:
         )
         result = await turn_usage._load_agent_state(
             session=session,
-            session_id="s",
+            chat_id="s",
             user_id="u",
             channel="console",
         )
@@ -501,7 +532,7 @@ class TestLoadAgentState:
         monkeypatch.setattr("agentscope.state.AgentState", FakeAgentState)
         result = await turn_usage._load_agent_state(
             session=session,
-            session_id="s",
+            chat_id="s",
             user_id="u",
             channel="console",
         )

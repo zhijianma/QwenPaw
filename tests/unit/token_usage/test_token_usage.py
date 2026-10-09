@@ -1520,8 +1520,8 @@ class TestTokenRecordingModelWrapper:
         assert stored["context_size"] == 1_000_000
         assert stored["compact_threshold"] == 0.8
 
-    def test_pop_usage_for_session(self, monkeypatch):
-        """Should pop usage for session."""
+    def test_pop_usage_for_chat_selects_exact_invocation(self, monkeypatch):
+        """The domain API consumes only the requested Chat turn."""
         monkeypatch.setattr(
             "qwenpaw.token_usage.manager.WORKING_DIR",
             "/tmp",
@@ -1536,16 +1536,41 @@ class TestTokenRecordingModelWrapper:
         accumulator.clear()
 
         # Add test usage
-        accumulator.record("test-session", {"prompt_tokens": 100})
+        accumulator.record(
+            "chat-1",
+            {"prompt_tokens": 100},
+            invocation_id="turn-1",
+        )
+        accumulator.record(
+            "chat-1",
+            {"prompt_tokens": 200},
+            invocation_id="turn-2",
+        )
 
-        usage = TokenRecordingModelWrapper.pop_usage_for_session(
-            "test-session",
+        usage = TokenRecordingModelWrapper.pop_usage_for_chat(
+            "chat-1",
+            invocation_id="turn-1",
         )
         assert usage is not None
         assert usage["prompt_tokens"] == 100
 
-        # Verify it was removed
-        assert (
-            TokenRecordingModelWrapper.pop_usage_for_session("test-session")
-            is None
+        # The sibling turn remains independently addressable.
+        sibling = TokenRecordingModelWrapper.pop_usage_for_chat(
+            "chat-1",
+            invocation_id="turn-2",
         )
+        assert sibling is not None
+        assert sibling["prompt_tokens"] == 200
+
+    def test_pop_usage_for_session_remains_protocol_compatibility(self):
+        """Session-oriented adapters keep an unambiguous legacy entrypoint."""
+        accumulator = get_turn_usage_accumulator()
+        accumulator.clear()
+        accumulator.record("acp-session", {"prompt_tokens": 100})
+
+        usage = TokenRecordingModelWrapper.pop_usage_for_session(
+            "acp-session",
+        )
+
+        assert usage is not None
+        assert usage["prompt_tokens"] == 100

@@ -5,7 +5,7 @@ interface TurnUsageStore {
   snapshot: TurnUsageSnapshot | null;
   setSnapshot: (snapshot: TurnUsageSnapshot | null) => void;
   activeTurn: TurnUsageToken | null;
-  beginTurn: (agentId: string, sessionId: string) => TurnUsageToken;
+  beginTurn: (agentId: string, chatId: string) => TurnUsageToken;
   setSnapshotForTurn: (
     snapshot: TurnUsageSnapshot | null,
     turn: TurnUsageToken,
@@ -19,7 +19,7 @@ interface TurnUsageStore {
 
 export interface TurnUsageToken {
   agentId: string;
-  sessionId: string;
+  chatId: string;
   revision: number;
 }
 
@@ -31,7 +31,7 @@ function isSameTurn(
 ): boolean {
   return (
     activeTurn?.agentId === turn.agentId &&
-    activeTurn.sessionId === turn.sessionId &&
+    activeTurn.chatId === turn.chatId &&
     activeTurn.revision === turn.revision
   );
 }
@@ -40,10 +40,10 @@ export const useTurnUsageStore = create<TurnUsageStore>((set, get) => ({
   snapshot: null,
   setSnapshot: (snapshot) => set({ snapshot }),
   activeTurn: null,
-  beginTurn: (agentId, sessionId) => {
+  beginTurn: (agentId, chatId) => {
     const turn = {
       agentId,
-      sessionId,
+      chatId,
       revision: ++nextTurnRevision,
     };
     set((state) => ({

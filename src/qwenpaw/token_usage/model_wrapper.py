@@ -498,9 +498,22 @@ class TokenRecordingModelWrapper(ChatModelBase):
         )
 
     @classmethod
+    def pop_usage_for_chat(
+        cls,
+        chat_id: str,
+        *,
+        invocation_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Consume live usage owned by one ChatSpec turn."""
+        return get_turn_usage_accumulator().pop(
+            chat_id,
+            invocation_id=invocation_id,
+        )
+
+    @classmethod
     def pop_usage_for_session(cls, session_id: str) -> dict[str, Any] | None:
-        """Compatibility adapter for protocol callers keyed by session."""
-        return get_turn_usage_accumulator().pop(session_id)
+        """Compatibility adapter for session-oriented protocols."""
+        return cls.pop_usage_for_chat(session_id)
 
     def _store_usage(self, usage: dict[str, Any] | None) -> None:
         from ..app.agent_context import (

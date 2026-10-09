@@ -37,11 +37,17 @@ Provider usage uses `provider_reported`. A local context estimate uses
 `local_estimate`; it may help explain context pressure but must not be added to
 provider billing totals.
 
-The live accumulator is not a fact store. It is keyed by `ChatSpec.id` and
-`invocation_id`, so simultaneous turns cannot merge. Model wrappers only emit
-normalized deltas; Loop Gates, Chat persistence and protocol adapters consume
-snapshots through its public API. A transport `session_id` may enter only
-through a compatibility adapter when no Chat/Invocation identity exists.
+The live accumulator is not a fact store. Its domain API accepts `chat_id`
+(`ChatSpec.id`) and `invocation_id`, so simultaneous turns cannot merge. Model
+wrappers only emit normalized deltas; Loop Gates and Chat persistence consume
+snapshots through that API. A transport `session_id` may enter only through a
+named protocol compatibility adapter when no Chat/Invocation identity exists;
+it must not leak back into the accounting model.
+
+The package-level `persist_chat_turn_usage` function and the model wrapper's
+`pop_usage_for_chat` method are the domain-facing extension points. The older
+`persist_turn_usage` and `pop_usage_for_session` names remain compatibility
+adapters for existing session-oriented plugins and protocols.
 
 ## 3. Write ordering
 

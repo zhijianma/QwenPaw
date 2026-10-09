@@ -19,6 +19,7 @@ from .projection import UsageProjectionStatus
 from .turn_usage import (
     TURN_USAGE_META_KEY,
     fmt_tokens,
+    persist_chat_turn_usage,
     persist_turn_usage,
 )
 
@@ -38,5 +39,6 @@ __all__ = [
     "_UsageEvent",
     "fmt_tokens",
     "TURN_USAGE_META_KEY",
+    "persist_chat_turn_usage",
     "persist_turn_usage",
 ]

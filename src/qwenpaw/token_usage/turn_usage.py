@@ -179,7 +179,7 @@ async def snapshot_context_usage_for_state(
 
 async def resolve_turn_usage(
     *,
-    session_id: str,
+    chat_id: str,
     agent_id: str,
     session: Any,
     user_id: str,
@@ -188,7 +188,7 @@ async def resolve_turn_usage(
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, Any | None]:
     """Resolve turn/ctx from provider usage + full agent-state estimate."""
     turn = get_turn_usage_accumulator().pop(
-        session_id,
+        chat_id,
         invocation_id=invocation_id,
     )
     if session is None:
@@ -196,7 +196,7 @@ async def resolve_turn_usage(
 
     agent_state = await _load_agent_state(
         session=session,
-        session_id=session_id,
+        chat_id=chat_id,
         user_id=user_id,
         channel=channel,
     )
@@ -270,14 +270,14 @@ def _write_turn_usage_meta(
 async def _load_agent_state(
     *,
     session: Any,
-    session_id: str,
+    chat_id: str,
     user_id: str,
     channel: str,
 ) -> Any | None:
     """Load ``AgentState`` from session store."""
     try:
         state = await session.get_session_state_dict(
-            session_id=session_id,
+            session_id=chat_id,
             user_id=user_id,
             channel=channel,
             allow_not_exist=True,
@@ -300,10 +300,10 @@ async def _load_agent_state(
         return None
 
 
-async def persist_turn_usage(
+async def persist_chat_turn_usage(
     *,
     session: Any,
-    session_id: str,
+    chat_id: str,
     user_id: str,
     channel: str,
     turn: dict[str, Any] | None,
@@ -316,7 +316,7 @@ async def persist_turn_usage(
     if agent_state is None:
         agent_state = await _load_agent_state(
             session=session,
-            session_id=session_id,
+            chat_id=chat_id,
             user_id=user_id,
             channel=channel,
         )
@@ -328,7 +328,7 @@ async def persist_turn_usage(
         )
         if _write_turn_usage_meta(msg, turn, ctx):
             await session.update_session_state(
-                session_id=session_id,
+                session_id=chat_id,
                 key="agent.state",
                 value=agent_state.model_dump(mode="json"),
                 user_id=user_id,
@@ -340,3 +340,25 @@ async def persist_turn_usage(
             "update_session_state for turn usage skipped",
             exc_info=True,
         )
+
+
+async def persist_turn_usage(
+    *,
+    session: Any,
+    session_id: str,
+    user_id: str,
+    channel: str,
+    turn: dict[str, Any] | None,
+    ctx: dict[str, Any] | None,
+    agent_state: Any | None = None,
+) -> None:
+    """Persist usage for a session-oriented compatibility caller."""
+    await persist_chat_turn_usage(
+        session=session,
+        chat_id=session_id,
+        user_id=user_id,
+        channel=channel,
+        turn=turn,
+        ctx=ctx,
+        agent_state=agent_state,
+    )

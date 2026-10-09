@@ -211,7 +211,7 @@ class TestLoadAgentState:
         )
         result = await tu._load_agent_state(
             session=session,
-            session_id="s",
+            chat_id="s",
             user_id="u",
             channel="console",
         )
@@ -223,7 +223,7 @@ class TestLoadAgentState:
         )
         result = await tu._load_agent_state(
             session=session,
-            session_id="s",
+            chat_id="s",
             user_id="u",
             channel="console",
         )
@@ -235,7 +235,7 @@ class TestLoadAgentState:
         )
         result = await tu._load_agent_state(
             session=session,
-            session_id="s",
+            chat_id="s",
             user_id="u",
             channel="console",
         )
@@ -249,7 +249,7 @@ class TestLoadAgentState:
         )
         result = await tu._load_agent_state(
             session=session,
-            session_id="s",
+            chat_id="s",
             user_id="u",
             channel="console",
         )
@@ -263,7 +263,7 @@ class TestLoadAgentState:
         )
         result = await tu._load_agent_state(
             session=session,
-            session_id="s",
+            chat_id="s",
             user_id="u",
             channel="console",
         )

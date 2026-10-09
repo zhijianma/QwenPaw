@@ -314,11 +314,11 @@ describe("turnUsageStore", () => {
     expect(useTurnUsageStore.getState().snapshot).toEqual(fullSnapshot);
   });
 
-  it("isTurnActive distinguishes agent/session/revision", () => {
+  it("isTurnActive distinguishes agent/chat/revision", () => {
     const t = useTurnUsageStore.getState().beginTurn("a1", "s1");
     const state = useTurnUsageStore.getState();
     expect(state.isTurnActive(t)).toBe(true);
-    expect(state.isTurnActive({ ...t, sessionId: "s2" })).toBe(false);
+    expect(state.isTurnActive({ ...t, chatId: "s2" })).toBe(false);
     expect(state.isTurnActive({ ...t, agentId: "a2" })).toBe(false);
     expect(state.isTurnActive({ ...t, revision: t.revision + 1 })).toBe(false);
   });

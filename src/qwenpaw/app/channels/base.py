@@ -1952,7 +1952,7 @@ class BaseChannel(ABC):
             from ...app.agent_context import get_current_invocation_id
 
             turn, ctx, agent_state = await turn_usage.resolve_turn_usage(
-                session_id=session_id,
+                chat_id=session_id,
                 agent_id=agent_id,
                 session=session,
                 user_id=user_id,
@@ -1966,9 +1966,9 @@ class BaseChannel(ABC):
                 logger.info("Usage for session %s: %s", session_id, turn)
             if session is not None:
                 try:
-                    await token_usage.persist_turn_usage(
+                    await token_usage.persist_chat_turn_usage(
                         session=session,
-                        session_id=session_id,
+                        chat_id=session_id,
                         user_id=user_id,
                         channel=channel,
                         turn=turn,
