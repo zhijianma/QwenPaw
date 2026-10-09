@@ -421,7 +421,11 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
   Interrupt 与 Approval 保持独立语义，禁止用逐步追问或“是否继续”充当执行调度器。
   UI 中的一问一答只是上述权威事件的 Conversation 投影；Kernel 不以 assistant
   message 结束作为运行终态，也不要求用户逐轮发送消息才能推进长程意图。
-- [ ] 冻结 Model Recovery Contract：
+- [x] 冻结 Model Recovery Contract：
+  - [x] `ModelRecoveryDecision` 已提升为 Kernel 稳定领域模型，冻结完整
+    failure/disposition 允许矩阵与 Retry-After 约束；Provider 分类器和
+    `ModelCallResult` 共用同一验证入口，Provider 不能自行组合未经许可的恢复动作。
+    历史记录缺少恢复字段时继续兼容读取，但新记录一旦声明恢复事实就必须满足矩阵。
   - [x] Kernel `ModelFailureClass` 已区分 `transport_unavailable`、
     `stream_interrupted`、Provider overload、
     rate limit、quota、budget、auth、policy、context overflow、user interrupt 与

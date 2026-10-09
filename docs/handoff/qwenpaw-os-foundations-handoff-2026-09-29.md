@@ -922,6 +922,18 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - 本切片后端 token/turn 定点测试 `96 passed`，前端 Chat/API 定点测试
   `60 passed`；Task 页面没有改动。
 
+### 2026-10-09 Model Recovery Kernel Contract
+
+- `ModelRecoveryDecision` 已从 Provider 私有 dataclass 提升为 Kernel 不可变领域模型；
+  Provider 分类器、Runtime 和持久 `ModelCallResult` 不再各自解释恢复组合。
+- Kernel 冻结全部 failure/disposition 允许矩阵。连接失败和 Provider 不可用只能进入
+  transport retry，部分流只能 continue/reconcile，限流和 quota 只能等待资源，
+  auth/policy/budget/invalid/context/unknown 只能终止，用户 Interrupt 只能停止。
+- `Retry-After` 仍只允许绑定 rate-limited resource wait；旧 ModelCall 记录没有恢复
+  字段时继续兼容读取，新记录声明恢复事实时必须通过 Kernel 验证。
+- Model Error Policy、Model Call、Resource Wait、Runtime Save 与 Observation 相关
+  `111 passed`；Task 页面没有改动。
+
 ## 5. 钉钉文档归档清单
 
 ### 框架分析目录

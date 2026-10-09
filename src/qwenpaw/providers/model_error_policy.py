@@ -14,7 +14,11 @@ import anthropic
 import httpx
 import openai
 
-from ..kernel import ModelFailureClass, ModelRecoveryDisposition
+from ..kernel import (
+    ModelFailureClass,
+    ModelRecoveryDecision,
+    ModelRecoveryDisposition,
+)
 from .error_utils import extract_status_code
 
 RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504, 529})
@@ -67,15 +71,6 @@ class ModelErrorDecision:
     status_code: int | None
     retryable: bool
     fallback_eligible: bool
-
-
-@dataclass(frozen=True, slots=True)
-class ModelRecoveryDecision:
-    """Provider-neutral failure and the Runtime action it permits."""
-
-    failure_class: ModelFailureClass
-    disposition: ModelRecoveryDisposition
-    retry_after_seconds: float | None = None
 
 
 class IncompleteModelStreamError(ConnectionError):

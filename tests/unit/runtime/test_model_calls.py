@@ -531,12 +531,9 @@ async def test_short_transport_retry_success_does_not_create_wait(
     succeeded = next(
         result
         for result in results
-        if result is not None
-        and result.status is ModelCallStatus.SUCCEEDED
+        if result is not None and result.status is ModelCallStatus.SUCCEEDED
     )
-    assert failed.failure_class is (
-        ModelFailureClass.TRANSPORT_UNAVAILABLE
-    )
+    assert failed.failure_class is (ModelFailureClass.TRANSPORT_UNAVAILABLE)
     assert succeeded.failure_class is None
     assert not await resource_waits.list_wait_conditions(
         agent_id="default",
@@ -822,6 +819,67 @@ def test_result_requires_complete_recovery_contract() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("failure_class", "disposition"),
+    [
+        (
+            ModelFailureClass.TRANSPORT_UNAVAILABLE,
+            ModelRecoveryDisposition.RETRY_TRANSPORT,
+        ),
+        (
+            ModelFailureClass.STREAM_INTERRUPTED,
+            ModelRecoveryDisposition.CONTINUE_MODEL_STEP,
+        ),
+        (
+            ModelFailureClass.RATE_LIMITED,
+            ModelRecoveryDisposition.WAIT_RESOURCE,
+        ),
+        (
+            ModelFailureClass.QUOTA_EXHAUSTED,
+            ModelRecoveryDisposition.WAIT_RESOURCE,
+        ),
+        (
+            ModelFailureClass.AUTHENTICATION_REQUIRED,
+            ModelRecoveryDisposition.FAIL_TERMINAL,
+        ),
+        (
+            ModelFailureClass.USER_INTERRUPTED,
+            ModelRecoveryDisposition.STOP_INTERRUPTED,
+        ),
+    ],
+)
+def test_result_accepts_kernel_recovery_matrix(
+    failure_class: ModelFailureClass,
+    disposition: ModelRecoveryDisposition,
+) -> None:
+    result = ModelCallResult(
+        attempt_id=uuid4(),
+        invocation_id=uuid4(),
+        conversation_id="chat-1",
+        status=ModelCallStatus.FAILED,
+        failure_class=failure_class,
+        recovery_disposition=disposition,
+    )
+
+    assert result.failure_class is failure_class
+    assert result.recovery_disposition is disposition
+
+
+def test_result_rejects_recovery_pair_outside_kernel_matrix() -> None:
+    with pytest.raises(
+        ValueError,
+        match="disposition is not allowed for failure class",
+    ):
+        ModelCallResult(
+            attempt_id=uuid4(),
+            invocation_id=uuid4(),
+            conversation_id="chat-1",
+            status=ModelCallStatus.FAILED,
+            failure_class=ModelFailureClass.AUTHENTICATION_REQUIRED,
+            recovery_disposition=(ModelRecoveryDisposition.RETRY_TRANSPORT),
+        )
+
+
 def test_retry_after_requires_rate_limited_resource_wait() -> None:
     with pytest.raises(
         ValueError,
@@ -833,9 +891,7 @@ def test_retry_after_requires_rate_limited_resource_wait() -> None:
             conversation_id="chat-1",
             status=ModelCallStatus.FAILED,
             failure_class=ModelFailureClass.TRANSPORT_UNAVAILABLE,
-            recovery_disposition=(
-                ModelRecoveryDisposition.RETRY_TRANSPORT
-            ),
+            recovery_disposition=(ModelRecoveryDisposition.RETRY_TRANSPORT),
             retry_after_seconds=10,
         )
 
@@ -852,9 +908,7 @@ def test_partial_output_cannot_be_marked_for_transport_replay() -> None:
             status=ModelCallStatus.FAILED,
             emitted_content=True,
             failure_class=ModelFailureClass.STREAM_INTERRUPTED,
-            recovery_disposition=(
-                ModelRecoveryDisposition.RETRY_TRANSPORT
-            ),
+            recovery_disposition=(ModelRecoveryDisposition.RETRY_TRANSPORT),
         )
 
 

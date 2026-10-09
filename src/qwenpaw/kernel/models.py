@@ -171,9 +171,9 @@ class ActionRetryReason(str, Enum):
 class ActionRetryPolicy(KernelModel):
     """Host-owned bounded retry policy for immutable Action attempts."""
 
-    policy_id: Literal["qwenpaw.action-retry-policy.v1"] = (
+    policy_id: Literal[
         "qwenpaw.action-retry-policy.v1"
-    )
+    ] = "qwenpaw.action-retry-policy.v1"
     max_attempts: int = Field(default=2, ge=1, le=10)
     initial_delay_seconds: float = Field(default=0, ge=0, le=300)
     backoff_multiplier: float = Field(default=2, ge=1, le=10)
@@ -240,6 +240,80 @@ class ModelRecoveryDisposition(str, Enum):
     FAIL_TERMINAL = "fail_terminal"
     RECONCILE_SIDE_EFFECT = "reconcile_side_effect"
     STOP_INTERRUPTED = "stop_interrupted"
+
+
+_MODEL_RECOVERY_MATRIX = {
+    ModelFailureClass.TRANSPORT_UNAVAILABLE: frozenset(
+        {ModelRecoveryDisposition.RETRY_TRANSPORT},
+    ),
+    ModelFailureClass.STREAM_INTERRUPTED: frozenset(
+        {
+            ModelRecoveryDisposition.CONTINUE_MODEL_STEP,
+            ModelRecoveryDisposition.RECONCILE_SIDE_EFFECT,
+        },
+    ),
+    ModelFailureClass.PROVIDER_OVERLOADED: frozenset(
+        {ModelRecoveryDisposition.RETRY_TRANSPORT},
+    ),
+    ModelFailureClass.RATE_LIMITED: frozenset(
+        {ModelRecoveryDisposition.WAIT_RESOURCE},
+    ),
+    ModelFailureClass.QUOTA_EXHAUSTED: frozenset(
+        {ModelRecoveryDisposition.WAIT_RESOURCE},
+    ),
+    ModelFailureClass.BUDGET_EXHAUSTED: frozenset(
+        {ModelRecoveryDisposition.FAIL_TERMINAL},
+    ),
+    ModelFailureClass.AUTHENTICATION_REQUIRED: frozenset(
+        {ModelRecoveryDisposition.FAIL_TERMINAL},
+    ),
+    ModelFailureClass.POLICY_DENIED: frozenset(
+        {ModelRecoveryDisposition.FAIL_TERMINAL},
+    ),
+    ModelFailureClass.INVALID_REQUEST: frozenset(
+        {ModelRecoveryDisposition.FAIL_TERMINAL},
+    ),
+    ModelFailureClass.CONTEXT_OVERFLOW: frozenset(
+        {ModelRecoveryDisposition.FAIL_TERMINAL},
+    ),
+    ModelFailureClass.PROVIDER_UNAVAILABLE: frozenset(
+        {ModelRecoveryDisposition.RETRY_TRANSPORT},
+    ),
+    ModelFailureClass.USER_INTERRUPTED: frozenset(
+        {ModelRecoveryDisposition.STOP_INTERRUPTED},
+    ),
+    ModelFailureClass.UNKNOWN: frozenset(
+        {ModelRecoveryDisposition.FAIL_TERMINAL},
+    ),
+}
+
+
+class ModelRecoveryDecision(KernelModel):
+    """Validated provider-neutral response to one model failure."""
+
+    failure_class: ModelFailureClass
+    disposition: ModelRecoveryDisposition
+    retry_after_seconds: float | None = Field(
+        default=None,
+        ge=0,
+        allow_inf_nan=False,
+    )
+
+    @model_validator(mode="after")
+    def validate_recovery_pair(self) -> Self:
+        """Reject recovery actions that cannot handle the failure class."""
+        if self.disposition not in _MODEL_RECOVERY_MATRIX[self.failure_class]:
+            raise ValueError(
+                "recovery disposition is not allowed for failure class",
+            )
+        if self.retry_after_seconds is not None and (
+            self.failure_class is not ModelFailureClass.RATE_LIMITED
+            or self.disposition is not ModelRecoveryDisposition.WAIT_RESOURCE
+        ):
+            raise ValueError(
+                "retry-after hint requires rate-limited resource wait",
+            )
+        return self
 
 
 class ModelOutputBoundary(str, Enum):
@@ -557,9 +631,7 @@ class ActionRequest(KernelModel):
     effect: ToolEffect = ToolEffect.NONE
     risk: RiskLevel = RiskLevel.LOW
     reversible: bool = True
-    idempotency_mode: ActionIdempotencyMode = (
-        ActionIdempotencyMode.UNDECLARED
-    )
+    idempotency_mode: ActionIdempotencyMode = ActionIdempotencyMode.UNDECLARED
     retry_policy: ActionRetryPolicy = Field(
         default_factory=ActionRetryPolicy,
     )
@@ -610,9 +682,7 @@ class ActionExecutionContext(KernelModel):
 class ActionRetryDecision(KernelModel):
     """Provider-neutral retry policy result for one immutable Action."""
 
-    policy_id: Literal["qwenpaw.action-retry.v1"] = (
-        "qwenpaw.action-retry.v1"
-    )
+    policy_id: Literal["qwenpaw.action-retry.v1"] = "qwenpaw.action-retry.v1"
     disposition: ActionRetryDisposition
     reason: ActionRetryReason
     provider_retryable: bool = False
@@ -625,8 +695,7 @@ class ActionRetryDecision(KernelModel):
     def validate_schedule(self) -> Self:
         """Reject retry scheduling fields on a non-retry decision."""
         admitted = (
-            self.disposition
-            is ActionRetryDisposition.RETRY_FROM_NEW_ACTION
+            self.disposition is ActionRetryDisposition.RETRY_FROM_NEW_ACTION
         )
         if not admitted and self.next_attempt is not None:
             raise ValueError("non-retry decision cannot schedule an attempt")
@@ -799,9 +868,7 @@ class ActionRecord(KernelModel):
     def validate_executor_retry_contract(self) -> Self:
         """Require a recorded executor promise for idempotent retries."""
         decision = (
-            self.result.retry_decision
-            if self.result is not None
-            else None
+            self.result.retry_decision if self.result is not None else None
         )
         if (
             decision is not None
@@ -1971,7 +2038,7 @@ class ModelCallResult(KernelModel):
     completed_at: AwareDatetime = Field(default_factory=utc_now)
 
     @model_validator(mode="after")
-    def validate_cost(self) -> Self:
+    def validate_result_evidence(self) -> Self:
         """Keep cost and recovery evidence internally consistent."""
         if self.cost_unknown == (self.cost_micros is not None):
             raise ValueError("model call cost value and unknown flag conflict")
@@ -2000,6 +2067,15 @@ class ModelCallResult(KernelModel):
                 "model call with emitted content cannot retry transport",
             )
         if (
+            self.failure_class is not None
+            and self.recovery_disposition is not None
+        ):
+            ModelRecoveryDecision(
+                failure_class=self.failure_class,
+                disposition=self.recovery_disposition,
+                retry_after_seconds=self.retry_after_seconds,
+            )
+        if (
             self.output_boundary is ModelOutputBoundary.PRE_OUTPUT
             and self.emitted_content
         ):
@@ -2009,13 +2085,16 @@ class ModelCallResult(KernelModel):
             and self.status is not ModelCallStatus.SUCCEEDED
         ):
             raise ValueError("complete response requires successful status")
-        if self.output_boundary in {
-            ModelOutputBoundary.TERMINAL_STREAM,
-        } and self.status is not ModelCallStatus.SUCCEEDED:
-            raise ValueError("complete stream boundary requires success")
         if (
             self.output_boundary
-            is ModelOutputBoundary.INCOMPLETE_STREAM_END
+            in {
+                ModelOutputBoundary.TERMINAL_STREAM,
+            }
+            and self.status is not ModelCallStatus.SUCCEEDED
+        ):
+            raise ValueError("complete stream boundary requires success")
+        if (
+            self.output_boundary is ModelOutputBoundary.INCOMPLETE_STREAM_END
             and self.status is ModelCallStatus.SUCCEEDED
         ):
             raise ValueError("incomplete stream boundary cannot succeed")
@@ -2200,9 +2279,7 @@ class ToolDefinition(KernelModel):
     policy_name: str = ""
     sandbox_required: bool = False
     effect: ToolEffect = ToolEffect.NONE
-    idempotency_mode: ActionIdempotencyMode = (
-        ActionIdempotencyMode.UNDECLARED
-    )
+    idempotency_mode: ActionIdempotencyMode = ActionIdempotencyMode.UNDECLARED
 
     @model_validator(mode="after")
     def validate_function_name(self) -> Self:
@@ -2223,9 +2300,7 @@ class DriverToolDefinition(KernelModel):
     effect: ToolEffect = ToolEffect.EXTERNAL_WRITE
     risk: RiskLevel = RiskLevel.HIGH
     reversible: bool = False
-    idempotency_mode: ActionIdempotencyMode = (
-        ActionIdempotencyMode.UNDECLARED
-    )
+    idempotency_mode: ActionIdempotencyMode = ActionIdempotencyMode.UNDECLARED
     invoke: SkipJsonSchema[Callable[[JsonObject], Awaitable[object]]] = Field(
         exclude=True,
     )

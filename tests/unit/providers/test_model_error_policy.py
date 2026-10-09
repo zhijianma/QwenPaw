@@ -11,7 +11,11 @@ import httpx
 import openai
 import pytest
 
-from qwenpaw.kernel import ModelFailureClass, ModelRecoveryDisposition
+from qwenpaw.kernel import (
+    ModelFailureClass,
+    ModelRecoveryDecision,
+    ModelRecoveryDisposition,
+)
 from qwenpaw.providers.model_error_policy import (
     classify_model_error,
     classify_model_recovery,
@@ -192,6 +196,7 @@ def test_rate_limit_recovery_preserves_retry_after_seconds() -> None:
 
     recovery = classify_model_recovery(error)
 
+    assert isinstance(recovery, ModelRecoveryDecision)
     assert recovery.failure_class is ModelFailureClass.RATE_LIMITED
     assert recovery.disposition is ModelRecoveryDisposition.WAIT_RESOURCE
     assert recovery.retry_after_seconds == 12.5
@@ -217,10 +222,7 @@ def test_partial_stream_uses_continuation_not_transport_replay() -> None:
     )
 
     assert recovery.failure_class is ModelFailureClass.STREAM_INTERRUPTED
-    assert (
-        recovery.disposition
-        is ModelRecoveryDisposition.CONTINUE_MODEL_STEP
-    )
+    assert recovery.disposition is ModelRecoveryDisposition.CONTINUE_MODEL_STEP
 
 
 def test_user_cancellation_never_enters_network_recovery() -> None:

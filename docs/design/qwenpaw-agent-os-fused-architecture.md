@@ -596,9 +596,11 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
   - [x] Goal pending Outcome 已接入 Workspace 启动恢复：内部 Submission 复用统一
     Invocation Control 与 generation lease，直接执行 Host 声明和 CAS finalize，不调用
     模型、不产生对话消息，也不等待用户发送下一轮输入。
-- [ ] 冻结 Model Recovery Contract：区分连接前失败、部分流中断、Provider 限流、
+- [x] 冻结 Model Recovery Contract：区分连接前失败、部分流中断、Provider 限流、
   quota/budget/auth/policy、用户 Interrupt 与 unknown；transport retry 不消耗业务
-  retry，超过短等待预算后持久化 Resource Wait 并释放运行槽。
+  retry，超过短等待预算后持久化 Resource Wait 并释放运行槽。稳定
+  `ModelRecoveryDecision` 在 Kernel 固化 failure/disposition 矩阵和 Retry-After
+  约束；Provider 分类器与持久 `ModelCallResult` 使用同一验证入口。
 - [ ] 完成长程恢复闭环：
   - [x] Interaction conversation turn 已通过 durable outbox 创建后续 Submission，
     继承 correlation 并创建新 Invocation；重启与 enqueue/mark 崩溃窗口保持幂等。
