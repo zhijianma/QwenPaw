@@ -131,6 +131,7 @@ import { createSdkSessionAdapter } from "./sdkSessionAdapter";
 import {
   allocateDurableChat,
   buildDurableComposerRequest,
+  canDrainLegacyQueueItems,
   resolveComposerAdmissionOwner,
   submitDurableChatRequest,
   waitForDurableAdmission,
@@ -709,7 +710,10 @@ async function startBackgroundQueue(
  * background senders for each one (except the excluded foreground session
  * and any that already have an active background sender).
  */
-function startAllBackgroundQueues(excludeSessionId?: string) {
+function startAllBackgroundQueues(
+  excludeSessionId: string | undefined,
+  canDrain: (items: ReadonlyArray<{ agentId?: string }>) => boolean,
+) {
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
     if (!key || !key.startsWith(STORAGE_PREFIX)) continue;
@@ -721,10 +725,15 @@ function startAllBackgroundQueues(excludeSessionId?: string) {
       const raw = localStorage.getItem(key);
       if (!raw) continue;
       const parsed = JSON.parse(raw);
-      const items: Array<{ status: string }> = Array.isArray(parsed)
+      const items: Array<{ status: string; agentId?: string }> = Array.isArray(
+        parsed,
+      )
         ? parsed
         : parsed.items;
       if (!items || items.length === 0) continue;
+      // A corrupted or legacy mixed-owner queue must fail closed as a whole;
+      // validating only its head could later drain a QwenPaw-owned item.
+      if (!canDrain(items)) continue;
       // Only start if there are actionable items
       const hasPending = items.some(
         (it) => it.status === "pending" || it.status === "sending",
@@ -1966,6 +1975,11 @@ export default function ChatPage() {
 
   const hasServerQueueSurface =
     usesQwenPawBackend && Boolean(backendChatId) && !isAgentTransition;
+  const canDrainLegacyQueue = useCallback(
+    (items: ReadonlyArray<{ agentId?: string }>) =>
+      canDrainLegacyQueueItems(items, agents),
+    [agents],
+  );
   // Web Locks remain a compatibility boundary for draft and external
   // backends. Stable QwenPaw Chats admit through the server in every tab.
   const isQueueOnlyTab =
@@ -2578,8 +2592,10 @@ export default function ChatPage() {
   useEffect(() => {
     const currentQueueSessionId = queueKey;
     stopBackgroundQueue(currentQueueSessionId);
-    // Kick off background senders for other sessions that have pending items
-    startAllBackgroundQueues(currentQueueSessionId);
+    // Only external backends retain the compatibility sender. QwenPaw owns
+    // admission from first-turn allocation onward, including legacy items
+    // left in localStorage by an older Console version.
+    startAllBackgroundQueues(currentQueueSessionId, canDrainLegacyQueue);
     return () => {
       if (autoSendTimerRef.current) {
         clearTimeout(autoSendTimerRef.current);
@@ -2587,7 +2603,7 @@ export default function ChatPage() {
       }
       // Only the owner tab may continue sending in the background; non-owner
       // tabs leave the queue alone for the owner (or next owner) to handle.
-      if (!isOwnerRef.current) return;
+      if (!isOwnerRef.current || usesQwenPawBackend) return;
       const remaining = messageQueueRef.current;
       if (remaining.length > 0) {
         // Use captured queueSessionId from this effect instance, not the
@@ -2612,7 +2628,7 @@ export default function ChatPage() {
         }
       }
     };
-  }, [queueSessionId, queueKey]);
+  }, [queueSessionId, queueKey, canDrainLegacyQueue, usesQwenPawBackend]);
 
   // Auto-send next queue item when:
   // 1. Response just completed (loading→idle), OR
@@ -2622,6 +2638,7 @@ export default function ChatPage() {
   useEffect(() => {
     const wasLoading = prevChatLoadingRef.current;
     prevChatLoadingRef.current = chatLoading;
+    if (usesQwenPawBackend) return;
 
     const responseJustCompleted = wasLoading && !chatLoading;
     const itemsJustQueued = messageQueue.length > 0 && !chatLoading;
@@ -2639,18 +2656,20 @@ export default function ChatPage() {
     queueRunState,
     scheduleNextSend,
     syncLoopModeStatus,
+    usesQwenPawBackend,
   ]);
 
   // When this tab acquires ownership (e.g., previous owner closed), kick the
   // queue: any pending items left behind should now be sent by us.
   useEffect(() => {
+    if (usesQwenPawBackend) return;
     if (!isOwner) return;
     if (chatLoadingRef.current) return;
     const q = useMessageQueueStore.getState().getQueue(queueKey);
     if (q.length > 0) {
       scheduleNextSend();
     }
-  }, [isOwner, queueSessionId, scheduleNextSend, queueKey]);
+  }, [isOwner, queueSessionId, scheduleNextSend, queueKey, usesQwenPawBackend]);
 
   // Intercept Enter to enqueue:
   //  - Ctrl/Meta+Enter: always enqueue (even when idle)
@@ -4514,6 +4533,7 @@ export default function ChatPage() {
             <ChatSenderTabsPanel
               bgSessionId={bgBackendSessionId}
               queueSessionId={queueKey}
+              legacyQueueEnabled={!usesQwenPawBackend}
               onRemove={handleQueueRemove}
               onEdit={handleQueueEdit}
               onReorder={handleQueueReorder}

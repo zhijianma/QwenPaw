@@ -970,6 +970,22 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   文件级 AST、mypy、Black、flake8、pylint 门禁通过，未运行全仓测试，也没有修改
   Task 页面。
 
+### 2026-10-09 QwenPaw Legacy Queue Isolation
+
+- 修复稳定 QwenPaw Chat 偶发闪现旧 Queue 的根因：服务端 Queue 已成为权威后，
+  `ChatSenderTabsPanel` 仍订阅并展示 localStorage Queue，挂载/卸载 effect 也可能继续
+  启动 background sender，遗留项存在重复提交风险。
+- 隔离现在以 backend 类型为边界，而不是等待 `backendChatId` 映射完成。QwenPaw 从
+  首轮 Chat 分配开始不展示、不调度、不后台排空 legacy Queue；遗留项只有解析到已知
+  外部 backend Agent 才可执行，QwenPaw 与未知 Agent 均 fail closed。后台工具面板
+  仍可独立显示，外部 backend compatibility FIFO 保持可用。
+- 旧 Chat SDK 集成测试已按事实重分类：服务端 admission 断言属于 QwenPaw，本地
+  FIFO 断言只属于 external backend；修复了全模块 mock 隐藏真实 admission 函数的
+  测试旁路。Chat admission、组件、lifecycle 共 124 项定点测试通过；改动文件
+  Prettier 检查和新增模块 ESLint 通过，Task 页面未改。全量 TypeScript `--noEmit`
+  仍被仓库既有错误阻断（旧 target lib、测试 fixture 缺字段和 Task/UI 旧类型），
+  本次改动文件没有出现在错误列表中，不能据此宣称全量类型门禁通过。
+
 ## 5. 钉钉文档归档清单
 
 ### 框架分析目录

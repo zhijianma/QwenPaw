@@ -32,6 +32,8 @@ interface ChatSenderTabsPanelProps {
   bgSessionId: string;
   /** Frontend chat/session id used by the message-queue store. */
   queueSessionId: string;
+  /** Legacy queue is never authoritative for a QwenPaw backend. */
+  legacyQueueEnabled: boolean;
   onRemove: (id: string) => void;
   onEdit: (id: string, text: string) => void;
   onReorder: (items: QueueItem[]) => void;
@@ -45,6 +47,7 @@ interface ChatSenderTabsPanelProps {
 export default function ChatSenderTabsPanel({
   bgSessionId,
   queueSessionId,
+  legacyQueueEnabled,
   onRemove,
   onEdit,
   onReorder,
@@ -59,11 +62,13 @@ export default function ChatSenderTabsPanel({
   const tasks = useBackgroundTasksStore((s) => s.tasks);
   const removeTasks = useBackgroundTasksStore((s) => s.removeTasks);
   // Self-subscribe so queue/run-state updates don't invalidate ChatPage options.
-  const queueItems =
+  const storedQueueItems =
     useMessageQueueStore((s) => s.queues[queueSessionId]) ?? EMPTY_QUEUE;
-  const runState = useMessageQueueStore(
+  const storedRunState = useMessageQueueStore(
     (s) => s.runStates[queueSessionId] ?? "idle",
   );
+  const queueItems = legacyQueueEnabled ? storedQueueItems : EMPTY_QUEUE;
+  const runState = legacyQueueEnabled ? storedRunState : "idle";
   const [batchBusy, setBatchBusy] = useState(false);
   const [showFinished, setShowFinished] = useState(false);
 

@@ -5,6 +5,7 @@ import {
   allocateDurableChat,
   buildDurableComposerRequest,
   buildDurableSubmission,
+  canDrainLegacyQueueItems,
   resolveComposerAdmissionOwner,
   submitDurableChatRequest,
   waitForDurableAdmission,
@@ -72,6 +73,26 @@ function projection(
 }
 
 describe("durable Chat submission adapter", () => {
+  it("never drains a QwenPaw or unknown legacy queue owner", () => {
+    const agents = [
+      { id: "default", backend: "qwenpaw" as const },
+      { id: "codex", backend: "codex" as const },
+    ];
+
+    expect(canDrainLegacyQueueItems([], agents)).toBe(false);
+    expect(canDrainLegacyQueueItems([{}], agents)).toBe(false);
+    expect(canDrainLegacyQueueItems([{ agentId: "missing" }], agents)).toBe(
+      false,
+    );
+    expect(canDrainLegacyQueueItems([{ agentId: "codex" }], agents)).toBe(true);
+    expect(
+      canDrainLegacyQueueItems(
+        [{ agentId: "codex" }, { agentId: "default" }],
+        agents,
+      ),
+    ).toBe(false);
+  });
+
   beforeEach(() => vi.clearAllMocks());
 
   it("allocates and activates a stable Chat before first submission", async () => {

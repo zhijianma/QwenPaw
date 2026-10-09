@@ -351,6 +351,10 @@ Workbench。前端只能提交命令、订阅事件和展示服务端投影；�
     均不再创建 `agent:new` 本地 Queue。页面切换后的旧草稿失败关闭，遗留本地草稿
     Queue 只保留兼容读取，不再承担新 admission；已有 Chat 在提交期间切换页面时
     继续按不可变 route 进入原 Conversation 的服务端 Queue。
+  - [x] QwenPaw backend 从首轮分配开始不再展示、调度或后台排空遗留
+    localStorage Queue；旧记录按 `agentId` 解析 backend，QwenPaw 与未知 Agent 均
+    fail closed。`runState`、Web Lock 和 background sender 仅保留给外部 backend
+    兼容队列，不能因 Chat ID 映射尚未完成而短暂接管 QwenPaw admission。
   - [ ] 外部 backend 仍使用本地兼容队列；待其公开 Conversation/Queue capability
     明确后删除跨标签发送状态机。
 - [x] Console 与 Channel `/stop` 已按 `ChatSpec.id` 优先使用统一 Interrupt，旧路径

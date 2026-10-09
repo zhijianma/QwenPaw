@@ -1,5 +1,7 @@
 import { chatApi } from "../../api/modules/chat";
 import type { ChatSubmissionRequest, ControlReceipt } from "../../api/types";
+import type { AgentBackend } from "../../api/types/agents";
+import { requiresQwenPawModel } from "../../utils/agentBackend";
 
 export interface DurableSubmissionAcceptance {
   receipt: ControlReceipt;
@@ -17,6 +19,21 @@ export type ComposerAdmissionOwner =
   | "legacy-queue"
   | "reject"
   | "server-queue";
+
+export function canDrainLegacyQueueItems(
+  items: ReadonlyArray<{ agentId?: string }>,
+  agents: ReadonlyArray<{ id: string; backend: AgentBackend }>,
+): boolean {
+  return (
+    items.length > 0 &&
+    items.every((item) => {
+      const owner = agents.find(
+        (agent) => agent.id === (item.agentId ?? "default"),
+      );
+      return owner != null && !requiresQwenPawModel(owner.backend);
+    })
+  );
+}
 
 const STANDARD_REQUEST_FIELDS = new Set([
   "input",

@@ -157,10 +157,12 @@ vi.mock("@/api/modules/chat", () => ({
     getChatStatus: mockGetChatStatus,
     filePreviewUrl: mockFilePreviewUrl,
     stopChat: vi.fn(() => Promise.resolve()),
+    recordExternalQueueFallback: vi.fn(() => Promise.resolve()),
   },
 }));
 
-vi.mock("./durableSubmission", () => ({
+vi.mock("./durableSubmission", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./durableSubmission")>()),
   submitDurableChatRequest: mockSubmitDurableChatRequest,
   waitForDurableAdmission: mockWaitForDurableAdmission,
 }));
@@ -718,7 +720,7 @@ describe("ChatPage coverage", () => {
     expect(mockQueueEnqueue).not.toHaveBeenCalled();
   });
 
-  it("queues a late admission into its original Chat and preserves the new route's input", async () => {
+  it("keeps a late QwenPaw admission off the legacy queue", async () => {
     const source = "75590000-0000-4000-8000-000000000002";
     const target = "75590000-0000-4000-8000-000000000003";
     mockGetSessionIdentity.mockImplementation(
@@ -771,18 +773,14 @@ describe("ChatPage coverage", () => {
       resolveStatus({ status: "idle" });
       result = await admission;
     });
-    expect(result).toEqual({ proceed: false, clear: false });
-    expect(mockQueueEnqueue).toHaveBeenCalledWith(
-      source,
+    expect(result).toEqual(
       expect.objectContaining({
-        text: "source pending input",
-        agentId: "default",
-        backendSessionId: "test-session",
+        proceed: true,
+        query: "source pending input",
+        session_id: "test-session",
       }),
     );
-    expect(
-      mockQueueEnqueue.mock.calls.every(([queue]) => queue === source),
-    ).toBe(true);
+    expect(mockQueueEnqueue).not.toHaveBeenCalled();
     expect(localStorage.getItem(draftKey)).toBe("new route draft");
     expect(mockClearSubmittedSenderInput).not.toHaveBeenCalled();
     localStorage.removeItem(draftKey);
@@ -791,6 +789,7 @@ describe("ChatPage coverage", () => {
   it.each([false, true])(
     "ignores old loop completion before touching the active queue timer (return to A=%s)",
     async (returnToA) => {
+      mockRequiresQwenPawModel.mockReturnValue(false);
       const { fetchActiveLoopMode } = await import("@/stores/loopStore");
       let finish!: () => void;
       const late = new Promise<void>((resolve) => {
@@ -1520,6 +1519,7 @@ describe("ChatPage coverage", () => {
   });
 
   it("enqueues an uploaded attachment with empty text on busy Enter", async () => {
+    mockRequiresQwenPawModel.mockReturnValue(false);
     mockSdkInput.loading = true;
     renderWithProviders(<ChatPage />, {
       initialEntries: ["/chat/test-session"],
@@ -1579,7 +1579,8 @@ describe("ChatPage coverage", () => {
     textarea.remove();
   });
 
-  it("routes send-button submissions into FIFO while this Chat is generating", async () => {
+  it("routes external send-button submissions into the compatibility FIFO", async () => {
+    mockRequiresQwenPawModel.mockReturnValue(false);
     mockSdkInput.loading = true;
     renderWithProviders(<ChatPage />, {
       initialEntries: ["/chat/test-session"],
@@ -1598,7 +1599,8 @@ describe("ChatPage coverage", () => {
     );
   });
 
-  it("queues an attachment-only submission in a non-owner tab", async () => {
+  it("queues an external attachment-only submission in a non-owner tab", async () => {
+    mockRequiresQwenPawModel.mockReturnValue(false);
     mockOwnershipState.acquire = false;
     renderWithProviders(<ChatPage />, {
       initialEntries: ["/chat/test-session"],
@@ -1636,7 +1638,8 @@ describe("ChatPage coverage", () => {
     );
   });
 
-  it("queues from /chat under this Agent draft despite a remembered history Chat", async () => {
+  it("queues an external draft without reusing remembered history", async () => {
+    mockRequiresQwenPawModel.mockReturnValue(false);
     const session = (await import("./sessionApi")).default;
     const previous = session.lastActiveChatId;
     session.lastActiveChatId = "remembered-history";
