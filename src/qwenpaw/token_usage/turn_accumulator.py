@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from threading import RLock
 from typing import Any
 
+from .models import TurnUsageEvidence
+
 
 @dataclass(frozen=True)
 class TurnUsageKey:
@@ -104,7 +106,7 @@ class TurnUsageAccumulator:
     """Own live, content-free usage snapshots until a turn is committed."""
 
     def __init__(self) -> None:
-        self._snapshots: dict[TurnUsageKey, dict[str, Any]] = {}
+        self._snapshots: dict[TurnUsageKey, TurnUsageEvidence] = {}
         self._lock = RLock()
 
     def record(
@@ -118,12 +120,15 @@ class TurnUsageAccumulator:
         if not chat_id or not usage:
             return
         key = TurnUsageKey(chat_id, invocation_id or None)
+        current = TurnUsageEvidence.model_validate(usage)
         with self._lock:
             previous = self._snapshots.get(key)
             self._snapshots[key] = (
-                copy.deepcopy(usage)
+                current
                 if previous is None
-                else _merge_usage(previous, usage)
+                else TurnUsageEvidence.model_validate(
+                    _merge_usage(previous.to_payload(), current.to_payload()),
+                )
             )
 
     def peek(
@@ -136,7 +141,7 @@ class TurnUsageAccumulator:
         with self._lock:
             key = self._resolve_key(chat_id, invocation_id)
             snapshot = self._snapshots.get(key) if key is not None else None
-            return copy.deepcopy(snapshot) if snapshot is not None else None
+            return snapshot.to_payload() if snapshot is not None else None
 
     def pop(
         self,
@@ -148,7 +153,7 @@ class TurnUsageAccumulator:
         with self._lock:
             key = self._resolve_key(chat_id, invocation_id)
             snapshot = self._snapshots.pop(key, None) if key else None
-            return copy.deepcopy(snapshot) if snapshot is not None else None
+            return snapshot.to_payload() if snapshot is not None else None
 
     def discard_chat(self, chat_id: str) -> None:
         """Discard all staged usage for one ChatSpec identity."""

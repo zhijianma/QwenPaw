@@ -54,6 +54,13 @@ snapshots through that API. A transport `session_id` may enter only through a
 named protocol compatibility adapter when no Chat/Invocation identity exists;
 it must not leak back into the accounting model.
 
+The accumulator stores frozen `TurnUsageEvidence` and
+`TurnModelUsageRoute` objects internally. Provider-reported, local-estimate,
+partial and unavailable measurements have explicit invariants; token totals,
+route totals and missing-usage call counts fail closed when contradictory.
+Public callers continue to receive sparse dictionaries so persisted Chat
+metadata and rolling-upgrade plugins do not acquire newly defaulted fields.
+
 The package-level `persist_chat_turn_usage` function and the model wrapper's
 `pop_usage_for_chat` method are the domain-facing extension points. The older
 `persist_turn_usage` and `pop_usage_for_session` names remain compatibility
@@ -208,4 +215,6 @@ Agent, Chat, or Turn ownership remain explicitly unattributed.
 - Known cost and unknown-cost call counts reconcile across every scope.
 - Calls without Provider usage remain countable and report unknown coverage.
 - A multi-call Turn preserves per-route token totals after message refresh.
+- Malformed live Turn totals or measurement states are rejected before they
+  can reach SSE or persisted message metadata.
 - Task pages and Task-specific frontend work remain out of scope.

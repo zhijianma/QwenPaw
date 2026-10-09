@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 """Tests for the live Chat-turn usage accumulator."""
 
+import pytest
+from pydantic import ValidationError
+
 from qwenpaw.token_usage.turn_accumulator import TurnUsageAccumulator
 
 
@@ -144,3 +147,35 @@ def test_discard_chat_removes_every_turn_without_touching_other_chat() -> None:
     assert accumulator.peek("chat-1", invocation_id="turn-1") is None
     assert accumulator.peek("chat-1", invocation_id="turn-2") is None
     assert accumulator.peek("chat-2", invocation_id="turn-3") is not None
+
+
+def test_accumulator_rejects_inconsistent_token_total() -> None:
+    accumulator = TurnUsageAccumulator()
+
+    with pytest.raises(ValidationError, match="total does not reconcile"):
+        accumulator.record(
+            "chat-1",
+            {
+                "prompt_tokens": 10,
+                "completion_tokens": 2,
+                "total_tokens": 99,
+            },
+            invocation_id="turn-1",
+        )
+
+
+def test_accumulator_rejects_contradictory_measurement() -> None:
+    accumulator = TurnUsageAccumulator()
+
+    with pytest.raises(ValidationError, match="cannot be unobserved"):
+        accumulator.record(
+            "chat-1",
+            {
+                "prompt_tokens": 10,
+                "completion_tokens": 2,
+                "total_tokens": 12,
+                "measurement": "provider_reported",
+                "usage_unobserved_calls": 1,
+            },
+            invocation_id="turn-1",
+        )

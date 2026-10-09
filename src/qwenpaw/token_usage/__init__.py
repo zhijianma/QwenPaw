@@ -14,6 +14,8 @@ from .models import (
     TokenUsageScopeRows,
     TokenUsageStats,
     TokenUsageSummary,
+    TurnModelUsageRoute,
+    TurnUsageEvidence,
 )
 from .model_wrapper import TokenRecordingModelWrapper
 from .projection import UsageProjectionStatus
@@ -35,6 +37,8 @@ __all__ = [
     "TokenUsageScopeRows",
     "TokenUsageStats",
     "TokenUsageSummary",
+    "TurnModelUsageRoute",
+    "TurnUsageEvidence",
     "UsageProjectionStatus",
     "get_token_usage_manager",
     "TokenRecordingModelWrapper",

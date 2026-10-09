@@ -4,9 +4,15 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Optional
+from typing import Literal, Optional, Self
 
-from pydantic import AliasChoices, BaseModel, Field, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    model_validator,
+)
 
 
 def _validate_chat_identity_aliases(value: object) -> None:
@@ -15,8 +21,111 @@ def _validate_chat_identity_aliases(value: object) -> None:
         return
     chat_id = value.get("chat_id")
     conversation_id = value.get("conversation_id")
-    if chat_id and conversation_id and chat_id != conversation_id:
+    if (
+        chat_id is not None
+        and conversation_id is not None
+        and chat_id != conversation_id
+    ):
         raise ValueError("chat_id and conversation_id must identify one Chat")
+
+
+class TurnModelUsageRoute(BaseModel):
+    """Validated usage for one concrete Provider/Model route in a turn."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    provider_id: str
+    model_name: str
+    prompt_tokens: int = Field(ge=0)
+    completion_tokens: int = Field(ge=0)
+    total_tokens: int = Field(ge=0)
+    call_count: int = Field(ge=1)
+    usage_unobserved_calls: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def validate_totals(self) -> Self:
+        """Keep route totals and measurement coverage reconcilable."""
+        if self.total_tokens != self.prompt_tokens + self.completion_tokens:
+            raise ValueError("turn route token total does not reconcile")
+        if self.usage_unobserved_calls > self.call_count:
+            raise ValueError("unobserved route calls exceed call count")
+        return self
+
+
+class TurnUsageEvidence(BaseModel):
+    """Validated, content-free usage snapshot for one live Chat turn."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    provider_id: str = ""
+    model_name: str = ""
+    prompt_tokens: int = Field(default=0, ge=0)
+    completion_tokens: int = Field(default=0, ge=0)
+    total_tokens: int | None = Field(default=None, ge=0)
+    cache_read_tokens: int = Field(default=0, ge=0)
+    cache_write_tokens: int = Field(default=0, ge=0)
+    cache_eligible_input_tokens: int = Field(default=0, ge=0)
+    cache_observed: bool = False
+    cache_hit_rate: float | None = Field(default=None, ge=0, le=100)
+    session_cache_read_tokens: int = Field(default=0, ge=0)
+    session_cache_eligible_input_tokens: int = Field(default=0, ge=0)
+    session_cache_observed: bool = False
+    session_cache_hit_rate: float | None = Field(
+        default=None,
+        ge=0,
+        le=100,
+    )
+    context_size: int = Field(default=0, ge=0)
+    compact_threshold: float | None = Field(
+        default=None,
+        gt=0,
+        le=1,
+    )
+    estimated: bool = False
+    measurement: Literal[
+        "provider_reported",
+        "local_estimate",
+        "partial",
+        "unavailable",
+    ] | None = None
+    usage_unobserved_calls: int = Field(default=0, ge=0)
+    chat_id: str | None = None
+    turn_id: str | None = None
+    observed_at: str | None = None
+    model_routes: tuple[TurnModelUsageRoute, ...] = Field(
+        default_factory=tuple,
+    )
+
+    @model_validator(mode="after")
+    def validate_evidence(self) -> Self:
+        """Reject internally contradictory live-turn measurements."""
+        expected_total = self.prompt_tokens + self.completion_tokens
+        if (
+            self.total_tokens is not None
+            and self.total_tokens != expected_total
+        ):
+            raise ValueError("turn token total does not reconcile")
+        if self.measurement == "provider_reported" and (
+            self.usage_unobserved_calls > 0
+        ):
+            raise ValueError("provider-reported turn cannot be unobserved")
+        if self.measurement == "local_estimate" and not self.estimated:
+            raise ValueError("local estimate must be marked estimated")
+        if self.measurement == "partial" and (
+            self.usage_unobserved_calls == 0 or expected_total == 0
+        ):
+            raise ValueError(
+                "partial turn requires measured and missing usage",
+            )
+        if self.measurement == "unavailable" and (
+            self.usage_unobserved_calls == 0 or expected_total > 0
+        ):
+            raise ValueError("unavailable turn cannot contain measured tokens")
+        return self
+
+    def to_payload(self) -> dict:
+        """Return the compatibility dictionary without injecting defaults."""
+        return self.model_dump(mode="json", exclude_unset=True)
 
 
 class TokenUsageStats(BaseModel):
@@ -199,4 +308,6 @@ __all__ = [
     "TokenUsageScopeRows",
     "TokenUsageStats",
     "TokenUsageSummary",
+    "TurnModelUsageRoute",
+    "TurnUsageEvidence",
 ]

@@ -1271,6 +1271,9 @@ Cron 不形成独立审批或产物事实源。
       固定 Chat 在当前页和全新浏览器标签重新加载后均显示相同的历史 Turn 用量与
       DashScope 实际模型，证明刷新恢复不依赖页面内存；`unavailable/partial` 仍由
       Provider 缺失 usage 的故障注入覆盖，不冒充当前 Provider 的真实缺失场景。
+      活跃累加器内部已冻结 `TurnUsageEvidence/TurnModelUsageRoute`，四类 measurement、
+      总 Token、路由 Token 与未观测调用互相校验；对外仍输出稀疏字典，避免给旧消息
+      metadata 注入默认字段。矛盾 payload 在进入 SSE/持久消息前失败关闭。
     - [x] Token Usage Summary 已成为服务端权威统计契约：同一查询同时返回全局、
       日期、实际 Provider/Model、日期×模型、Agent、`ChatSpec.id` 和 Invocation turn
       聚合。Console 不再下载明细并维护第二套页面私有聚合口径；`/details` 仅保留为

@@ -6,6 +6,8 @@ import pytest
 
 from qwenpaw.token_usage import TokenUsageRecord as PackageRecord
 from qwenpaw.token_usage import TokenUsageSummary as PackageSummary
+from qwenpaw.token_usage import TurnModelUsageRoute as PackageTurnRoute
+from qwenpaw.token_usage import TurnUsageEvidence as PackageTurnEvidence
 from qwenpaw.token_usage import manager as legacy_manager
 from qwenpaw.token_usage import models
 
@@ -28,6 +30,8 @@ def test_query_models_keep_public_and_legacy_import_identity() -> None:
         assert getattr(legacy_manager, name) is getattr(models, name)
     assert PackageRecord is models.TokenUsageRecord
     assert PackageSummary is models.TokenUsageSummary
+    assert PackageTurnRoute is models.TurnModelUsageRoute
+    assert PackageTurnEvidence is models.TurnUsageEvidence
 
 
 def test_chat_id_is_canonical_with_consistent_legacy_alias() -> None:
@@ -81,3 +85,10 @@ def test_public_usage_schemas_only_expose_chat_id() -> None:
         properties = contract.model_json_schema()["properties"]
         assert "chat_id" in properties
         assert "conversation_id" not in properties
+
+
+def test_turn_usage_evidence_preserves_sparse_compatibility_payload() -> None:
+    evidence = models.TurnUsageEvidence(prompt_tokens=3)
+
+    assert evidence.to_payload() == {"prompt_tokens": 3}
+    assert "model_routes" in evidence.model_json_schema()["properties"]
