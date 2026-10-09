@@ -1106,6 +1106,19 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   当前进程健康检查。矩阵相关 46 项单元测试及其引用的 27 项 OS 行为合同通过；
   未运行全仓测试，Task 页面没有改动。
 
+### 2026-10-09 Cron Durable Catalog Reconciliation
+
+- 已迁移 Cron 不再等到首次 Fire 才写 Scheduler Port。创建、更新、暂停、恢复、删除
+  和 Workspace 启动恢复会同步确定性的 `ScheduleDefinition`；降级到 stream/text 等
+  legacy path 时删除旧定义，既有 Fire/Lease 历史仍保留。
+- `CronManager` 协调 JSON、APScheduler 与 durable catalog 的迁移事务：catalog 写入
+  失败恢复旧声明，仓库拒绝删除会恢复 catalog，启动恢复失败会禁用 job 并移除
+  APScheduler 唤醒器。APScheduler 仍负责到期计算，因此 Scheduler 全迁移父项仍未
+  完成，不能误报为已经拥有 durable trigger worker。
+- Scheduler SQLite、system/plugin 合同、Dispatcher、Cron、Heartbeat 与 Manager
+  共 79 项定点测试通过；Task 页面
+  未修改，未运行全仓测试。
+
 ## 5. 钉钉文档归档清单
 
 ### 框架分析目录

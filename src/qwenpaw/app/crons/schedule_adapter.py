@@ -105,7 +105,8 @@ def _objective(job: CronJobSpec) -> str:
     )
 
 
-def _schedule_id(agent_id: str, job_id: str) -> str:
+def cron_schedule_id(agent_id: str, job_id: str) -> str:
+    """Return the deterministic Kernel schedule identity for a Cron job."""
     digest = hashlib.sha256(
         f"{agent_id}:{job_id}".encode("utf-8"),
     ).hexdigest()[:20]
@@ -221,7 +222,7 @@ class CronScheduleAdapter:
         )
         model_selection = cron_model_selection(job)
         return ScheduleDefinition(
-            schedule_id=_schedule_id(agent_id, job.id),
+            schedule_id=cron_schedule_id(agent_id, job.id),
             agent_id=agent_id,
             conversation_id=binding.conversation_id,
             name=job.name,
@@ -259,5 +260,6 @@ class CronScheduleAdapter:
 __all__ = [
     "CronScheduleAdapter",
     "CronScheduleMigrationError",
+    "cron_schedule_id",
     "cron_model_selection",
 ]

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -59,6 +60,36 @@ def manager(repo: InMemoryJobRepository) -> CronManager:
         repo=repo,
         workspace=MagicMock(),
         channel_manager=AsyncMock(),
+    )
+
+
+class _CatalogRuntime:
+    """Minimal durable catalog double for manager transaction tests."""
+
+    def __init__(self) -> None:
+        self.synchronized: list[CronJobSpec] = []
+        self.removed: list[CronJobSpec] = []
+        self.fail_name: str | None = None
+
+    async def synchronize(self, job: CronJobSpec) -> None:
+        if job.name == self.fail_name:
+            raise RuntimeError("catalog unavailable")
+        self.synchronized.append(job.model_copy(deep=True))
+
+    async def remove(self, job: CronJobSpec) -> bool:
+        self.removed.append(job.model_copy(deep=True))
+        return True
+
+
+def _catalog_manager(
+    repo: InMemoryJobRepository,
+    runtime: Any,
+) -> CronManager:
+    return CronManager(
+        repo=repo,
+        workspace=MagicMock(),
+        channel_manager=AsyncMock(),
+        task_runtime=runtime,
     )
 
 
@@ -267,6 +298,94 @@ async def test_create_or_replace_job_registers_with_scheduler(
 
     assert manager._scheduler.get_job("j1") is not None
     await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_crud_reconciles_durable_schedule_catalog(
+    repo: InMemoryJobRepository,
+) -> None:
+    runtime = _CatalogRuntime()
+    mgr = _catalog_manager(repo, runtime)
+    job = make_cron_job_spec(job_id="catalog")
+
+    await mgr.create_or_replace_job(job)
+    await mgr.pause_job("catalog")
+    deleted = await mgr.delete_job("catalog")
+
+    assert deleted is True
+    assert [item.enabled for item in runtime.synchronized] == [True, False]
+    assert [item.id for item in runtime.removed] == ["catalog"]
+
+
+@pytest.mark.asyncio
+async def test_catalog_failure_rolls_back_job_declaration(
+    repo: InMemoryJobRepository,
+) -> None:
+    runtime = _CatalogRuntime()
+    mgr = _catalog_manager(repo, runtime)
+    original = make_cron_job_spec(job_id="catalog")
+    await mgr.create_or_replace_job(original)
+    replacement = original.model_copy(update={"name": "broken"})
+    runtime.fail_name = "broken"
+
+    with pytest.raises(RuntimeError, match="catalog unavailable"):
+        await mgr.create_or_replace_job(replacement)
+
+    stored = await repo.get_job("catalog")
+    assert stored == original
+    assert runtime.synchronized[-1] == original
+
+
+@pytest.mark.asyncio
+async def test_start_reconciles_preexisting_job_into_catalog(
+    repo: InMemoryJobRepository,
+) -> None:
+    runtime = _CatalogRuntime()
+    job = make_cron_job_spec(job_id="preexisting")
+    await repo.upsert_job(job)
+    mgr = _catalog_manager(repo, runtime)
+
+    await mgr.start()
+
+    assert runtime.synchronized == [job]
+    await mgr.stop()
+
+
+@pytest.mark.asyncio
+async def test_start_disables_job_when_catalog_reconciliation_fails(
+    repo: InMemoryJobRepository,
+) -> None:
+    runtime = _CatalogRuntime()
+    job = make_cron_job_spec(job_id="unavailable")
+    runtime.fail_name = job.name
+    await repo.upsert_job(job)
+    mgr = _catalog_manager(repo, runtime)
+
+    await mgr.start()
+
+    stored = await repo.get_job("unavailable")
+    assert stored is not None
+    assert stored.enabled is False
+    assert mgr._scheduler.get_job("unavailable") is None
+    assert [item.id for item in runtime.removed] == ["unavailable"]
+    await mgr.stop()
+
+
+@pytest.mark.asyncio
+async def test_delete_restores_catalog_when_repository_refuses(
+    repo: InMemoryJobRepository,
+) -> None:
+    runtime = _CatalogRuntime()
+    mgr = _catalog_manager(repo, runtime)
+    job = make_cron_job_spec(job_id="retained")
+    await mgr.create_or_replace_job(job)
+    repo.delete_job = AsyncMock(return_value=False)
+
+    with pytest.raises(RuntimeError, match="refused deletion"):
+        await mgr.delete_job("retained")
+
+    assert runtime.removed == [job]
+    assert runtime.synchronized == [job, job]
 
 
 # ---------------------------------------------------------------------------

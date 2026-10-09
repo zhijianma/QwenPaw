@@ -89,6 +89,27 @@ class LiteScheduledTaskRuntime:  # pylint: disable=too-few-public-methods
             deliveries,
         )
 
+    async def upsert_definition(
+        self,
+        definition: ScheduleDefinition,
+    ) -> ScheduleDefinition:
+        """Synchronize one definition without creating a Task fire."""
+        _bindings, dispatcher = await self._dependencies()
+        return await dispatcher.upsert_definition(definition)
+
+    async def remove_definition(
+        self,
+        *,
+        agent_id: str,
+        schedule_id: str,
+    ) -> bool:
+        """Remove one catalog definition while preserving fire history."""
+        _bindings, dispatcher = await self._dependencies()
+        return await dispatcher.remove_definition(
+            agent_id=agent_id,
+            schedule_id=schedule_id,
+        )
+
     async def _dependencies(self):
         from ...constant import WORKING_DIR
 

@@ -808,6 +808,12 @@ Invocation，新 Invocation 自动使用新 generation。
     Task version 与状态转换 CAS 选出唯一 Run，输家只回放胜者事实；回放异常不会
     反向把已 completed 的 Scheduler lease 错写为 failed。
 - [ ] Cron/Heartbeat 通过 Scheduler Port 创建或恢复执行，不直连旧 Runtime。
+  - [x] 已迁移 Cron 的创建、更新、暂停、恢复、删除与 Workspace 启动恢复会在首次
+    Fire 之前同步 Host-owned Scheduler catalog；降级到 legacy path 会删除旧定义，
+    防止双重事实。JSON、APScheduler 和 catalog 任一步失败会恢复前一声明；启动恢复
+    失败则禁用并移除唤醒器。APScheduler 当前只保留到期唤醒责任，尚未被 durable
+    trigger worker 替换，因此父项保持未完成。Scheduler SQLite、system/plugin 合同、
+    Cron/Heartbeat 与 Manager 共 79 项定点测试通过。
   - [x] APScheduler Trigger Adapter 为已迁移 Cron 与 Heartbeat 保存真实
     `scheduled_for` 并生成稳定 Fire 幂等键；手动触发使用独立操作键，不与定时槽
     竞争。尚未迁移的 Cron 类型继续走显式兼容路径。

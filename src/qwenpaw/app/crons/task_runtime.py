@@ -19,6 +19,7 @@ from .schedule_adapter import (
     CronScheduleAdapter,
     CronScheduleMigrationError,
     cron_model_selection,
+    cron_schedule_id,
 )
 from .scheduled_task_runtime import LiteScheduledTaskRuntime
 
@@ -84,6 +85,39 @@ class LiteCronTaskRuntime:
     def supports(self, job: CronJobSpec) -> bool:
         """Return the legacy boolean projection of :meth:`decision`."""
         return self.decision(job).uses_durable_runtime
+
+    async def synchronize(self, job: CronJobSpec) -> None:
+        """Reconcile one Cron declaration into the durable catalog."""
+        if job.id is None:
+            raise ValueError("Cron job has no stable ID")
+        if not self.supports(job):
+            await self.remove(job)
+            return
+        binding = await CronConversationBinder(self._workspace).bind(
+            job,
+            session_id=cron_session_id_for_job(job),
+            required=True,
+        )
+        if binding is None:  # pragma: no cover - strict Binder invariant
+            raise RuntimeError("Cron Conversation binding is missing")
+        definition = CronScheduleAdapter().convert(
+            job,
+            agent_id=self._workspace.agent_id,
+            binding=binding,
+        )
+        await self._scheduled.upsert_definition(definition)
+
+    async def remove(self, job: CronJobSpec) -> bool:
+        """Remove one Cron definition from the durable catalog."""
+        if job.id is None:
+            return False
+        return await self._scheduled.remove_definition(
+            agent_id=self._workspace.agent_id,
+            schedule_id=cron_schedule_id(
+                self._workspace.agent_id,
+                job.id,
+            ),
+        )
 
     async def execute(
         self,

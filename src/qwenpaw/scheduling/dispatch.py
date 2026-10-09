@@ -161,6 +161,35 @@ class ScheduledTaskDispatcher:
         finally:
             await generation_lease.close()
 
+    async def upsert_definition(
+        self,
+        definition: ScheduleDefinition,
+    ) -> ScheduleDefinition:
+        """Persist one definition through the generation-pinned Scheduler."""
+        generation_lease = await self._capability_resolver.pin()
+        try:
+            scheduler = await self._resolve_scheduler(generation_lease)
+            return await scheduler.upsert(definition)
+        finally:
+            await generation_lease.close()
+
+    async def remove_definition(
+        self,
+        *,
+        agent_id: str,
+        schedule_id: str,
+    ) -> bool:
+        """Remove one definition without deleting immutable fire history."""
+        generation_lease = await self._capability_resolver.pin()
+        try:
+            scheduler = await self._resolve_scheduler(generation_lease)
+            return await scheduler.remove(
+                agent_id=agent_id,
+                schedule_id=schedule_id,
+            )
+        finally:
+            await generation_lease.close()
+
     async def _replay_bound_task(
         self,
         definition: ScheduleDefinition,

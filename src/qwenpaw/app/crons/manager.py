@@ -182,6 +182,21 @@ class CronManager(ManagerBase):
                             update={"enabled": False},
                         )
                         await self._repo.upsert_job(disabled_job)
+                        try:
+                            await self._register_or_update(disabled_job)
+                        except Exception:  # pylint: disable=broad-except
+                            if self._scheduler.get_job(job.id):
+                                self._scheduler.remove_job(job.id)
+                            try:
+                                await self._remove_task_runtime_definition(
+                                    disabled_job,
+                                )
+                            except Exception:  # pylint: disable=broad-except
+                                logger.exception(
+                                    "Failed to remove disabled Cron from "
+                                    "the durable catalog: job_id=%s",
+                                    job.id,
+                                )
                         logger.warning(
                             "Auto-disabled invalid cron job: "
                             "job_id=%s name=%s",
@@ -310,6 +325,26 @@ class CronManager(ManagerBase):
             removal_gates=("Implement CronTaskRuntime.decision().",),
         )
 
+    async def _synchronize_task_runtime(self, job: CronJobSpec) -> None:
+        """Synchronize optional durable catalog support fail closed."""
+        runtime = self._task_runtime
+        synchronize = getattr(runtime, "synchronize", None)
+        if callable(synchronize):
+            await synchronize(job)  # pylint: disable=not-callable
+
+    async def _remove_task_runtime_definition(
+        self,
+        job: CronJobSpec,
+    ) -> bool:
+        """Remove an optional durable catalog definition idempotently."""
+        runtime = self._task_runtime
+        remove = getattr(runtime, "remove", None)
+        if not callable(remove):
+            return False
+        return bool(
+            await remove(job),  # pylint: disable=not-callable
+        )
+
     def validate_job_spec(self, spec: CronJobSpec) -> None:
         """Fully validate scheduler registration without changing state."""
         if spec.id is None:
@@ -354,13 +389,29 @@ class CronManager(ManagerBase):
     )
     async def delete_job(self, job_id: str) -> bool:
         async with self._lock:
+            job = await self._repo.get_job(job_id)
+            if job is None:
+                return False
+            await self._remove_task_runtime_definition(job)
             if self._started and self._scheduler.get_job(job_id):
                 self._scheduler.remove_job(job_id)
+            try:
+                deleted = await self._repo.delete_job(job_id)
+                if not deleted:
+                    raise RuntimeError(
+                        f"Cron repository refused deletion: {job_id}",
+                    )
+            except Exception:
+                if self._started:
+                    await self._register_or_update(job)
+                else:
+                    await self._synchronize_task_runtime(job)
+                raise
             self._states.pop(job_id, None)
             self._history.pop(job_id, None)
             await self._repo.delete_history(job_id)
             self._rt.pop(job_id, None)
-            return await self._repo.delete_job(job_id)
+            return True
 
     async def pause_job(self, job_id: str) -> None:
         async with self._lock:
@@ -368,9 +419,10 @@ class CronManager(ManagerBase):
             if job is None:
                 raise KeyError(f"Job not found: {job_id}")
             disabled_job = job.model_copy(update={"enabled": False})
-            await self._repo.upsert_job(disabled_job)
-            if self._scheduler.get_job(job_id):
-                self._scheduler.pause_job(job_id)
+            await self._persist_and_register(
+                disabled_job,
+                previous=job,
+            )
 
     async def resume_job(self, job_id: str) -> None:
         async with self._lock:
@@ -428,6 +480,8 @@ class CronManager(ManagerBase):
         try:
             if self._started:
                 await self._register_or_update(spec)
+            else:
+                await self._synchronize_task_runtime(spec)
         except Exception:
             try:
                 if previous is None:
@@ -439,8 +493,13 @@ class CronManager(ManagerBase):
                     if previous is None:
                         if self._scheduler.get_job(job_id):
                             self._scheduler.remove_job(job_id)
+                        await self._remove_task_runtime_definition(spec)
                     else:
                         await self._register_or_update(previous)
+                elif previous is None:
+                    await self._remove_task_runtime_definition(spec)
+                else:
+                    await self._synchronize_task_runtime(previous)
 
                 if old_runtime is None:
                     self._rt.pop(job_id, None)
@@ -978,6 +1037,7 @@ class CronManager(ManagerBase):
         st = self._states.get(spec.id, CronJobState())
         st.next_run_at = aps_job.next_run_time if aps_job else None
         self._states[spec.id] = st
+        await self._synchronize_task_runtime(spec)
 
     def _build_trigger(
         self,

@@ -101,8 +101,10 @@ Fire 显式包含 `agent_id`。一次计划时间只产生一个稳定 `idempote
    回放会恢复该 Task，而不是等待 Delivery 超时；并发恢复只产生一个 Run。
 4. [已完成] APScheduler 只作为 Trigger Adapter；已迁移 Cron 与 Heartbeat 回调使用
    捕获的真实 `scheduled_for` 生成稳定 `ScheduleFire` 并 claim，手动触发使用独立键。
-5. Agent Cron 将 Fire 转成 `TaskSource.SCHEDULE` 的 Task/Run，不再调用
-   `workspace.stream_query()`。
+5. [已完成：final/silent] Agent Cron 将 Fire 转成 `TaskSource.SCHEDULE` 的
+   Task/Run，不再调用 `workspace.stream_query()`。创建、更新、暂停、恢复、删除与
+   Workspace 启动恢复也会在首次 Fire 前同步 durable catalog；stream/text-only
+   仍属于具名兼容路径。
 6. [已完成] Heartbeat 使用同一 Port；`DeliveryPolicy.suppress_exact_text` 将
    `HEARTBEAT_OK` 表达为“保留 Task 事实但不产生 Delivery/Inbox”。
 7. 旧 text-only Channel 定时发送先保留兼容 Adapter；迁移完成后再设弃用门槛。
@@ -139,6 +141,13 @@ Ready。进程内持久化 Ledger 到实际 ConsoleChannel 的链路已经通过
 Channel 的上传/展示等价验收尚未完成，所以
 `LiteCronTaskRuntime.supports(stream)` 仍为 false。这是显式迁移门禁，不是能力
 探测遗漏。
+
+Cron 的 JSON 声明、APScheduler 唤醒器与 Scheduler catalog 现在由
+`CronManager` 作为一个迁移事务协调：新声明只有在 catalog 同步成功后才提交；更新
+失败恢复旧声明；删除底层仓库拒绝时恢复 catalog；启动恢复失败会把 job 持久化为
+disabled 并移除 APScheduler job。切换到 legacy path 时会主动删除确定性的 Kernel
+schedule definition，但不会删除既有 Fire/Lease 历史。当前 APScheduler 仍负责计算
+下一个到期时间；在 durable trigger worker 接管前，不能把父迁移项标为完成。
 
 ## 5. 验收门禁
 

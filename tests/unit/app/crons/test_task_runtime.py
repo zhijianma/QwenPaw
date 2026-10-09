@@ -134,6 +134,40 @@ def test_lite_cron_runtime_explains_each_compatibility_path(
 
 
 @pytest.mark.asyncio
+async def test_lite_cron_runtime_synchronizes_catalog_before_first_fire(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("qwenpaw.constant.WORKING_DIR", tmp_path)
+    workspace = SimpleNamespace(
+        agent_id="default",
+        workspace_dir=tmp_path,
+        capability_registry=GenerationRegistry(),
+        chat_manager=_ChatManager(),
+    )
+    runtime = LiteCronTaskRuntime(workspace)
+    job = make_cron_job_spec(job_id="catalog")
+    job.dispatch.mode = "final"
+
+    await runtime.synchronize(job)
+
+    store = SQLiteSchedulerStore(tmp_path / "scheduler.db")
+    [definition] = await store.list_definitions(agent_id="default")
+    assert definition.enabled is True
+    assert definition.metadata["legacy_cron_job_id"] == "catalog"
+
+    disabled = job.model_copy(update={"enabled": False})
+    await runtime.synchronize(disabled)
+    [updated] = await store.list_definitions(agent_id="default")
+    assert updated.enabled is False
+
+    legacy_stream = job.model_copy(deep=True)
+    legacy_stream.dispatch.mode = "stream"
+    await runtime.synchronize(legacy_stream)
+    assert await store.list_definitions(agent_id="default") == ()
+
+
+@pytest.mark.asyncio
 async def test_lite_cron_runtime_waits_for_task_and_delivery(
     tmp_path: Path,
     monkeypatch,

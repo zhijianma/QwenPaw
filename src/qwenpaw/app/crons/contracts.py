@@ -35,6 +35,12 @@ class CronTaskRuntime(Protocol):
     def supports(self, job: CronJobSpec) -> bool:
         """Compatibility alias for older host integrations."""
 
+    async def synchronize(self, job: CronJobSpec) -> None:
+        """Reconcile one declaration into the durable schedule catalog."""
+
+    async def remove(self, job: CronJobSpec) -> bool:
+        """Remove one declaration from the durable schedule catalog."""
+
     async def execute(
         self,
         job: CronJobSpec,
