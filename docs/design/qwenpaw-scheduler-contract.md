@@ -129,7 +129,9 @@ Cursor Store 是 Host-only Port，不从 Plugin SDK 导出；Scheduler Provider 
    `HEARTBEAT_OK` 表达为“保留 Task 事实但不产生 Delivery/Inbox”。
 7. [已完成：基础设施] Host-owned durable trigger worker 按 Agent 有界读取 due
    Cursor，执行前裁决 definition 变更与 misfire，只有处理成功或明确跳过后才 CAS
-   advance；处理异常保持同一 occurrence 待重试，并发 Worker 由下游 Fire Lease
+   advance；handler 通过 `handled/retry` 显式回执区分“失败已记账”和“基础设施暂态
+   失败”，未捕获异常等同 retry。Worker 的 catalog 读取通过同一 generation-pinned
+   Scheduler Provider，不能绕过插件/内置统一契约。并发 Worker 由下游 Fire Lease
    保证副作用幂等、由 Cursor CAS 选出唯一进度赢家。该 Worker 尚未接入
    `CronManager` 的生产唤醒循环。
 8. 旧 text-only Channel 定时发送先保留兼容 Adapter；迁移完成后再设弃用门槛。

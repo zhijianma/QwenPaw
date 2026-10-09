@@ -14,6 +14,7 @@ from qwenpaw.kernel import (
 from qwenpaw.scheduling import (
     DurableScheduleTriggerWorker,
     SQLiteSchedulerStore,
+    ScheduleOccurrenceHandling,
     ScheduleTriggerDisposition,
     first_schedule_fire_at,
     schedule_definition_hash,
@@ -123,6 +124,42 @@ async def test_handler_failure_leaves_due_cursor_retryable(tmp_path) -> None:
         agent_id="agent-a",
         now=scheduled_for,
         handle=fail,
+    )
+
+    assert report.outcomes[0].disposition is (
+        ScheduleTriggerDisposition.RETRY_PENDING
+    )
+    assert (
+        await store.get_cursor(
+            agent_id="agent-a",
+            schedule_id=definition.schedule_id,
+        )
+        == original
+    )
+
+
+@pytest.mark.asyncio
+async def test_handler_can_explicitly_request_retry_without_exception(
+    tmp_path,
+) -> None:
+    store = SQLiteSchedulerStore(tmp_path / "scheduler.db")
+    scheduled_for = datetime(2026, 10, 9, tzinfo=timezone.utc)
+    definition = _definition()
+    original = await _register(store, definition, now=scheduled_for)
+
+    async def retry(
+        _definition_value: ScheduleDefinition,
+        _scheduled_for: datetime,
+    ) -> ScheduleOccurrenceHandling:
+        return ScheduleOccurrenceHandling.RETRY
+
+    report = await DurableScheduleTriggerWorker(
+        catalog=store,
+        cursors=store,
+    ).tick(
+        agent_id="agent-a",
+        now=scheduled_for,
+        handle=retry,
     )
 
     assert report.outcomes[0].disposition is (

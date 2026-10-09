@@ -18,6 +18,7 @@ from ..kernel import (
     ScheduleFire,
     ScheduleLease,
     ScheduleLeaseStatus,
+    ScheduleTriggerCursorStore,
     SchedulerHost,
     SchedulerPort,
     SchedulerProvider,
@@ -31,6 +32,11 @@ from ..tasks.application import CreateTaskCommand, TaskApplicationService
 from ..tasks.ledger import EventSequenceError, TaskVersionConflictError
 from ..tasks.runtime import TaskRuntimeOrchestrator
 from ..tasks.system_contributions import SYSTEM_DEFAULT_STRATEGY_ID
+from .trigger_worker import (
+    DurableScheduleTriggerWorker,
+    ScheduleOccurrenceHandler,
+    ScheduleTriggerTickReport,
+)
 
 DEFAULT_SCHEDULER_CAPABILITY_ID = (
     "qwenpaw.system.tasks.local-durable-scheduler"
@@ -186,6 +192,31 @@ class ScheduledTaskDispatcher:
             return await scheduler.remove(
                 agent_id=agent_id,
                 schedule_id=schedule_id,
+            )
+        finally:
+            await generation_lease.close()
+
+    async def run_due_triggers(
+        self,
+        *,
+        agent_id: str,
+        now: datetime,
+        cursors: ScheduleTriggerCursorStore,
+        handle: ScheduleOccurrenceHandler,
+        batch_size: int = 100,
+    ) -> ScheduleTriggerTickReport:
+        """Consume due cursors through one generation-pinned Scheduler."""
+        generation_lease = await self._capability_resolver.pin()
+        try:
+            scheduler = await self._resolve_scheduler(generation_lease)
+            return await DurableScheduleTriggerWorker(
+                catalog=scheduler,
+                cursors=cursors,
+                batch_size=batch_size,
+            ).tick(
+                agent_id=agent_id,
+                now=now,
+                handle=handle,
             )
         finally:
             await generation_lease.close()

@@ -20,6 +20,7 @@ from .triggering import (
 from .trigger_worker import (
     DurableScheduleTriggerWorker,
     ScheduleOccurrenceHandler,
+    ScheduleOccurrenceHandling,
     ScheduleTriggerDisposition,
     ScheduleTriggerOutcome,
     ScheduleTriggerTickReport,
@@ -37,6 +38,7 @@ __all__ = [
     "SchedulerCapabilityUnavailableError",
     "DurableScheduleTriggerWorker",
     "ScheduleOccurrenceHandler",
+    "ScheduleOccurrenceHandling",
     "ScheduleTriggerDisposition",
     "ScheduleTriggerOutcome",
     "ScheduleTriggerTickReport",

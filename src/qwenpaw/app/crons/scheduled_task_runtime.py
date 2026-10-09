@@ -25,7 +25,12 @@ from ...kernel import (
     ScheduleTriggerCursor,
     TaskStatus,
 )
-from ...scheduling import ScheduleDispatchResult, ScheduledTaskDispatcher
+from ...scheduling import (
+    ScheduleDispatchResult,
+    ScheduleOccurrenceHandler,
+    ScheduleTriggerTickReport,
+    ScheduledTaskDispatcher,
+)
 from ...scheduling import SQLiteSchedulerStore, SchedulerStoreHost
 from ...scheduling import (
     first_schedule_fire_at,
@@ -132,6 +137,23 @@ class LiteScheduledTaskRuntime:  # pylint: disable=too-few-public-methods
             schedule_id=schedule_id,
         )
         return definition_removed or cursor_removed
+
+    async def run_due(
+        self,
+        *,
+        now: datetime,
+        handle: ScheduleOccurrenceHandler,
+        batch_size: int = 100,
+    ) -> ScheduleTriggerTickReport:
+        """Consume due definitions through the pinned Scheduler Provider."""
+        _bindings, dispatcher = await self._dependencies()
+        return await dispatcher.run_due_triggers(
+            agent_id=self._workspace.agent_id,
+            now=now,
+            cursors=self._store(),
+            handle=handle,
+            batch_size=batch_size,
+        )
 
     async def _dependencies(self):
         bindings = await self._host.compose(self._workspace)

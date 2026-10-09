@@ -22,9 +22,17 @@ from .triggering import (
     schedule_definition_hash,
 )
 
+
+class ScheduleOccurrenceHandling(str, Enum):
+    """Whether one observed occurrence may advance durable progress."""
+
+    HANDLED = "handled"
+    RETRY = "retry"
+
+
 ScheduleOccurrenceHandler = Callable[
     [ScheduleDefinition, datetime],
-    Awaitable[None],
+    Awaitable[ScheduleOccurrenceHandling | None],
 ]
 
 
@@ -166,8 +174,14 @@ class DurableScheduleTriggerWorker:
             )
 
         try:
-            await handle(definition, scheduled_for)
+            handling = await handle(definition, scheduled_for)
         except Exception:  # noqa: BLE001 - retry is the durability boundary
+            return self._outcome(
+                cursor,
+                scheduled_for,
+                ScheduleTriggerDisposition.RETRY_PENDING,
+            )
+        if handling is ScheduleOccurrenceHandling.RETRY:
             return self._outcome(
                 cursor,
                 scheduled_for,
@@ -234,6 +248,7 @@ class DurableScheduleTriggerWorker:
 __all__ = [
     "DurableScheduleTriggerWorker",
     "ScheduleOccurrenceHandler",
+    "ScheduleOccurrenceHandling",
     "ScheduleTriggerDisposition",
     "ScheduleTriggerOutcome",
     "ScheduleTriggerTickReport",

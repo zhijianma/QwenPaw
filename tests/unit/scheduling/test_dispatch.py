@@ -18,14 +18,18 @@ from qwenpaw.kernel import (
     ScheduleDefinition,
     ScheduleLeaseStatus,
     ScheduleTrigger,
+    ScheduleTriggerCursor,
     TaskSource,
     TaskStatus,
 )
 from qwenpaw.plugins.generations import GenerationRegistry
 from qwenpaw.scheduling import (
     ScheduleDispatchDisposition,
+    ScheduleTriggerDisposition,
     ScheduledTaskDispatcher,
     SQLiteSchedulerStore,
+    first_schedule_fire_at,
+    schedule_definition_hash,
 )
 from qwenpaw.tasks.application import TaskApplicationService
 from qwenpaw.tasks.ledger import SQLiteExecutionLedger
@@ -88,6 +92,20 @@ class _FailOnceOrchestrator:
         return await self._delegate.start(*args, **kwargs)
 
 
+def _definition() -> ScheduleDefinition:
+    return ScheduleDefinition(
+        schedule_id="reports.daily",
+        agent_id="default",
+        conversation_id="chat-reports",
+        name="Daily report",
+        objective="Prepare the daily report",
+        trigger=ScheduleTrigger(kind="cron", cron="0 9 * * *"),
+        planner_id=_PLANNER_ID,
+        runner_id=_RUNNER_ID,
+        strategy_id=_STRATEGY_ID,
+    )
+
+
 def _bundle() -> CapabilityBundle:
     return CapabilityBundle(
         provider_id=_PROVIDER_ID,
@@ -115,6 +133,77 @@ def _bundle() -> CapabilityBundle:
                 entrypoint="tests.schedule:strategy",
             ),
         ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_due_triggers_use_generation_pinned_scheduler_catalog(
+    tmp_path: Path,
+) -> None:
+    release = asyncio.Event()
+    scheduler = SQLiteSchedulerStore(tmp_path / "scheduler.db")
+    registry = GenerationRegistry()
+
+    def factory(declaration):
+        implementations = {
+            "scheduler": scheduler,
+            "planner": _Planner(),
+            "runner": _Runner(release),
+            "strategy": _Strategy(),
+        }
+        return implementations[declaration.contribution_id]
+
+    await registry.activate_bundle(_bundle(), factory)
+    service = TaskService(
+        store=SQLiteExecutionLedger(tmp_path / "tasks.db"),
+        registry_generation=registry.generation,
+    )
+    definition = _definition()
+    scheduled_for = datetime(2026, 10, 10, 9, tzinfo=timezone.utc)
+    await scheduler.upsert(definition)
+    await scheduler.reconcile_cursor(
+        ScheduleTriggerCursor(
+            agent_id=definition.agent_id,
+            schedule_id=definition.schedule_id,
+            definition_hash=schedule_definition_hash(definition),
+            next_fire_at=first_schedule_fire_at(
+                definition,
+                now=scheduled_for,
+            ),
+        ),
+    )
+    handled = []
+
+    async def handle(
+        received: ScheduleDefinition,
+        received_at: datetime,
+    ) -> None:
+        handled.append((received.schedule_id, received_at))
+
+    report = await ScheduledTaskDispatcher(
+        capability_resolver=registry,
+        task_application=TaskApplicationService(
+            service,
+            agent_id="default",
+            default_project_dir=tmp_path,
+        ),
+        task_orchestrator=TaskRuntimeOrchestrator(
+            service,
+            registry,
+            TaskRuntimeSupervisor(),
+        ),
+        ledger_workspace_dir=tmp_path,
+        scheduler_capability_id=_SCHEDULER_ID,
+    ).run_due_triggers(
+        agent_id="default",
+        now=scheduled_for,
+        cursors=scheduler,
+        handle=handle,
+    )
+
+    assert handled == [(definition.schedule_id, scheduled_for)]
+    assert report.outcomes[0].disposition is (
+        ScheduleTriggerDisposition.DISPATCHED
     )
 
 

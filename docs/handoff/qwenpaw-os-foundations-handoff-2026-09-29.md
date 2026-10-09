@@ -1142,6 +1142,11 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - 并发 Worker 可以同时到达幂等 handler，但最终由 Fire Lease 防止重复 Task、副作用，
   Cursor revision CAS 只允许一个进度赢家；孤儿 Cursor 删除也携带 definition hash 与
   revision，目录重建竞争会返回 `race_lost` 而非误删新进度。
+- 接入前置契约已补齐：handler 可以显式返回 `handled` 或 `retry`；异常和 `retry` 都
+  保持当前 occurrence，`handled` 才推进。Worker 的 catalog 解析通过 Dispatcher 固定
+  一个 Registry generation 并解析 Scheduler Provider，Lite Runtime 不会直接绕过
+  插件/内置同契约。这样 CronManager 可把“Task 失败但事实与历史已记账”标记 handled，
+  把真正未记账的基础设施故障标记 retry，避免终态 FAILED Fire 永久热循环。
 - 核心 Worker/Store/evaluator 共 34 项定点测试通过；扩大到 scheduling、Cron 应用层、
   portability 与 Kernel 合同后 238 项通过。所改文件 mypy、Black、flake8、pylint
   全部通过。未运行全仓测试，Task 页面未修改。下一步是把 Worker 接入
