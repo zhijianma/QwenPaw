@@ -153,18 +153,37 @@ async def test_lite_cron_runtime_synchronizes_catalog_before_first_fire(
 
     store = SQLiteSchedulerStore(tmp_path / "scheduler.db")
     [definition] = await store.list_definitions(agent_id="default")
+    cursor = await store.get_cursor(
+        agent_id="default",
+        schedule_id=definition.schedule_id,
+    )
     assert definition.enabled is True
     assert definition.metadata["legacy_cron_job_id"] == "catalog"
+    assert cursor is not None
+    assert cursor.next_fire_at is not None
 
     disabled = job.model_copy(update={"enabled": False})
     await runtime.synchronize(disabled)
     [updated] = await store.list_definitions(agent_id="default")
+    disabled_cursor = await store.get_cursor(
+        agent_id="default",
+        schedule_id=updated.schedule_id,
+    )
     assert updated.enabled is False
+    assert disabled_cursor is not None
+    assert disabled_cursor.next_fire_at is None
 
     legacy_stream = job.model_copy(deep=True)
     legacy_stream.dispatch.mode = "stream"
     await runtime.synchronize(legacy_stream)
     assert await store.list_definitions(agent_id="default") == ()
+    assert (
+        await store.get_cursor(
+            agent_id="default",
+            schedule_id=definition.schedule_id,
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio

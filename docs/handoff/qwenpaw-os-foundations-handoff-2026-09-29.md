@@ -1119,6 +1119,18 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   共 79 项定点测试通过；Task 页面
   未修改，未运行全仓测试。
 
+### 2026-10-09 Durable Schedule Trigger Cursor
+
+- Kernel 新增 Host-only `ScheduleTriggerCursor` 与 Store Port；Lite SQLite 原位增加
+  cursor 表，以 Agent+Schedule 隔离 definition hash、next/last occurrence 和 revision
+  CAS。重启保留同定义进度，定义变更重置，删除不影响 Fire/Lease 历史。
+- 新增纯 cron/once/interval evaluator。once 的过期点保留给后续 misfire policy；
+  interval 初次注册从当前时间对齐下一周期，不会因旧 start time 补跑全部历史。
+  Cron durable catalog 同步现在同时写 Cursor，降级/删除同时移除 Cursor。
+- Cursor 尚未被 trigger worker 消费，因此 APScheduler 仍负责唤醒，父迁移项保持
+  未完成。本切片 73 项 Kernel/SQLite/evaluator/Cron 定点测试通过；Task 页面未改，
+  未运行全仓测试。
+
 ## 5. 钉钉文档归档清单
 
 ### 框架分析目录

@@ -10,6 +10,7 @@ from uuid import uuid4
 import pytest
 
 from qwenpaw.kernel import (
+    ScheduleCursorConflictError,
     ScheduleDefinition,
     ScheduleDefinitionNotFoundError,
     ScheduleFire,
@@ -18,6 +19,8 @@ from qwenpaw.kernel import (
     ScheduleLeaseConflictError,
     ScheduleLeaseStatus,
     ScheduleTrigger,
+    ScheduleTriggerCursor,
+    ScheduleTriggerCursorStore,
     SchedulerPort,
 )
 from qwenpaw.scheduling import SQLiteSchedulerStore
@@ -66,6 +69,7 @@ async def test_store_satisfies_port_and_orders_definition_catalog(
     store = SQLiteSchedulerStore(tmp_path / "scheduler.db")
 
     assert isinstance(store, SchedulerPort)
+    assert isinstance(store, ScheduleTriggerCursorStore)
     await store.upsert(_definition("reports.weekly"))
     await store.upsert(_definition("reports.daily"))
     await store.upsert(
@@ -410,4 +414,104 @@ async def test_fail_and_recover_expired_create_terminal_facts(
             now=_now() + timedelta(days=1),
         )
         == ()
+    )
+
+
+@pytest.mark.asyncio
+async def test_trigger_cursor_survives_reconcile_and_advances_with_cas(
+    tmp_path,
+) -> None:
+    store = SQLiteSchedulerStore(tmp_path / "scheduler.db")
+    first_at = datetime(2026, 10, 10, 9, tzinfo=timezone.utc)
+    cursor = ScheduleTriggerCursor(
+        agent_id="agent-a",
+        schedule_id="reports.daily",
+        definition_hash="sha256:first",
+        next_fire_at=first_at,
+    )
+
+    created = await store.reconcile_cursor(cursor)
+    replayed = await SQLiteSchedulerStore(
+        tmp_path / "scheduler.db",
+    ).reconcile_cursor(
+        cursor.model_copy(
+            update={"next_fire_at": first_at + timedelta(days=7)},
+        ),
+    )
+    assert replayed == created
+
+    [due] = await store.list_due_cursors(
+        agent_id="agent-a",
+        now=first_at,
+    )
+    next_at = first_at + timedelta(days=1)
+    advanced = await store.advance_cursor(
+        agent_id="agent-a",
+        schedule_id="reports.daily",
+        definition_hash="sha256:first",
+        expected_revision=due.revision,
+        scheduled_for=first_at,
+        next_fire_at=next_at,
+    )
+
+    assert advanced.revision == 2
+    assert advanced.last_fire_at == first_at
+    assert advanced.next_fire_at == next_at
+    assert (
+        await store.list_due_cursors(
+            agent_id="agent-a",
+            now=first_at,
+        )
+        == ()
+    )
+    with pytest.raises(ScheduleCursorConflictError, match="revision"):
+        await store.advance_cursor(
+            agent_id="agent-a",
+            schedule_id="reports.daily",
+            definition_hash="sha256:first",
+            expected_revision=due.revision,
+            scheduled_for=first_at,
+            next_fire_at=next_at,
+        )
+
+
+@pytest.mark.asyncio
+async def test_definition_change_resets_cursor_without_cross_agent_leak(
+    tmp_path,
+) -> None:
+    store = SQLiteSchedulerStore(tmp_path / "scheduler.db")
+    first_at = datetime(2026, 10, 10, 9, tzinfo=timezone.utc)
+    for agent_id in ("agent-a", "agent-b"):
+        await store.reconcile_cursor(
+            ScheduleTriggerCursor(
+                agent_id=agent_id,
+                schedule_id="reports.daily",
+                definition_hash="sha256:first",
+                next_fire_at=first_at,
+            ),
+        )
+    changed = await store.reconcile_cursor(
+        ScheduleTriggerCursor(
+            agent_id="agent-a",
+            schedule_id="reports.daily",
+            definition_hash="sha256:changed",
+            next_fire_at=first_at + timedelta(hours=1),
+        ),
+    )
+
+    assert changed.revision == 2
+    assert changed.definition_hash == "sha256:changed"
+    assert changed.last_fire_at is None
+    [agent_b] = await store.list_due_cursors(
+        agent_id="agent-b",
+        now=first_at,
+    )
+    assert agent_b.definition_hash == "sha256:first"
+    assert await store.remove_cursor(
+        agent_id="agent-a",
+        schedule_id="reports.daily",
+    )
+    assert not await store.remove_cursor(
+        agent_id="agent-a",
+        schedule_id="reports.daily",
     )

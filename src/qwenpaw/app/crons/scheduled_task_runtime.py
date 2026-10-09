@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -22,10 +22,15 @@ from ...kernel import (
     DeliveryMode,
     DeliveryPolicy,
     ScheduleDefinition,
+    ScheduleTriggerCursor,
     TaskStatus,
 )
 from ...scheduling import ScheduleDispatchResult, ScheduledTaskDispatcher
 from ...scheduling import SQLiteSchedulerStore, SchedulerStoreHost
+from ...scheduling import (
+    first_schedule_fire_at,
+    schedule_definition_hash,
+)
 from ...tasks.service import TaskService
 from ..task_runtime import (
     TaskApplicationBindings,
@@ -46,6 +51,7 @@ class LiteScheduledTaskRuntime:  # pylint: disable=too-few-public-methods
         self._host = host or task_application_host(
             workspace.capability_registry,
         )
+        self._scheduler_store: SQLiteSchedulerStore | None = None
 
     async def execute(
         self,
@@ -95,7 +101,19 @@ class LiteScheduledTaskRuntime:  # pylint: disable=too-few-public-methods
     ) -> ScheduleDefinition:
         """Synchronize one definition without creating a Task fire."""
         _bindings, dispatcher = await self._dependencies()
-        return await dispatcher.upsert_definition(definition)
+        persisted = await dispatcher.upsert_definition(definition)
+        await self._store().reconcile_cursor(
+            ScheduleTriggerCursor(
+                agent_id=persisted.agent_id,
+                schedule_id=persisted.schedule_id,
+                definition_hash=schedule_definition_hash(persisted),
+                next_fire_at=first_schedule_fire_at(
+                    persisted,
+                    now=datetime.now(timezone.utc),
+                ),
+            ),
+        )
+        return persisted
 
     async def remove_definition(
         self,
@@ -105,14 +123,17 @@ class LiteScheduledTaskRuntime:  # pylint: disable=too-few-public-methods
     ) -> bool:
         """Remove one catalog definition while preserving fire history."""
         _bindings, dispatcher = await self._dependencies()
-        return await dispatcher.remove_definition(
+        definition_removed = await dispatcher.remove_definition(
             agent_id=agent_id,
             schedule_id=schedule_id,
         )
+        cursor_removed = await self._store().remove_cursor(
+            agent_id=agent_id,
+            schedule_id=schedule_id,
+        )
+        return definition_removed or cursor_removed
 
     async def _dependencies(self):
-        from ...constant import WORKING_DIR
-
         bindings = await self._host.compose(self._workspace)
         dispatcher = ScheduledTaskDispatcher(
             capability_resolver=bindings.runtime.capability_resolver,
@@ -120,10 +141,20 @@ class LiteScheduledTaskRuntime:  # pylint: disable=too-few-public-methods
             task_orchestrator=bindings.orchestrator,
             ledger_workspace_dir=Path(self._workspace.workspace_dir),
             scheduler_host=SchedulerStoreHost(
-                SQLiteSchedulerStore(WORKING_DIR / "scheduler.db"),
+                self._store(),
             ),
         )
         return bindings, dispatcher
+
+    def _store(self) -> SQLiteSchedulerStore:
+        """Return the Host-owned Scheduler and trigger progress store."""
+        if self._scheduler_store is None:
+            from ...constant import WORKING_DIR
+
+            self._scheduler_store = SQLiteSchedulerStore(
+                WORKING_DIR / "scheduler.db",
+            )
+        return self._scheduler_store
 
     def _worker(
         self,

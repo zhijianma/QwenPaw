@@ -37,6 +37,10 @@ class ScheduleLeaseNotFoundError(LookupError):
     """Raised when a lease mutation references an absent lease."""
 
 
+class ScheduleCursorConflictError(RuntimeError):
+    """Raised when trigger cursor identity or revision has changed."""
+
+
 class ScheduleTrigger(KernelModel):
     """One backend-neutral time trigger with exactly one value shape."""
 
@@ -101,6 +105,29 @@ class ScheduleDefinition(KernelModel):
     max_concurrency: int = Field(default=1, ge=1)
     misfire_grace_seconds: int = Field(default=600, ge=0)
     metadata: JsonObject = Field(default_factory=dict)
+
+
+class ScheduleTriggerCursor(KernelModel):
+    """Durable trigger progress for one exact Schedule definition."""
+
+    agent_id: NonEmptyStr
+    schedule_id: NamespacedId
+    definition_hash: NonEmptyStr
+    revision: int = Field(default=1, ge=1)
+    next_fire_at: AwareDatetime | None = None
+    last_fire_at: AwareDatetime | None = None
+    updated_at: AwareDatetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def validate_progress(self) -> Self:
+        """Require the next occurrence to follow the committed one."""
+        if (
+            self.last_fire_at is not None
+            and self.next_fire_at is not None
+            and self.next_fire_at <= self.last_fire_at
+        ):
+            raise ValueError("next schedule fire must follow last fire")
+        return self
 
 
 class ScheduleFire(KernelModel):
@@ -225,6 +252,7 @@ class ScheduleLease(KernelModel):
 __all__ = [
     "ScheduleDefinition",
     "ScheduleDefinitionNotFoundError",
+    "ScheduleCursorConflictError",
     "ScheduleFire",
     "ScheduleFireConflictError",
     "ScheduleLease",
@@ -232,4 +260,5 @@ __all__ = [
     "ScheduleLeaseNotFoundError",
     "ScheduleLeaseStatus",
     "ScheduleTrigger",
+    "ScheduleTriggerCursor",
 ]

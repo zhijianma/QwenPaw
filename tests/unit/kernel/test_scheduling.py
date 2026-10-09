@@ -13,6 +13,7 @@ from qwenpaw.kernel import (
     ScheduleLease,
     ScheduleLeaseStatus,
     ScheduleTrigger,
+    ScheduleTriggerCursor,
     SchedulerPort,
 )
 
@@ -71,6 +72,19 @@ def test_interval_trigger_preserves_optional_time_bounds() -> None:
             kind="once",
             run_at=start,
             start_at=start,
+        )
+
+
+def test_trigger_cursor_rejects_non_monotonic_progress() -> None:
+    scheduled_for = _now()
+
+    with pytest.raises(ValidationError, match="must follow last fire"):
+        ScheduleTriggerCursor(
+            agent_id="default",
+            schedule_id="reports.daily",
+            definition_hash="sha256:test",
+            last_fire_at=scheduled_for,
+            next_fire_at=scheduled_for,
         )
 
 

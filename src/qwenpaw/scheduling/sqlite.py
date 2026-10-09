@@ -12,6 +12,7 @@ from pathlib import Path
 from uuid import UUID
 
 from ..kernel.scheduling import (
+    ScheduleCursorConflictError,
     ScheduleDefinition,
     ScheduleDefinitionNotFoundError,
     ScheduleFire,
@@ -20,6 +21,7 @@ from ..kernel.scheduling import (
     ScheduleLeaseConflictError,
     ScheduleLeaseNotFoundError,
     ScheduleLeaseStatus,
+    ScheduleTriggerCursor,
 )
 
 _PREPARE_LOCKS_GUARD = threading.Lock()
@@ -181,6 +183,84 @@ class SQLiteSchedulerStore:
             _utc(now),
         )
 
+    async def reconcile_cursor(
+        self,
+        cursor: ScheduleTriggerCursor,
+    ) -> ScheduleTriggerCursor:
+        """Create trigger progress or reset it for a new definition hash."""
+        await self._prepare()
+        return await asyncio.to_thread(self._reconcile_cursor_sync, cursor)
+
+    async def get_cursor(
+        self,
+        *,
+        agent_id: str,
+        schedule_id: str,
+    ) -> ScheduleTriggerCursor | None:
+        """Return one exact trigger cursor."""
+        await self._prepare()
+        return await asyncio.to_thread(
+            self._get_cursor_sync,
+            agent_id,
+            schedule_id,
+        )
+
+    async def list_due_cursors(
+        self,
+        *,
+        agent_id: str,
+        now: datetime,
+        limit: int = 100,
+    ) -> tuple[ScheduleTriggerCursor, ...]:
+        """Return due cursors in deterministic occurrence order."""
+        if limit < 1 or limit > 1000:
+            raise ValueError(
+                "schedule cursor limit must be between 1 and 1000",
+            )
+        await self._prepare()
+        return await asyncio.to_thread(
+            self._list_due_cursors_sync,
+            agent_id,
+            _utc(now),
+            limit,
+        )
+
+    async def advance_cursor(
+        self,
+        *,
+        agent_id: str,
+        schedule_id: str,
+        definition_hash: str,
+        expected_revision: int,
+        scheduled_for: datetime,
+        next_fire_at: datetime | None,
+    ) -> ScheduleTriggerCursor:
+        """Commit one handled occurrence through definition/revision CAS."""
+        await self._prepare()
+        return await asyncio.to_thread(
+            self._advance_cursor_sync,
+            agent_id,
+            schedule_id,
+            definition_hash,
+            expected_revision,
+            _utc(scheduled_for),
+            _utc(next_fire_at) if next_fire_at is not None else None,
+        )
+
+    async def remove_cursor(
+        self,
+        *,
+        agent_id: str,
+        schedule_id: str,
+    ) -> bool:
+        """Delete active progress without touching immutable Fire history."""
+        await self._prepare()
+        return await asyncio.to_thread(
+            self._remove_cursor_sync,
+            agent_id,
+            schedule_id,
+        )
+
     async def _prepare(self) -> None:
         if self._prepared:
             return
@@ -208,6 +288,7 @@ class SQLiteSchedulerStore:
                 connection.execute("BEGIN IMMEDIATE")
                 self._prepare_definition_table(connection)
                 self._prepare_lease_table(connection)
+                self._prepare_cursor_table(connection)
                 connection.execute(
                     """
                     CREATE INDEX IF NOT EXISTS idx_schedule_leases_expiry
@@ -217,6 +298,28 @@ class SQLiteSchedulerStore:
                     """,
                 )
                 connection.commit()
+
+    @staticmethod
+    def _prepare_cursor_table(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schedule_trigger_cursors (
+                agent_id TEXT NOT NULL,
+                schedule_id TEXT NOT NULL,
+                definition_hash TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                next_fire_at TEXT,
+                cursor_json TEXT NOT NULL,
+                PRIMARY KEY(agent_id, schedule_id)
+            )
+            """,
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_schedule_cursors_due
+            ON schedule_trigger_cursors(agent_id, next_fire_at, schedule_id)
+            """,
+        )
 
     @staticmethod
     def _table_columns(
@@ -607,6 +710,204 @@ class SQLiteSchedulerStore:
                 recovered.append(updated)
             connection.commit()
         return tuple(recovered)
+
+    def _reconcile_cursor_sync(
+        self,
+        proposed: ScheduleTriggerCursor,
+    ) -> ScheduleTriggerCursor:
+        now = datetime.now(timezone.utc)
+        normalized = ScheduleTriggerCursor.model_validate(
+            {
+                **proposed.model_dump(),
+                "revision": 1,
+                "next_fire_at": (
+                    _utc(proposed.next_fire_at)
+                    if proposed.next_fire_at is not None
+                    else None
+                ),
+                "last_fire_at": None,
+                "updated_at": now,
+            },
+        )
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT cursor_json FROM schedule_trigger_cursors
+                WHERE agent_id = ? AND schedule_id = ?
+                """,
+                (proposed.agent_id, proposed.schedule_id),
+            ).fetchone()
+            if row is not None:
+                current = ScheduleTriggerCursor.model_validate_json(
+                    row["cursor_json"],
+                )
+                if current.definition_hash == proposed.definition_hash:
+                    connection.commit()
+                    return current
+                normalized = normalized.model_copy(
+                    update={"revision": current.revision + 1},
+                )
+            connection.execute(
+                """
+                INSERT INTO schedule_trigger_cursors (
+                    agent_id, schedule_id, definition_hash, revision,
+                    next_fire_at, cursor_json
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(agent_id, schedule_id) DO UPDATE SET
+                    definition_hash = excluded.definition_hash,
+                    revision = excluded.revision,
+                    next_fire_at = excluded.next_fire_at,
+                    cursor_json = excluded.cursor_json
+                """,
+                self._cursor_row(normalized),
+            )
+            connection.commit()
+        return normalized
+
+    def _list_due_cursors_sync(
+        self,
+        agent_id: str,
+        now: datetime,
+        limit: int,
+    ) -> tuple[ScheduleTriggerCursor, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT cursor_json FROM schedule_trigger_cursors
+                WHERE agent_id = ?
+                  AND next_fire_at IS NOT NULL
+                  AND next_fire_at <= ?
+                ORDER BY next_fire_at, schedule_id
+                LIMIT ?
+                """,
+                (agent_id, now.isoformat(), limit),
+            ).fetchall()
+        return tuple(
+            ScheduleTriggerCursor.model_validate_json(row["cursor_json"])
+            for row in rows
+        )
+
+    def _get_cursor_sync(
+        self,
+        agent_id: str,
+        schedule_id: str,
+    ) -> ScheduleTriggerCursor | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT cursor_json FROM schedule_trigger_cursors
+                WHERE agent_id = ? AND schedule_id = ?
+                """,
+                (agent_id, schedule_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return ScheduleTriggerCursor.model_validate_json(row["cursor_json"])
+
+    def _advance_cursor_sync(
+        self,
+        agent_id: str,
+        schedule_id: str,
+        definition_hash: str,
+        expected_revision: int,
+        scheduled_for: datetime,
+        next_fire_at: datetime | None,
+    ) -> ScheduleTriggerCursor:
+        now = datetime.now(timezone.utc)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT cursor_json FROM schedule_trigger_cursors
+                WHERE agent_id = ? AND schedule_id = ?
+                """,
+                (agent_id, schedule_id),
+            ).fetchone()
+            if row is None:
+                connection.rollback()
+                raise ScheduleCursorConflictError("schedule cursor is absent")
+            current = ScheduleTriggerCursor.model_validate_json(
+                row["cursor_json"],
+            )
+            reasons = []
+            if current.definition_hash != definition_hash:
+                reasons.append("definition")
+            if current.revision != expected_revision:
+                reasons.append("revision")
+            if current.next_fire_at != scheduled_for:
+                reasons.append("occurrence")
+            if reasons:
+                connection.rollback()
+                raise ScheduleCursorConflictError(
+                    "schedule cursor advance conflicts on: "
+                    f"{', '.join(reasons)}",
+                )
+            updated = ScheduleTriggerCursor.model_validate(
+                {
+                    **current.model_dump(),
+                    "revision": current.revision + 1,
+                    "last_fire_at": scheduled_for,
+                    "next_fire_at": next_fire_at,
+                    "updated_at": now,
+                },
+            )
+            written = connection.execute(
+                """
+                UPDATE schedule_trigger_cursors SET
+                    revision = ?, next_fire_at = ?, cursor_json = ?
+                WHERE agent_id = ? AND schedule_id = ?
+                  AND definition_hash = ? AND revision = ?
+                """,
+                (
+                    updated.revision,
+                    (
+                        next_fire_at.isoformat()
+                        if next_fire_at is not None
+                        else None
+                    ),
+                    _canonical_json(updated),
+                    agent_id,
+                    schedule_id,
+                    definition_hash,
+                    expected_revision,
+                ),
+            )
+            if written.rowcount != 1:
+                connection.rollback()
+                raise ScheduleCursorConflictError(
+                    "schedule cursor changed during advance",
+                )
+            connection.commit()
+        return updated
+
+    def _remove_cursor_sync(self, agent_id: str, schedule_id: str) -> bool:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                """
+                DELETE FROM schedule_trigger_cursors
+                WHERE agent_id = ? AND schedule_id = ?
+                """,
+                (agent_id, schedule_id),
+            )
+            connection.commit()
+        return cursor.rowcount > 0
+
+    @staticmethod
+    def _cursor_row(cursor: ScheduleTriggerCursor) -> tuple[object, ...]:
+        return (
+            cursor.agent_id,
+            cursor.schedule_id,
+            cursor.definition_hash,
+            cursor.revision,
+            (
+                _utc(cursor.next_fire_at).isoformat()
+                if cursor.next_fire_at is not None
+                else None
+            ),
+            _canonical_json(cursor),
+        )
 
     def _claimed_for_update(
         self,

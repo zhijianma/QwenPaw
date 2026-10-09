@@ -111,6 +111,7 @@ from .scheduling import (
     ScheduleDefinition,
     ScheduleFire,
     ScheduleLease,
+    ScheduleTriggerCursor,
 )
 from .conversations import (
     ConversationForkCommand,
@@ -355,6 +356,54 @@ class SchedulerPort(Protocol):
         now: datetime,
     ) -> tuple[ScheduleLease, ...]:
         """Fail one Agent's expired claims and return terminal records."""
+
+
+@runtime_checkable
+class ScheduleTriggerCursorStore(Protocol):
+    """Host-owned durable progress for framework-neutral trigger workers."""
+
+    async def reconcile_cursor(
+        self,
+        cursor: ScheduleTriggerCursor,
+    ) -> ScheduleTriggerCursor:
+        """Create progress or reset it when the definition hash changes."""
+
+    async def get_cursor(
+        self,
+        *,
+        agent_id: str,
+        schedule_id: str,
+    ) -> ScheduleTriggerCursor | None:
+        """Return one exact cursor or none when it is not registered."""
+
+    async def list_due_cursors(
+        self,
+        *,
+        agent_id: str,
+        now: datetime,
+        limit: int = 100,
+    ) -> tuple[ScheduleTriggerCursor, ...]:
+        """Return due progress ordered by occurrence and Schedule ID."""
+
+    async def advance_cursor(
+        self,
+        *,
+        agent_id: str,
+        schedule_id: str,
+        definition_hash: str,
+        expected_revision: int,
+        scheduled_for: datetime,
+        next_fire_at: datetime | None,
+    ) -> ScheduleTriggerCursor:
+        """Commit one handled occurrence using definition and revision CAS."""
+
+    async def remove_cursor(
+        self,
+        *,
+        agent_id: str,
+        schedule_id: str,
+    ) -> bool:
+        """Remove active progress without deleting Fire history."""
 
 
 @runtime_checkable

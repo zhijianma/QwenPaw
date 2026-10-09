@@ -89,6 +89,25 @@ Fire 显式包含 `agent_id`。一次计划时间只产生一个稳定 `idempote
 公开 Contribution Slot 为 `scheduler`，process 生命周期，fail closed。插件只能从
 `qwenpaw.plugins.sdk` 导入这些契约。
 
+### Host-owned Trigger Cursor
+
+时间计算属于 Host 基础设施，不交给 Provider 或插件持有。Kernel 的
+`ScheduleTriggerCursor` 只保存 `agent_id + schedule_id`、完整 Definition hash、
+`next_fire_at`、`last_fire_at` 和 revision；不保存 APScheduler 对象。Cursor Store
+提供 reconcile、exact get、due query、revision CAS advance 和 remove：
+
+- 同一 Definition 重启时保留原进度，不从当前时间重新猜测。
+- Definition 内容改变时提升 revision 并按新 Trigger 重建进度。
+- Worker 只有在处理一个 occurrence 后才能 CAS advance；崩溃后再次读取同一 due
+  occurrence，并依靠 Schedule Fire 幂等键回放，不会丢任务。
+- 删除 Cursor 不删除 Definition 之外的历史 Fire/Lease。
+
+cron/once/interval 的 recurrence evaluator 是纯函数。cron 从当前时间计算下一次；
+once 保留已经过去的时间点，让 Worker 根据 misfire grace 裁决；interval 的首次进度
+对齐到不早于当前时间的周期边界，避免导入旧 `start_at` 时制造历史补跑风暴。
+Cursor Store 是 Host-only Port，不从 Plugin SDK 导出；Scheduler Provider 仍只操作
+宿主准入的 `SchedulerPort`。
+
 ## 4. 迁移顺序
 
 1. [已完成] 实现 Lite SQLite Scheduler Store 与 CAS 租约。
@@ -190,3 +209,5 @@ Agent 隔离完全由 Kernel 复合身份和数据库约束保证。测试在 Ho
 `SchedulerHost.scheduler_store()` 获得已准入的 `SchedulerPort`，公共 SDK 不导出
 SQLite Adapter。声明 `scheduler.provider` 却未实现完整 Provider，或返回无效 Port
 的插件，会在 generation 发布前 fail closed；旧 `scheduler` Slot 只保留迁移兼容。
+同一 SQLite Adapter 还实现 Host-only Trigger Cursor Store，使 Definition、Cursor
+与 Fire Lease 位于同一 WAL 数据库，但 Provider 看不到 Cursor 生命周期 API。

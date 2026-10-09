@@ -814,6 +814,12 @@ Invocation，新 Invocation 自动使用新 generation。
     失败则禁用并移除唤醒器。APScheduler 当前只保留到期唤醒责任，尚未被 durable
     trigger worker 替换，因此父项保持未完成。Scheduler SQLite、system/plugin 合同、
     Cron/Heartbeat 与 Manager 共 79 项定点测试通过。
+  - [x] Kernel 已冻结 Host-only `ScheduleTriggerCursor` / Store Port；Lite SQLite
+    保存 definition hash、next/last occurrence 与 revision CAS，支持 due 有界查询、
+    定义变更 reset、删除和跨 Agent 隔离。cron/once/interval 使用无状态 evaluator；
+    once 保留过期点交给 misfire 判定，interval 首次注册对齐到不早于当前时间的周期，
+    避免迁移时补跑全部历史。Cursor 已随 durable catalog 同步，但消费它的 trigger
+    worker 尚未接入，因此 APScheduler 仍未退出。
   - [x] APScheduler Trigger Adapter 为已迁移 Cron 与 Heartbeat 保存真实
     `scheduled_for` 并生成稳定 Fire 幂等键；手动触发使用独立操作键，不与定时槽
     竞争。尚未迁移的 Cron 类型继续走显式兼容路径。

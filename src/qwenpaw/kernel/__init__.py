@@ -271,6 +271,7 @@ from .memory import (
     MemoryStateUnavailableError,
 )
 from .scheduling import (
+    ScheduleCursorConflictError,
     ScheduleDefinition,
     ScheduleDefinitionNotFoundError,
     ScheduleFire,
@@ -280,6 +281,7 @@ from .scheduling import (
     ScheduleLeaseNotFoundError,
     ScheduleLeaseStatus,
     ScheduleTrigger,
+    ScheduleTriggerCursor,
 )
 from .conversations import (
     ConversationForkBoundary,
@@ -431,6 +433,7 @@ from .ports import (
     VerificationHistoryPort,
     OperationalEventPort,
     RuntimeInteractionProducer,
+    ScheduleTriggerCursorStore,
     SchedulerPort,
     SchedulerHost,
     SchedulerProvider,
@@ -666,6 +669,7 @@ __all__ = [
     "MemoryStateUnavailableError",
     "ScheduleDefinition",
     "ScheduleDefinitionNotFoundError",
+    "ScheduleCursorConflictError",
     "ScheduleFire",
     "ScheduleFireConflictError",
     "ScheduleLease",
@@ -673,6 +677,8 @@ __all__ = [
     "ScheduleLeaseNotFoundError",
     "ScheduleLeaseStatus",
     "ScheduleTrigger",
+    "ScheduleTriggerCursor",
+    "ScheduleTriggerCursorStore",
     "ACTIVE_SUBMISSION_STATUSES",
     "SUBMISSION_TRANSITIONS",
     "TERMINAL_SUBMISSION_STATUSES",
