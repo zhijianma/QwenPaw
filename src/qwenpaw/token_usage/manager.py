@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """Token usage manager — thin orchestrator."""
 
-import json
 import logging
 import threading
 from datetime import date, datetime, timedelta, timezone
@@ -10,6 +9,7 @@ from typing import Optional, TYPE_CHECKING
 
 from ..constant import WORKING_DIR, TOKEN_USAGE_FILE
 from ..kernel import ModelCallAttempt, ModelCallRecord, ModelCallResult
+from .aggregation import summarize_usage
 from .buffer import TokenUsageBuffer, _UsageEvent
 from .models import (
     TokenUsageByAgent,
@@ -41,72 +41,6 @@ def _usage_agent_id() -> str:
             exc_info=True,
         )
         return ""
-
-
-_UNATTRIBUTED_SCOPE = "__unattributed__"
-
-
-def _scope_key(*parts: str | None) -> str:
-    """Build a collision-free public key for one ownership scope."""
-    normalized = [part or _UNATTRIBUTED_SCOPE for part in parts]
-    return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
-
-
-def _new_stats(**identity: str | None) -> dict:
-    """Return a mutable aggregate with optional identity fields."""
-    return {
-        **identity,
-        "prompt_tokens": 0,
-        "completion_tokens": 0,
-        "cache_read_tokens": 0,
-        "cache_write_tokens": 0,
-        "cache_eligible_input_tokens": 0,
-        "cache_observed_calls": 0,
-        "context_input_tokens": 0,
-        "context_window_tokens": 0,
-        "context_observed_calls": 0,
-        "near_compaction_calls": 0,
-        "cost_micros": 0,
-        "cost_unknown_calls": 0,
-        "context_usage_ratio": None,
-        "max_context_usage_ratio": None,
-        "usage_observed_calls": 0,
-        "usage_unobserved_calls": 0,
-        "call_count": 0,
-    }
-
-
-def _add_stats(target: dict, record: TokenUsageRecord) -> None:
-    """Accumulate one immutable usage record into a mutable aggregate."""
-    target["prompt_tokens"] += record.prompt_tokens
-    target["completion_tokens"] += record.completion_tokens
-    target["cache_read_tokens"] += record.cache_read_tokens
-    target["cache_write_tokens"] += record.cache_write_tokens
-    target["cache_eligible_input_tokens"] += record.cache_eligible_input_tokens
-    target["cache_observed_calls"] += record.cache_observed_calls
-    target["context_input_tokens"] += record.context_input_tokens
-    target["context_window_tokens"] += record.context_window_tokens
-    target["context_observed_calls"] += record.context_observed_calls
-    target["near_compaction_calls"] += record.near_compaction_calls
-    target["cost_micros"] += record.cost_micros
-    target["cost_unknown_calls"] += record.cost_unknown_calls
-    target["context_usage_ratio"] = (
-        target["context_input_tokens"] / target["context_window_tokens"] * 100
-        if target["context_window_tokens"] > 0
-        else None
-    )
-    maxima = (
-        target.get("max_context_usage_ratio"),
-        record.max_context_usage_ratio,
-    )
-    target["max_context_usage_ratio"] = (
-        max(value for value in maxima if value is not None)
-        if any(value is not None for value in maxima)
-        else None
-    )
-    target["usage_observed_calls"] += record.usage_observed_calls
-    target["usage_unobserved_calls"] += record.usage_unobserved_calls
-    target["call_count"] += record.call_count
 
 
 def _matches_filters(
@@ -425,140 +359,7 @@ class TokenUsageManager:
             turn_id,
         )
 
-        total_stats = _new_stats()
-        by_model_raw: dict[str, dict] = {}
-        by_date_raw: dict[str, dict] = {}
-        by_date_model_raw: dict[str, dict[str, dict]] = {}
-        by_agent_raw: dict[str, dict] = {}
-        by_chat_raw: dict[str, dict] = {}
-        by_turn_raw: dict[str, dict] = {}
-
-        for r in records:
-            _add_stats(total_stats, r)
-
-            # Aggregate by model
-            model_key = (
-                f"{r.provider_id}:{r.model}" if r.provider_id else r.model
-            )
-            model_identity = {
-                "provider_id": r.provider_id,
-                "model": r.model,
-            }
-            bm = by_model_raw.setdefault(
-                model_key,
-                _new_stats(**model_identity),
-            )
-            _add_stats(bm, r)
-
-            # Aggregate by date
-            bd = by_date_raw.setdefault(
-                r.date,
-                _new_stats(),
-            )
-            _add_stats(bd, r)
-
-            date_models = by_date_model_raw.setdefault(r.date, {})
-            bdm = date_models.setdefault(
-                model_key,
-                _new_stats(**model_identity),
-            )
-            _add_stats(bdm, r)
-
-            agent_key = _scope_key(r.agent_id)
-            ba = by_agent_raw.setdefault(
-                agent_key,
-                _new_stats(agent_id=r.agent_id),
-            )
-            _add_stats(ba, r)
-
-            chat_key = _scope_key(r.agent_id, r.conversation_id)
-            bc = by_chat_raw.setdefault(
-                chat_key,
-                _new_stats(
-                    agent_id=r.agent_id,
-                    conversation_id=r.conversation_id,
-                ),
-            )
-            _add_stats(bc, r)
-
-            turn_key = _scope_key(
-                r.agent_id,
-                r.conversation_id,
-                r.turn_id,
-            )
-            bt = by_turn_raw.setdefault(
-                turn_key,
-                _new_stats(
-                    agent_id=r.agent_id,
-                    conversation_id=r.conversation_id,
-                    turn_id=r.turn_id,
-                ),
-            )
-            _add_stats(bt, r)
-
-        by_agent = {
-            key: TokenUsageByAgent.model_validate(value)
-            for key, value in sorted(by_agent_raw.items())
-        }
-        by_chat = {
-            key: TokenUsageByConversation.model_validate(value)
-            for key, value in sorted(by_chat_raw.items())
-        }
-        by_turn = {
-            key: TokenUsageByTurn.model_validate(value)
-            for key, value in sorted(by_turn_raw.items())
-        }
-        return TokenUsageSummary(
-            total_prompt_tokens=total_stats["prompt_tokens"],
-            total_completion_tokens=total_stats["completion_tokens"],
-            total_cache_read_tokens=total_stats["cache_read_tokens"],
-            total_cache_write_tokens=total_stats["cache_write_tokens"],
-            total_cache_eligible_input_tokens=(
-                total_stats["cache_eligible_input_tokens"]
-            ),
-            cache_observed_calls=total_stats["cache_observed_calls"],
-            cache_hit_rate=(
-                total_stats["cache_read_tokens"]
-                / total_stats["cache_eligible_input_tokens"]
-                * 100
-                if total_stats["cache_eligible_input_tokens"] > 0
-                else None
-            ),
-            total_context_input_tokens=total_stats["context_input_tokens"],
-            total_context_window_tokens=total_stats["context_window_tokens"],
-            context_observed_calls=total_stats["context_observed_calls"],
-            near_compaction_calls=total_stats["near_compaction_calls"],
-            total_cost_micros=total_stats["cost_micros"],
-            cost_unknown_calls=total_stats["cost_unknown_calls"],
-            context_usage_ratio=total_stats["context_usage_ratio"],
-            max_context_usage_ratio=total_stats["max_context_usage_ratio"],
-            total_calls=total_stats["call_count"],
-            usage_observed_calls=total_stats["usage_observed_calls"],
-            usage_unobserved_calls=total_stats["usage_unobserved_calls"],
-            by_model={
-                k: TokenUsageByModel.model_validate(v)
-                for k, v in sorted(by_model_raw.items())
-            },
-            by_date={
-                k: TokenUsageStats.model_validate(v)
-                for k, v in sorted(by_date_raw.items())
-            },
-            by_date_model={
-                date_key: {
-                    model_key: TokenUsageByDateModel.model_validate(value)
-                    for model_key, value in sorted(models.items())
-                }
-                for date_key, models in sorted(by_date_model_raw.items())
-            },
-            scopes=TokenUsageScopeRows(
-                agents=list(by_agent.values()),
-                chats=list(by_chat.values()),
-                turns=list(by_turn.values()),
-            ),
-            by_agent=by_agent,
-            by_chat=by_chat,
-            by_turn=by_turn,
-        )
+        return summarize_usage(records)
 
     async def get_details(
         self,
@@ -668,3 +469,18 @@ class TokenUsageManager:
 def get_token_usage_manager() -> TokenUsageManager:
     """Return the process-wide singleton ``TokenUsageManager``."""
     return TokenUsageManager.get_instance()
+
+
+__all__ = [
+    "TokenUsageByAgent",
+    "TokenUsageByConversation",
+    "TokenUsageByDateModel",
+    "TokenUsageByModel",
+    "TokenUsageByTurn",
+    "TokenUsageManager",
+    "TokenUsageRecord",
+    "TokenUsageScopeRows",
+    "TokenUsageStats",
+    "TokenUsageSummary",
+    "get_token_usage_manager",
+]

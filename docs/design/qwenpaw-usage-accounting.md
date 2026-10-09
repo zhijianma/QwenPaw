@@ -13,7 +13,9 @@ The public query models live in `token_usage/models.py`. Projection and API
 layers depend on this stable contract; the lifecycle manager depends on both,
 so the disposable SQLite projection never imports orchestration or singleton
 state. `manager.py` continues to re-export these names for source compatibility
-with existing extensions.
+with existing extensions. Cross-scope reduction lives in the pure
+`token_usage/aggregation.py` function, keeping weighting, coverage and
+collision-safe compatibility keys independent from storage lifecycle.
 
 The ownership path is:
 
