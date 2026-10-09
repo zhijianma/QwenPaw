@@ -32,7 +32,7 @@ function submission(
 ): TurnSubmission {
   return {
     agent_id: "agent-1",
-    conversation_id: "chat-1",
+    chat_id: "chat-1",
     priority: 20,
     content: submissionId,
     artifact_refs: [],
@@ -58,10 +58,10 @@ function projection(
 ): ConversationRuntimeProjection {
   return {
     agent_id: "agent-1",
-    conversation_id: "chat-1",
+    chat_id: "chat-1",
     queue: {
       agent_id: "agent-1",
-      conversation_id: "chat-1",
+      chat_id: "chat-1",
       revision,
       active_submission_id: activeSubmissionId,
       submissions,
@@ -285,7 +285,7 @@ describe("durable Chat submission adapter", () => {
       kind: "enqueue",
       status: "accepted",
       agent_id: "agent-1",
-      conversation_id: "chat-1",
+      chat_id: "chat-1",
       revision: 12,
       detail: "",
       recorded_at: "2026-09-28T00:00:01Z",

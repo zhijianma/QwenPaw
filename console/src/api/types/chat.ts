@@ -131,7 +131,9 @@ export interface SubmissionInputEnvelope {
 export interface TurnSubmission {
   schema?: string;
   agent_id: string;
-  conversation_id: string;
+  chat_id: string;
+  /** @deprecated Use chat_id. */
+  conversation_id?: string;
   priority: number;
   content: string;
   artifact_refs: ArtifactRef[];
@@ -152,7 +154,9 @@ export interface TurnSubmission {
 export interface QueueProjection {
   schema?: string;
   agent_id: string;
-  conversation_id: string;
+  chat_id: string;
+  /** @deprecated Use chat_id. */
+  conversation_id?: string;
   revision: number;
   active_submission_id?: string | null;
   submissions: TurnSubmission[];
@@ -236,7 +240,9 @@ export type ConversationExecutionState =
 
 export interface ConversationExecutionChain {
   schema?: "qwenpaw.conversation-execution-chain.v1";
-  conversation_id: string;
+  chat_id: string;
+  /** @deprecated Use chat_id. */
+  conversation_id?: string;
   correlation_id: string;
   state: ConversationExecutionState;
   submission_ids: string[];
@@ -286,7 +292,9 @@ export interface CommunicationContract {
 export interface ConversationRuntimeProjection {
   schema?: string;
   agent_id: string;
-  conversation_id: string;
+  chat_id: string;
+  /** @deprecated Use chat_id. */
+  conversation_id?: string;
   queue: QueueProjection;
   interactions: ChatInteraction[];
   execution_chains?: ConversationExecutionChain[];
@@ -329,7 +337,9 @@ export interface ControlReceipt {
   kind: ControlCommandKind | "enqueue";
   status: ControlCommandStatus;
   agent_id: string;
-  conversation_id: string;
+  chat_id: string;
+  /** @deprecated Use chat_id. */
+  conversation_id?: string;
   revision: number;
   detail: string;
   applied_at_safe_point?: SteerSafePoint | null;

@@ -45,10 +45,10 @@ const interaction: ChatInteraction = {
 
 const runtimeProjection = (interactions: ChatInteraction[]) => ({
   agent_id: "default",
-  conversation_id: "chat-1",
+  chat_id: "chat-1",
   queue: {
     agent_id: "default",
-    conversation_id: "chat-1",
+    chat_id: "chat-1",
     revision: 0,
     active_submission_id: null,
     submissions: [],

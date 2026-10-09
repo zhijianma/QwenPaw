@@ -147,8 +147,48 @@ def test_submission_request_has_no_client_sequence_or_status() -> None:
     )
 
     payload = request.model_dump(mode="json")
+    assert payload["chat_id"] == "chat-1"
+    assert "conversation_id" not in payload
     assert "sequence" not in payload
     assert "status" not in payload
+
+
+def test_control_contracts_restore_legacy_chat_identity() -> None:
+    request = TurnSubmissionRequest.model_validate(
+        {
+            "agent_id": "default",
+            "conversation_id": "chat-1",
+            "content": "hello",
+            "idempotency_key": "message-legacy",
+        },
+    )
+    command = ControlCommand.model_validate(
+        {
+            "kind": "interrupt_current",
+            "agent_id": "default",
+            "conversation_id": "chat-1",
+            "idempotency_key": "interrupt-legacy",
+            "expected_revision": 1,
+            "target_invocation_id": str(uuid4()),
+        },
+    )
+    receipt = ControlReceipt.model_validate(
+        {
+            "command_id": str(command.command_id),
+            "kind": "interrupt_current",
+            "status": "applied",
+            "agent_id": "default",
+            "conversation_id": "chat-1",
+            "revision": 2,
+        },
+    )
+
+    for contract in (request, command, receipt):
+        payload = contract.model_dump(mode="json")
+        assert contract.chat_id == "chat-1"
+        assert contract.conversation_id == "chat-1"
+        assert payload["chat_id"] == "chat-1"
+        assert "conversation_id" not in payload
 
 
 def test_submission_transition_requires_interrupting_state() -> None:

@@ -31,7 +31,7 @@ vi.mock("../../../api/runtimeProjectionStream", () => ({
 function submission(id: string, position: number): TurnSubmission {
   return {
     agent_id: "default",
-    conversation_id: "chat-1",
+    chat_id: "chat-1",
     priority: 20,
     content: `Message ${id}`,
     artifact_refs: [],
@@ -57,10 +57,10 @@ function projection(
 ): ConversationRuntimeProjection {
   return {
     agent_id: "default",
-    conversation_id: "chat-1",
+    chat_id: "chat-1",
     queue: {
       agent_id: "default",
-      conversation_id: "chat-1",
+      chat_id: "chat-1",
       revision,
       active_submission_id: activeSubmissionId,
       submissions,
@@ -97,7 +97,7 @@ describe("ServerRuntimeQueue", () => {
       kind: "cancel_queued",
       status: "applied",
       agent_id: "default",
-      conversation_id: "chat-1",
+      chat_id: "chat-1",
       revision: 4,
       detail: "",
       recorded_at: "2026-09-28T00:00:01Z",
@@ -109,7 +109,7 @@ describe("ServerRuntimeQueue", () => {
       kind: "reorder",
       status: "applied",
       agent_id: "default",
-      conversation_id: "chat-1",
+      chat_id: "chat-1",
       revision: 4,
       detail: "",
       recorded_at: "2026-09-28T00:00:01Z",

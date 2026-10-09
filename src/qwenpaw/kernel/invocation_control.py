@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Literal
 from uuid import UUID, uuid4
 
-from pydantic import AwareDatetime, Field, model_validator
+from pydantic import AliasChoices, AwareDatetime, Field, model_validator
 
 from .communications import CommunicationContract
 from .models import (
@@ -185,11 +185,24 @@ class SubmissionInputEnvelope(KernelModel):
     payload: JsonObject
 
 
-class TurnSubmissionRequest(KernelModel):
+class _ChatIdentity(KernelModel):
+    """Canonical ChatSpec identity with legacy input compatibility."""
+
+    chat_id: NonEmptyStr = Field(
+        validation_alias=AliasChoices("chat_id", "conversation_id"),
+        description="Owning ChatSpec.id",
+    )
+
+    @property
+    def conversation_id(self) -> str:
+        """Return the deprecated Python alias during migration."""
+        return self.chat_id
+
+
+class TurnSubmissionRequest(_ChatIdentity):
     """Validated input accepted before the server assigns queue order."""
 
     agent_id: NonEmptyStr
-    conversation_id: NonEmptyStr
     priority: int = Field(default=20, ge=0, le=100)
     content: NonEmptyStr
     artifact_refs: tuple[ArtifactRef, ...] = ()
@@ -240,13 +253,12 @@ class TurnSubmission(TurnSubmissionRequest):
         return self
 
 
-class ControlCommand(KernelModel):
+class ControlCommand(_ChatIdentity):
     """One idempotent request to change server-side runtime state."""
 
     command_id: UUID = Field(default_factory=uuid4)
     kind: ControlCommandKind
     agent_id: NonEmptyStr
-    conversation_id: NonEmptyStr
     idempotency_key: NonEmptyStr
     expected_revision: int = Field(ge=0)
     target_submission_id: UUID | None = None
@@ -326,7 +338,7 @@ class ControlCommand(KernelModel):
             )
 
 
-class ControlReceipt(KernelModel):
+class ControlReceipt(_ChatIdentity):
     """Authoritative acknowledgement for submission or control mutation."""
 
     receipt_id: UUID = Field(default_factory=uuid4)
@@ -335,7 +347,6 @@ class ControlReceipt(KernelModel):
     kind: ControlCommandKind | Literal["enqueue"]
     status: ControlCommandStatus
     agent_id: NonEmptyStr
-    conversation_id: NonEmptyStr
     revision: int = Field(ge=1)
     detail: str = ""
     applied_at_safe_point: SteerSafePoint | None = None
@@ -373,17 +384,16 @@ class ControlRecord(KernelModel):
             raise ValueError("control receipt kind mismatch")
         if (
             self.receipt.agent_id != self.command.agent_id
-            or self.receipt.conversation_id != self.command.conversation_id
+            or self.receipt.chat_id != self.command.chat_id
         ):
             raise ValueError("control receipt owner mismatch")
         return self
 
 
-class QueueProjection(KernelModel):
+class QueueProjection(_ChatIdentity):
     """Consistent server-side view of one conversation queue."""
 
     agent_id: NonEmptyStr
-    conversation_id: NonEmptyStr
     revision: int = Field(ge=0)
     active_submission_id: UUID | None = None
     submissions: tuple[TurnSubmission, ...] = ()
@@ -419,12 +429,12 @@ class QueueProjection(KernelModel):
         for item in self.submissions:
             if item.agent_id != self.agent_id:
                 raise ValueError("queue submission agent_id mismatch")
-            if item.conversation_id != self.conversation_id:
-                raise ValueError("queue submission conversation_id mismatch")
+            if item.chat_id != self.chat_id:
+                raise ValueError("queue submission chat_id mismatch")
         return self
 
 
-class ConversationExecutionChain(KernelModel):
+class ConversationExecutionChain(_ChatIdentity):
     """Derived execution state for one correlation-scoped user intent.
 
     ``inactive`` means no Invocation is currently running. It deliberately
@@ -435,7 +445,6 @@ class ConversationExecutionChain(KernelModel):
         default="qwenpaw.conversation-execution-chain.v1",
         alias="schema",
     )
-    conversation_id: NonEmptyStr
     correlation_id: UUID
     state: ConversationExecutionState
     submission_ids: tuple[UUID, ...] = Field(min_length=1)
@@ -479,7 +488,7 @@ class ConversationExecutionChain(KernelModel):
             raise ValueError("outcome state requires an explicit outcome")
         if self.outcome is not None:
             if (
-                self.outcome.conversation_id != self.conversation_id
+                self.outcome.conversation_id != self.chat_id
                 or self.outcome.correlation_id != self.correlation_id
             ):
                 raise ValueError("execution chain outcome ownership mismatch")
@@ -494,11 +503,10 @@ class ConversationExecutionChain(KernelModel):
         return self
 
 
-class ConversationRuntimeProjection(KernelModel):
+class ConversationRuntimeProjection(_ChatIdentity):
     """Recoverable current-state projection for one conversation runtime."""
 
     agent_id: NonEmptyStr
-    conversation_id: NonEmptyStr
     queue: QueueProjection
     interactions: tuple[InteractionRequest, ...] = ()
     execution_chains: tuple[ConversationExecutionChain, ...] = ()
@@ -513,21 +521,21 @@ class ConversationRuntimeProjection(KernelModel):
         """Reject mixed conversation or agent state in one projection."""
         if self.queue.agent_id != self.agent_id:
             raise ValueError("runtime projection queue agent_id mismatch")
-        if self.queue.conversation_id != self.conversation_id:
+        if self.queue.chat_id != self.chat_id:
             raise ValueError(
-                "runtime projection queue conversation_id mismatch",
+                "runtime projection queue chat_id mismatch",
             )
         for interaction in self.interactions:
             if interaction.agent_id != self.agent_id:
                 raise ValueError(
                     "runtime projection interaction agent_id mismatch",
                 )
-            if interaction.conversation_id != self.conversation_id:
+            if interaction.chat_id != self.chat_id:
                 raise ValueError(
-                    "runtime projection interaction conversation_id mismatch",
+                    "runtime projection interaction chat_id mismatch",
                 )
         for chain in self.execution_chains:
-            if chain.conversation_id != self.conversation_id:
+            if chain.chat_id != self.chat_id:
                 raise ValueError(
                     "runtime projection execution chain owner mismatch",
                 )
@@ -544,7 +552,7 @@ class ConversationRuntimeProjection(KernelModel):
                 "runtime projection execution chains must be unique",
             )
         for observation in self.activity.items:
-            if observation.conversation_id != self.conversation_id:
+            if observation.conversation_id != self.chat_id:
                 raise ValueError(
                     "runtime projection activity conversation_id mismatch",
                 )

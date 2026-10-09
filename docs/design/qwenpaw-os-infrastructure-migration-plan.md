@@ -286,6 +286,12 @@ Workbench。前端只能提交命令、订阅事件和展示服务端投影；�
   - [x] Console 以服务端 `ChatSpec.id` 作为 Conversation identity，
     以 Message identity 作为 submission 幂等键；控制面领域模型不再包含
     `session_id`，该字段仅由渠道和旧历史模块自行兼容。
+  - [x] Queue / Steer / Interrupt 控制面的 `TurnSubmission`、`ControlCommand`、
+    `ControlReceipt`、`QueueProjection`、`ConversationExecutionChain` 与
+    `ConversationRuntimeProjection` 公共合同已统一使用
+    `chat_id = ChatSpec.id`。旧 SQLite 行与 dispatcher 继续通过只读 Python
+    `conversation_id` 属性工作；HTTP、SSE 与 Console 新类型只产生 `chat_id`。
+    嵌套 Outcome / Observation 仍是独立事实合同，另按各自迁移切片处理。
   - [x] `InvocationScope.conversation_id` 已冻结为可空的一等 `ChatSpec.id`；Chat
     Adapter 在装配时只写入一次，Memory Host、Interaction 和控制面从固定 Scope
     传播。没有 Conversation 的 transport 保持 `None`，禁止回退到 `session_id`。

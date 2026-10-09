@@ -365,9 +365,12 @@ ChatSpec.id
 - `Invocation.id` 只标识一次 Runtime 尝试，不跨进程复活；
 - Assistant message 是面向人的输出，不是 Runtime 状态机的终止标志。
 
-Action 与 Model Call 的公共 Kernel/HTTP 合同均使用 `chat_id`。持久化适配器仍可
-读取旧 `conversation_id`，SDK 也暂时保留只读 Python 属性，但新 JSON 与插件代码
-不得继续产生第二个 Chat 身份名称。
+Action、Model Call 以及 Queue / Steer / Interrupt 控制面的 Submission、Command、
+Receipt、Queue、Execution Chain 与 Runtime Projection 公共 Kernel/HTTP 合同均使用
+`chat_id`。持久化适配器仍可读取旧 `conversation_id`，SDK 也暂时保留只读 Python
+属性，但新 JSON、SSE、Console 类型与插件代码不得继续产生第二个 Chat 身份名称。
+Outcome 与 Observation 等嵌套权威事实按各自合同独立迁移，不能因为被 Runtime
+Projection 引用就隐式改写其 schema。
 
 Chat Runtime 已按 `correlation_id` 从权威 Submission 与 Interaction 派生
 `ConversationExecutionChain`：同一意图的多次 Submission / Invocation 保持一个执行

@@ -173,9 +173,18 @@ async def test_chat_queue_reorder_cancel_and_idempotent_replay(
         )
 
     assert projection.status_code == 200
-    assert projection.json()["revision"] == 2
+    projection_payload = projection.json()
+    assert projection_payload["chat_id"] == "chat-spec-1"
+    assert "conversation_id" not in projection_payload
+    assert all(
+        item["chat_id"] == "chat-spec-1" and "conversation_id" not in item
+        for item in projection_payload["submissions"]
+    )
+    assert projection_payload["revision"] == 2
     assert reordered.status_code == 200
     assert reordered.json()["status"] == "applied"
+    assert reordered.json()["chat_id"] == "chat-spec-1"
+    assert "conversation_id" not in reordered.json()
     assert replay.json() == reordered.json()
     assert stale_cancel.status_code == 409
     assert cancelled.status_code == 200
@@ -411,7 +420,14 @@ async def test_runtime_api_exposes_inactive_execution_not_completion(
         response = await client.get("/api/chats/chat-spec-1/runtime")
 
     assert response.status_code == 200
-    [chain] = response.json()["execution_chains"]
+    runtime_payload = response.json()
+    assert runtime_payload["chat_id"] == "chat-spec-1"
+    assert "conversation_id" not in runtime_payload
+    assert runtime_payload["queue"]["chat_id"] == "chat-spec-1"
+    assert "conversation_id" not in runtime_payload["queue"]
+    [chain] = runtime_payload["execution_chains"]
+    assert chain["chat_id"] == "chat-spec-1"
+    assert "conversation_id" not in chain
     assert chain["schema"] == "qwenpaw.conversation-execution-chain.v1"
     assert chain["correlation_id"] == str(correlation_id)
     assert chain["state"] == "inactive"

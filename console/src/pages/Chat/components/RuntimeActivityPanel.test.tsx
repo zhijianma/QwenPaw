@@ -23,7 +23,7 @@ function chain(
   state: ConversationExecutionChain["state"] = "running",
 ): ConversationExecutionChain {
   return {
-    conversation_id: "chat-1",
+    chat_id: "chat-1",
     correlation_id: "correlation-1",
     state,
     submission_ids: ["submission-1"],
@@ -65,10 +65,10 @@ function projection(
 ): ConversationRuntimeProjection {
   return {
     agent_id: "default",
-    conversation_id: "chat-1",
+    chat_id: "chat-1",
     queue: {
       agent_id: "default",
-      conversation_id: "chat-1",
+      chat_id: "chat-1",
       revision: 1,
       active_submission_id: "submission-1",
       submissions: [],
