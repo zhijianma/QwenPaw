@@ -32,7 +32,7 @@ def _record(
         usage_unobserved_calls=int(not observed),
         call_count=1,
         agent_id=agent_id,
-        conversation_id=chat_id,
+        chat_id=chat_id,
         turn_id=turn_id,
     )
 
@@ -61,6 +61,8 @@ def test_summary_uses_weighted_context_ratio_and_preserves_peak() -> None:
     assert summary.max_context_usage_ratio == 50
     assert summary.total_calls == 2
     assert len(summary.scopes.turns) == 2
+    assert summary.scopes.chats[0].chat_id == "chat-a"
+    assert summary.scopes.turns[0].chat_id == "chat-a"
 
 
 def test_summary_keeps_unobserved_calls_in_every_scope() -> None:

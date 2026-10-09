@@ -413,7 +413,7 @@ async def test_manager_merges_cutover_without_double_counting(
         20,
         date(2026, 10, 9),
         agent_id="agent-a",
-        conversation_id="chat-1",
+        chat_id="chat-1",
         turn_id=str(record.attempt.invocation_id),
     )
     await manager.record(

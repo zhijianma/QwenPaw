@@ -715,7 +715,7 @@ class TestTokenUsageManagerCore:
 
         assert summary.by_agent['["bot-a"]'].prompt_tokens == 140
         chat = summary.by_chat['["bot-a","chat-1"]']
-        assert chat.conversation_id == "chat-1"
+        assert chat.chat_id == "chat-1"
         assert chat.call_count == 2
         assert set(summary.by_turn) == {
             '["bot-a","chat-1","turn-1"]',
@@ -723,11 +723,11 @@ class TestTokenUsageManagerCore:
         }
         assert [row.agent_id for row in summary.scopes.agents] == ["bot-a"]
         assert [
-            (row.agent_id, row.conversation_id, row.call_count)
+            (row.agent_id, row.chat_id, row.call_count)
             for row in summary.scopes.chats
         ] == [("bot-a", "chat-1", 2)]
         assert {
-            (row.agent_id, row.conversation_id, row.turn_id)
+            (row.agent_id, row.chat_id, row.turn_id)
             for row in summary.scopes.turns
         } == {
             ("bot-a", "chat-1", "turn-1"),
@@ -902,6 +902,7 @@ class TestTokenUsageManagerCore:
                 "provider_id": "prov2",
                 "model": "model-from-key",
                 "agent_id": None,
+                "chat_id": None,
                 "conversation_id": None,
                 "turn_id": None,
             },
@@ -927,6 +928,7 @@ class TestTokenUsageManagerCore:
                 "provider_id": "ollama",
                 "model": "namespace:model:tag",
                 "agent_id": None,
+                "chat_id": None,
                 "conversation_id": None,
                 "turn_id": None,
             },
@@ -961,6 +963,7 @@ class TestTokenUsageManagerCore:
                 "provider_id": "prov2",
                 "model": "model-from-key",
                 "agent_id": None,
+                "chat_id": None,
                 "conversation_id": None,
                 "turn_id": None,
             },

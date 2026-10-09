@@ -21,6 +21,8 @@ export interface TokenUsageRecord {
   usage_unobserved_calls?: number;
   call_count: number;
   agent_id?: string | null;
+  chat_id?: string | null;
+  /** @deprecated Use chat_id. */
   conversation_id?: string | null;
   turn_id?: string | null;
 }
@@ -58,7 +60,9 @@ export interface TokenUsageByAgent extends TokenUsageStats {
 }
 
 export interface TokenUsageByChat extends TokenUsageByAgent {
-  conversation_id: string | null;
+  chat_id?: string | null;
+  /** @deprecated Rolling-upgrade alias; use chat_id. */
+  conversation_id?: string | null;
 }
 
 export interface TokenUsageByTurn extends TokenUsageByChat {

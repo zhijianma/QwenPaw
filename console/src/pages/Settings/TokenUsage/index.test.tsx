@@ -170,7 +170,7 @@ function makeRecord(overrides: Record<string, unknown> = {}) {
     max_context_usage_ratio: 50,
     call_count: 3,
     agent_id: "agent-a",
-    conversation_id: "chat-a",
+    chat_id: "chat-a",
     turn_id: "turn-a",
     ...overrides,
   };
@@ -279,12 +279,12 @@ function makeSummary(
       chats: records.map((record) => ({
         ...stats(record),
         agent_id: record.agent_id,
-        conversation_id: record.conversation_id,
+        chat_id: record.chat_id,
       })),
       turns: records.map((record) => ({
         ...stats(record),
         agent_id: record.agent_id,
-        conversation_id: record.conversation_id,
+        chat_id: record.chat_id,
         turn_id: record.turn_id,
       })),
     },
@@ -296,23 +296,23 @@ function makeSummary(
     ),
     by_chat: Object.fromEntries(
       records.map((record, index) => [
-        `${record.agent_id ?? "none"}:${record.conversation_id}:${index}`,
+        `${record.agent_id ?? "none"}:${record.chat_id}:${index}`,
         {
           ...stats(record),
           agent_id: record.agent_id,
-          conversation_id: record.conversation_id,
+          chat_id: record.chat_id,
         },
       ]),
     ),
     by_turn: Object.fromEntries(
       records.map((record, index) => [
-        `${record.agent_id ?? "none"}:${record.conversation_id}:${
+        `${record.agent_id ?? "none"}:${record.chat_id}:${
           record.turn_id
         }:${index}`,
         {
           ...stats(record),
           agent_id: record.agent_id,
-          conversation_id: record.conversation_id,
+          chat_id: record.chat_id,
           turn_id: record.turn_id,
         },
       ]),
@@ -457,6 +457,14 @@ describe("TokenUsagePage", () => {
 
   it("reads compatibility maps from an older backend", async () => {
     const summary = makeSummary([makeRecord()]);
+    Object.values(summary.by_chat).forEach((row) => {
+      row.conversation_id = row.chat_id;
+      delete row.chat_id;
+    });
+    Object.values(summary.by_turn).forEach((row) => {
+      row.conversation_id = row.chat_id;
+      delete row.chat_id;
+    });
     apiMocks.getTokenUsage.mockResolvedValue({
       ...summary,
       scopes: undefined,
@@ -468,6 +476,7 @@ describe("TokenUsagePage", () => {
     expect(capturedProps.tables.byAgentData).toHaveLength(1);
     expect(capturedProps.tables.byChatData).toHaveLength(1);
     expect(capturedProps.tables.byTurnData).toHaveLength(1);
+    expect(capturedProps.tables.byChatData[0].chat).toBe("chat-a");
   });
 
   it("shows the error state with a retry that refetches", async () => {

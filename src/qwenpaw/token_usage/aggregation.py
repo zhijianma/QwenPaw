@@ -8,7 +8,7 @@ from collections.abc import Sequence
 
 from .models import (
     TokenUsageByAgent,
-    TokenUsageByConversation,
+    TokenUsageByChat,
     TokenUsageByDateModel,
     TokenUsageByModel,
     TokenUsageByTurn,
@@ -133,26 +133,26 @@ def summarize_usage(
         )
         _add_stats(by_agent, record)
 
-        chat_key = _scope_key(record.agent_id, record.conversation_id)
+        chat_key = _scope_key(record.agent_id, record.chat_id)
         by_chat = by_chat_raw.setdefault(
             chat_key,
             _new_stats(
                 agent_id=record.agent_id,
-                conversation_id=record.conversation_id,
+                chat_id=record.chat_id,
             ),
         )
         _add_stats(by_chat, record)
 
         turn_key = _scope_key(
             record.agent_id,
-            record.conversation_id,
+            record.chat_id,
             record.turn_id,
         )
         by_turn = by_turn_raw.setdefault(
             turn_key,
             _new_stats(
                 agent_id=record.agent_id,
-                conversation_id=record.conversation_id,
+                chat_id=record.chat_id,
                 turn_id=record.turn_id,
             ),
         )
@@ -163,7 +163,7 @@ def summarize_usage(
         for key, value in sorted(by_agent_raw.items())
     }
     chats = {
-        key: TokenUsageByConversation.model_validate(value)
+        key: TokenUsageByChat.model_validate(value)
         for key, value in sorted(by_chat_raw.items())
     }
     turns = {

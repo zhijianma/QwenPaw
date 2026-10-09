@@ -90,6 +90,12 @@ of JSON-encoded dictionary keys. The older `by_agent/by_chat/by_turn` maps remai
 read-only compatibility projections during migration and must reconcile exactly
 with the structured rows; clients should not parse their keys.
 
+`chat_id` is the canonical public identity field and always means
+`ChatSpec.id`. The older `conversation_id` response field and Python type name
+remain synchronized, deprecated compatibility aliases during rolling upgrades.
+The legacy SQLite column and `ModelCallAttempt.conversation_id` are translated
+at the projection boundary; they are not a second usage ownership concept.
+
 Every scope exposes cost evidence alongside tokens. `cost_micros` sums only
 Provider-reported monetary micro-units; `cost_unknown_calls` counts calls whose
 price is unavailable. The two fields remain separate, so a partially known

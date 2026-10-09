@@ -106,7 +106,7 @@ def query_legacy_usage(
                     usage_unobserved_calls=0,
                     call_count=call_count,
                     agent_id=record_agent,
-                    conversation_id=record_conversation,
+                    chat_id=record_conversation,
                     turn_id=record_turn,
                 ),
             )
@@ -119,7 +119,7 @@ def _record_identity(record: TokenUsageRecord) -> tuple[str | None, ...]:
     return (
         record.date,
         record.agent_id,
-        record.conversation_id,
+        record.chat_id,
         record.turn_id,
         record.provider_id,
         record.model,
@@ -159,7 +159,7 @@ def merge_cutover_usage(
     compatible: list[TokenUsageRecord] = []
     for record in legacy:
         before_cutover = date.fromisoformat(record.date) < cutover
-        unscoped = record.conversation_id is None and record.turn_id is None
+        unscoped = record.chat_id is None and record.turn_id is None
         if not before_cutover and not unscoped:
             continue
         shadow = shadow_by_identity.get(_record_identity(record))

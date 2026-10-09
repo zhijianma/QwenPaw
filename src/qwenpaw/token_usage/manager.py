@@ -14,6 +14,7 @@ from .buffer import TokenUsageBuffer, _UsageEvent
 from .compatibility import merge_cutover_usage, query_legacy_usage
 from .models import (
     TokenUsageByAgent,
+    TokenUsageByChat,
     TokenUsageByConversation,
     TokenUsageByDateModel,
     TokenUsageByModel,
@@ -42,6 +43,16 @@ def _usage_agent_id() -> str:
             exc_info=True,
         )
         return ""
+
+
+def _canonical_chat_id(
+    chat_id: str | None,
+    conversation_id: str | None,
+) -> str | None:
+    """Resolve ChatSpec.id while accepting the deprecated keyword."""
+    if chat_id and conversation_id and chat_id != conversation_id:
+        raise ValueError("chat_id and conversation_id must identify one Chat")
+    return chat_id or conversation_id
 
 
 class TokenUsageManager:
@@ -138,8 +149,9 @@ class TokenUsageManager:
         cache_eligible_input_tokens: int = 0,
         cache_observed: bool = False,
         agent_id: str | None = None,
-        conversation_id: str | None = None,
+        chat_id: str | None = None,
         turn_id: str | None = None,
+        conversation_id: str | None = None,
     ) -> None:
         """Record token usage for a given provider, model and date.
 
@@ -156,7 +168,10 @@ class TokenUsageManager:
             cache_write_tokens: Number of prompt tokens written to cache.
             cache_eligible_input_tokens: Normalized cache-rate denominator.
             cache_observed: Whether the adapter reports cache usage.
+            chat_id: Owning ChatSpec.id.
+            conversation_id: Deprecated compatibility alias for chat_id.
         """
+        canonical_chat_id = _canonical_chat_id(chat_id, conversation_id)
         observed_at = datetime.now(tz=timezone.utc)
         if at_date is None:
             at_date = observed_at.date()
@@ -177,7 +192,7 @@ class TokenUsageManager:
                 agent_id=(
                     agent_id if agent_id is not None else _usage_agent_id()
                 ),
-                conversation_id=conversation_id or "",
+                conversation_id=canonical_chat_id or "",
                 turn_id=turn_id or "",
             ),
         )
@@ -189,8 +204,10 @@ class TokenUsageManager:
         model_name: Optional[str] = None,
         provider_id: Optional[str] = None,
         agent_id: Optional[str] = None,
-        conversation_id: Optional[str] = None,
+        chat_id: Optional[str] = None,
         turn_id: Optional[str] = None,
+        *,
+        conversation_id: Optional[str] = None,
     ) -> TokenUsageSummary:
         """Get aggregated token usage summary.
 
@@ -199,6 +216,8 @@ class TokenUsageManager:
             end_date: End of date range (inclusive). Default: today.
             model_name: Optional model name filter.
             provider_id: Optional provider ID filter.
+            chat_id: Optional ChatSpec.id filter.
+            conversation_id: Deprecated compatibility alias for chat_id.
 
         Returns:
             TokenUsageSummary with totals, by_model, by_provider, by_date.
@@ -208,13 +227,14 @@ class TokenUsageManager:
         if start_date is None:
             start_date = end_date - timedelta(days=30)
 
+        canonical_chat_id = _canonical_chat_id(chat_id, conversation_id)
         records = await self._get_records(
             start_date,
             end_date,
             model_name,
             provider_id,
             agent_id,
-            conversation_id,
+            canonical_chat_id,
             turn_id,
         )
 
@@ -227,8 +247,10 @@ class TokenUsageManager:
         model_name: Optional[str] = None,
         provider_id: Optional[str] = None,
         agent_id: Optional[str] = None,
-        conversation_id: Optional[str] = None,
+        chat_id: Optional[str] = None,
         turn_id: Optional[str] = None,
+        *,
+        conversation_id: Optional[str] = None,
     ) -> list[TokenUsageRecord]:
         """Get raw token usage records for frontend aggregation.
 
@@ -237,6 +259,8 @@ class TokenUsageManager:
             end_date: End of date range (inclusive). Default: today.
             model_name: Optional model name filter.
             provider_id: Optional provider ID filter.
+            chat_id: Optional ChatSpec.id filter.
+            conversation_id: Deprecated compatibility alias for chat_id.
 
         Returns:
             List of TokenUsageRecord. With agent tracking, a row is
@@ -247,13 +271,14 @@ class TokenUsageManager:
         if start_date is None:
             start_date = end_date - timedelta(days=30)
 
+        canonical_chat_id = _canonical_chat_id(chat_id, conversation_id)
         return await self._get_records(
             start_date,
             end_date,
             model_name,
             provider_id,
             agent_id,
-            conversation_id,
+            canonical_chat_id,
             turn_id,
         )
 
@@ -264,7 +289,7 @@ class TokenUsageManager:
         model_name: Optional[str],
         provider_id: Optional[str],
         agent_id: Optional[str],
-        conversation_id: Optional[str],
+        chat_id: Optional[str],
         turn_id: Optional[str],
     ) -> list[TokenUsageRecord]:
         """Merge pre-cutover compatibility rows with fact projections."""
@@ -276,7 +301,7 @@ class TokenUsageManager:
             model_name=model_name,
             provider_id=provider_id,
             agent_id=agent_id,
-            conversation_id=conversation_id,
+            conversation_id=chat_id,
             turn_id=turn_id,
         )
         cutover, projected = await self._projection.query(
@@ -285,7 +310,7 @@ class TokenUsageManager:
             model_name=model_name,
             provider_id=provider_id,
             agent_id=agent_id,
-            conversation_id=conversation_id,
+            conversation_id=chat_id,
             turn_id=turn_id,
             include_shadow=True,
         )
@@ -308,6 +333,7 @@ def get_token_usage_manager() -> TokenUsageManager:
 
 __all__ = [
     "TokenUsageByAgent",
+    "TokenUsageByChat",
     "TokenUsageByConversation",
     "TokenUsageByDateModel",
     "TokenUsageByModel",

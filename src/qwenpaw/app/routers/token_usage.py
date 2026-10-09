@@ -89,7 +89,7 @@ async def get_token_usage(
         model_name=model,
         provider_id=provider,
         agent_id=agent_id,
-        conversation_id=chat_id,
+        chat_id=chat_id,
         turn_id=turn_id,
     )
 
@@ -144,6 +144,6 @@ async def get_token_usage_details(
         model_name=model,
         provider_id=provider,
         agent_id=agent_id,
-        conversation_id=chat_id,
+        chat_id=chat_id,
         turn_id=turn_id,
     )

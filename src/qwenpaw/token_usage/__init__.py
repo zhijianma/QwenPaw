@@ -5,6 +5,7 @@ from .buffer import _UsageEvent
 from .manager import get_token_usage_manager
 from .models import (
     TokenUsageByAgent,
+    TokenUsageByChat,
     TokenUsageByConversation,
     TokenUsageByDateModel,
     TokenUsageByModel,
@@ -25,6 +26,7 @@ from .turn_usage import (
 
 __all__ = [
     "TokenUsageByAgent",
+    "TokenUsageByChat",
     "TokenUsageByConversation",
     "TokenUsageByDateModel",
     "TokenUsageByModel",

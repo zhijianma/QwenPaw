@@ -5,7 +5,17 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+
+def _resolve_chat_identity(
+    chat_id: str | None,
+    conversation_id: str | None,
+) -> str | None:
+    """Resolve the canonical ChatSpec identity from a legacy alias."""
+    if chat_id and conversation_id and chat_id != conversation_id:
+        raise ValueError("chat_id and conversation_id must identify one Chat")
+    return chat_id or conversation_id
 
 
 class TokenUsageStats(BaseModel):
@@ -44,14 +54,30 @@ class TokenUsageRecord(TokenUsageStats):
             "Owning agent ID; null if the stored row predates agent tracking"
         ),
     )
-    conversation_id: Optional[str] = Field(
+    chat_id: Optional[str] = Field(
         None,
         description="Owning ChatSpec.id; null for legacy or unscoped calls",
+    )
+    conversation_id: Optional[str] = Field(
+        None,
+        json_schema_extra={"deprecated": True},
+        description="Deprecated compatibility alias for chat_id",
     )
     turn_id: Optional[str] = Field(
         None,
         description="Owning OS invocation; null for legacy calls",
     )
+
+    @model_validator(mode="after")
+    def normalize_chat_identity(self) -> "TokenUsageRecord":
+        """Keep the deprecated response alias consistent during cutover."""
+        chat_id = _resolve_chat_identity(
+            self.chat_id,
+            self.conversation_id,
+        )
+        self.chat_id = chat_id
+        self.conversation_id = chat_id
+        return self
 
 
 class TokenUsageByModel(TokenUsageStats):
@@ -74,13 +100,32 @@ class TokenUsageByAgent(TokenUsageStats):
     agent_id: Optional[str] = None
 
 
-class TokenUsageByConversation(TokenUsageByAgent):
+class TokenUsageByChat(TokenUsageByAgent):
     """Aggregate owned by one ChatSpec within an Agent namespace."""
 
-    conversation_id: Optional[str] = None
+    chat_id: Optional[str] = None
+    conversation_id: Optional[str] = Field(
+        None,
+        json_schema_extra={"deprecated": True},
+    )
+
+    @model_validator(mode="after")
+    def normalize_chat_identity(self) -> "TokenUsageByChat":
+        """Keep the deprecated response alias consistent during cutover."""
+        chat_id = _resolve_chat_identity(
+            self.chat_id,
+            self.conversation_id,
+        )
+        self.chat_id = chat_id
+        self.conversation_id = chat_id
+        return self
 
 
-class TokenUsageByTurn(TokenUsageByConversation):
+# Source compatibility for extensions importing the pre-ChatSpec type name.
+TokenUsageByConversation = TokenUsageByChat
+
+
+class TokenUsageByTurn(TokenUsageByChat):
     """Aggregate owned by one OS turn/invocation."""
 
     turn_id: Optional[str] = None
@@ -90,7 +135,7 @@ class TokenUsageScopeRows(BaseModel):
     """Structured ownership dimensions without encoded dictionary keys."""
 
     agents: list[TokenUsageByAgent] = Field(default_factory=list)
-    chats: list[TokenUsageByConversation] = Field(default_factory=list)
+    chats: list[TokenUsageByChat] = Field(default_factory=list)
     turns: list[TokenUsageByTurn] = Field(default_factory=list)
 
 
@@ -135,7 +180,7 @@ class TokenUsageSummary(BaseModel):
         default_factory=dict,
         description="Compatibility map; prefer scopes.agents",
     )
-    by_chat: dict[str, TokenUsageByConversation] = Field(
+    by_chat: dict[str, TokenUsageByChat] = Field(
         default_factory=dict,
         description="Compatibility map; prefer scopes.chats",
     )
@@ -147,6 +192,7 @@ class TokenUsageSummary(BaseModel):
 
 __all__ = [
     "TokenUsageByAgent",
+    "TokenUsageByChat",
     "TokenUsageByConversation",
     "TokenUsageByDateModel",
     "TokenUsageByModel",

@@ -26,6 +26,13 @@ import { useTokenTypeConfig } from "./hooks/useTokenTypeConfig";
 import { buildByDateRows } from "./tokenUsageRows";
 import styles from "./index.module.less";
 
+function usageChatId(stats: {
+  chat_id?: string | null;
+  conversation_id?: string | null;
+}): string | null {
+  return stats.chat_id ?? stats.conversation_id ?? null;
+}
+
 function TokenUsagePage() {
   const { t } = useTranslation();
   const { message } = useAppMessage();
@@ -228,17 +235,18 @@ function TokenUsagePage() {
       aggregatedData.scopes?.chats ?? Object.values(aggregatedData.by_chat);
     return rows
       .map((stats) => {
+        const chatId = usageChatId(stats);
         const profile = stats.agent_id
           ? agentsById.get(stats.agent_id)
           : undefined;
         return {
-          key: JSON.stringify([stats.agent_id, stats.conversation_id]),
+          key: JSON.stringify([stats.agent_id, chatId]),
           agent: !stats.agent_id
             ? t("tokenUsage.unattributed")
             : profile
             ? getAgentDisplayName(profile, t)
             : stats.agent_id,
-          chat: stats.conversation_id || t("tokenUsage.unattributed"),
+          chat: chatId || t("tokenUsage.unattributed"),
           prompt_tokens: stats.prompt_tokens,
           completion_tokens: stats.completion_tokens,
           cache_read_tokens: stats.cache_read_tokens,
@@ -266,21 +274,18 @@ function TokenUsagePage() {
       aggregatedData.scopes?.turns ?? Object.values(aggregatedData.by_turn);
     return rows
       .map((stats) => {
+        const chatId = usageChatId(stats);
         const profile = stats.agent_id
           ? agentsById.get(stats.agent_id)
           : undefined;
         return {
-          key: JSON.stringify([
-            stats.agent_id,
-            stats.conversation_id,
-            stats.turn_id,
-          ]),
+          key: JSON.stringify([stats.agent_id, chatId, stats.turn_id]),
           agent: !stats.agent_id
             ? t("tokenUsage.unattributed")
             : profile
             ? getAgentDisplayName(profile, t)
             : stats.agent_id,
-          chat: stats.conversation_id || t("tokenUsage.unattributed"),
+          chat: chatId || t("tokenUsage.unattributed"),
           turn: stats.turn_id || t("tokenUsage.unattributed"),
           prompt_tokens: stats.prompt_tokens,
           completion_tokens: stats.completion_tokens,

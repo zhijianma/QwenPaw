@@ -390,7 +390,7 @@ class LiteUsageProjection:
                 max_context_usage_ratio=max_context_ratio,
                 call_count=(current.call_count if current else 0) + 1,
                 agent_id=row["agent_id"],
-                conversation_id=row["conversation_id"],
+                chat_id=row["conversation_id"],
                 turn_id=str(row["turn_id"]),
             )
         return cutover, list(grouped.values())
