@@ -82,6 +82,11 @@ def test_api_token_usage_summary_and_details_contract(app_server) -> None:
     assert body["total_cost_micros"] >= 0
     assert body["cost_unknown_calls"] >= 0
     assert isinstance(body.get("by_date"), dict)
+    scopes = body.get("scopes")
+    assert isinstance(scopes, dict)
+    assert isinstance(scopes.get("agents"), list)
+    assert isinstance(scopes.get("chats"), list)
+    assert isinstance(scopes.get("turns"), list)
 
     details = app_server.api_request("GET", "/api/token-usage/details")
     assert details.status_code == 200, app_server.logs_tail()

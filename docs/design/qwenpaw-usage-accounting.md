@@ -68,6 +68,12 @@ All scopes are filters over the same facts:
 - turn: `agent_id + ChatSpec.id + invocation_id`;
 - date/model: UTC `completed_at` plus actual Provider/Model from the Attempt.
 
+The Summary API exposes ownership aggregates as structured
+`scopes.agents/chats/turns` rows. Identity is carried by explicit fields instead
+of JSON-encoded dictionary keys. The older `by_agent/by_chat/by_turn` maps remain
+read-only compatibility projections during migration and must reconcile exactly
+with the structured rows; clients should not parse their keys.
+
 Every scope exposes cost evidence alongside tokens. `cost_micros` sums only
 Provider-reported monetary micro-units; `cost_unknown_calls` counts calls whose
 price is unavailable. The two fields remain separate, so a partially known

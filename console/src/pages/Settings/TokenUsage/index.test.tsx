@@ -268,6 +268,23 @@ function makeSummary(records: ReturnType<typeof makeRecord>[]) {
       ]),
     ),
     by_date_model: {},
+    scopes: {
+      agents: records.map((record) => ({
+        ...stats(record),
+        agent_id: record.agent_id,
+      })),
+      chats: records.map((record) => ({
+        ...stats(record),
+        agent_id: record.agent_id,
+        conversation_id: record.conversation_id,
+      })),
+      turns: records.map((record) => ({
+        ...stats(record),
+        agent_id: record.agent_id,
+        conversation_id: record.conversation_id,
+        turn_id: record.turn_id,
+      })),
+    },
     by_agent: Object.fromEntries(
       records.map((record, index) => [
         `${record.agent_id ?? "none"}:${index}`,
@@ -401,6 +418,36 @@ describe("TokenUsagePage", () => {
     render(<TokenUsagePage />);
     await waitFor(() => expect(capturedProps.tables).toBeTruthy());
     expect(capturedProps.tables.byAgentData[0].agent).toBe("unknown-agent");
+  });
+
+  it("prefers structured scope rows over compatibility maps", async () => {
+    const summary = makeSummary([makeRecord()]);
+    summary.by_agent = {};
+    summary.by_chat = {};
+    summary.by_turn = {};
+    apiMocks.getTokenUsage.mockResolvedValue(summary);
+
+    render(<TokenUsagePage />);
+    await waitFor(() => expect(capturedProps.tables).toBeTruthy());
+
+    expect(capturedProps.tables.byAgentData).toHaveLength(1);
+    expect(capturedProps.tables.byChatData).toHaveLength(1);
+    expect(capturedProps.tables.byTurnData).toHaveLength(1);
+  });
+
+  it("reads compatibility maps from an older backend", async () => {
+    const summary = makeSummary([makeRecord()]);
+    apiMocks.getTokenUsage.mockResolvedValue({
+      ...summary,
+      scopes: undefined,
+    });
+
+    render(<TokenUsagePage />);
+    await waitFor(() => expect(capturedProps.tables).toBeTruthy());
+
+    expect(capturedProps.tables.byAgentData).toHaveLength(1);
+    expect(capturedProps.tables.byChatData).toHaveLength(1);
+    expect(capturedProps.tables.byTurnData).toHaveLength(1);
   });
 
   it("shows the error state with a retry that refetches", async () => {

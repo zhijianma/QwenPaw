@@ -1029,6 +1029,17 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   Retry/Fallback、ACP、全部 Channel、Hook 与 Goal 相关联合定点回归
   `2992 passed, 1 skipped`；Task 页面没有改动。
 
+### 2026-10-09 Token Usage 结构化 Scope API
+
+- Summary 新增 `scopes.agents/chats/turns`，Agent、`ChatSpec.id` 与 Invocation turn
+  均为显式字段，不再要求二次开发者理解或解析 JSON tuple key。
+- `by_agent/by_chat/by_turn` 暂作为同一聚合结果的只读兼容投影；Console 优先读取
+  结构化 rows，并在滚动升级连接旧后端时回退 map，不建立第二套统计逻辑。
+- Token/Projection/Agent/API 后端定点回归 `131 passed`，Console Token Usage 与
+  Chat Turn Usage 定点回归 `81 passed`，真实 API 子进程契约 `1 passed`；Python
+  门禁、前端 ESLint/Prettier 及完整 TypeScript typecheck 通过。
+- Task 页面及非必要 Task 后端未修改。
+
 ### 2026-10-09 Model Transport Capability
 
 - Kernel 新增 Provider-neutral `ModelTransportContract`、Host-keyed HMAC Resume Evidence 与

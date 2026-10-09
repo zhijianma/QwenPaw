@@ -61,6 +61,12 @@ export interface TokenUsageByTurn extends TokenUsageByChat {
   turn_id: string | null;
 }
 
+export interface TokenUsageScopeRows {
+  agents: TokenUsageByAgent[];
+  chats: TokenUsageByChat[];
+  turns: TokenUsageByTurn[];
+}
+
 export interface TokenUsageSummary {
   total_prompt_tokens: number;
   total_completion_tokens: number;
@@ -81,7 +87,12 @@ export interface TokenUsageSummary {
   by_model: Record<string, TokenUsageByModel>;
   by_date: Record<string, TokenUsageStats>;
   by_date_model: Record<string, Record<string, TokenUsageByModel>>;
+  /** Structured ownership rows. Optional while rolling upgrades are supported. */
+  scopes?: TokenUsageScopeRows;
+  /** @deprecated Prefer scopes.agents. */
   by_agent: Record<string, TokenUsageByAgent>;
+  /** @deprecated Prefer scopes.chats. */
   by_chat: Record<string, TokenUsageByChat>;
+  /** @deprecated Prefer scopes.turns. */
   by_turn: Record<string, TokenUsageByTurn>;
 }

@@ -185,9 +185,11 @@ function TokenUsagePage() {
   );
 
   const byAgentData = useMemo(() => {
-    if (!aggregatedData?.by_agent) return [];
-    return Object.entries(aggregatedData.by_agent)
-      .map(([key, stats]) => {
+    if (!aggregatedData) return [];
+    const rows =
+      aggregatedData.scopes?.agents ?? Object.values(aggregatedData.by_agent);
+    return rows
+      .map((stats) => {
         const agentId = stats.agent_id;
         const profile = agentId ? agentsById.get(agentId) : undefined;
         const agent = !agentId
@@ -196,7 +198,7 @@ function TokenUsagePage() {
           ? getAgentDisplayName(profile, t)
           : agentId;
         return {
-          key,
+          key: JSON.stringify([agentId]),
           agent,
           prompt_tokens: stats.prompt_tokens,
           completion_tokens: stats.completion_tokens,
@@ -216,17 +218,19 @@ function TokenUsagePage() {
           b.completion_tokens -
           (a.prompt_tokens + a.completion_tokens),
       );
-  }, [aggregatedData?.by_agent, agentsById, t]);
+  }, [aggregatedData, agentsById, t]);
 
   const byChatData = useMemo(() => {
-    if (!aggregatedData?.by_chat) return [];
-    return Object.entries(aggregatedData.by_chat)
-      .map(([key, stats]) => {
+    if (!aggregatedData) return [];
+    const rows =
+      aggregatedData.scopes?.chats ?? Object.values(aggregatedData.by_chat);
+    return rows
+      .map((stats) => {
         const profile = stats.agent_id
           ? agentsById.get(stats.agent_id)
           : undefined;
         return {
-          key,
+          key: JSON.stringify([stats.agent_id, stats.conversation_id]),
           agent: !stats.agent_id
             ? t("tokenUsage.unattributed")
             : profile
@@ -251,17 +255,23 @@ function TokenUsagePage() {
           b.completion_tokens -
           (a.prompt_tokens + a.completion_tokens),
       );
-  }, [aggregatedData?.by_chat, agentsById, t]);
+  }, [aggregatedData, agentsById, t]);
 
   const byTurnData = useMemo(() => {
-    if (!aggregatedData?.by_turn) return [];
-    return Object.entries(aggregatedData.by_turn)
-      .map(([key, stats]) => {
+    if (!aggregatedData) return [];
+    const rows =
+      aggregatedData.scopes?.turns ?? Object.values(aggregatedData.by_turn);
+    return rows
+      .map((stats) => {
         const profile = stats.agent_id
           ? agentsById.get(stats.agent_id)
           : undefined;
         return {
-          key,
+          key: JSON.stringify([
+            stats.agent_id,
+            stats.conversation_id,
+            stats.turn_id,
+          ]),
           agent: !stats.agent_id
             ? t("tokenUsage.unattributed")
             : profile
@@ -287,7 +297,7 @@ function TokenUsagePage() {
           b.completion_tokens -
           (a.prompt_tokens + a.completion_tokens),
       );
-  }, [aggregatedData?.by_turn, agentsById, t]);
+  }, [aggregatedData, agentsById, t]);
 
   const tablesEmpty = byModelData.length === 0 && byDateData.length === 0;
 

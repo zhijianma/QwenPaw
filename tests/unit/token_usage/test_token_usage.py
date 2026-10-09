@@ -501,6 +501,9 @@ class TestTokenUsageModels:
         assert summary.by_model == {}
         assert summary.by_date == {}
         assert summary.by_date_model == {}
+        assert summary.scopes.agents == []
+        assert summary.scopes.chats == []
+        assert summary.scopes.turns == []
         assert summary.by_agent == {}
         assert summary.by_chat == {}
         assert summary.by_turn == {}
@@ -717,6 +720,27 @@ class TestTokenUsageManagerCore:
             '["bot-a","chat-1","turn-1"]',
             '["bot-a","chat-1","turn-2"]',
         }
+        assert [row.agent_id for row in summary.scopes.agents] == ["bot-a"]
+        assert [
+            (row.agent_id, row.conversation_id, row.call_count)
+            for row in summary.scopes.chats
+        ] == [("bot-a", "chat-1", 2)]
+        assert {
+            (row.agent_id, row.conversation_id, row.turn_id)
+            for row in summary.scopes.turns
+        } == {
+            ("bot-a", "chat-1", "turn-1"),
+            ("bot-a", "chat-1", "turn-2"),
+        }
+        assert [row.model_dump() for row in summary.scopes.agents] == [
+            row.model_dump() for row in summary.by_agent.values()
+        ]
+        assert [row.model_dump() for row in summary.scopes.chats] == [
+            row.model_dump() for row in summary.by_chat.values()
+        ]
+        assert [row.model_dump() for row in summary.scopes.turns] == [
+            row.model_dump() for row in summary.by_turn.values()
+        ]
         by_model = summary.by_date_model["2026-04-24"]
         assert by_model["openai:gpt-4"].prompt_tokens == 140
 

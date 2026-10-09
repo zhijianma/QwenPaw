@@ -114,6 +114,14 @@ class TokenUsageByTurn(TokenUsageByConversation):
     turn_id: Optional[str] = None
 
 
+class TokenUsageScopeRows(BaseModel):
+    """Structured ownership dimensions without encoded dictionary keys."""
+
+    agents: list[TokenUsageByAgent] = Field(default_factory=list)
+    chats: list[TokenUsageByConversation] = Field(default_factory=list)
+    turns: list[TokenUsageByTurn] = Field(default_factory=list)
+
+
 class TokenUsageSummary(BaseModel):
     """Aggregated token usage summary returned by get_summary()."""
 
@@ -145,17 +153,21 @@ class TokenUsageSummary(BaseModel):
         default_factory=dict,
         description="Per date, then provider:model aggregation",
     )
+    scopes: TokenUsageScopeRows = Field(
+        default_factory=TokenUsageScopeRows,
+        description="Structured Agent, ChatSpec, and Invocation aggregates",
+    )
     by_agent: dict[str, TokenUsageByAgent] = Field(
         default_factory=dict,
-        description="Per Agent aggregation; legacy rows are unattributed",
+        description="Compatibility map; prefer scopes.agents",
     )
     by_chat: dict[str, TokenUsageByConversation] = Field(
         default_factory=dict,
-        description="Per Agent and ChatSpec aggregation",
+        description="Compatibility map; prefer scopes.chats",
     )
     by_turn: dict[str, TokenUsageByTurn] = Field(
         default_factory=dict,
-        description="Per Agent, ChatSpec, and turn aggregation",
+        description="Compatibility map; prefer scopes.turns",
     )
 
 
@@ -606,6 +618,18 @@ class TokenUsageManager:
             )
             _add_stats(bt, r)
 
+        by_agent = {
+            key: TokenUsageByAgent.model_validate(value)
+            for key, value in sorted(by_agent_raw.items())
+        }
+        by_chat = {
+            key: TokenUsageByConversation.model_validate(value)
+            for key, value in sorted(by_chat_raw.items())
+        }
+        by_turn = {
+            key: TokenUsageByTurn.model_validate(value)
+            for key, value in sorted(by_turn_raw.items())
+        }
         return TokenUsageSummary(
             total_prompt_tokens=total_stats["prompt_tokens"],
             total_completion_tokens=total_stats["completion_tokens"],
@@ -646,18 +670,14 @@ class TokenUsageManager:
                 }
                 for date_key, models in sorted(by_date_model_raw.items())
             },
-            by_agent={
-                k: TokenUsageByAgent.model_validate(v)
-                for k, v in sorted(by_agent_raw.items())
-            },
-            by_chat={
-                k: TokenUsageByConversation.model_validate(v)
-                for k, v in sorted(by_chat_raw.items())
-            },
-            by_turn={
-                k: TokenUsageByTurn.model_validate(v)
-                for k, v in sorted(by_turn_raw.items())
-            },
+            scopes=TokenUsageScopeRows(
+                agents=list(by_agent.values()),
+                chats=list(by_chat.values()),
+                turns=list(by_turn.values()),
+            ),
+            by_agent=by_agent,
+            by_chat=by_chat,
+            by_turn=by_turn,
         )
 
     async def get_details(
