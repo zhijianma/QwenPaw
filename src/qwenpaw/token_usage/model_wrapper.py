@@ -13,6 +13,7 @@ from agentscope.model._model_usage import ChatUsage
 
 from ..kernel.models import (
     ModelCallAttempt,
+    ModelCallResult,
     ModelCallStatus,
     ModelFailureClass,
     ModelOutputBoundary,
@@ -203,6 +204,8 @@ class TokenRecordingModelWrapper(ChatModelBase):
         self,
         facts: _ModelUsageFacts | None,
         attempt: ModelCallAttempt | None = None,
+        *,
+        record_legacy: bool = True,
     ) -> None:
         """Update compatibility projections after durable completion."""
         if facts is None or (
@@ -217,29 +220,31 @@ class TokenRecordingModelWrapper(ChatModelBase):
             else ""
         )
         turn_id = str(attempt.invocation_id) if attempt is not None else ""
-        event = _UsageEvent(
-            provider_id=self._provider_id,
-            model_name=self.model,
-            prompt_tokens=facts.input_tokens,
-            completion_tokens=facts.output_tokens,
-            date_str=observed_at.date().isoformat(),
-            now_iso=observed_at.isoformat(
-                timespec="seconds",
-            ),
-            cache_read_tokens=facts.cache_read_tokens,
-            cache_write_tokens=facts.cache_write_tokens,
-            cache_eligible_input_tokens=(facts.cache_eligible_input_tokens),
-            cache_observed=facts.cache_observed,
-            agent_id=(
-                attempt.agent_id
-                if attempt is not None and attempt.agent_id
-                else _usage_agent_id()
-            ),
-            conversation_id=conversation_id,
-            turn_id=turn_id,
-        )
-        # Fire-and-forget: synchronous put_nowait, ~100 ns, no await needed.
-        get_token_usage_manager().enqueue(event)
+        if record_legacy:
+            event = _UsageEvent(
+                provider_id=self._provider_id,
+                model_name=self.model,
+                prompt_tokens=facts.input_tokens,
+                completion_tokens=facts.output_tokens,
+                date_str=observed_at.date().isoformat(),
+                now_iso=observed_at.isoformat(
+                    timespec="seconds",
+                ),
+                cache_read_tokens=facts.cache_read_tokens,
+                cache_write_tokens=facts.cache_write_tokens,
+                cache_eligible_input_tokens=(
+                    facts.cache_eligible_input_tokens
+                ),
+                cache_observed=facts.cache_observed,
+                agent_id=(
+                    attempt.agent_id
+                    if attempt is not None and attempt.agent_id
+                    else _usage_agent_id()
+                ),
+                conversation_id=conversation_id,
+                turn_id=turn_id,
+            )
+            get_token_usage_manager().enqueue(event)
 
         usage_data = {
             "provider_id": self._provider_id,
@@ -339,7 +344,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
         error: BaseException | None = None,
         emitted_content: bool = False,
         output_boundary: ModelOutputBoundary | None = None,
-    ) -> None:
+    ) -> ModelCallResult | None:
         """Record a content-free result after one concrete attempt."""
         from ..runtime.model_calls import complete_current_model_attempt
 
@@ -367,7 +372,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
                 retryable = is_retryable_same_model(error)
             else:
                 error_kind = type(error).__name__.lower()
-        await complete_current_model_attempt(
+        return await complete_current_model_attempt(
             attempt,
             status=status,
             error_kind=error_kind,
@@ -410,7 +415,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
         """Charge usage, persist the fact, then update legacy projections."""
         facts = self._normalize_usage(usage)
         await self._record_task_budget(usage)
-        await self._complete_model_attempt(
+        result = await self._complete_model_attempt(
             attempt,
             status=status,
             usage=facts,
@@ -418,7 +423,17 @@ class TokenRecordingModelWrapper(ChatModelBase):
             emitted_content=emitted_content,
             output_boundary=output_boundary,
         )
-        self._record_usage_facts(facts, attempt)
+        record_legacy = True
+        if attempt is not None and result is not None and facts is not None:
+            record_legacy = await get_token_usage_manager().project_model_call(
+                attempt,
+                result,
+            )
+        self._record_usage_facts(
+            facts,
+            attempt,
+            record_legacy=record_legacy,
+        )
 
     @classmethod
     def pop_usage_for_session(cls, session_id: str) -> dict[str, Any] | None:

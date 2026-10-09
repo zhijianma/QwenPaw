@@ -1130,10 +1130,12 @@ Cron 不形成独立审批或产物事实源。
       日期、实际 Provider/Model、日期×模型、Agent、`ChatSpec.id` 和 Invocation turn
       聚合。Console 不再下载明细并维护第二套页面私有聚合口径；`/details` 仅保留为
       明细查询与兼容 API。不同 Agent 下相同 Chat/Turn ID 使用复合 scope key 隔离。
-    - [ ] Token Usage Summary 的数据源仍需从可丢弃 JSON 队列切换为 Model Call
-      usage 事实的可重建索引。切换必须先冻结 legacy cutover watermark，以 attempt ID
-      幂等去重，并提供 reconciliation/rebuild；旧聚合键只能作为水位前的兼容数据，
-      不能与新事实按日期直接相加。
+    - [x] Token Usage Summary 已从单一 JSON 数据源切换为 Model Call usage 的可重建
+      Lite 投影。SQLite 只保存内容无关的派生字段，以 `attempt_id` 幂等；应用启动扫描
+      全部已配置 Agent Workspace 并原子 rebuild。首次初始化冻结下一 UTC 日为 legacy
+      cutover：新代码在水位前双写作 shadow，水位后停止有归属的 JSON 写入；查询过滤
+      水位后的有归属 legacy row 后再合并投影，因此不按日期直接相加或双算。诊断 API
+      返回 cutover、索引量、最后 rebuild 时间与条数，不暴露 Prompt 或消息。
     - [ ] Workstation / Hub 的健康度、成本和数据边界动态路由仍待实现。Lite 当前
       继续使用确定性主模型与显式 fallback 顺序，不静默切换。
   - [ ] Run Completion、Verification 与业务 Outcome 分层；当前已阻止 Invocation

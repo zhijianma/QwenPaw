@@ -1,6 +1,7 @@
 # QwenPaw Usage Accounting Contract
 
-> Status: incremental migration; Chat-first Lite scope. Task UI is excluded.
+> Status: Lite fact projection implemented; Chat-first scope. Task UI is
+> excluded.
 
 ## 1. Decision
 
@@ -47,7 +48,8 @@ For every provider attempt:
 
 This ordering prevents a failed durable write from creating a phantom call in
 the legacy statistics file. A projection failure must not mutate the immutable
-fact. Reconciliation can replay facts later.
+fact or create an aggregated fallback row that cannot later be deduplicated.
+Reconciliation replays the fact later.
 
 ## 4. Query contract
 
@@ -69,17 +71,21 @@ The existing JSON file contains already-aggregated rows and has no attempt ID.
 It cannot be safely merged with Model Call facts by date because overlap would
 double count. The read switch therefore requires all of the following:
 
-1. write a one-time UTC cutover watermark and immutable source version;
-2. keep legacy rows strictly before that watermark;
-3. index Model Call results at or after the watermark by unique `attempt_id`;
-4. make the index disposable and rebuildable from registered Agent workspaces;
-5. expose reconciliation state (`watermark`, indexed count, last rebuild,
-   errors) without message or prompt content;
-6. compare old and new totals during a bounded shadow-read period before the
-   API changes source.
+1. write the next UTC date as a one-time immutable cutover watermark;
+2. keep attributed legacy rows strictly before that watermark;
+3. index Model Call results by unique `attempt_id` and query them at or after
+   the watermark;
+4. rebuild the disposable index from all configured Agent workspaces at app
+   startup;
+5. expose cutover, indexed count and last rebuild state without message or
+   prompt content;
+6. dual-write before the cutover as a bounded structural shadow period; stop
+   attributed JSON writes after it. Unscoped compatibility writes remain in
+   JSON and cannot overlap a Model Call attempt.
 
-No direct date-level addition is allowed. Records that predate Agent, Chat, or
-Turn ownership remain explicitly unattributed.
+No direct date-level addition is allowed. The query removes attributed JSON
+rows on and after cutover before adding projected rows. Records that predate
+Agent, Chat, or Turn ownership remain explicitly unattributed.
 
 ## 6. Lite acceptance
 
@@ -91,4 +97,3 @@ Turn ownership remain explicitly unattributed.
 - Summary values remain stable across restart and projection rebuild.
 - Global, Agent, Chat and Turn totals reconcile to the same attempt set.
 - Task pages and Task-specific frontend work remain out of scope.
-

@@ -572,15 +572,17 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
   retry、流式成功/取消/失败和 usage，并提供 Chat-owned 只读查询。Route 区分逻辑
   请求与实际 Provider/Model，Attempt 记录 Adapter/Formatter 身份和版本；缺失价格
   以 `cost_unknown` 留证，不折算为零。
-- [ ] Token 统计收敛到同一模型调用事实，不由前端或消息历史反推。
+- [x] Token 统计收敛到同一模型调用事实，不由前端或消息历史反推。
   - [x] 新 Model Call Attempt 已保存
     `agent_id → ChatSpec.id → invocation(turn) → provider/model` 完整归属；Result 已保存
     Provider 报告的 input/output、cache 与 cost，且先持久化事实，再更新旧 JSON 兼容投影。
   - [x] 日期按 UTC、模型按实际调用路由；Provider usage 标记为
     `provider_reported`，Chat 上下文估算标记为 `local_estimate`，两种口径不混合。
-  - [ ] `/api/token-usage` 当前仍从旧 JSON 聚合文件读取。完成可重建的 Model Call usage
-    索引、历史切换水位与 attempt 级去重后才能切换查询；在此之前 JSON 只定义为兼容投影，
-    不得宣称是权威事实源。旧聚合记录继续可读，但不伪造历史上不存在的 chat/turn 归属。
+  - [x] Lite 使用可删除 SQLite 投影按 `attempt_id` 幂等索引 Model Call usage；启动时
+    从全部已配置 Agent Workspace 重建。首次初始化把下一 UTC 日设为不可变 cutover：
+    水位前读取 legacy JSON，水位后有 Chat/Turn 归属的调用只读事实投影，无 Attempt
+    的兼容调用仍可读取。`/api/token-usage/projection` 公开无内容的水位、索引量和最后
+    rebuild 状态。旧聚合记录继续可读，但不伪造历史上不存在的 chat/turn 归属。
 - [x] 将 Chat 运行模型从隐含的一问一答升级为 Conversation Execution Chain：
   `Submission` 是输入，`Invocation` 是一次运行尝试，`correlation_id` 贯穿同一意图
   的多次等待与恢复；短问答继续使用单 Invocation 快速路径。

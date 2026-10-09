@@ -344,8 +344,32 @@ async def lifespan(  # pylint: disable=too-many-statements,too-many-branches
     # Start token usage manager background tasks
     logger.debug("Starting TokenUsageManager background tasks...")
     from ..token_usage import get_token_usage_manager
+    from ..runtime.model_calls import lite_model_call_store
 
     token_usage_manager = get_token_usage_manager()
+    try:
+        config = load_config(get_config_path())
+        workspace_dirs = {
+            Path(profile.workspace_dir).expanduser()
+            for profile in config.agents.profiles.values()
+        }
+        scanned = await asyncio.gather(
+            *(
+                lite_model_call_store(workspace_dir).scan_all()
+                for workspace_dir in workspace_dirs
+            ),
+        )
+        records = [record for batch in scanned for record in batch]
+        rebuilt = await token_usage_manager.rebuild_projection(records)
+        logger.debug(
+            "Rebuilt token usage projection from %s Model Calls",
+            rebuilt,
+        )
+    except Exception:
+        logger.warning(
+            "Token usage projection rebuild skipped; keeping prior index",
+            exc_info=True,
+        )
     token_usage_manager.start(flush_interval=10)
 
     # Expose to endpoints (must be set before first request arrives).

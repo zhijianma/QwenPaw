@@ -194,6 +194,38 @@ async def test_session_classifies_retry_and_fallback_attempts(
 
 
 @pytest.mark.asyncio
+async def test_store_scans_all_chat_owners_for_projection_rebuild(
+    tmp_path: Path,
+) -> None:
+    store = lite_model_call_store(tmp_path)
+    first_scope = _scope(tmp_path)
+    second_scope = _scope(tmp_path).model_copy(
+        update={
+            "invocation_id": uuid4(),
+            "conversation_id": "chat-2",
+            "session_id": "chat-2",
+        },
+    )
+    for scope in (first_scope, second_scope):
+        session = _session(scope, _manifest(scope), store)
+        attempt = await _begin_attempt(session)
+        await session.complete(
+            attempt,
+            status=ModelCallStatus.SUCCEEDED,
+            input_tokens=10,
+            output_tokens=2,
+            usage_measurement="provider_reported",
+        )
+
+    records = await store.scan_all()
+
+    assert {record.attempt.conversation_id for record in records} == {
+        "chat-1",
+        "chat-2",
+    }
+
+
+@pytest.mark.asyncio
 async def test_overflow_retry_has_explicit_first_route_reason(
     tmp_path: Path,
 ) -> None:
@@ -293,6 +325,12 @@ async def test_token_wrapper_persists_complete_provider_usage(
     monkeypatch.setattr(
         "qwenpaw.token_usage.model_wrapper._cache_usage_metrics",
         lambda *_args: (True, 100),
+    )
+    usage_manager = MagicMock()
+    usage_manager.project_model_call = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        "qwenpaw.token_usage.model_wrapper.get_token_usage_manager",
+        lambda: usage_manager,
     )
     wrapper = TokenRecordingModelWrapper("provider-a", provider)
 

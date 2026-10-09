@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Integration tests for the token-usage API router.
 
-Covers GET /api/token-usage (summary) and GET /api/token-usage/details
-with various query parameters (date ranges, model/provider filters).
+Covers summary, details and projection diagnostics endpoints.
 """
 
 from __future__ import annotations
@@ -11,6 +10,26 @@ import pytest
 from helpers import default_http_timeout
 
 _TOKEN_USAGE_TIMEOUT = default_http_timeout(15.0)
+
+
+@pytest.mark.integration
+@pytest.mark.p1
+def test_token_usage_projection_status(app_server) -> None:
+    """The diagnostics endpoint exposes cutover state without content."""
+    resp = app_server.api_request(
+        "GET",
+        "/api/token-usage/projection",
+        timeout=_TOKEN_USAGE_TIMEOUT,
+    )
+
+    assert resp.status_code == 200, app_server.logs_tail()
+    payload = resp.json()
+    assert set(payload) == {
+        "cutover_date",
+        "indexed_attempts",
+        "last_rebuild_at",
+        "last_rebuild_count",
+    }
 
 
 # ------------------------------------------------------------------ #

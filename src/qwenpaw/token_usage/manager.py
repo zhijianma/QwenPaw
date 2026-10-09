@@ -6,12 +6,16 @@ import logging
 import threading
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
 from ..constant import WORKING_DIR, TOKEN_USAGE_FILE
+from ..kernel import ModelCallAttempt, ModelCallRecord, ModelCallResult
 from .buffer import TokenUsageBuffer, _UsageEvent
+
+if TYPE_CHECKING:
+    from .projection import UsageProjectionStatus
 
 logger = logging.getLogger(__name__)
 
@@ -203,10 +207,52 @@ class TokenUsageManager:
     _instance: "TokenUsageManager | None" = None
     _lock = threading.Lock()
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        projection_path: Path | None = None,
+        projection_cutover_date: date | None = None,
+    ) -> None:
+        from .projection import LiteUsageProjection
+
         path: Path = (WORKING_DIR / TOKEN_USAGE_FILE).expanduser()
         self._buffer = TokenUsageBuffer(path)
+        self._projection = LiteUsageProjection(
+            projection_path
+            or (WORKING_DIR / "token_usage_projection.sqlite3").expanduser(),
+            initial_cutover_date=projection_cutover_date,
+        )
         self._flush_interval = 10  # default
+
+    async def project_model_call(
+        self,
+        attempt: ModelCallAttempt,
+        result: ModelCallResult,
+    ) -> bool:
+        """Index one fact and return whether legacy JSON should also record."""
+        try:
+            cutover = await self._projection.record(attempt, result)
+        except Exception:
+            logger.exception(
+                "token_usage: model-call projection failed attempt=%s",
+                attempt.attempt_id,
+            )
+            # Never create an aggregated fallback row that cannot later be
+            # deduplicated from the authoritative attempt during rebuild.
+            return False
+        completed_date = result.completed_at.astimezone(timezone.utc).date()
+        return completed_date < cutover
+
+    async def get_projection_status(self) -> "UsageProjectionStatus":
+        """Return content-free state for reconciliation diagnostics."""
+        return await self._projection.status()
+
+    async def rebuild_projection(
+        self,
+        records: list[ModelCallRecord],
+    ) -> int:
+        """Replace the disposable index from authoritative Model Calls."""
+        return await self._projection.rebuild(records)
 
     def start(self, flush_interval: int = 10) -> None:
         """Start background flush task.
@@ -400,10 +446,7 @@ class TokenUsageManager:
         if start_date is None:
             start_date = end_date - timedelta(days=30)
 
-        merged = await self._buffer.get_merged_data()
-
-        records = await self._query(
-            merged,
+        records = await self._get_records(
             start_date,
             end_date,
             model_name,
@@ -568,10 +611,7 @@ class TokenUsageManager:
         if start_date is None:
             start_date = end_date - timedelta(days=30)
 
-        merged = await self._buffer.get_merged_data()
-
-        records = await self._query(
-            merged,
+        return await self._get_records(
             start_date,
             end_date,
             model_name,
@@ -581,7 +621,44 @@ class TokenUsageManager:
             turn_id,
         )
 
-        return records
+    async def _get_records(
+        self,
+        start_date: date,
+        end_date: date,
+        model_name: Optional[str],
+        provider_id: Optional[str],
+        agent_id: Optional[str],
+        conversation_id: Optional[str],
+        turn_id: Optional[str],
+    ) -> list[TokenUsageRecord]:
+        """Merge pre-cutover compatibility rows with fact projections."""
+        merged = await self._buffer.get_merged_data()
+        legacy = await self._query(
+            merged,
+            start_date,
+            end_date,
+            model_name,
+            provider_id,
+            agent_id,
+            conversation_id,
+            turn_id,
+        )
+        cutover, projected = await self._projection.query(
+            start_date,
+            end_date,
+            model_name=model_name,
+            provider_id=provider_id,
+            agent_id=agent_id,
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+        )
+        legacy = [
+            record
+            for record in legacy
+            if date.fromisoformat(record.date) < cutover
+            or (record.conversation_id is None and record.turn_id is None)
+        ]
+        return [*legacy, *projected]
 
     @classmethod
     def get_instance(cls) -> "TokenUsageManager":

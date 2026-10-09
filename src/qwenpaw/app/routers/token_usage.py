@@ -9,6 +9,7 @@ from ...token_usage import (
     get_token_usage_manager,
     TokenUsageSummary,
     TokenUsageRecord,
+    UsageProjectionStatus,
 )
 
 router = APIRouter(prefix="/token-usage", tags=["token-usage"])
@@ -27,6 +28,15 @@ def _parse_date(s: str | None) -> date | None:
         return date.fromisoformat(s)
     except (ValueError, TypeError):
         return None
+
+
+@router.get(
+    "/projection",
+    summary="Get token usage projection status",
+)
+async def get_token_usage_projection() -> UsageProjectionStatus:
+    """Return content-free cutover and reconciliation diagnostics."""
+    return await get_token_usage_manager().get_projection_status()
 
 
 @router.get(

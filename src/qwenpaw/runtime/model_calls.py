@@ -236,6 +236,33 @@ class FilesystemModelCallStore:
             raise ValueError("conversation_id cannot be empty")
         return await run_sync_io(self._list_sync, conversation_id, None)
 
+    def _scan_all_sync(self) -> list[ModelCallRecord]:
+        records: list[ModelCallRecord] = []
+        for attempt_path in self._root.glob("*/*/*/attempt.json"):
+            record = ModelCallRecord.model_validate_json(
+                attempt_path.read_text(encoding="utf-8"),
+            )
+            result_path = attempt_path.with_name("result.json")
+            result = (
+                ModelCallResult.model_validate_json(
+                    result_path.read_text(encoding="utf-8"),
+                )
+                if result_path.exists()
+                else None
+            )
+            records.append(record.model_copy(update={"result": result}))
+        records.sort(
+            key=lambda item: (
+                item.attempt.started_at,
+                item.attempt.attempt_index,
+            ),
+        )
+        return records
+
+    async def scan_all(self) -> Sequence[ModelCallRecord]:
+        """Scan every workspace-owned fact for projection rebuilding."""
+        return await run_sync_io(self._scan_all_sync)
+
 
 class ModelCallSession:
     """Classify actual provider attempts within one logical model call."""
@@ -369,7 +396,7 @@ class ModelCallSession:
         cache_eligible_input_tokens: int = 0,
         cache_observed: bool = False,
         cost_micros: int | None = None,
-    ) -> None:
+    ) -> ModelCallResult:
         """Persist content-free terminal evidence for one attempt."""
         result = ModelCallResult(
             attempt_id=attempt.attempt_id,
@@ -417,6 +444,7 @@ class ModelCallSession:
                     attempt.provider_id,
                     attempt.model_id,
                 )
+        return result
 
     async def defer_terminal_resource_wait(
         self,
@@ -503,14 +531,14 @@ async def complete_current_model_attempt(
     cache_eligible_input_tokens: int = 0,
     cache_observed: bool = False,
     cost_micros: int | None = None,
-) -> None:
+) -> ModelCallResult | None:
     """Complete an attempt when it belongs to the active logical call."""
     if attempt is None:
-        return
+        return None
     session = _CURRENT_MODEL_CALL.get()
     if session is None:
         raise ModelCallPersistenceError("model attempt lost its call session")
-    await session.complete(
+    return await session.complete(
         attempt,
         status=status,
         error_kind=error_kind,

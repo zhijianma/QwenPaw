@@ -956,6 +956,26 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - 本切片 Model Call/Token Usage 定点测试 `84 passed`，Observation、Recovery 与 Chat
   API 上下游定点测试 `50 passed`。Task 页面没有改动。
 
+### 2026-10-09 Token Usage 可重建投影与安全切换
+
+- 新增 Lite `token_usage_projection.sqlite3`，只保存 Model Call 的内容无关 usage
+  派生字段；`attempt_id` 是唯一键，同一事实重复投影保持幂等，不同事实冲突失败关闭。
+  SQLite 可整库删除，不取代 Workspace 中的 `attempt.json/result.json` 权威事实。
+- 应用启动读取全部已配置 Agent 的 Workspace，通过 `ModelCallStore.scan_all()` 收集
+  事实并原子 rebuild；任一 Workspace 扫描失败时保留旧索引，不用部分数据覆盖。
+- 首次初始化把下一 UTC 日写成不可变 cutover。水位前 Model Call 同时写事实投影和
+  legacy JSON，作为结构 shadow；水位后有 Attempt 的调用停止写 JSON。查询会过滤
+  水位后所有带 Chat/Turn 归属的 JSON row，再合并 SQLite 投影，避免重启、重试或旧
+  进程残留造成双算；没有 Attempt 的兼容调用仍由 JSON 提供。
+- 单次投影失败只记录日志，不写无法按 Attempt 去重的 JSON fallback；不可变 Result
+  已经落盘，下一次启动 rebuild 会补回。该取舍允许短暂统计延迟，但不允许永久双算。
+- `/api/token-usage/projection` 返回 cutover date、indexed attempts、最后 rebuild 时间
+  和数量，不包含消息、Prompt、reasoning 或 Secret。Summary/details 的既有响应保持
+  兼容，Console 无需修改。
+- 投影、Model Call、Token Usage、Retry/Fallback、Task budget、Observation 定点测试
+  `234 passed`；应用启动与 Token Usage API 定点测试 `19 passed`。Python 文件级
+  mypy、Black、Flake8、Pylint 通过。Task 页面没有改动。
+
 ### 2026-10-09 Model Recovery Kernel Contract
 
 - `ModelRecoveryDecision` 已从 Provider 私有 dataclass 提升为 Kernel 不可变领域模型；

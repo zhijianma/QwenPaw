@@ -14,6 +14,7 @@ from .manager import (
     get_token_usage_manager,
 )
 from .model_wrapper import TokenRecordingModelWrapper
+from .projection import UsageProjectionStatus
 from .turn_usage import (
     TURN_USAGE_META_KEY,
     fmt_tokens,
@@ -29,6 +30,7 @@ __all__ = [
     "TokenUsageRecord",
     "TokenUsageStats",
     "TokenUsageSummary",
+    "UsageProjectionStatus",
     "get_token_usage_manager",
     "TokenRecordingModelWrapper",
     "_UsageEvent",

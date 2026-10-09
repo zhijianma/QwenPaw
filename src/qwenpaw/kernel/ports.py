@@ -1565,6 +1565,9 @@ class ModelCallStore(Protocol):
     ) -> Sequence[ModelCallRecord]:
         """Return newest provider attempts for one ChatSpec identity."""
 
+    async def scan_all(self) -> Sequence[ModelCallRecord]:
+        """Return all records for rebuilding disposable projections."""
+
 
 @runtime_checkable
 class ModelResourceRecoveryPort(Protocol):
