@@ -198,6 +198,51 @@ describe("merged host bubbles behavior", () => {
     expect(regenerate).toHaveBeenCalledWith("sdk-message-id");
   });
 
+  it("renders usage owned by the completed response turn", () => {
+    render(
+      provider(
+        <HostResponseCard
+          id="usage-message"
+          data={{
+            id: "usage-response",
+            status: AgentScopeRuntimeRunStatus.Completed,
+            output: [],
+            usage: {
+              prompt_tokens: 34_179,
+              completion_tokens: 382,
+              total_tokens: 34_561,
+              provider_id: "dashscope",
+              model_name: "qwen3.8-max",
+              measurement: "provider_reported",
+            },
+          }}
+        />,
+      ),
+    );
+
+    const summary = screen.getByTestId("turn-usage-summary");
+    expect(summary).toHaveTextContent("chat.turnUsagePopover.turn");
+    expect(summary).toHaveTextContent("34.6K");
+    expect(summary).toHaveTextContent("dashscope/qwen3.8-max");
+  });
+
+  it("does not render an empty usage summary for legacy responses", () => {
+    render(
+      provider(
+        <HostResponseCard
+          id="legacy-message"
+          data={{
+            id: "legacy-response",
+            status: AgentScopeRuntimeRunStatus.Completed,
+            output: [],
+          }}
+        />,
+      ),
+    );
+
+    expect(screen.queryByTestId("turn-usage-summary")).toBeNull();
+  });
+
   it("retains the original request card's content and ordered prepend/append fallback", () => {
     extensions.lists[ChatList.requestPrepend] = [
       {

@@ -77,6 +77,8 @@ import {
   subscribeChatDisplayPreference,
   type AssistantMessageDisplayPreference,
 } from "../../utils/chatDisplayPreference";
+import { formatCompact } from "../../utils/formatNumber";
+import { readTurnUsageFromResponseCardData } from "./turnUsage";
 
 function sortByOrder<T extends { item: { order?: number } }>(arr: T[]): T[] {
   return arr
@@ -206,6 +208,45 @@ function renderResponseMessage(item: IAgentScopeRuntimeMessage) {
   }
 }
 
+function TurnUsageSummary({ data }: { data: IAgentScopeRuntimeResponse }) {
+  const { t } = useTranslation();
+  const snapshot = readTurnUsageFromResponseCardData(
+    data as unknown as Record<string, unknown>,
+  );
+  const usage = snapshot?.usage;
+  if (!usage) return null;
+  const promptTokens = Number(usage.prompt_tokens) || 0;
+  const completionTokens = Number(usage.completion_tokens) || 0;
+  const totalTokens =
+    Number(usage.total_tokens) || promptTokens + completionTokens;
+  if (totalTokens <= 0) return null;
+  const estimated =
+    usage.measurement === "local_estimate" || usage.estimated === true;
+  const model = [usage.provider_id, usage.model_name].filter(Boolean).join("/");
+
+  return (
+    <div className={styles.turnUsage} data-testid="turn-usage-summary">
+      <span className={styles.turnUsageLabel}>
+        {t(
+          estimated
+            ? "chat.turnUsagePopover.turnEstimated"
+            : "chat.turnUsagePopover.turn",
+        )}
+      </span>
+      <span className={styles.turnUsageTotal}>
+        {formatCompact(totalTokens)} {t("chat.turnUsagePopover.tok")}
+      </span>
+      <span className={styles.turnUsageDetail}>
+        {t("chat.turnUsagePopover.inOut", {
+          inTok: formatCompact(promptTokens),
+          outTok: formatCompact(completionTokens),
+        })}
+      </span>
+      {model ? <span className={styles.turnUsageModel}>{model}</span> : null}
+    </div>
+  );
+}
+
 function DefaultHostResponseCard({
   data,
   messageId,
@@ -317,6 +358,9 @@ function DefaultHostResponseCard({
         <Bubble.Interrupted title={t("chat.turnCanceled")} />
       ) : null}
       {contentAppend}
+      {AgentScopeRuntimeResponseBuilder.maybeDone(data) ? (
+        <TurnUsageSummary data={data} />
+      ) : null}
       {AgentScopeRuntimeResponseBuilder.maybeDone(data) ? (
         <ResponseArtifactList messages={messages} />
       ) : null}

@@ -922,10 +922,13 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - Console Token Usage 已将同一明细投影为全局摘要及 Agent、Chat、Turn、日期、模型
   五个切面。Chat/Turn 使用包含 Agent 的复合键；旧记录即使没有 Chat/Turn，也只在
   各自 Agent 内显示为“未归属”，不会跨 Agent 合并或伪造历史归属。
+- Chat 的每个完成 ResponseCard 直接显示该 Turn 的总 Token、输入/输出及实际
+  Provider/Model；`local_estimate` 明确显示为约数，旧回合无 usage 时不伪造空统计。
+  数据来自卡片持久 metadata，刷新及历史恢复后仍可见，不依赖全局最新 Turn Store。
 - 本切片后端 token/turn 定点测试 `96 passed`，前端 Chat/API 定点测试
-  `60 passed`；统计页新增聚合与页面定点测试 `19 passed`。真实统计页已验证五个切面，
-  新 Turn 的端到端 usage 验收被既有 `workspace-driver` Tool Catalog 超限门禁阻断，
-  未误判为 token 统计失败；Task 页面没有改动。
+  `60 passed`；统计页新增聚合与页面定点测试 `19 passed`，Turn 卡片及 usage
+  定点测试 `51 passed`。真实统计页已验证五个切面；真实 Chat Turn 显示
+  `34.6K tok` 及实际模型，刷新后保持一致。Task 页面没有改动。
 
 ### 2026-10-09 Model Recovery Kernel Contract
 

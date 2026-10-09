@@ -32,3 +32,36 @@
     }
   }
 }
+
+.turnUsage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-top: 10px;
+  color: var(--app-text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+
+.turnUsageLabel {
+  font-weight: 600;
+}
+
+.turnUsageTotal {
+  color: var(--app-text);
+  font-weight: 600;
+}
+
+.turnUsageDetail,
+.turnUsageModel {
+  opacity: 0.78;
+}
+
+.turnUsageModel {
+  overflow: hidden;
+  max-width: 240px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
