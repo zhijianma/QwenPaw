@@ -1630,7 +1630,7 @@ class WorkspaceChatSubmissionDispatcher:
             invocation_id=invocation_id,
             correlation_id=execution.correlation_id,
             agent_id=execution.agent_id,
-            conversation_id=execution.chat_id,
+            chat_id=execution.chat_id,
             session_id=execution.chat_id,
             root_agent_id=execution.agent_id,
             root_session_id=execution.chat_id,

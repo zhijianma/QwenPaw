@@ -200,14 +200,14 @@ class GoalMode(AgentMode):
         if (
             self._store is None
             or invocation is None
-            or invocation.conversation_id is None
+            or invocation.chat_id is None
         ):
             return
         execution = await self._store.read(
             agent_id=invocation.agent_id,
-            conversation_id=invocation.conversation_id,
+            conversation_id=invocation.chat_id,
         )
-        key = invocation.conversation_id
+        key = invocation.chat_id
         if execution is None or execution.status in {
             GoalExecutionStatus.COMPLETED,
             GoalExecutionStatus.BLOCKED,

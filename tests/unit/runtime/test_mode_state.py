@@ -218,7 +218,7 @@ async def test_system_and_plugin_hosts_use_isolated_namespaces(
 
 @pytest.mark.asyncio
 async def test_mode_host_requires_stable_chat_identity(tmp_path) -> None:
-    scope = _scope(tmp_path).model_copy(update={"conversation_id": None})
+    scope = _scope(tmp_path).model_copy(update={"chat_id": None})
     host = ProviderAgentModeHost(
         {},
         bind_agent_mode_state("example.mode", scope),

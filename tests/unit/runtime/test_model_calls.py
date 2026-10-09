@@ -205,7 +205,7 @@ async def test_store_scans_all_chat_owners_for_projection_rebuild(
     second_scope = _scope(tmp_path).model_copy(
         update={
             "invocation_id": uuid4(),
-            "conversation_id": "chat-2",
+            "chat_id": "chat-2",
             "session_id": "chat-2",
         },
     )

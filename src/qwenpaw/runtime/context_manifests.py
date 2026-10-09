@@ -289,7 +289,9 @@ class ContextManifestCompiler:
             "correlation_id": str(
                 self._scope.correlation_id or self._scope.invocation_id,
             ),
-            "conversation_id": self._scope.conversation_id,
+            # Keep the v1 digest field name stable across the public
+            # InvocationScope identity migration.
+            "conversation_id": self._scope.chat_id,
             "registry_generation": self._scope.registry_generation,
             "capability_lock_id": (
                 str(self._scope.capability_lock_id)
@@ -322,7 +324,7 @@ class ContextManifestCompiler:
             correlation_id=(
                 self._scope.correlation_id or self._scope.invocation_id
             ),
-            conversation_id=self._scope.conversation_id,
+            chat_id=self._scope.chat_id,
             registry_epoch_id=self._scope.registry_epoch_id,
             registry_generation=self._scope.registry_generation,
             capability_lock_id=self._scope.capability_lock_id,

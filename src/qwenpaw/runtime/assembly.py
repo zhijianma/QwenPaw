@@ -209,7 +209,7 @@ class RuntimeAssemblyFactory:
         self,
         *,
         agent_id: str,
-        conversation_id: str | None = None,
+        chat_id: str | None = None,
         session_id: str,
         root_agent_id: str,
         root_session_id: str,
@@ -224,8 +224,24 @@ class RuntimeAssemblyFactory:
         environment_resolver: EnvironmentResolver | None = None,
         environment_store: EnvironmentStore | None = None,
         capability_lock_store: CapabilityLockStore | None = None,
+        conversation_id: str | None = None,
     ) -> InvocationAssembly:
         """Pin the catalog and return one task-independent scope."""
+        if (
+            chat_id is not None
+            and conversation_id is not None
+            and chat_id != conversation_id
+        ):
+            raise ValueError(
+                "chat_id and conversation_id must identify one Chat",
+            )
+        if chat_id is not None and not chat_id.strip():
+            raise ValueError("chat_id cannot be empty")
+        if conversation_id is not None and not conversation_id.strip():
+            raise ValueError("conversation_id cannot be empty")
+        resolved_chat_id = (
+            chat_id if chat_id is not None else conversation_id
+        )
         if selection is not None and selection_overrides is not None:
             raise ValueError(
                 "selection and selection_overrides are mutually exclusive",
@@ -322,7 +338,7 @@ class RuntimeAssemblyFactory:
                         contract=contract,
                         resolution=resolution,
                     ),
-                    conversation_id=conversation_id,
+                    conversation_id=resolved_chat_id,
                 )
             if resolution.status is EnvironmentResolutionStatus.UNSATISFIED:
                 raise EnvironmentContractUnsatisfiedError(resolution)
@@ -330,7 +346,7 @@ class RuntimeAssemblyFactory:
                 invocation_id=resolved_invocation_id,
                 correlation_id=(correlation_id or resolved_invocation_id),
                 agent_id=agent_id,
-                conversation_id=conversation_id,
+                chat_id=resolved_chat_id,
                 session_id=session_id,
                 root_agent_id=root_agent_id,
                 root_session_id=root_session_id,

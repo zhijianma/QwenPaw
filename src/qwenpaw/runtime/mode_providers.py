@@ -24,11 +24,11 @@ class _BoundAgentModeState:
     store: AgentModeStateStore
 
     def _conversation_id(self) -> str:
-        if self.scope.conversation_id is None:
+        if self.scope.chat_id is None:
             raise RuntimeError(
                 "agent mode state requires a stable ChatSpec.id",
             )
-        return self.scope.conversation_id
+        return self.scope.chat_id
 
     def _registry_epoch_id(self) -> UUID:
         if self.scope.registry_epoch_id is None:

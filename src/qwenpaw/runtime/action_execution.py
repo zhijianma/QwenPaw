@@ -292,7 +292,7 @@ class RuntimeActionRetryRunner:
         )
         assembly = await factory.open(
             agent_id=checkpoint.agent_id,
-            conversation_id=plan.chat_id,
+            chat_id=plan.chat_id,
             session_id=plan.chat_id,
             root_agent_id=checkpoint.agent_id,
             root_session_id=plan.chat_id,

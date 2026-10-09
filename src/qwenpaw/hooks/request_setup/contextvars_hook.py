@@ -102,7 +102,7 @@ class ContextVarsSetupHook(LifecycleHook):
             str(invocation.invocation_id) if invocation is not None else None,
         )
         conversation_id = (
-            invocation.conversation_id if invocation is not None else None
+            invocation.chat_id if invocation is not None else None
         )
         outcome_host = None
         if invocation is not None and conversation_id is not None:

@@ -561,7 +561,7 @@ async def test_runtime_provider_kit_activates_runtime_contributions(
     prompt_fragments = await prompt.list_fragments(
         memory_module.InvocationScope(
             agent_id="default",
-            conversation_id="chat",
+            chat_id="chat",
             session_id="transport-chat",
             root_agent_id="default",
             root_session_id="transport-chat",
@@ -579,7 +579,7 @@ async def test_runtime_provider_kit_activates_runtime_contributions(
         command_module,
         memory_module.InvocationScope(
             agent_id="default",
-            conversation_id="chat",
+            chat_id="chat",
             session_id="transport-chat",
             root_agent_id="default",
             root_session_id="transport-chat",

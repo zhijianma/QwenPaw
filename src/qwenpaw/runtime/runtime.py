@@ -85,7 +85,7 @@ class Runtime:
                 capability_registry_for(self.workspace),
             ).open(
                 agent_id=ctx.agent_id,
-                conversation_id=self._conversation_id(request),
+                chat_id=self._conversation_id(request),
                 session_id=ctx.session_id,
                 root_agent_id=ctx.root_agent_id,
                 root_session_id=ctx.root_session_id,

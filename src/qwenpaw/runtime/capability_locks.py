@@ -71,7 +71,7 @@ class CapabilityLockCompiler:
             invocation_id=scope.invocation_id,
             correlation_id=scope.correlation_id or scope.invocation_id,
             agent_id=scope.agent_id,
-            conversation_id=scope.conversation_id,
+            conversation_id=scope.chat_id,
             registry_epoch_id=scope.registry_epoch_id,
             registry_generation=scope.registry_generation,
             releases=tuple(releases),

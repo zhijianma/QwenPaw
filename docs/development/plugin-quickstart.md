@@ -445,11 +445,12 @@ progress ticks, and transient retries belong in runtime telemetry rather than
 Inbox. Replaying identical content is idempotent. A mismatched `agent_id`
 fails closed.
 
-`InvocationScope.conversation_id` is the stable `ChatSpec.id` when an
-invocation belongs to a persisted Chat. It is `None` for transports that have
-no Conversation identity and never falls back to `session_id`. Plugins should
-use it for Conversation ownership and use `session_id` only when adapting a
-legacy transport or persistence implementation.
+`InvocationScope.chat_id` is the stable `ChatSpec.id` when an invocation
+belongs to a persisted Chat. It is `None` for transports that have no Chat
+identity and never falls back to `session_id`. Plugins should use it for Chat
+ownership and use `session_id` only when adapting a legacy transport or
+persistence implementation. `conversation_id` remains a deprecated read-only
+Python alias; new plugin code and serialized contracts must not emit it.
 
 Conversation branching follows the same identity rule. The public SDK exports
 `ConversationForkCommand`, `ConversationForkOrigin`,

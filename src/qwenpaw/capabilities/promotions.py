@@ -483,7 +483,7 @@ class LiteCapabilityPromotionScenarioRunner:
             return config_outcome
         scope = InvocationScope(
             agent_id="promotion-scenario",
-            conversation_id="promotion-scenario",
+            chat_id="promotion-scenario",
             session_id="promotion-scenario",
             root_agent_id="promotion-scenario",
             root_session_id="promotion-scenario",
@@ -873,7 +873,7 @@ def _promotion_invocation_scope(
     """Create one deterministic, non-production invocation fixture."""
     return InvocationScope(
         agent_id="promotion-scenario",
-        conversation_id="promotion-scenario",
+        chat_id="promotion-scenario",
         session_id="promotion-scenario",
         root_agent_id="promotion-scenario",
         root_session_id="promotion-scenario",
@@ -892,7 +892,7 @@ def _promotion_driver_invocation_scope(
     """Create an isolated Driver catalog-discovery fixture."""
     return InvocationScope(
         agent_id="promotion-scenario",
-        conversation_id="promotion-scenario",
+        chat_id="promotion-scenario",
         session_id="promotion-scenario",
         root_agent_id="promotion-scenario",
         root_session_id="promotion-scenario",

@@ -161,8 +161,8 @@ class RuntimeCompactionRecorder:
         *,
         strategy_id: str,
     ) -> None:
-        if scope.conversation_id is None:
-            raise ValueError("compaction recording requires conversation_id")
+        if scope.chat_id is None:
+            raise ValueError("compaction recording requires chat_id")
         self._scope = scope
         self._store = store
         self._strategy_id = strategy_id
@@ -248,10 +248,10 @@ class RuntimeCompactionRecorder:
         started_at,
     ) -> CompactionRecord:
         scope = self._scope
-        assert scope.conversation_id is not None
+        assert scope.chat_id is not None
         return CompactionRecord(
             agent_id=scope.agent_id,
-            conversation_id=scope.conversation_id,
+            conversation_id=scope.chat_id,
             invocation_id=scope.invocation_id,
             correlation_id=scope.correlation_id,
             registry_generation=scope.registry_generation,

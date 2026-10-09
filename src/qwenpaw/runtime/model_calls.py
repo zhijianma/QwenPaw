@@ -337,7 +337,7 @@ class ModelCallSession:
             correlation_id=(
                 self._scope.correlation_id or self._scope.invocation_id
             ),
-            conversation_id=self._scope.conversation_id,
+            chat_id=self._scope.chat_id,
             registry_epoch_id=self._scope.registry_epoch_id,
             registry_generation=self._scope.registry_generation,
             context_manifest_id=self._manifest.manifest_id,
@@ -358,7 +358,7 @@ class ModelCallSession:
             invocation_id=route.invocation_id,
             correlation_id=route.correlation_id,
             agent_id=self._scope.agent_id,
-            conversation_id=route.conversation_id,
+            chat_id=route.chat_id,
             registry_epoch_id=route.registry_epoch_id,
             registry_generation=route.registry_generation,
             context_manifest_id=route.context_manifest_id,
@@ -416,7 +416,7 @@ class ModelCallSession:
         result = ModelCallResult(
             attempt_id=attempt.attempt_id,
             invocation_id=attempt.invocation_id,
-            conversation_id=attempt.conversation_id,
+            chat_id=attempt.chat_id,
             status=status,
             error_kind=error_kind,
             retryable=retryable,

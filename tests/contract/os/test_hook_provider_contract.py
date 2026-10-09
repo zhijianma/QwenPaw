@@ -87,7 +87,7 @@ class _RuntimeContext:
 def _scope(workspace_dir: Path) -> InvocationScope:
     return InvocationScope(
         agent_id="default",
-        conversation_id="chat-contract",
+        chat_id="chat-contract",
         session_id="transport-contract",
         root_agent_id="default",
         root_session_id="transport-contract",
@@ -181,7 +181,7 @@ async def test_plugin_hook_flows_through_runtime_opening_pipeline(
     workspace_dir.mkdir()
     assembly = await RuntimeAssemblyFactory(registry).open(
         agent_id="default",
-        conversation_id="chat-contract",
+        chat_id="chat-contract",
         session_id="transport-contract",
         root_agent_id="default",
         root_session_id="transport-contract",

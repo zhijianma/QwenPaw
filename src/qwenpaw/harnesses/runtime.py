@@ -387,7 +387,7 @@ class HarnessRuntime:
             scope = InvocationScope(
                 invocation_id=invocation_id,
                 agent_id=self._agent_id,
-                conversation_id=conversation_id,
+                chat_id=conversation_id,
                 session_id=session_id,
                 root_agent_id=str(
                     request_context.get("root_agent_id") or self._agent_id,

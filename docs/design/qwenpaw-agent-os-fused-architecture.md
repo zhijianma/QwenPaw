@@ -369,6 +369,10 @@ Action、Model Call 以及 Queue / Steer / Interrupt 控制面的 Submission、C
 Receipt、Queue、Execution Chain 与 Runtime Projection 公共 Kernel/HTTP 合同均使用
 `chat_id`。持久化适配器仍可读取旧 `conversation_id`，SDK 也暂时保留只读 Python
 属性，但新 JSON、SSE、Console 类型与插件代码不得继续产生第二个 Chat 身份名称。
+插件和内置 Provider 共同接收的 `InvocationScope` 也只发布可选 `chat_id`；
+`session_id` 继续表示传输上下文，不能作为 Chat ownership fallback。旧插件构造参数
+仍可读取，冲突双身份失败关闭；`RuntimeAssemblyFactory.open()` 对新调用者使用同一
+canonical 参数，并在生成 Scope 前完成兼容归一化。
 Outcome 与 Observation 等嵌套权威事实按各自合同独立迁移，不能因为被 Runtime
 Projection 引用就隐式改写其 schema。Outcome 声明与事实、RuntimeObservation 和
 ConversationTrajectoryPage 公共合同均已使用 `chat_id`；历史输入继续兼容

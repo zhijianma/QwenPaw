@@ -85,7 +85,7 @@ class _SystemDriverHost:
 def _scope(workspace_dir: Path) -> InvocationScope:
     return InvocationScope(
         agent_id="agent-contract",
-        conversation_id="chat-contract",
+        chat_id="chat-contract",
         session_id="transport-contract",
         root_agent_id="agent-contract",
         root_session_id="transport-contract",
@@ -248,7 +248,7 @@ async def test_plugin_driver_flows_through_builder_prompt_and_approval(
     workspace_dir.mkdir()
     assembly = await RuntimeAssemblyFactory(registry).open(
         agent_id="agent-contract",
-        conversation_id="chat-contract",
+        chat_id="chat-contract",
         session_id="transport-contract",
         root_agent_id="agent-contract",
         root_session_id="transport-contract",
@@ -355,7 +355,7 @@ async def test_driver_hot_replacement_keeps_open_session_behavior(
     )
     old_assembly = await factory.open(
         agent_id="agent-contract",
-        conversation_id="chat-old",
+        chat_id="chat-old",
         session_id="transport-old",
         root_agent_id="agent-contract",
         root_session_id="transport-old",
@@ -375,7 +375,7 @@ async def test_driver_hot_replacement_keeps_open_session_behavior(
     )
     new_assembly = await factory.open(
         agent_id="agent-contract",
-        conversation_id="chat-new",
+        chat_id="chat-new",
         session_id="transport-new",
         root_agent_id="agent-contract",
         root_session_id="transport-new",

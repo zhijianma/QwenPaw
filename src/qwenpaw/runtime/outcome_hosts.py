@@ -37,7 +37,7 @@ class InvocationOutcomeHost:
         request: ConversationOutcomeRequest,
     ) -> ConversationOutcome:
         """Submit without allowing a provider to forge ownership fields."""
-        if self._scope.conversation_id is None:
+        if self._scope.chat_id is None:
             raise ValueError("outcome requires a stable ChatSpec.id")
         if self._scope.correlation_id is None:
             raise ValueError("outcome requires a correlation identity")
@@ -50,7 +50,7 @@ class InvocationOutcomeHost:
             ConversationOutcomeDeclaration(
                 outcome_id=request.outcome_id,
                 agent_id=self._scope.agent_id,
-                chat_id=self._scope.conversation_id,
+                chat_id=self._scope.chat_id,
                 correlation_id=self._scope.correlation_id,
                 status=request.status,
                 producer_id=(self._producer_lease.registration.producer_id),

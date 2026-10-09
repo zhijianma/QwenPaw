@@ -27,7 +27,7 @@ from qwenpaw.runtime.context_manifests import (
 def _scope() -> InvocationScope:
     return InvocationScope(
         agent_id="default",
-        conversation_id="chat-1",
+        chat_id="chat-1",
         session_id="transport-session",
         root_agent_id="default",
         root_session_id="transport-session",
@@ -101,7 +101,7 @@ def test_manifest_covers_actual_messages_and_capability_disclosure() -> None:
         attempt_kind="primary",
     )
 
-    assert manifest.conversation_id == "chat-1"
+    assert manifest.chat_id == "chat-1"
     assert manifest.registry_epoch_id == UUID(int=2)
     assert manifest.registry_generation == 12
     assert manifest.capability_lock_id == UUID(int=1)

@@ -822,7 +822,7 @@ class RuntimeActionRecorder:
                 self._scope.correlation_id or self._scope.invocation_id
             ),
             agent_id=self._scope.agent_id,
-            conversation_id=self._scope.conversation_id,
+            chat_id=self._scope.chat_id,
             registry_generation=self._scope.registry_generation,
             environment_ref=environment_ref
             or (
@@ -1076,7 +1076,7 @@ class RuntimeActionRecorder:
         )
         if self._clock() < retry_at:
             raise ActionRetryNotReadyError(retry_at)
-        if previous_request.conversation_id != self._scope.conversation_id:
+        if previous_request.chat_id != self._scope.chat_id:
             raise ActionConflictError("retry action conversation mismatch")
         expected_correlation = (
             self._scope.correlation_id or self._scope.invocation_id

@@ -25,7 +25,7 @@ class _PromptHost:
 def _scope(workspace_dir: Path) -> InvocationScope:
     return InvocationScope(
         agent_id="default",
-        conversation_id="chat-contract",
+        chat_id="chat-contract",
         session_id="transport-contract",
         root_agent_id="default",
         root_session_id="transport-contract",
@@ -68,7 +68,7 @@ async def test_system_and_plugin_prompt_providers_share_behavioral_contract(
             for item in first
         )
 
-    assert scope.conversation_id == "chat-contract"
+    assert scope.chat_id == "chat-contract"
     assert (
         "System workspace guidance"
         in (await providers[0].list_fragments(scope, host))[0].content
@@ -109,7 +109,7 @@ async def test_plugin_prompt_flows_through_pinned_runtime_assembly(
     workspace_dir.mkdir()
     assembly = await RuntimeAssemblyFactory(registry).open(
         agent_id="default",
-        conversation_id="chat-contract",
+        chat_id="chat-contract",
         session_id="transport-contract",
         root_agent_id="default",
         root_session_id="transport-contract",

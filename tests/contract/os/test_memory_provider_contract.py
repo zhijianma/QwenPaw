@@ -36,7 +36,7 @@ class _Backend:
 def _scope(workspace_dir: Path) -> InvocationScope:
     return InvocationScope(
         agent_id="default",
-        conversation_id="chat-contract",
+        chat_id="chat-contract",
         session_id="transport-contract",
         root_agent_id="default",
         root_session_id="transport-contract",
@@ -66,7 +66,7 @@ async def test_system_and_plugin_memory_share_behavioral_contract(
                 _Backend(),
                 provider_id="qwenpaw.system.memory.workspace-memory",
                 agent_id=scope.agent_id,
-                conversation_id=scope.conversation_id,
+                conversation_id=scope.chat_id,
                 workspace_dir=scope.workspace_dir,
             ),
         ),
@@ -75,7 +75,7 @@ async def test_system_and_plugin_memory_share_behavioral_contract(
             ProviderMemoryHost(
                 provider_id="runtime-provider-kit.project-memory",
                 agent_id=scope.agent_id,
-                conversation_id=scope.conversation_id,
+                conversation_id=scope.chat_id,
                 workspace_dir=scope.workspace_dir,
                 provider_config={"prompt_prefix": "Remember"},
             ),
@@ -107,7 +107,7 @@ async def test_system_and_plugin_memory_share_behavioral_contract(
         expected_revision=0,
     )
     assert agent_snapshot.owner_id == scope.agent_id
-    assert conversation_snapshot.owner_id == scope.conversation_id
+    assert conversation_snapshot.owner_id == scope.chat_id
 
 
 @pytest.mark.asyncio
@@ -140,7 +140,7 @@ async def test_plugin_memory_flows_through_builder_prompt_and_tool_guard(
     workspace_dir.mkdir()
     assembly = await RuntimeAssemblyFactory(registry).open(
         agent_id="agent-contract",
-        conversation_id="chat-contract",
+        chat_id="chat-contract",
         session_id="transport-contract",
         root_agent_id="agent-contract",
         root_session_id="transport-contract",

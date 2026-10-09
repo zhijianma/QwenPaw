@@ -775,7 +775,7 @@ class AgentBuilder:
             raw_submission_id = request_context.get("os_submission_id")
             if (
                 raw_submission_id is not None
-                and invocation.conversation_id is not None
+                and invocation.chat_id is not None
                 and ctx.workspace is not None
             ):
                 from .background_actions import (
@@ -799,7 +799,7 @@ class AgentBuilder:
                     workspace=ctx.workspace,
                     source_submission_id=UUID(str(raw_submission_id)),
                     invocation_id=invocation.invocation_id,
-                    conversation_id=invocation.conversation_id,
+                    conversation_id=invocation.chat_id,
                     correlation_id=(
                         invocation.correlation_id
                         or invocation.invocation_id
@@ -1363,10 +1363,10 @@ class AgentBuilder:
             rc[
                 "os_memory_provider_id"
             ] = invocation.selection.memory_provider_id
-            if invocation.conversation_id is None:
+            if invocation.chat_id is None:
                 rc.pop("os_conversation_id", None)
             else:
-                rc["os_conversation_id"] = invocation.conversation_id
+                rc["os_conversation_id"] = invocation.chat_id
         steering_session = getattr(ctx, "extras", {}).get(
             "steering_session",
         )
@@ -1740,7 +1740,7 @@ class AgentBuilder:
                 self._get_memory_manager(ctx),
                 provider_id=provider_id,
                 agent_id=invocation.agent_id,
-                conversation_id=invocation.conversation_id,
+                conversation_id=invocation.chat_id,
                 workspace_dir=invocation.workspace_dir,
                 provider_config=provider_config,
             )
@@ -1748,7 +1748,7 @@ class AgentBuilder:
             host = ProviderMemoryHost(
                 provider_id=provider_id,
                 agent_id=invocation.agent_id,
-                conversation_id=invocation.conversation_id,
+                conversation_id=invocation.chat_id,
                 workspace_dir=invocation.workspace_dir,
                 provider_config=provider_config,
             )

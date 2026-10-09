@@ -51,7 +51,7 @@ class _SystemMode:
 def _scope(workspace_dir: Path) -> InvocationScope:
     return InvocationScope(
         agent_id="agent-contract",
-        conversation_id="chat-contract",
+        chat_id="chat-contract",
         session_id="transport-contract",
         root_agent_id="agent-contract",
         root_session_id="transport-contract",
@@ -151,7 +151,7 @@ async def test_plugin_mode_flows_through_runtime_lifecycle(
     provider_id = "runtime-provider-kit.review-mode"
     assembly = await RuntimeAssemblyFactory(registry).open(
         agent_id="agent-contract",
-        conversation_id="chat-contract",
+        chat_id="chat-contract",
         session_id="transport-contract",
         root_agent_id="agent-contract",
         root_session_id="transport-contract",
@@ -222,7 +222,7 @@ async def test_plugin_mode_config_fails_before_provider_open(
     provider_id = "runtime-provider-kit.review-mode"
     assembly = await RuntimeAssemblyFactory(registry).open(
         agent_id="agent-contract",
-        conversation_id="chat-contract",
+        chat_id="chat-contract",
         session_id="transport-contract",
         root_agent_id="agent-contract",
         root_session_id="transport-contract",

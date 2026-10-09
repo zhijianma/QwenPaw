@@ -360,7 +360,7 @@ class RuntimeSandboxEnvironmentManager:
         )
         await self._store.record(
             EnvironmentRecord(contract=contract, resolution=resolution),
-            conversation_id=self._scope.conversation_id,
+            conversation_id=self._scope.chat_id,
         )
         return (
             EnvironmentRef(

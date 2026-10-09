@@ -393,6 +393,14 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
 - [x] 冻结持续执行身份：`ChatSpec.id` 是 Conversation，`Submission.id` 是一次
   输入，`Invocation.id` 是一次运行尝试，`correlation_id` 贯穿同一长程意图；
   禁止用 assistant message 或 `session_id` 推断生命周期。
+  - [x] 内置与插件 Provider 共用的 `InvocationScope` 已统一发布可选 `chat_id`；
+    `RuntimeAssemblyFactory.open()` 使用 canonical 参数并保留旧 keyword adapter，
+    新 Runtime、Harness、Action、Model Call、Context、Compaction 和 Goal Mode 消费侧
+    均直接读取 `scope.chat_id`。旧 `conversation_id` 输入与只读属性继续兼容，冲突
+    双身份失败关闭；公共 Kernel schema 中旧字段模型由 10 个降至 9 个。Task-only 的
+    `RuntimeLaunchConfig/RuntimeContext` 按当前冻结范围后置，未借机开发 Task 页面。
+    2026-10-10 固定 Chat 在 `/clear` 后真实返回 `INVOCATION_CHAT_ID_OK`；最新 Route、
+    Attempt、Result 共用同一 Invocation 和 `ChatSpec.id`，HTTP 三层均只输出 `chat_id`。
   - [x] Chat Runtime 由权威 Submission 与 Interaction 按 correlation 派生有界
     `ConversationExecutionChain`；同一意图跨 Invocation 保留完整因果身份。一次
     Submission `succeeded` 后仅进入 `inactive`，绝不伪装业务 `completed`；阻塞

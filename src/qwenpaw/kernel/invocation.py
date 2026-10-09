@@ -3,10 +3,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Literal, Self
 from uuid import UUID, uuid4
 
-from pydantic import AwareDatetime, Field, model_validator
+from pydantic import AliasChoices, AwareDatetime, Field, model_validator
 
 from .capability_locks import Sha256Digest
 from .models import (
@@ -100,7 +101,11 @@ class InvocationScope(KernelModel):
     invocation_id: UUID = Field(default_factory=uuid4)
     correlation_id: UUID | None = None
     agent_id: NonEmptyStr
-    conversation_id: NonEmptyStr | None = None
+    chat_id: NonEmptyStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("chat_id", "conversation_id"),
+        description="Owning ChatSpec.id; null for non-Chat invocations",
+    )
     session_id: NonEmptyStr
     root_agent_id: NonEmptyStr
     root_session_id: NonEmptyStr
@@ -116,6 +121,28 @@ class InvocationScope(KernelModel):
         default_factory=CapabilitySelection,
     )
     started_at: AwareDatetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_chat_identity(cls, value: object) -> object:
+        """Reject ambiguous canonical and legacy Chat identities."""
+        if isinstance(value, Mapping):
+            chat_id = value.get("chat_id")
+            conversation_id = value.get("conversation_id")
+            if (
+                chat_id is not None
+                and conversation_id is not None
+                and chat_id != conversation_id
+            ):
+                raise ValueError(
+                    "chat_id and conversation_id must identify one Chat",
+                )
+        return value
+
+    @property
+    def conversation_id(self) -> str | None:
+        """Return the deprecated Python alias during migration."""
+        return self.chat_id
 
     @model_validator(mode="after")
     def validate_environment_identity(self) -> Self:

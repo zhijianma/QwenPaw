@@ -164,6 +164,45 @@ async def test_open_resolves_system_agent_factory_without_task_ids(
 
 
 @pytest.mark.asyncio
+async def test_open_uses_canonical_chat_identity_and_rejects_conflict(
+    tmp_path,
+) -> None:
+    factory = RuntimeAssemblyFactory(GenerationRegistry())
+    assembly = await factory.open(
+        agent_id="default",
+        chat_id="chat-a",
+        session_id="chat-session",
+        root_agent_id="default",
+        root_session_id="chat-session",
+        workspace_dir=tmp_path,
+    )
+
+    assert assembly.scope.chat_id == "chat-a"
+    await assembly.close()
+
+    with pytest.raises(ValueError, match="must identify one Chat"):
+        await factory.open(
+            agent_id="default",
+            chat_id="chat-a",
+            conversation_id="chat-b",
+            session_id="chat-session",
+            root_agent_id="default",
+            root_session_id="chat-session",
+            workspace_dir=tmp_path,
+        )
+
+    with pytest.raises(ValueError, match="chat_id cannot be empty"):
+        await factory.open(
+            agent_id="default",
+            chat_id="",
+            session_id="chat-session",
+            root_agent_id="default",
+            root_session_id="chat-session",
+            workspace_dir=tmp_path,
+        )
+
+
+@pytest.mark.asyncio
 async def test_environment_failure_does_not_create_missing_workspace(
     tmp_path,
 ) -> None:
