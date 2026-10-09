@@ -1202,7 +1202,10 @@ Cron 不形成独立审批或产物事实源。
       SSE 只读公开快照接口，协议 `session_id` 仅保留窄兼容入口。Provider 未返回
       usage 的成功调用仍以 `unavailable` 和实际路由/调用数进入 Turn；混合 Turn 标记
       `partial`，Console 不再把未观测调用隐藏或显示为 `0 tok`。live payload 统一以
-      `chat_id` 表示 `ChatSpec.id`，旧 `conversation_id` 仅兼容读取。
+      `chat_id` 表示 `ChatSpec.id`，旧 `conversation_id` 仅兼容读取。2026-10-10
+      固定 Chat 在当前页和全新浏览器标签重新加载后均显示相同的历史 Turn 用量与
+      DashScope 实际模型，证明刷新恢复不依赖页面内存；`unavailable/partial` 仍由
+      Provider 缺失 usage 的故障注入覆盖，不冒充当前 Provider 的真实缺失场景。
     - [x] Token Usage Summary 已成为服务端权威统计契约：同一查询同时返回全局、
       日期、实际 Provider/Model、日期×模型、Agent、`ChatSpec.id` 和 Invocation turn
       聚合。Console 不再下载明细并维护第二套页面私有聚合口径；`/details` 仅保留为
