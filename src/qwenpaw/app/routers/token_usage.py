@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Token usage API for console and skill tool."""
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Query
 
@@ -12,6 +12,11 @@ from ...token_usage import (
 )
 
 router = APIRouter(prefix="/token-usage", tags=["token-usage"])
+
+
+def _utc_today() -> date:
+    """Return the calendar date used by the usage ledger."""
+    return datetime.now(tz=timezone.utc).date()
 
 
 def _parse_date(s: str | None) -> date | None:
@@ -50,9 +55,20 @@ async def get_token_usage(
         None,
         description="Filter by provider ID",
     ),
+    agent_id: str | None = Query(None, description="Filter by agent ID"),
+    chat_id: str
+    | None = Query(
+        None,
+        description="Filter by owning ChatSpec.id",
+    ),
+    turn_id: str
+    | None = Query(
+        None,
+        description="Filter by OS invocation/turn ID",
+    ),
 ) -> TokenUsageSummary:
     """Return aggregated token usage summary for the given date range."""
-    end_d = _parse_date(end_date) or date.today()
+    end_d = _parse_date(end_date) or _utc_today()
     start_d = _parse_date(start_date) or (end_d - timedelta(days=30))
     if start_d > end_d:
         start_d, end_d = end_d, start_d
@@ -62,6 +78,9 @@ async def get_token_usage(
         end_date=end_d,
         model_name=model,
         provider_id=provider,
+        agent_id=agent_id,
+        conversation_id=chat_id,
+        turn_id=turn_id,
     )
 
 
@@ -91,9 +110,20 @@ async def get_token_usage_details(
         None,
         description="Filter by provider ID",
     ),
+    agent_id: str | None = Query(None, description="Filter by agent ID"),
+    chat_id: str
+    | None = Query(
+        None,
+        description="Filter by owning ChatSpec.id",
+    ),
+    turn_id: str
+    | None = Query(
+        None,
+        description="Filter by OS invocation/turn ID",
+    ),
 ) -> list[TokenUsageRecord]:
     """Return raw token usage records for the given date range."""
-    end_d = _parse_date(end_date) or date.today()
+    end_d = _parse_date(end_date) or _utc_today()
     start_d = _parse_date(start_date) or (end_d - timedelta(days=30))
     if start_d > end_d:
         start_d, end_d = end_d, start_d
@@ -103,4 +133,7 @@ async def get_token_usage_details(
         end_date=end_d,
         model_name=model,
         provider_id=provider,
+        agent_id=agent_id,
+        conversation_id=chat_id,
+        turn_id=turn_id,
     )

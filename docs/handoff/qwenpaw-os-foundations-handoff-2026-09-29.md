@@ -906,6 +906,22 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - system 高风险、陈旧候选、low-risk UI 热安装、Promotion/Scenario/Router/CLI 共
   `185 passed`；文件级 mypy、flake8、pylint 已通过。Task 页面没有改动。
 
+### 2026-10-09 Token Usage 多级归属
+
+- 现有 token 文件原先在写盘前压缩为日期、Agent、Provider、Model，无法恢复
+  Chat/turn 归属；新记录保留 `agent_id`、`ChatSpec.id` 和 Invocation turn，旧记录
+  继续可读且归属为 null。
+- `/api/token-usage` 与 `/details` 在日期、Provider、Model 之外支持 `agent_id`、
+  `chat_id`、`turn_id` 过滤。同一事实因此可形成 global/agent/chat/turn 四级视图，
+  前端无需从消息历史二次汇总。
+- Provider 返回 token 标记为 `provider_reported`；没有实际 usage 时，Chat 的字符
+  估算标记为 `local_estimate`。日期按 UTC、模型按实际 Provider route 记录。
+- turn 当前稳定定义为 OS Invocation；工具循环的多次调用同属一 turn，retry/fallback
+  可按实际 Provider/Model 分行。后续若 Kernel 显式冻结 Submission ID 到
+  InvocationScope 的关系，可增加 submission 投影，但不以 `session_id` 代替。
+- 本切片后端 token/turn 定点测试 `96 passed`，前端 Chat/API 定点测试
+  `60 passed`；Task 页面没有改动。
+
 ## 5. 钉钉文档归档清单
 
 ### 框架分析目录

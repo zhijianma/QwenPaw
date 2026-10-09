@@ -572,6 +572,12 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
   retry、流式成功/取消/失败和 usage，并提供 Chat-owned 只读查询。Route 区分逻辑
   请求与实际 Provider/Model，Attempt 记录 Adapter/Formatter 身份和版本；缺失价格
   以 `cost_unknown` 留证，不折算为零。
+- [x] Token 统计沿用同一模型调用事实，不由前端或消息历史反推。新 usage 记录保留
+  `agent_id → ChatSpec.id → invocation(turn) → provider/model` 完整归属，可在同一日期
+  范围内投影 global、agent、chat、turn 四级统计；日期按 UTC 归档，模型取实际调用
+  路由。Provider usage 标记为 `provider_reported`，无 Provider usage 时 Chat 上下文估算
+  标记为 `local_estimate`，两种口径不得混合冒充精确计费数据。旧日期/agent/model
+  聚合记录继续可读，但没有历史上不存在的 chat/turn 归属。
 - [x] 将 Chat 运行模型从隐含的一问一答升级为 Conversation Execution Chain：
   `Submission` 是输入，`Invocation` 是一次运行尝试，`correlation_id` 贯穿同一意图
   的多次等待与恢复；短问答继续使用单 Invocation 快速路径。

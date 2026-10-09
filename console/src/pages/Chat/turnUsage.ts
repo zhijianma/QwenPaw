@@ -24,6 +24,10 @@ export interface TurnUsage {
   session_cache_observed?: boolean;
   session_cache_hit_rate?: number | null;
   estimated?: boolean;
+  measurement?: "provider_reported" | "local_estimate";
+  conversation_id?: string | null;
+  turn_id?: string | null;
+  observed_at?: string;
 }
 
 export interface ContextUsage {
@@ -120,8 +124,7 @@ function getResponseCardData(
 ): Record<string, unknown> | null {
   const card = (
     cards as
-      | Array<{ code?: string; data?: Record<string, unknown> }>
-      | undefined
+      Array<{ code?: string; data?: Record<string, unknown> }> | undefined
   )?.find((c) => c?.code === "AgentScopeRuntimeResponseCard");
   return card?.data ?? null;
 }

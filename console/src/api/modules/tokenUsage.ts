@@ -6,6 +6,9 @@ export interface GetTokenUsageParams {
   end_date: string;
   model?: string;
   provider?: string;
+  agent_id?: string;
+  chat_id?: string;
+  turn_id?: string;
 }
 
 function buildQuery(params: GetTokenUsageParams): string {
@@ -15,6 +18,9 @@ function buildQuery(params: GetTokenUsageParams): string {
   });
   if (params.model) search.set("model", params.model);
   if (params.provider) search.set("provider", params.provider);
+  if (params.agent_id) search.set("agent_id", params.agent_id);
+  if (params.chat_id) search.set("chat_id", params.chat_id);
+  if (params.turn_id) search.set("turn_id", params.turn_id);
   return `?${search.toString()}`;
 }
 

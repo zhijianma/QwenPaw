@@ -1106,6 +1106,13 @@ Cron 不形成独立审批或产物事实源。
       `cost_unknown=true`，不冒充零成本。固定 Chat 再次 `/clear` 后真实返回
       `MODEL_CALL_FACTS_E2E_OK`，记录 requested/actual 均为 DashScope
       `qwen3.8-max`，Adapter/Formatter 版本为 `2.2.2b1`，调用成功且价格未知。
+    - [x] Token usage 写入前不再丢失运行归属：新记录按 UTC 日期、Agent、
+      `ChatSpec.id`、Invocation turn、实际 Provider/Model 聚合。统一查询支持不带归属
+      条件的 global、以及 agent/chat/turn 逐级过滤；一次 turn 内工具循环的多个模型
+      调用累计在同一 Invocation 下，实际 retry/fallback 仍按 Provider/Model 分行。
+      Chat 消息继续携带本 turn usage 和上下文窗口投影，并显式区分
+      `provider_reported` 与 `local_estimate`。旧三段聚合键保持只读兼容，不伪造
+      conversation/turn identity。
     - [ ] Workstation / Hub 的健康度、成本和数据边界动态路由仍待实现。Lite 当前
       继续使用确定性主模型与显式 fallback 顺序，不静默切换。
   - [ ] Run Completion、Verification 与业务 Outcome 分层；当前已阻止 Invocation

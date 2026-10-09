@@ -54,6 +54,7 @@ def _turn_from_stats(stats: dict[str, Any]) -> dict[str, Any] | None:
         "cache_observed": False,
         "cache_hit_rate": None,
         "estimated": True,
+        "measurement": "local_estimate",
     }
 
 

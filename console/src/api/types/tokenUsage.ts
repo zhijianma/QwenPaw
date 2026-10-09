@@ -1,4 +1,4 @@
-/** Single token usage record (per date + agent + provider + model). */
+/** Single token usage record with optional ChatSpec and turn ownership. */
 export interface TokenUsageRecord {
   date: string; // YYYY-MM-DD
   provider_id: string;
@@ -11,6 +11,8 @@ export interface TokenUsageRecord {
   cache_observed_calls: number;
   call_count: number;
   agent_id?: string | null;
+  conversation_id?: string | null;
+  turn_id?: string | null;
 }
 
 /** Per-model (has provider_id, model) or per-date (no provider_id, model) stats. */

@@ -2,7 +2,7 @@
 """Model wrapper that records token usage from LLM responses."""
 
 import asyncio
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any, AsyncGenerator, Literal
@@ -116,8 +116,10 @@ class TokenRecordingModelWrapper(ChatModelBase):
         super().__init__(
             credential=getattr(model, "credential", None),
             model=getattr(model, "model", "unknown"),
-            parameters=getattr(model, "parameters", None)
-            or ChatModelBase.Parameters(),
+            parameters=(
+                getattr(model, "parameters", None)
+                or ChatModelBase.Parameters()
+            ),
             stream=getattr(model, "stream", True),
             context_size=getattr(model, "context_size", 32768),
         )
@@ -144,7 +146,11 @@ class TokenRecordingModelWrapper(ChatModelBase):
         """Keep formatter updates synchronized with the wrapped model."""
         self._model.formatter = value
 
-    def _record_usage(self, usage: ChatUsage | None) -> None:
+    def _record_usage(
+        self,
+        usage: ChatUsage | None,
+        attempt: ModelCallAttempt | None = None,
+    ) -> None:
         """Enqueue a usage event synchronously — never blocks the caller."""
         if usage is None:
             return
@@ -172,13 +178,20 @@ class TokenRecordingModelWrapper(ChatModelBase):
             cache_read = 0
             cache_write = 0
 
+        observed_at = datetime.now(tz=timezone.utc)
+        conversation_id = (
+            str(attempt.conversation_id)
+            if attempt is not None and attempt.conversation_id
+            else ""
+        )
+        turn_id = str(attempt.invocation_id) if attempt is not None else ""
         event = _UsageEvent(
             provider_id=self._provider_id,
             model_name=self.model,
             prompt_tokens=pt,
             completion_tokens=ct,
-            date_str=date.today().isoformat(),
-            now_iso=datetime.now(tz=timezone.utc).isoformat(
+            date_str=observed_at.date().isoformat(),
+            now_iso=observed_at.isoformat(
                 timespec="seconds",
             ),
             cache_read_tokens=cache_read,
@@ -186,6 +199,8 @@ class TokenRecordingModelWrapper(ChatModelBase):
             cache_eligible_input_tokens=cache_eligible,
             cache_observed=cache_observed,
             agent_id=_usage_agent_id(),
+            conversation_id=conversation_id,
+            turn_id=turn_id,
         )
         # Fire-and-forget: synchronous put_nowait, ~100 ns, no await needed.
         get_token_usage_manager().enqueue(event)
@@ -212,6 +227,10 @@ class TokenRecordingModelWrapper(ChatModelBase):
             # Auto-compaction threshold (fraction of the window) so the UI can
             # mark where context gets evicted. None = disabled/unknown.
             "compact_threshold": self._compact_threshold,
+            "conversation_id": conversation_id or None,
+            "turn_id": turn_id or None,
+            "observed_at": observed_at.isoformat(timespec="seconds"),
+            "measurement": "provider_reported",
         }
         self._store_usage(usage_data)
 
@@ -398,7 +417,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
                 output_boundary=ModelOutputBoundary.PRE_OUTPUT,
             )
             raise
-        self._record_usage(safe_attr(result, "usage"))
+        self._record_usage(safe_attr(result, "usage"), attempt)
         await self._record_task_budget(safe_attr(result, "usage"))
         await self._complete_model_attempt(
             attempt,
@@ -457,7 +476,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
 
         if isinstance(result, AsyncGenerator):
             return self._wrap_stream(result, attempt)
-        self._record_usage(safe_attr(result, "usage"))
+        self._record_usage(safe_attr(result, "usage"), attempt)
         await self._record_task_budget(safe_attr(result, "usage"))
         await self._complete_model_attempt(
             attempt,
@@ -520,9 +539,11 @@ class TokenRecordingModelWrapper(ChatModelBase):
                 output_boundary=(
                     ModelOutputBoundary.TERMINAL_STREAM
                     if terminal_chunk_seen
-                    else ModelOutputBoundary.PARTIAL_STREAM
-                    if emitted_content
-                    else ModelOutputBoundary.PRE_OUTPUT
+                    else (
+                        ModelOutputBoundary.PARTIAL_STREAM
+                        if emitted_content
+                        else ModelOutputBoundary.PRE_OUTPUT
+                    )
                 ),
             )
             raise
@@ -570,5 +591,5 @@ class TokenRecordingModelWrapper(ChatModelBase):
                 raise error
         finally:
             await stream.aclose()
-            self._record_usage(last_usage)
+            self._record_usage(last_usage, attempt)
             await self._record_task_budget(last_usage)

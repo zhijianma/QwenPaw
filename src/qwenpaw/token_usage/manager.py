@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Token usage manager — thin orchestrator.
-"""
+"""Token usage manager — thin orchestrator."""
 
 import logging
 import threading
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -45,7 +44,8 @@ class TokenUsageStats(BaseModel):
 class TokenUsageRecord(TokenUsageStats):
     """Single row from token usage query.
 
-    With agent tracking, a row is (date, agent, provider, model).
+    New rows preserve the complete runtime ownership path. Legacy rows keep
+    nullable ownership so historical totals remain visible.
     """
 
     date: str = Field(..., description="Date (YYYY-MM-DD)")
@@ -56,6 +56,14 @@ class TokenUsageRecord(TokenUsageStats):
         description=(
             "Owning agent ID; null if the stored row predates agent tracking"
         ),
+    )
+    conversation_id: Optional[str] = Field(
+        None,
+        description="Owning ChatSpec.id; null for legacy or unscoped calls",
+    )
+    turn_id: Optional[str] = Field(
+        None,
+        description="Owning OS invocation; null for legacy calls",
     )
 
 
@@ -91,6 +99,32 @@ class TokenUsageSummary(BaseModel):
     by_date: dict[str, TokenUsageStats] = Field(
         default_factory=dict,
         description="Per date (YYYY-MM-DD) - all models combined",
+    )
+
+
+def _matches_filters(
+    *,
+    model: str,
+    provider_id: str,
+    agent_id: str | None,
+    conversation_id: str | None,
+    turn_id: str | None,
+    expected_model: str | None,
+    expected_provider: str | None,
+    expected_agent: str | None,
+    expected_conversation: str | None,
+    expected_turn: str | None,
+) -> bool:
+    """Return whether one usage row belongs to the requested scope."""
+    return all(
+        (
+            expected_model is None or model == expected_model,
+            expected_provider is None or provider_id == expected_provider,
+            expected_agent is None or agent_id == expected_agent,
+            expected_conversation is None
+            or conversation_id == expected_conversation,
+            expected_turn is None or turn_id == expected_turn,
+        ),
     )
 
 
@@ -145,6 +179,9 @@ class TokenUsageManager:
         cache_write_tokens: int = 0,
         cache_eligible_input_tokens: int = 0,
         cache_observed: bool = False,
+        agent_id: str | None = None,
+        conversation_id: str | None = None,
+        turn_id: str | None = None,
     ) -> None:
         """Record token usage for a given provider, model and date.
 
@@ -156,16 +193,15 @@ class TokenUsageManager:
             model_name: Name of the model (e.g. "qwen3-max", "gpt-4").
             prompt_tokens: Number of input/prompt tokens.
             completion_tokens: Number of output/completion tokens.
-            at_date: Date to record under. Defaults to today (local).
+            at_date: Date to record under. Defaults to today in UTC.
             cache_read_tokens: Number of prompt tokens read from cache.
             cache_write_tokens: Number of prompt tokens written to cache.
             cache_eligible_input_tokens: Normalized cache-rate denominator.
             cache_observed: Whether the adapter reports cache usage.
         """
-        from datetime import datetime, timezone
-
+        observed_at = datetime.now(tz=timezone.utc)
         if at_date is None:
-            at_date = date.today()
+            at_date = observed_at.date()
         self._buffer.enqueue(
             _UsageEvent(
                 provider_id=provider_id,
@@ -173,14 +209,18 @@ class TokenUsageManager:
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 date_str=at_date.isoformat(),
-                now_iso=datetime.now(tz=timezone.utc).isoformat(
+                now_iso=observed_at.isoformat(
                     timespec="seconds",
                 ),
                 cache_read_tokens=cache_read_tokens,
                 cache_write_tokens=cache_write_tokens,
                 cache_eligible_input_tokens=cache_eligible_input_tokens,
                 cache_observed=cache_observed,
-                agent_id=_usage_agent_id(),
+                agent_id=(
+                    agent_id if agent_id is not None else _usage_agent_id()
+                ),
+                conversation_id=conversation_id or "",
+                turn_id=turn_id or "",
             ),
         )
 
@@ -191,6 +231,9 @@ class TokenUsageManager:
         end_date: date,
         model_name: Optional[str],
         provider_id: Optional[str],
+        agent_id: Optional[str] = None,
+        conversation_id: Optional[str] = None,
+        turn_id: Optional[str] = None,
     ) -> list[TokenUsageRecord]:
         """Return per-day records from the merged data dict."""
         results: list[TokenUsageRecord] = []
@@ -205,6 +248,8 @@ class TokenUsageManager:
                     rec_agent = None
                 else:
                     rec_agent = entry.get("agent_id") or ""
+                rec_conversation = entry.get("conversation_id") or None
+                rec_turn = entry.get("turn_id") or None
                 rec_model = entry.get("model_name") or ""
                 if not rec_model:
                     key = str(_key)
@@ -214,9 +259,18 @@ class TokenUsageManager:
                         rec_model = key.split(":", 1)[1]
                     else:
                         rec_model = key
-                if model_name is not None and rec_model != model_name:
-                    continue
-                if provider_id is not None and rec_provider != provider_id:
+                if not _matches_filters(
+                    model=rec_model,
+                    provider_id=rec_provider,
+                    agent_id=rec_agent,
+                    conversation_id=rec_conversation,
+                    turn_id=rec_turn,
+                    expected_model=model_name,
+                    expected_provider=provider_id,
+                    expected_agent=agent_id,
+                    expected_conversation=conversation_id,
+                    expected_turn=turn_id,
+                ):
                     continue
                 results.append(
                     TokenUsageRecord(
@@ -243,6 +297,8 @@ class TokenUsageManager:
                         ),
                         call_count=entry.get("call_count", 0),
                         agent_id=rec_agent,
+                        conversation_id=rec_conversation,
+                        turn_id=rec_turn,
                     ),
                 )
             current += timedelta(days=1)
@@ -255,6 +311,9 @@ class TokenUsageManager:
         end_date: Optional[date] = None,
         model_name: Optional[str] = None,
         provider_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        conversation_id: Optional[str] = None,
+        turn_id: Optional[str] = None,
     ) -> TokenUsageSummary:
         """Get aggregated token usage summary.
 
@@ -268,7 +327,7 @@ class TokenUsageManager:
             TokenUsageSummary with totals, by_model, by_provider, by_date.
         """
         if end_date is None:
-            end_date = date.today()
+            end_date = datetime.now(tz=timezone.utc).date()
         if start_date is None:
             start_date = end_date - timedelta(days=30)
 
@@ -280,6 +339,9 @@ class TokenUsageManager:
             end_date,
             model_name,
             provider_id,
+            agent_id,
+            conversation_id,
+            turn_id,
         )
 
         total_prompt = 0
@@ -380,6 +442,9 @@ class TokenUsageManager:
         end_date: Optional[date] = None,
         model_name: Optional[str] = None,
         provider_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        conversation_id: Optional[str] = None,
+        turn_id: Optional[str] = None,
     ) -> list[TokenUsageRecord]:
         """Get raw token usage records for frontend aggregation.
 
@@ -394,7 +459,7 @@ class TokenUsageManager:
             (date, agent, provider, model).
         """
         if end_date is None:
-            end_date = date.today()
+            end_date = datetime.now(tz=timezone.utc).date()
         if start_date is None:
             start_date = end_date - timedelta(days=30)
 
@@ -406,6 +471,9 @@ class TokenUsageManager:
             end_date,
             model_name,
             provider_id,
+            agent_id,
+            conversation_id,
+            turn_id,
         )
 
         return records

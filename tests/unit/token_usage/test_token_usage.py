@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Unit tests for the token usage core module."""
+
 from __future__ import annotations
 
 import asyncio
@@ -34,6 +35,9 @@ from qwenpaw.token_usage.turn_usage import add_session_cache_usage
 
 _EMPTY_AGENT_KEY = "\x1f".join(("", "openai", "gpt-4"))
 _NAMED_AGENT_KEY = "\x1f".join(("bot-a", "openai", "gpt-4"))
+_SCOPED_KEY = "\x1f".join(
+    ("bot-a", "chat-1", "turn-1", "openai", "gpt-4"),
+)
 
 
 def _ev(**kwargs) -> _UsageEvent:
@@ -149,6 +153,24 @@ class TestApplyEvent:
         assert day[_NAMED_AGENT_KEY]["agent_id"] == "bot-a"
         assert day[_EMPTY_AGENT_KEY]["agent_id"] == ""
         assert day[_EMPTY_AGENT_KEY]["call_count"] == 2
+
+    def test_apply_event_preserves_chat_and_turn_scope(self):
+        """Runtime usage should retain ChatSpec and turn ownership."""
+        cache = {}
+
+        _apply_event(
+            cache,
+            _ev(
+                agent_id="bot-a",
+                conversation_id="chat-1",
+                turn_id="turn-1",
+            ),
+        )
+
+        entry = cache["2026-04-24"][_SCOPED_KEY]
+        assert entry["agent_id"] == "bot-a"
+        assert entry["conversation_id"] == "chat-1"
+        assert entry["turn_id"] == "turn-1"
 
 
 # =============================================================================
@@ -791,6 +813,8 @@ class TestTokenUsageManagerCore:
                 "provider_id": "prov2",
                 "model": "model-from-key",
                 "agent_id": None,
+                "conversation_id": None,
+                "turn_id": None,
             },
             {
                 "prompt_tokens": 7,
@@ -804,6 +828,8 @@ class TestTokenUsageManagerCore:
                 "provider_id": "ollama",
                 "model": "namespace:model:tag",
                 "agent_id": None,
+                "conversation_id": None,
+                "turn_id": None,
             },
         ]
 
@@ -828,8 +854,75 @@ class TestTokenUsageManagerCore:
                 "provider_id": "prov2",
                 "model": "model-from-key",
                 "agent_id": None,
+                "conversation_id": None,
+                "turn_id": None,
             },
         ]
+
+    @pytest.mark.asyncio
+    async def test_query_filters_global_agent_chat_and_turn_scopes(self):
+        """Every ownership level should use the same usage facts."""
+        # pylint: disable=protected-access
+        manager = TokenUsageManager()
+        merged: dict = {}
+        _apply_event(
+            merged,
+            _ev(
+                agent_id="bot-a",
+                conversation_id="chat-1",
+                turn_id="turn-1",
+            ),
+        )
+        _apply_event(
+            merged,
+            _ev(
+                agent_id="bot-a",
+                conversation_id="chat-2",
+                turn_id="turn-2",
+                prompt_tokens=40,
+                completion_tokens=10,
+            ),
+        )
+
+        global_rows = await manager._query(
+            merged,
+            date(2026, 4, 24),
+            date(2026, 4, 24),
+            None,
+            None,
+        )
+        agent_rows = await manager._query(
+            merged,
+            date(2026, 4, 24),
+            date(2026, 4, 24),
+            None,
+            None,
+            "bot-a",
+        )
+        chat_rows = await manager._query(
+            merged,
+            date(2026, 4, 24),
+            date(2026, 4, 24),
+            None,
+            None,
+            "bot-a",
+            "chat-1",
+        )
+        turn_rows = await manager._query(
+            merged,
+            date(2026, 4, 24),
+            date(2026, 4, 24),
+            None,
+            None,
+            "bot-a",
+            "chat-1",
+            "turn-1",
+        )
+
+        assert len(global_rows) == 2
+        assert len(agent_rows) == 2
+        assert [row.conversation_id for row in chat_rows] == ["chat-1"]
+        assert [row.turn_id for row in turn_rows] == ["turn-1"]
 
 
 # =============================================================================
@@ -999,6 +1092,29 @@ class TestTokenRecordingModelWrapper:
         )
         assert peek_current_agent_id() == ""
         assert _usage_agent_id() == ""
+
+    def test_record_usage_uses_model_attempt_ownership(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        """Model attempt should bind usage to ChatSpec and OS turn."""
+        wrapper, captured = self._stream_harness(tmp_path, monkeypatch)
+        usage = MagicMock(
+            input_tokens=100,
+            output_tokens=50,
+            cache_input_tokens=0,
+            cache_creation_input_tokens=0,
+        )
+        attempt = MagicMock(
+            conversation_id="chat-1",
+            invocation_id="turn-1",
+        )
+
+        wrapper._record_usage(usage, attempt)
+
+        assert captured[0].conversation_id == "chat-1"
+        assert captured[0].turn_id == "turn-1"
 
     def test_record_usage_carries_cache_metrics(self, tmp_path, monkeypatch):
         """Provider cache counters should reach both event and turn usage."""

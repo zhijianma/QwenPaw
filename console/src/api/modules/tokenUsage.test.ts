@@ -55,4 +55,17 @@ describe("tokenUsageApi", () => {
       "/token-usage/details?start_date=2026-02-01&end_date=2026-02-28",
     );
   });
+
+  it("getTokenUsageDetails includes ownership scope filters", async () => {
+    await tokenUsageApi.getTokenUsageDetails({
+      start_date: "2026-02-01",
+      end_date: "2026-02-28",
+      agent_id: "bot-a",
+      chat_id: "chat-1",
+      turn_id: "turn-1",
+    });
+    expect(request).toHaveBeenCalledWith(
+      "/token-usage/details?start_date=2026-02-01&end_date=2026-02-28&agent_id=bot-a&chat_id=chat-1&turn_id=turn-1",
+    );
+  });
 });

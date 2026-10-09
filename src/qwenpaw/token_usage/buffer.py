@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
-"""In-memory write buffer with async producer-consumer for token usage.
-"""
+"""In-memory write buffer with async producer-consumer for token usage."""
 
 import asyncio
 import copy
@@ -29,6 +28,8 @@ class _UsageEvent(NamedTuple):
     cache_eligible_input_tokens: int = 0
     cache_observed: bool = False
     agent_id: str = ""
+    conversation_id: str = ""
+    turn_id: str = ""
 
 
 class TokenUsageBuffer:
@@ -42,7 +43,7 @@ class TokenUsageBuffer:
         self._path = path
         self._flush_interval = flush_interval
 
-        # Format: { date: { colon key or unit-separator triple: {...} } }
+        # Format: { date: { legacy or unit-separated scope key: {...} } }
         self._disk_cache: dict = {}
         self._cache_loaded = False
 
@@ -196,14 +197,22 @@ def _apply_event(cache: dict, ev: _UsageEvent) -> None:
     """Accumulate a single usage event into *cache* in-place.
 
     Cache format: { "2026-04-23": { key: {...} } }.
-    New events always use unit-separator keys
-    (agent_id\\x1fprovider_id\\x1fmodel_name), including empty agent_id
-    (\\x1fprovider\\x1fmodel), so they do not merge into legacy
-    provider:model rows. Old colon keys are left as-is (no migration).
+    New events always use unit-separator keys with the complete ownership
+    path (agent, ChatSpec, turn, provider, model). Empty ownership values keep
+    non-runtime callers compatible without merging into legacy rows. Old
+    three-part and colon keys are left as-is and remain queryable.
     """
-    composite_key = "\x1f".join(
-        (ev.agent_id or "", ev.provider_id, ev.model_name),
-    )
+    ownership = (ev.conversation_id or "", ev.turn_id or "")
+    if any(ownership):
+        key_parts = (
+            ev.agent_id or "",
+            *ownership,
+            ev.provider_id,
+            ev.model_name,
+        )
+    else:
+        key_parts = (ev.agent_id or "", ev.provider_id, ev.model_name)
+    composite_key = "\x1f".join(key_parts)
     day_bucket = cache.setdefault(ev.date_str, {})
     entry = day_bucket.setdefault(
         composite_key,
@@ -218,6 +227,8 @@ def _apply_event(cache: dict, ev: _UsageEvent) -> None:
             "cache_observed_calls": 0,
             "call_count": 0,
             "agent_id": ev.agent_id,
+            "conversation_id": ev.conversation_id,
+            "turn_id": ev.turn_id,
         },
     )
     entry["prompt_tokens"] += ev.prompt_tokens
