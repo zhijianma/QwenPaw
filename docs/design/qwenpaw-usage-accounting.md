@@ -9,6 +9,12 @@ Model Call is the authoritative fact for model usage. Token Usage is a
 read-optimized, rebuildable projection. A frontend aggregate, message-history
 scan, or fire-and-forget JSON buffer must never become a competing fact source.
 
+The public query models live in `token_usage/models.py`. Projection and API
+layers depend on this stable contract; the lifecycle manager depends on both,
+so the disposable SQLite projection never imports orchestration or singleton
+state. `manager.py` continues to re-export these names for source compatibility
+with existing extensions.
+
 The ownership path is:
 
 ```text

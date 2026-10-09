@@ -2,7 +2,8 @@
 """Token usage tracking for LLM API calls."""
 
 from .buffer import _UsageEvent
-from .manager import (
+from .manager import get_token_usage_manager
+from .models import (
     TokenUsageByAgent,
     TokenUsageByConversation,
     TokenUsageByDateModel,
@@ -12,7 +13,6 @@ from .manager import (
     TokenUsageScopeRows,
     TokenUsageStats,
     TokenUsageSummary,
-    get_token_usage_manager,
 )
 from .model_wrapper import TokenRecordingModelWrapper
 from .projection import UsageProjectionStatus

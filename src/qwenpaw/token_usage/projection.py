@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict
 
 from ..kernel import ModelCallAttempt, ModelCallRecord, ModelCallResult
 from ..utils.io_utils import run_sync_io
-from .manager import TokenUsageRecord
+from .models import TokenUsageRecord
 
 
 class UsageProjectionConflictError(RuntimeError):
