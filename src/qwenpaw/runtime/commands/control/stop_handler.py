@@ -6,6 +6,8 @@ The /stop command immediately terminates an ongoing agent task.
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
 from uuid import uuid4
 
@@ -59,6 +61,7 @@ class StopCommandHandler(BaseControlCommandHandler):
 
         workspace = context.workspace
         channel_id = context.channel.channel
+        observation_id = f"channel-stop:{_message_identity(context.payload)}"
 
         # Scope the lookup to the requesting user so users sharing the same
         # session_id (group members, or DM users whose conversation_id suffix
@@ -70,6 +73,12 @@ class StopCommandHandler(BaseControlCommandHandler):
         )
 
         if chat_id is None:
+            await _observe_legacy_stop(
+                workspace,
+                observation_id=observation_id,
+                entrypoint="channel.slash_stop",
+                disposition="chat_not_found",
+            )
             logger.warning(
                 f"/stop: No active chat found for "
                 f"session={target_session_id[:30]} channel={channel_id}",
@@ -87,9 +96,7 @@ class StopCommandHandler(BaseControlCommandHandler):
                 receipt = await control.interrupt_current(
                     agent_id=workspace.agent_id,
                     conversation_id=chat_id,
-                    idempotency_key=(
-                        f"channel-stop:{_message_identity(context.payload)}"
-                    ),
+                    idempotency_key=observation_id,
                 )
             except (QueueCommandConflictError, QueueRevisionConflictError):
                 logger.info(
@@ -101,6 +108,12 @@ class StopCommandHandler(BaseControlCommandHandler):
             receipt is not None
             and receipt.status is ControlCommandStatus.APPLIED
         ):
+            await _observe_legacy_stop(
+                workspace,
+                observation_id=observation_id,
+                entrypoint="channel.slash_stop",
+                disposition="os_interrupt",
+            )
             logger.info(
                 "/stop: OS interrupt applied chat_id=%s session=%s",
                 chat_id,
@@ -124,6 +137,12 @@ class StopCommandHandler(BaseControlCommandHandler):
                 ),
             )
         if stopped:
+            await _observe_legacy_stop(
+                workspace,
+                observation_id=observation_id,
+                entrypoint="channel.slash_stop",
+                disposition="compatibility_cancelled",
+            )
             logger.info(
                 "/stop: compatibility cancellation applied chat_id=%s "
                 "session=%s",
@@ -136,6 +155,12 @@ class StopCommandHandler(BaseControlCommandHandler):
                 f"running invocation interrupted."
             )
 
+        await _observe_legacy_stop(
+            workspace,
+            observation_id=observation_id,
+            entrypoint="channel.slash_stop",
+            disposition="no_active_invocation",
+        )
         logger.warning(
             "/stop: Nothing to stop: chat_id=%s session=%s",
             chat_id,
@@ -168,3 +193,30 @@ def _message_identity(payload) -> str:
         (str(candidate) for candidate in candidates if candidate),
         str(uuid4()),
     )
+
+
+async def _observe_legacy_stop(
+    workspace,
+    *,
+    observation_id: str,
+    entrypoint: str,
+    disposition: str,
+) -> None:
+    """Call the optional Host observer without coupling Runtime to App."""
+    observer = getattr(workspace, "legacy_stop_compatibility", None)
+    record = getattr(observer, "record", None)
+    if not callable(record):
+        return
+    try:
+        result = record(
+            observation_id=observation_id,
+            entrypoint=entrypoint,
+            disposition=disposition,
+        )
+        if inspect.isawaitable(result):
+            await asyncio.wait_for(result, timeout=0.25)
+    except Exception:  # pylint: disable=broad-except
+        logger.warning(
+            "legacy stop compatibility observation failed",
+            exc_info=True,
+        )

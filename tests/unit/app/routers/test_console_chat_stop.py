@@ -12,6 +12,9 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from qwenpaw.app.routers import console as console_mod
+from qwenpaw.app.chats.compatibility import (
+    SQLiteLegacyStopCompatibilityStore,
+)
 from qwenpaw.kernel import ControlCommandStatus
 from qwenpaw.tool_calls import CancelReason
 
@@ -135,6 +138,7 @@ async def test_stop_prefers_os_interrupt_without_legacy_cancellation(
     app,
     stop_workspace,
     coordinator,
+    tmp_path,
 ) -> None:
     control = SimpleNamespace(
         interrupt_current=AsyncMock(
@@ -145,6 +149,12 @@ async def test_stop_prefers_os_interrupt_without_legacy_cancellation(
         ),
     )
     stop_workspace.invocation_control = control
+    observer = SQLiteLegacyStopCompatibilityStore(
+        tmp_path / "chat-compatibility.db",
+        "agent-a",
+    )
+    await observer.start()
+    stop_workspace.legacy_stop_compatibility = observer
     stop_workspace.chat_manager.get_chat = AsyncMock(
         return_value=SimpleNamespace(
             id="chat-uuid",
@@ -170,6 +180,10 @@ async def test_stop_prefers_os_interrupt_without_legacy_cancellation(
     assert interrupt_args["idempotency_key"].startswith("console-stop:")
     coordinator.cancel_running_for_session.assert_not_awaited()
     stop_workspace.task_tracker.request_stop.assert_not_awaited()
+    report = await observer.report()
+    assert report.total_hits == 1
+    assert report.hits[0].entrypoint == "console.stop_api"
+    assert report.hits[0].disposition == "os_interrupt"
 
 
 @pytest.mark.asyncio

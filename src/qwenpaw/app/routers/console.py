@@ -64,6 +64,7 @@ from ..chats.input_artifacts import (
     ConversationInputArtifactError,
     claim_conversation_artifacts,
 )
+from ..chats.compatibility import observe_legacy_stop
 from ..chats.title_generator import generate_and_update_title
 from ..legacy_inbox_observation import (
     LegacyInboxDualReadAssessment,
@@ -633,6 +634,7 @@ async def post_console_chat_stop(
     """Stop the running chat and its foreground tool calls."""
     logger.debug("[STOP API] Received stop request for chat_id=%s", chat_id)
     workspace = await get_agent_for_request(request)
+    observation_id = f"console-stop:{uuid.uuid4()}"
 
     resolved_chat_id = chat_id
     runtime_session_id: str | None = None
@@ -663,7 +665,7 @@ async def post_console_chat_stop(
             receipt = await control.interrupt_current(
                 agent_id=workspace.agent_id,
                 conversation_id=resolved_chat_id,
-                idempotency_key=f"console-stop:{uuid.uuid4()}",
+                idempotency_key=observation_id,
             )
             if receipt is not None:
                 interrupt_command_id = receipt.command_id
@@ -678,6 +680,12 @@ async def post_console_chat_stop(
             )
 
     if interrupt_applied:
+        await observe_legacy_stop(
+            workspace,
+            observation_id=observation_id,
+            entrypoint="console.stop_api",
+            disposition="os_interrupt",
+        )
         logger.debug(
             "[STOP API] OS interrupt applied chat_id=%s",
             resolved_chat_id,
@@ -717,6 +725,15 @@ async def post_console_chat_stop(
                 else "runtime binding and compatibility run were unavailable"
             ),
         )
+
+    await observe_legacy_stop(
+        workspace,
+        observation_id=observation_id,
+        entrypoint="console.stop_api",
+        disposition=(
+            "compatibility_cancelled" if stopped else "no_active_invocation"
+        ),
+    )
 
     logger.debug(
         "[STOP API] stop completed: stopped=%s run_stopped=%s tools=%s",

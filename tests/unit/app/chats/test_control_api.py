@@ -16,6 +16,9 @@ from qwenpaw.app.chats.api import (
     router,
     stream_chat_runtime_projection,
 )
+from qwenpaw.app.chats.compatibility import (
+    SQLiteLegacyStopCompatibilityStore,
+)
 from qwenpaw.app.chats.manager import ChatManager
 from qwenpaw.app.chats.models import ChatSpec
 from qwenpaw.app.chats.repo import JsonChatRepository
@@ -66,6 +69,11 @@ async def _control_context(tmp_path: Path):
     )
     store = SQLiteInvocationControl(tmp_path / "control.sqlite3")
     service = InvocationControlService(store=store)
+    legacy_stop_compatibility = SQLiteLegacyStopCompatibilityStore(
+        tmp_path / "chat-compatibility.db",
+        "default",
+    )
+    await legacy_stop_compatibility.start()
     workspace = SimpleNamespace(
         agent_id="default",
         workspace_dir=tmp_path,
@@ -78,6 +86,7 @@ async def _control_context(tmp_path: Path):
             tmp_path / "resource-waits.sqlite3",
             agent_id="default",
         ),
+        legacy_stop_compatibility=legacy_stop_compatibility,
     )
     workspace.submission_dispatcher = WorkspaceChatSubmissionDispatcher(
         workspace=workspace,
@@ -178,6 +187,10 @@ async def test_chat_queue_reorder_cancel_and_idempotent_replay(
         conversation_id="chat-spec-1",
     )
     assert remaining.submissions == ()
+    compatibility = await app.dependency_overrides[
+        get_workspace
+    ]().legacy_stop_compatibility.report()
+    assert compatibility.total_hits == 0
     await service.close()
 
 

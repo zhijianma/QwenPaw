@@ -20,7 +20,7 @@
 |---|---|---|---|---|---|
 | QwenPaw Chat 提交 | `active-adapter` | `InvocationControlService` + SQLite Submission Queue | HTTP/Console 将消息与附件转换为版本化 envelope | Runtime Projection、Control Receipt、Queue revision | 固定 Chat 多标签 FIFO、浏览器关闭后继续、进程重启恢复全部真实通过 |
 | 外部 backend Chat 队列 | `legacy-fallback` | 外部 backend 自身能力 | Console 保留旧本地队列，不冒充 OS Queue；仅已知外部 backend 的 `agentId` 可启动 compatibility sender，QwenPaw 与未知 Agent 的遗留项失败关闭 | Harness `conversation_queue` 能力位；实际 fallback 通过幂等收据写入 agent/backend-scoped SQLite 汇总；`/api/chats/compatibility/external-queue` 只读查询 | 外部 backend 公开 Conversation/Queue capability，通过相同隔离与恢复套件，并建立旧队列零使用观察窗口 |
-| `/stop` 与旧取消入口 | `active-adapter` | Invocation cancellation root | 显式映射 `interrupt_current`；清队列必须走 `stop_and_clear` | Control Receipt、Invocation 终态 | 所有客户端停止使用隐式清队列语义，旧调用量观察期为零 |
+| `/stop` 与旧取消入口 | `active-adapter` | Invocation cancellation root | 显式映射 `interrupt_current`；清队列必须走 `stop_and_clear` | Control Receipt、Invocation 终态；Workspace 启动即建立 7 天零使用窗口，旧 Console API 与 Channel `/stop` 只记录入口、处置和时间，`/api/chats/compatibility/legacy-stop` 返回 agent-scoped 删除门禁 | 所有客户端迁移到显式 `interrupt` / `stop-and-clear`，连续 7 天旧调用量为零，并由迁移负责人确认后方可删除 |
 | 旧 Approval waiter | `active-adapter` | durable Interaction / Approval Broker | 唤醒旧 Future，不拥有审批状态 | Tool、Governance Tool、Driver、Codex/Qoder Harness 与 ReMe 共用 Execution Contract deadline；Task Ledger 持久化 `expires_at`；Interaction Projection、Audit、桥接失败 fail closed | 固定 Chat 及真实 Scheduler Task 的批准/拒绝/超时/取消验收全部通过，且进程丢失恢复无孤立审批 |
 | PawApp `UIBridge.confirm()` | `active-adapter` | workspace `InteractionService`，以 `ChatSpec.id + invocation_id` 归属 | `pawapp:confirm_request` 仅投递兼容事件；响应进入通用 Chat Interaction API | durable request/resolution、revision、expires_at、Task cancel 联动；SDK 保留完整交互 envelope | 完成浏览器断线重连与热替换中的真实 PawApp 验收，并观察旧 request-only 客户端为零 |
 | Cron `final` / `silent` agent job | `active-adapter` | Scheduler Fire + Task Ledger + Delivery Receipt | `CronManager` 仅选择新 Task Runtime 并回写旧 history | Task/Run、Delivery Receipt、Cron history | 保持兼容 history 期间不删；新管理入口替代旧 Job schema 后再评估 |
@@ -50,7 +50,11 @@
 可替换的 Plugin 注册 API 与 Cron Runtime 选择已满足该规范。Cron Job 详情、最近
 状态和执行历史会返回同一个 `CronRuntimeDecision`，并区分各类 fallback 原因和删除
 门槛。旧 Inbox 双读已有持久化观察摘要和只读门禁，但尚未经历真实 7 天观察期，也未
-完成归档恢复演练。旧 Task capability ID 已记录真实解析命中，并提供精确的新 ID、
+完成归档恢复演练。旧 Stop 入口已由 Host-owned SQLite 观察器区分 Console API、
+Channel 命令及 OS Interrupt、兼容取消与无活动运行；新 Control API 不计入旧入口命中，
+观察幂等键只保存 SHA-256；报告不保存 Chat、Session、消息或用户内容。即使零使用
+窗口完成，客户端迁移确认仍是
+独立删除门槛。旧 Task capability ID 已记录真实解析命中，并提供精确的新 ID、
 Slot 建议和可重置的 7 天零使用窗口；服务启动时持久化观察起点，任一旧 ID 命中都会
 重置窗口。即使窗口完成，持久化引用迁移仍是独立阻塞条件。外部 backend Queue 已
 冻结 `conversation_queue` 能力位，并在唯一 legacy admission 点记录不含消息内容和

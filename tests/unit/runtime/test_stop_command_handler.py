@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Tests for channel-neutral ``/stop`` Interrupt semantics."""
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -38,6 +39,7 @@ def _workspace(receipt):
             request_stop=AsyncMock(return_value=False),
         ),
         channel_manager=SimpleNamespace(clear_queue=AsyncMock()),
+        legacy_stop_compatibility=SimpleNamespace(record=AsyncMock()),
     )
 
 
@@ -60,6 +62,11 @@ async def test_stop_uses_os_interrupt_without_clearing_queue() -> None:
     )
     workspace.task_tracker.request_stop.assert_not_awaited()
     workspace.channel_manager.clear_queue.assert_not_awaited()
+    workspace.legacy_stop_compatibility.record.assert_awaited_once_with(
+        observation_id="channel-stop:channel-message-1",
+        entrypoint="channel.slash_stop",
+        disposition="os_interrupt",
+    )
 
 
 @pytest.mark.asyncio
@@ -72,6 +79,11 @@ async def test_stop_falls_back_without_clearing_queue() -> None:
     assert "running invocation interrupted" in result
     workspace.task_tracker.request_stop.assert_awaited_once_with("chat-1")
     workspace.channel_manager.clear_queue.assert_not_awaited()
+    workspace.legacy_stop_compatibility.record.assert_awaited_once_with(
+        observation_id="channel-stop:channel-message-1",
+        entrypoint="channel.slash_stop",
+        disposition="compatibility_cancelled",
+    )
 
 
 @pytest.mark.asyncio
@@ -107,3 +119,25 @@ async def test_stop_scopes_chat_lookup_to_requesting_user() -> None:
         "slack",
         user_id="user-1",
     )
+
+
+@pytest.mark.asyncio
+async def test_stop_observation_timeout_does_not_delay_interrupt() -> None:
+    workspace = _workspace(
+        SimpleNamespace(
+            status=ControlCommandStatus.APPLIED,
+            command_id=uuid4(),
+        ),
+    )
+
+    async def slow_record(**_kwargs) -> None:
+        await asyncio.sleep(2)
+
+    workspace.legacy_stop_compatibility.record.side_effect = slow_record
+    started_at = asyncio.get_running_loop().time()
+
+    result = await StopCommandHandler().handle(_context(workspace))
+
+    elapsed = asyncio.get_running_loop().time() - started_at
+    assert "running invocation interrupted" in result
+    assert elapsed < 0.75

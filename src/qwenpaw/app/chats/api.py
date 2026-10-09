@@ -125,6 +125,7 @@ from .submission_dispatcher import CONSOLE_SUBMISSION_ENVELOPE
 from .compatibility import (
     ExternalQueueFallbackRequest,
     SQLiteExternalQueueCompatibilityStore,
+    SQLiteLegacyStopCompatibilityStore,
 )
 
 logger = logging.getLogger(__name__)
@@ -148,6 +149,15 @@ def _external_queue_compatibility_store(
     )
     setattr(workspace, "_external_queue_compatibility_store", store)
     return store
+
+
+def _legacy_stop_compatibility_store(
+    workspace: Any,
+) -> SQLiteLegacyStopCompatibilityStore:
+    store = getattr(workspace, "legacy_stop_compatibility", None)
+    if isinstance(store, SQLiteLegacyStopCompatibilityStore):
+        return store
+    raise RuntimeError("legacy stop compatibility service is unavailable")
 
 
 def _is_app_owned_chat(chat: ChatSpec) -> bool:
@@ -190,6 +200,15 @@ async def external_queue_compatibility(
     report = await _external_queue_compatibility_store(workspace).report(
         agent_id=workspace.agent_id,
     )
+    return report.model_dump(mode="json")
+
+
+@router.get("/compatibility/legacy-stop")
+async def legacy_stop_compatibility(
+    workspace=Depends(get_workspace),
+) -> dict[str, Any]:
+    """Return content-free removal evidence for deprecated stop APIs."""
+    report = await _legacy_stop_compatibility_store(workspace).report()
     return report.model_dump(mode="json")
 
 

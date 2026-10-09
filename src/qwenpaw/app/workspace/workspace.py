@@ -253,6 +253,13 @@ class Workspace:  # pylint: disable=too-many-public-methods
         return self._service_manager.services.get("invocation_control")
 
     @property
+    def legacy_stop_compatibility(self):
+        """Return structured observation for deprecated stop entrypoints."""
+        return self._service_manager.services.get(
+            "legacy_stop_compatibility",
+        )
+
+    @property
     def interaction_service(self):
         """Get the shared approval, input, and suggestion broker."""
         return self._service_manager.services.get("interaction_service")
@@ -614,6 +621,9 @@ class Workspace:  # pylint: disable=too-many-public-methods
         from ...invocation_control import InvocationControlService
         from ...interactions import InteractionService
         from ...recovery import ModelResourceWaitService
+        from ..chats.compatibility import (
+            SQLiteLegacyStopCompatibilityStore,
+        )
 
         sm.register(
             ServiceDescriptor(
@@ -630,6 +640,25 @@ class Workspace:  # pylint: disable=too-many-public-methods
                 start_method="start",
                 stop_method="close",
                 require_clean_stop=True,
+                priority=10,
+                concurrent_init=False,
+            ),
+        )
+
+        sm.register(
+            ServiceDescriptor(
+                name="legacy_stop_compatibility",
+                service_class=SQLiteLegacyStopCompatibilityStore,
+                init_args=lambda ws: {
+                    "database_path": (
+                        ws.workspace_dir
+                        / ".qwenpaw"
+                        / "lite"
+                        / "chat-compatibility.db"
+                    ),
+                    "agent_id": ws.agent_id,
+                },
+                start_method="start",
                 priority=10,
                 concurrent_init=False,
             ),
