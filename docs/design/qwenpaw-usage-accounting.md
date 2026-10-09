@@ -110,6 +110,14 @@ they are never described as measured zero-token calls. Their context window is
 also excluded from utilization because a known denominator without observed
 input would manufacture a false `0%` ratio.
 
+The completed Chat turn snapshot follows the same rule. A successful call
+without Provider usage is persisted as `measurement=unavailable` with its
+actual Provider/Model and call count. Mixed turns use `measurement=partial`:
+known tokens remain visible while `usage_unobserved_calls` reports missing
+measurements. A Provider-reported zero remains distinct from both cases. The
+Console renders these states after streaming and after message-history reload;
+it never formats an unavailable call as `0 tok`.
+
 Retry and fallback are separate attempts and separate calls. Multiple calls in
 one tool loop share the Invocation turn. Composite public keys remain
 collision-safe JSON tuples until the API moves to structured rows.

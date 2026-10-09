@@ -3433,6 +3433,8 @@
       "turnEstimated": "本轮约",
       "tok": "tok",
       "inOut": "in {{inTok}} · out {{outTok}}",
+      "unavailable": "Token 用量未返回",
+      "unavailableCalls": "{{count}} 次调用未返回用量",
       "contextLabel": "上下文窗口",
       "outerRing": "外圈",
       "cacheLabel": "缓存命中率",

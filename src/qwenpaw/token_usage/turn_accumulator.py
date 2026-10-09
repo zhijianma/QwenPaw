@@ -55,6 +55,16 @@ def _merge_usage(
             route["prompt_tokens"] + route["completion_tokens"]
         )
         route["call_count"] += int(item.get("call_count", 1) or 1)
+        unavailable_calls = int(
+            item.get("usage_unobserved_calls", 0) or 0,
+        )
+        if unavailable_calls > 0:
+            route["usage_unobserved_calls"] = (
+                int(
+                    route.get("usage_unobserved_calls", 0) or 0,
+                )
+                + unavailable_calls
+            )
     merged["model_routes"] = list(routes.values())
     for field_name in (
         "prompt_tokens",
@@ -79,6 +89,14 @@ def _merge_usage(
         if cache_eligible > 0
         else None
     )
+    unavailable_calls = int(
+        previous.get("usage_unobserved_calls", 0) or 0,
+    ) + int(current.get("usage_unobserved_calls", 0) or 0)
+    if unavailable_calls > 0:
+        merged["usage_unobserved_calls"] = unavailable_calls
+        merged["measurement"] = (
+            "partial" if merged["total_tokens"] > 0 else "unavailable"
+        )
     return merged
 
 

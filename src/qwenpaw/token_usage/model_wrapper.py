@@ -213,9 +213,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
         record_legacy: bool = True,
     ) -> None:
         """Update compatibility projections after durable completion."""
-        if facts is None or (
-            facts.input_tokens <= 0 and facts.output_tokens <= 0
-        ):
+        if facts is None:
             return
 
         observed_at = datetime.now(tz=timezone.utc)
@@ -283,6 +281,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
             # Auto-compaction threshold (fraction of the window) so the UI can
             # mark where context gets evicted. None = disabled/unknown.
             "compact_threshold": self._compact_threshold,
+            "chat_id": conversation_id or None,
             "conversation_id": conversation_id or None,
             "turn_id": turn_id or None,
             "observed_at": observed_at.isoformat(timespec="seconds"),
@@ -299,6 +298,62 @@ class TokenRecordingModelWrapper(ChatModelBase):
             },
         ]
         self._store_usage(usage_data)
+
+    def _record_unavailable_usage(
+        self,
+        attempt: ModelCallAttempt | None,
+    ) -> None:
+        """Retain a successful call whose Provider omitted usage."""
+        provider_id = (
+            str(attempt.provider_id)
+            if attempt is not None
+            else self._provider_id
+        )
+        model_name = (
+            str(attempt.model_id) if attempt is not None else self.model
+        )
+        chat_id = (
+            str(attempt.conversation_id)
+            if attempt is not None and attempt.conversation_id
+            else ""
+        )
+        turn_id = str(attempt.invocation_id) if attempt is not None else ""
+        observed_at = datetime.now(tz=timezone.utc)
+        self._store_usage(
+            {
+                "provider_id": provider_id,
+                "model_name": model_name,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "cache_eligible_input_tokens": 0,
+                "cache_observed": False,
+                "cache_hit_rate": None,
+                "context_size": int(
+                    getattr(self._model, "context_size", 0) or 0,
+                ),
+                "compact_threshold": self._compact_threshold,
+                "chat_id": chat_id or None,
+                "conversation_id": chat_id or None,
+                "turn_id": turn_id or None,
+                "observed_at": observed_at.isoformat(timespec="seconds"),
+                "measurement": "unavailable",
+                "usage_unobserved_calls": 1,
+                "model_routes": [
+                    {
+                        "provider_id": provider_id,
+                        "model_name": model_name,
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                        "total_tokens": 0,
+                        "call_count": 1,
+                        "usage_unobserved_calls": 1,
+                    },
+                ],
+            },
+        )
 
     def _record_usage(
         self,
@@ -496,6 +551,8 @@ class TokenRecordingModelWrapper(ChatModelBase):
             attempt,
             record_legacy=record_legacy,
         )
+        if facts is None and status == ModelCallStatus.SUCCEEDED:
+            self._record_unavailable_usage(attempt)
 
     @classmethod
     def pop_usage_for_chat(
@@ -523,7 +580,9 @@ class TokenRecordingModelWrapper(ChatModelBase):
 
         if not usage:
             return
-        chat_id = str(usage.get("conversation_id") or "")
+        chat_id = str(
+            usage.get("chat_id") or usage.get("conversation_id") or "",
+        )
         if not chat_id:
             chat_id = get_current_session_id() or ""
         invocation_id = str(usage.get("turn_id") or "")

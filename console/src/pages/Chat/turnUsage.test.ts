@@ -71,6 +71,21 @@ describe("extractTurnUsageFromBackendMetadata", () => {
     ).toBeNull();
   });
 
+  it("keeps unavailable provider usage distinct from an empty payload", () => {
+    const snap = extractTurnUsageFromBackendMetadata({
+      [TURN_USAGE_META_KEY]: {
+        usage: {
+          total_tokens: 0,
+          measurement: "unavailable",
+          usage_unobserved_calls: 1,
+        },
+      },
+    });
+
+    expect(snap?.usage?.measurement).toBe("unavailable");
+    expect(snap?.usage?.usage_unobserved_calls).toBe(1);
+  });
+
   it("keeps context-only payloads and nulls usage", () => {
     const snap = extractTurnUsageFromBackendMetadata({
       [TURN_USAGE_META_KEY]: { context_usage: ctx },
@@ -129,6 +144,18 @@ describe("readTurnUsageFromResponseCardData", () => {
     expect(
       readTurnUsageFromResponseCardData({ usage, context_usage: ctx }),
     ).toEqual(fullSnapshot);
+  });
+
+  it("reads a zero-token call when the provider omitted usage", () => {
+    expect(
+      readTurnUsageFromResponseCardData({
+        usage: {
+          total_tokens: 0,
+          measurement: "unavailable",
+          usage_unobserved_calls: 1,
+        },
+      })?.usage?.measurement,
+    ).toBe("unavailable");
   });
 });
 

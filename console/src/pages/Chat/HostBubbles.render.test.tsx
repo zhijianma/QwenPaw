@@ -243,6 +243,60 @@ describe("merged host bubbles behavior", () => {
     expect(screen.queryByTestId("turn-usage-summary")).toBeNull();
   });
 
+  it("renders unavailable usage without presenting it as zero tokens", () => {
+    render(
+      provider(
+        <HostResponseCard
+          id="unobserved-usage-message"
+          data={{
+            id: "unobserved-usage-response",
+            status: AgentScopeRuntimeRunStatus.Completed,
+            output: [],
+            usage: {
+              provider_id: "openai",
+              model_name: "gpt-4o",
+              total_tokens: 0,
+              measurement: "unavailable",
+              usage_unobserved_calls: 1,
+            },
+          }}
+        />,
+      ),
+    );
+
+    const summary = screen.getByTestId("turn-usage-summary");
+    expect(summary).toHaveTextContent("chat.turnUsagePopover.unavailable");
+    expect(summary).toHaveTextContent("openai/gpt-4o");
+    expect(summary).not.toHaveTextContent("0 chat.turnUsagePopover.tok");
+  });
+
+  it("keeps a provider-reported zero distinct from unavailable usage", () => {
+    render(
+      provider(
+        <HostResponseCard
+          id="zero-usage-message"
+          data={{
+            id: "zero-usage-response",
+            status: AgentScopeRuntimeRunStatus.Completed,
+            output: [],
+            usage: {
+              provider_id: "local",
+              model_name: "zero-model",
+              prompt_tokens: 0,
+              completion_tokens: 0,
+              total_tokens: 0,
+              measurement: "provider_reported",
+            },
+          }}
+        />,
+      ),
+    );
+
+    const summary = screen.getByTestId("turn-usage-summary");
+    expect(summary).toHaveTextContent("0 chat.turnUsagePopover.tok");
+    expect(summary).not.toHaveTextContent("chat.turnUsagePopover.unavailable");
+  });
+
   it("renders every model route for a fallback turn", () => {
     render(
       provider(

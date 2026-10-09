@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from qwenpaw.app.agent_context import peek_current_agent_id
+from qwenpaw.kernel import ModelCallStatus
 from qwenpaw.token_usage.buffer import (
     TokenUsageBuffer,
     _UsageEvent,
@@ -1389,6 +1390,36 @@ class TestTokenRecordingModelWrapper:
                 "call_count": 1,
             },
         ]
+
+    @pytest.mark.asyncio
+    async def test_success_without_provider_usage_remains_visible(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        """A successful call without usage must not look like no call."""
+        monkeypatch.setattr(
+            "qwenpaw.app.agent_context.get_current_session_id",
+            lambda: "chat-unobserved",
+        )
+        wrapper, _captured = self._stream_harness(tmp_path, monkeypatch)
+        wrapper._record_task_budget = AsyncMock()
+        wrapper._complete_model_attempt = AsyncMock(return_value=None)
+
+        await wrapper._finish_model_attempt(
+            None,
+            status=ModelCallStatus.SUCCEEDED,
+            usage=None,
+        )
+
+        stored = TokenRecordingModelWrapper.pop_usage_for_chat(
+            "chat-unobserved",
+        )
+        assert stored is not None
+        assert stored["measurement"] == "unavailable"
+        assert stored["usage_unobserved_calls"] == 1
+        assert stored["total_tokens"] == 0
+        assert stored["model_routes"][0]["call_count"] == 1
 
     def test_session_cache_usage_uses_latest_persisted_checkpoint(self):
         """Session totals should extend the newest durable checkpoint."""

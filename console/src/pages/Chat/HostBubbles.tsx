@@ -219,13 +219,20 @@ function TurnUsageSummary({ data }: { data: IAgentScopeRuntimeResponse }) {
   const completionTokens = Number(usage.completion_tokens) || 0;
   const totalTokens =
     Number(usage.total_tokens) || promptTokens + completionTokens;
-  if (totalTokens <= 0) return null;
+  const unavailableCalls = Number(usage.usage_unobserved_calls) || 0;
+  const measuredZero =
+    usage.measurement === "provider_reported" && totalTokens === 0;
+  if (totalTokens <= 0 && unavailableCalls <= 0 && !measuredZero) return null;
   const estimated =
     usage.measurement === "local_estimate" || usage.estimated === true;
   const model = [usage.provider_id, usage.model_name].filter(Boolean).join("/");
   const modelRoutes = Array.isArray(usage.model_routes)
-    ? usage.model_routes.filter((route) => route.total_tokens > 0)
+    ? usage.model_routes.filter(
+        (route) =>
+          route.total_tokens > 0 || Number(route.usage_unobserved_calls) > 0,
+      )
     : [];
+  const usageUnavailable = totalTokens <= 0 && unavailableCalls > 0;
 
   return (
     <div className={styles.turnUsage} data-testid="turn-usage-summary">
@@ -237,14 +244,25 @@ function TurnUsageSummary({ data }: { data: IAgentScopeRuntimeResponse }) {
         )}
       </span>
       <span className={styles.turnUsageTotal}>
-        {formatCompact(totalTokens)} {t("chat.turnUsagePopover.tok")}
+        {usageUnavailable
+          ? t("chat.turnUsagePopover.unavailable")
+          : `${formatCompact(totalTokens)} ${t("chat.turnUsagePopover.tok")}`}
       </span>
-      <span className={styles.turnUsageDetail}>
-        {t("chat.turnUsagePopover.inOut", {
-          inTok: formatCompact(promptTokens),
-          outTok: formatCompact(completionTokens),
-        })}
-      </span>
+      {!usageUnavailable ? (
+        <span className={styles.turnUsageDetail}>
+          {t("chat.turnUsagePopover.inOut", {
+            inTok: formatCompact(promptTokens),
+            outTok: formatCompact(completionTokens),
+          })}
+        </span>
+      ) : null}
+      {!usageUnavailable && unavailableCalls > 0 ? (
+        <span className={styles.turnUsageDetail}>
+          {t("chat.turnUsagePopover.unavailableCalls", {
+            count: unavailableCalls,
+          })}
+        </span>
+      ) : null}
       {modelRoutes.length > 1 ? (
         modelRoutes.map((route) => {
           const routeName = [route.provider_id, route.model_name]
@@ -255,8 +273,12 @@ function TurnUsageSummary({ data }: { data: IAgentScopeRuntimeResponse }) {
               className={styles.turnUsageModel}
               key={`${route.provider_id}:${route.model_name}`}
             >
-              {routeName} · {formatCompact(route.total_tokens)}{" "}
-              {t("chat.turnUsagePopover.tok")}
+              {routeName} ·{" "}
+              {route.total_tokens > 0
+                ? `${formatCompact(route.total_tokens)} ${t(
+                    "chat.turnUsagePopover.tok",
+                  )}`
+                : t("chat.turnUsagePopover.unavailable")}
             </span>
           );
         })

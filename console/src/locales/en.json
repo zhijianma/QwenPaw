@@ -3576,6 +3576,8 @@
       "turnEstimated": "This turn ~",
       "tok": "tok",
       "inOut": "in {{inTok}} · out {{outTok}}",
+      "unavailable": "Token usage unavailable",
+      "unavailableCalls": "{{count}} call(s) without usage",
       "contextLabel": "Context window",
       "outerRing": "Outer ring",
       "cacheLabel": "Cache hit rate",

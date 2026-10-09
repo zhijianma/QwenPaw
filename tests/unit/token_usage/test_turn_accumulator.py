@@ -55,6 +55,48 @@ def test_accumulator_merges_model_calls_within_one_turn() -> None:
     assert len(snapshot["model_routes"]) == 2
 
 
+def test_accumulator_keeps_unavailable_calls_out_of_token_totals() -> None:
+    accumulator = TurnUsageAccumulator()
+    accumulator.record(
+        "chat-1",
+        _usage("provider-a", "model-a", 10, 2),
+        invocation_id="turn-1",
+    )
+    accumulator.record(
+        "chat-1",
+        {
+            "provider_id": "provider-b",
+            "model_name": "model-b",
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "measurement": "unavailable",
+            "usage_unobserved_calls": 1,
+            "model_routes": [
+                {
+                    "provider_id": "provider-b",
+                    "model_name": "model-b",
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "call_count": 1,
+                    "usage_unobserved_calls": 1,
+                },
+            ],
+        },
+        invocation_id="turn-1",
+    )
+
+    snapshot = accumulator.peek("chat-1", invocation_id="turn-1")
+
+    assert snapshot is not None
+    assert snapshot["total_tokens"] == 12
+    assert snapshot["measurement"] == "partial"
+    assert snapshot["usage_unobserved_calls"] == 1
+    assert snapshot["model_routes"][1]["total_tokens"] == 0
+    assert snapshot["model_routes"][1]["usage_unobserved_calls"] == 1
+
+
 def test_accumulator_isolates_concurrent_turns_in_one_chat() -> None:
     accumulator = TurnUsageAccumulator()
     accumulator.record(

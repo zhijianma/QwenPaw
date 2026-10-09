@@ -15,6 +15,7 @@ export interface TurnUsageModelRoute {
   completion_tokens: number;
   total_tokens: number;
   call_count: number;
+  usage_unobserved_calls?: number;
 }
 
 export interface TurnUsage {
@@ -33,7 +34,14 @@ export interface TurnUsage {
   session_cache_observed?: boolean;
   session_cache_hit_rate?: number | null;
   estimated?: boolean;
-  measurement?: "provider_reported" | "local_estimate";
+  measurement?:
+    | "provider_reported"
+    | "local_estimate"
+    | "partial"
+    | "unavailable";
+  usage_unobserved_calls?: number;
+  chat_id?: string | null;
+  /** @deprecated Rolling-upgrade alias; use chat_id. */
   conversation_id?: string | null;
   turn_id?: string | null;
   observed_at?: string;
@@ -57,6 +65,22 @@ const readNumber = (obj: unknown, key: string): number => {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 };
 
+function hasUsageEvidence(usage: unknown): usage is TurnUsage {
+  if (!usage || typeof usage !== "object") return false;
+  const measurement = (usage as TurnUsage).measurement;
+  return (
+    readNumber(usage, "total_tokens") > 0 ||
+    readNumber(usage, "prompt_tokens") +
+      readNumber(usage, "completion_tokens") >
+      0 ||
+    measurement === "provider_reported" ||
+    measurement === "local_estimate" ||
+    measurement === "partial" ||
+    measurement === "unavailable" ||
+    readNumber(usage, "usage_unobserved_calls") > 0
+  );
+}
+
 function parseTurnUsagePayload(raw: unknown): TurnUsageSnapshot | null {
   if (!raw || typeof raw !== "object") return null;
   const obj = raw as Record<string, unknown>;
@@ -66,10 +90,7 @@ function parseTurnUsagePayload(raw: unknown): TurnUsageSnapshot | null {
     usageRaw && typeof usageRaw === "object" ? (usageRaw as TurnUsage) : null;
   const context =
     ctxRaw && typeof ctxRaw === "object" ? (ctxRaw as ContextUsage) : null;
-  const usageTotal =
-    readNumber(usage, "total_tokens") ||
-    readNumber(usage, "prompt_tokens") + readNumber(usage, "completion_tokens");
-  const hasUsage = !!usage && usageTotal > 0;
+  const hasUsage = hasUsageEvidence(usage);
   const hasCtx = !!context && readNumber(context, "estimated_tokens") > 0;
   if (!hasUsage && !hasCtx) return null;
   return {
@@ -111,13 +132,7 @@ export function readTurnUsageFromResponseCardData(
   if (!data) return null;
   const usage = data.usage;
   const context = data.context_usage;
-  const hasUsage =
-    usage &&
-    typeof usage === "object" &&
-    (readNumber(usage, "total_tokens") > 0 ||
-      readNumber(usage, "prompt_tokens") +
-        readNumber(usage, "completion_tokens") >
-        0);
+  const hasUsage = hasUsageEvidence(usage);
   const hasCtx =
     context &&
     typeof context === "object" &&
@@ -417,10 +432,7 @@ function parseTurnUsageSsePayload(
   }
   const usage = payload.usage;
   const ctx = payload.context_usage;
-  const usageTotal =
-    readNumber(usage, "total_tokens") ||
-    readNumber(usage, "prompt_tokens") + readNumber(usage, "completion_tokens");
-  const hasUsage = usage && typeof usage === "object" && usageTotal > 0;
+  const hasUsage = hasUsageEvidence(usage);
   const hasCtx =
     ctx && typeof ctx === "object" && readNumber(ctx, "estimated_tokens") > 0;
   if (!hasUsage && !hasCtx) return null;
