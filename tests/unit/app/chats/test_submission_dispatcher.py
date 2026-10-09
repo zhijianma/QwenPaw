@@ -117,7 +117,7 @@ async def test_dispatcher_recovers_pending_goal_without_model_turn(
     active = await goal_store.write(
         GoalExecution(
             agent_id="default",
-            conversation_id="chat-goal",
+            chat_id="chat-goal",
             correlation_id=uuid4(),
             objective="Finish the durable migration",
             max_iterations=20,

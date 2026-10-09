@@ -659,7 +659,7 @@ class GoalMode(AgentMode):
             last_feedback=execution.last_feedback,
             goal_id=execution.goal_id,
             agent_id=execution.agent_id,
-            conversation_id=execution.conversation_id,
+            conversation_id=execution.chat_id,
             correlation_id=execution.correlation_id,
             revision=execution.revision,
             status=execution.status,
@@ -674,7 +674,7 @@ class GoalMode(AgentMode):
         return GoalExecution(
             goal_id=session.goal_id,
             agent_id=session.agent_id,
-            conversation_id=session.conversation_id,
+            chat_id=session.conversation_id,
             correlation_id=session.correlation_id,
             objective=session.goal,
             status=session.status,

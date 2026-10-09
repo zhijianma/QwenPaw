@@ -3,10 +3,13 @@
 
 from __future__ import annotations
 
+import json
+import sqlite3
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 
 from qwenpaw.kernel import (
     CapabilityProviderKind,
@@ -45,7 +48,7 @@ def _scope(tmp_path, *, invocation_id=None) -> InvocationScope:
 def _execution() -> GoalExecution:
     return GoalExecution(
         agent_id="default",
-        conversation_id="chat-a",
+        chat_id="chat-a",
         correlation_id=uuid4(),
         objective="Finish the migration",
         max_iterations=20,
@@ -102,13 +105,71 @@ async def test_goal_store_lists_only_pending_outcomes_by_agent(
     other = _execution().model_copy(
         update={
             "agent_id": "other",
-            "conversation_id": "chat-other",
+            "chat_id": "chat-other",
         },
     )
     await store.write(other, expected_revision=0)
 
     assert await store.list_pending(agent_id="default") == (pending,)
     assert await store.list_pending(agent_id="other") == ()
+
+
+def test_goal_execution_uses_canonical_chat_identity() -> None:
+    execution = _execution()
+
+    payload = execution.model_dump(mode="json")
+
+    assert execution.chat_id == "chat-a"
+    assert execution.conversation_id == "chat-a"
+    assert payload["chat_id"] == "chat-a"
+    assert "conversation_id" not in payload
+    properties = GoalExecution.model_json_schema()["properties"]
+    assert "chat_id" in properties
+    assert "conversation_id" not in properties
+
+
+def test_goal_execution_restores_legacy_chat_identity() -> None:
+    payload = _execution().model_dump(mode="json")
+    payload["conversation_id"] = payload.pop("chat_id")
+
+    restored = GoalExecution.model_validate(payload)
+
+    assert restored.chat_id == "chat-a"
+    assert restored.conversation_id == "chat-a"
+
+
+def test_goal_execution_rejects_conflicting_chat_aliases() -> None:
+    with pytest.raises(ValidationError, match="must identify one Chat"):
+        GoalExecution.model_validate(
+            {
+                **_execution().model_dump(mode="json"),
+                "conversation_id": "chat-other",
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_goal_store_restores_legacy_sqlite_json(tmp_path) -> None:
+    database_path = tmp_path / "goals.db"
+    store = SQLiteGoalExecutionStore(database_path)
+    persisted = await store.write(_execution(), expected_revision=0)
+    payload = persisted.model_dump(mode="json")
+    payload["conversation_id"] = payload.pop("chat_id")
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "UPDATE conversation_goals SET model_json = ? "
+            "WHERE agent_id = ? AND conversation_id = ?",
+            (json.dumps(payload), "default", "chat-a"),
+        )
+
+    restored = await SQLiteGoalExecutionStore(database_path).read(
+        agent_id="default",
+        conversation_id="chat-a",
+    )
+
+    assert restored is not None
+    assert restored.chat_id == "chat-a"
+    assert restored.model_dump(mode="json")["chat_id"] == "chat-a"
 
 
 @pytest.mark.asyncio

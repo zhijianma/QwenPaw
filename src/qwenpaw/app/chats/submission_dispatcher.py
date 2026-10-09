@@ -1438,7 +1438,7 @@ class WorkspaceChatSubmissionDispatcher:
             submissions = (
                 await self._control.scan_submissions_for_conversation(
                     agent_id=execution.agent_id,
-                    conversation_id=execution.conversation_id,
+                    conversation_id=execution.chat_id,
                 )
             )
             if any(
@@ -1455,7 +1455,7 @@ class WorkspaceChatSubmissionDispatcher:
             await self._control.enqueue_turn(
                 TurnSubmissionRequest(
                     agent_id=execution.agent_id,
-                    conversation_id=execution.conversation_id,
+                    conversation_id=execution.chat_id,
                     priority=0,
                     content="[Goal outcome recovery]",
                     request_context={"channel": "console"},
@@ -1630,10 +1630,10 @@ class WorkspaceChatSubmissionDispatcher:
             invocation_id=invocation_id,
             correlation_id=execution.correlation_id,
             agent_id=execution.agent_id,
-            conversation_id=execution.conversation_id,
-            session_id=execution.conversation_id,
+            conversation_id=execution.chat_id,
+            session_id=execution.chat_id,
             root_agent_id=execution.agent_id,
-            root_session_id=execution.conversation_id,
+            root_session_id=execution.chat_id,
             workspace_dir=str(self._workspace.workspace_dir),
             registry_epoch_id=generation_lease.registry_epoch_id,
             registry_generation=generation_lease.generation,
@@ -1666,7 +1666,7 @@ class WorkspaceChatSubmissionDispatcher:
         except Exception:
             current = await self._goals.read(
                 agent_id=execution.agent_id,
-                conversation_id=execution.conversation_id,
+                conversation_id=execution.chat_id,
             )
             if (
                 current is None

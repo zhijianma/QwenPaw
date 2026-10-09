@@ -187,7 +187,7 @@ class SQLiteGoalExecutionStore:
             row = connection.execute(
                 "SELECT revision, model_json FROM conversation_goals "
                 "WHERE agent_id = ? AND conversation_id = ?",
-                (execution.agent_id, execution.conversation_id),
+                (execution.agent_id, execution.chat_id),
             ).fetchone()
             current_revision = int(row["revision"]) if row else 0
             if current_revision != expected_revision:
@@ -215,7 +215,7 @@ class SQLiteGoalExecutionStore:
                 """,
                 (
                     persisted.agent_id,
-                    persisted.conversation_id,
+                    persisted.chat_id,
                     persisted.revision,
                     persisted.model_dump_json(),
                 ),
@@ -244,7 +244,7 @@ class SQLiteGoalExecutionStore:
             return
         immutable = (
             "agent_id",
-            "conversation_id",
+            "chat_id",
             "correlation_id",
             "objective",
             "max_iterations",

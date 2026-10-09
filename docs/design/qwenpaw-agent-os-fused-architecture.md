@@ -624,7 +624,9 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
   - [x] Lite Goal 已通过 Kernel `GoalExecutionStore` 持久化并在 turn-start 恢复；CAS
     revision 阻止 active replacement 和契约漂移，pending Outcome 可跨 Invocation
     幂等收敛。Chat admission 在 active Goal 中继承同一 correlation；`/clear`、预算和
-    迭代上限只产生明确技术终态，不制造业务完成。
+    迭代上限只产生明确技术终态，不制造业务完成。`GoalExecution` 公共合同只输出
+    `chat_id = ChatSpec.id`；Lite Store 的旧列和历史 JSON 由 Adapter 兼容读取，不要求
+    数据重写，也不允许 canonical/legacy 双身份冲突。
   - [x] Goal pending Outcome 已接入 Workspace 启动恢复：内部 Submission 复用统一
     Invocation Control 与 generation lease，直接执行 Host 声明和 CAS finalize，不调用
     模型、不产生对话消息，也不等待用户发送下一轮输入。

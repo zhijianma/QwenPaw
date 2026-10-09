@@ -1303,6 +1303,11 @@ Cron 不形成独立审批或产物事实源。
       成功/Goal finalize 前的崩溃窗口，Broker 通过可选 exact lookup 跨 Invocation
       幂等确认；业务字段变化失败关闭。Chat Submission admission 通过
       `ConversationCorrelationResolver` 在 Goal active/pending 时继承原 correlation，
+      `GoalExecution` 公共 JSON/schema 仅输出 `chat_id = ChatSpec.id`；SQLite 旧列和
+      历史 `conversation_id` JSON 继续兼容读取，冲突双身份失败关闭。Store 查询参数与
+      表结构暂留在 Adapter 内，插件 SDK 不再产生旧字段。当前四个本地 Agent Workspace
+      的 Goal 表均为空，因此真实历史样本不可用；旧 SQLite JSON 恢复、CAS、重启恢复和
+      pending Outcome 主动收敛由 34 项定点测试覆盖，不把空库误报为在线 Goal 验收。
       terminal 后才创建新意图。
     - [x] Workspace 启动扫描 pending Goal，并通过内部 Submission 创建新的恢复
       Invocation；恢复固定当前 capability generation、继承原 correlation、经过相同

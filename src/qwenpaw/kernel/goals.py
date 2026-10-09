@@ -3,11 +3,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import Enum
 from typing import Literal, Self
 from uuid import UUID, uuid4
 
-from pydantic import AwareDatetime, Field, model_validator
+from pydantic import AliasChoices, AwareDatetime, Field, model_validator
 
 from .models import KernelModel, NonEmptyStr, utc_now
 from .outcomes import ConversationOutcomeStatus
@@ -33,7 +34,10 @@ class GoalExecution(KernelModel):
     )
     goal_id: UUID = Field(default_factory=uuid4)
     agent_id: NonEmptyStr
-    conversation_id: NonEmptyStr
+    chat_id: NonEmptyStr = Field(
+        validation_alias=AliasChoices("chat_id", "conversation_id"),
+        description="Owning ChatSpec.id",
+    )
     correlation_id: UUID
     objective: str = Field(min_length=1, max_length=20000)
     status: GoalExecutionStatus = GoalExecutionStatus.ACTIVE
@@ -48,6 +52,24 @@ class GoalExecution(KernelModel):
     revision: int = Field(default=0, ge=0)
     started_at: AwareDatetime = Field(default_factory=utc_now)
     updated_at: AwareDatetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_chat_identity(cls, value: object) -> object:
+        """Reject ambiguous canonical and legacy Chat identities."""
+        if isinstance(value, Mapping):
+            chat_id = value.get("chat_id")
+            conversation_id = value.get("conversation_id")
+            if chat_id and conversation_id and chat_id != conversation_id:
+                raise ValueError(
+                    "chat_id and conversation_id must identify one Chat",
+                )
+        return value
+
+    @property
+    def conversation_id(self) -> str:
+        """Return the deprecated Python alias during migration."""
+        return self.chat_id
 
     @model_validator(mode="after")
     def validate_terminal_intent(self) -> Self:
