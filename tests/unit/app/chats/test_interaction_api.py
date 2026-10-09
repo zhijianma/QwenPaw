@@ -105,6 +105,9 @@ async def test_list_and_resolve_chat_owned_interaction(tmp_path) -> None:
     )
 
     assert opened == [interaction]
+    opened_payload = opened[0].model_dump(mode="json")
+    assert opened_payload["chat_id"] == "chat-spec-1"
+    assert "conversation_id" not in opened_payload
     assert resolution.status is InteractionStatus.RESOLVED
     assert resolution.response is not None
     assert resolution.response.actor.id == "console-admin"

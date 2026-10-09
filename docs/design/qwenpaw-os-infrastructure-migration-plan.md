@@ -300,6 +300,10 @@ Workbench。前端只能提交命令、订阅事件和展示服务端投影；�
   - [x] 内置 `ask_user` 工具和 Chat Interaction Adapter 已贯通：服务端按
     `ChatSpec.id` 投递和校验响应，Console 只呈现 open projection；真实 Chat
     已验证选项回答后工具返回、reasoning 继续并形成最终消息。
+  - [x] Approval、Ask User 与 Suggestion 共用的 `InteractionRequest` 公共合同已统一
+    使用 `chat_id = ChatSpec.id`；SQLite 历史行和旧插件可继续通过
+    `conversation_id` 输入/只读属性恢复，HTTP/OpenAPI 与 Console 新类型不再要求旧
+    字段。Queue/Runtime Projection 的剩余 conversation 命名另按独立切片迁移。
   - [x] Kernel 已冻结内容最小化的 `WaitCondition` / `ContinuationRef` 契约；
     Lite 从 Interaction 权威表投影 Approval 与 Ask User 的等待、解决、过期和取消，
     重启后可查询且不复制 prompt、选项或回答；waiter / hook 的 attached 状态区分

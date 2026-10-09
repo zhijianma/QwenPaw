@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Self
 from uuid import UUID, uuid4
 
-from pydantic import AwareDatetime, Field, model_validator
+from pydantic import AliasChoices, AwareDatetime, Field, model_validator
 
 from .models import (
     ActorRef,
@@ -76,7 +76,10 @@ class InteractionRequest(KernelModel):
     kind: InteractionKind
     mode: InteractionMode
     agent_id: NonEmptyStr
-    conversation_id: NonEmptyStr
+    chat_id: NonEmptyStr = Field(
+        validation_alias=AliasChoices("chat_id", "conversation_id"),
+        description="Owning ChatSpec.id",
+    )
     invocation_id: UUID
     correlation_id: UUID = Field(default_factory=uuid4)
     task_id: UUID | None = None
@@ -93,6 +96,11 @@ class InteractionRequest(KernelModel):
     revision: int = Field(default=1, ge=1)
     created_at: AwareDatetime = Field(default_factory=utc_now)
     expires_at: AwareDatetime | None = None
+
+    @property
+    def conversation_id(self) -> str:
+        """Return the deprecated Python alias during migration."""
+        return self.chat_id
 
     @model_validator(mode="after")
     def validate_kind_semantics(self) -> Self:

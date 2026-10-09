@@ -23,7 +23,7 @@ const interaction: ChatInteraction = {
   kind: "user_input",
   mode: "blocking",
   agent_id: "default",
-  conversation_id: "chat-1",
+  chat_id: "chat-1",
   invocation_id: "00000000-0000-0000-0000-000000000401",
   correlation_id: "00000000-0000-0000-0000-000000000402",
   title: "Choose output",

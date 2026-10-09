@@ -54,7 +54,9 @@ export interface ChatInteraction {
   kind: InteractionKind;
   mode: InteractionMode;
   agent_id: string;
-  conversation_id: string;
+  chat_id: string;
+  /** @deprecated Use chat_id. */
+  conversation_id?: string;
   invocation_id: string;
   correlation_id: string;
   source_id?: string | null;

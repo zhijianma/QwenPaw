@@ -406,6 +406,8 @@ supersession 历史派生 correlation-scoped 正序回放，并以 content-free 
 Approval、Ask User、Suggestion、Steer 和 Interrupt 均是执行链中的一等事件。
 Interaction 或资源等待必须保存 durable `WaitCondition` 并释放计算资源；满足条件后
 由 outbox 创建新的 continuation Submission，而不是恢复旧 Python 调用栈。
+`InteractionRequest.chat_id` 是 Approval、Ask User 与 Suggestion 的唯一公共 Chat
+身份；旧 `conversation_id` 只在持久化读取和 Python 兼容属性中保留。
 
 ### 8.2 分层恢复
 

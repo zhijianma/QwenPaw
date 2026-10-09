@@ -337,6 +337,8 @@ it is released by timeout or cancellation and must not be used for cross-process
 continuation. `suggest()` persists and returns immediately; it can never pause
 the Runtime. All three are owned by `ChatSpec.id + invocation_id`, so plugins
 must not introduce their own session identity, waiter, or frontend queue.
+The returned `InteractionRequest.chat_id` is that `ChatSpec.id`;
+`conversation_id` is a deprecated read-only Python alias for legacy plugins.
 
 Every blocking user-input request must declare one `UserInputReason`:
 `MISSING_REQUIRED_FACT`, `MATERIAL_PREFERENCE`, `SCOPE_AUTHORIZATION`, or
