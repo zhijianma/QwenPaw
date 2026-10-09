@@ -255,6 +255,13 @@ def _model_observations(
             ),
             "input_tokens": result.input_tokens,
             "output_tokens": result.output_tokens,
+            "usage_measurement": result.usage_measurement,
+            "cache_read_tokens": result.cache_read_tokens,
+            "cache_write_tokens": result.cache_write_tokens,
+            "cache_eligible_input_tokens": (
+                result.cache_eligible_input_tokens
+            ),
+            "cache_observed": result.cache_observed,
             "cost_micros": result.cost_micros,
             "cost_unknown": result.cost_unknown,
         },
@@ -1050,8 +1057,9 @@ async def _empty_model_resource_waits() -> Sequence[ModelResourceWait]:
     return ()
 
 
-async def _empty_conversation_artifacts(
-) -> Sequence[ConversationArtifactRecord]:
+async def _empty_conversation_artifacts() -> Sequence[
+    ConversationArtifactRecord
+]:
     return ()
 
 
@@ -1198,8 +1206,7 @@ class LiteObservationProjection(ObservationProjectionPort):
                 self._verifications,
                 conversation_id,
             )
-            if self._verifications is not None
-            and self._task_results is None
+            if self._verifications is not None and self._task_results is None
             else _empty_verifications()
         )
         model_step_records = (
@@ -1323,13 +1330,11 @@ class LiteObservationProjection(ObservationProjectionPort):
         observations.extend(
             _verification_observation(record, conversation_id)
             for record in (
-                resolved_task_results.verifications
-                or resolved_verifications
+                resolved_task_results.verifications or resolved_verifications
             )
         )
         observations.extend(
-            _model_step_observation(record)
-            for record in resolved_model_steps
+            _model_step_observation(record) for record in resolved_model_steps
         )
         observations.extend(
             _model_resource_wait_observation(record)

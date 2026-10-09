@@ -1999,6 +1999,7 @@ class ModelCallAttempt(KernelModel):
     route_decision_id: UUID
     invocation_id: UUID
     correlation_id: UUID
+    agent_id: NonEmptyStr | None = None
     conversation_id: NonEmptyStr | None = None
     registry_epoch_id: UUID | None = None
     registry_generation: int = Field(ge=1)
@@ -2034,15 +2035,48 @@ class ModelCallResult(KernelModel):
     )
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
+    usage_measurement: Literal["provider_reported"] | None = None
+    cache_read_tokens: int = Field(default=0, ge=0)
+    cache_write_tokens: int = Field(default=0, ge=0)
+    cache_eligible_input_tokens: int = Field(default=0, ge=0)
+    cache_observed: bool = False
     cost_micros: int | None = Field(default=None, ge=0)
     cost_unknown: bool = True
     completed_at: AwareDatetime = Field(default_factory=utc_now)
 
     @model_validator(mode="after")
-    def validate_result_evidence(self) -> Self:
-        """Keep cost and recovery evidence internally consistent."""
+    def validate_usage_evidence(self) -> Self:
+        """Keep provider usage, cache and cost evidence consistent."""
         if self.cost_unknown == (self.cost_micros is not None):
             raise ValueError("model call cost value and unknown flag conflict")
+        if self.usage_measurement is not None and (
+            self.input_tokens is None or self.output_tokens is None
+        ):
+            raise ValueError(
+                "measured model usage requires input and output tokens",
+            )
+        if not self.cache_observed and any(
+            (
+                self.cache_read_tokens,
+                self.cache_write_tokens,
+                self.cache_eligible_input_tokens,
+            ),
+        ):
+            raise ValueError(
+                "unobserved model cache usage cannot contain counters",
+            )
+        if self.cache_observed and (
+            self.cache_read_tokens + self.cache_write_tokens
+            > self.cache_eligible_input_tokens
+        ):
+            raise ValueError(
+                "model cache counters exceed eligible input tokens",
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_result_evidence(self) -> Self:
+        """Keep terminal and recovery evidence internally consistent."""
         has_failure = self.failure_class is not None
         has_disposition = self.recovery_disposition is not None
         if has_failure != has_disposition:

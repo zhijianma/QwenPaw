@@ -5,7 +5,7 @@ import asyncio
 from datetime import datetime, timezone
 from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
-from typing import Any, AsyncGenerator, Literal
+from typing import Any, AsyncGenerator, Literal, NamedTuple
 
 from agentscope.model import ChatModelBase
 from agentscope.model._model_response import ChatResponse
@@ -38,6 +38,18 @@ _CACHE_USAGE_MODEL_MODULES = (
     "agentscope.model._openai_response",
     "agentscope.model._xai",
 )
+
+
+class _ModelUsageFacts(NamedTuple):
+    """Normalized provider usage shared by durable and legacy projections."""
+
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+    cache_eligible_input_tokens: int
+    cache_observed: bool
+    cost_micros: int | None
 
 
 @lru_cache(maxsize=32)
@@ -146,14 +158,13 @@ class TokenRecordingModelWrapper(ChatModelBase):
         """Keep formatter updates synchronized with the wrapped model."""
         self._model.formatter = value
 
-    def _record_usage(
+    def _normalize_usage(
         self,
         usage: ChatUsage | None,
-        attempt: ModelCallAttempt | None = None,
-    ) -> None:
-        """Enqueue a usage event synchronously — never blocks the caller."""
+    ) -> _ModelUsageFacts | None:
+        """Normalize provider usage once at the model boundary."""
         if usage is None:
-            return
+            return None
         pt = max(int(getattr(usage, "input_tokens", 0) or 0), 0)
         ct = max(int(getattr(usage, "output_tokens", 0) or 0), 0)
         cache_read = max(
@@ -166,8 +177,6 @@ class TokenRecordingModelWrapper(ChatModelBase):
             ),
             0,
         )
-        if pt <= 0 and ct <= 0:
-            return
         cache_observed, cache_eligible = _cache_usage_metrics(
             self._model,
             pt,
@@ -177,6 +186,29 @@ class TokenRecordingModelWrapper(ChatModelBase):
         if not cache_observed:
             cache_read = 0
             cache_write = 0
+        raw_cost = getattr(usage, "cost_micros", None)
+        return _ModelUsageFacts(
+            input_tokens=pt,
+            output_tokens=ct,
+            cache_read_tokens=cache_read,
+            cache_write_tokens=cache_write,
+            cache_eligible_input_tokens=cache_eligible,
+            cache_observed=cache_observed,
+            cost_micros=(
+                max(int(raw_cost), 0) if raw_cost is not None else None
+            ),
+        )
+
+    def _record_usage_facts(
+        self,
+        facts: _ModelUsageFacts | None,
+        attempt: ModelCallAttempt | None = None,
+    ) -> None:
+        """Update compatibility projections after durable completion."""
+        if facts is None or (
+            facts.input_tokens <= 0 and facts.output_tokens <= 0
+        ):
+            return
 
         observed_at = datetime.now(tz=timezone.utc)
         conversation_id = (
@@ -188,17 +220,21 @@ class TokenRecordingModelWrapper(ChatModelBase):
         event = _UsageEvent(
             provider_id=self._provider_id,
             model_name=self.model,
-            prompt_tokens=pt,
-            completion_tokens=ct,
+            prompt_tokens=facts.input_tokens,
+            completion_tokens=facts.output_tokens,
             date_str=observed_at.date().isoformat(),
             now_iso=observed_at.isoformat(
                 timespec="seconds",
             ),
-            cache_read_tokens=cache_read,
-            cache_write_tokens=cache_write,
-            cache_eligible_input_tokens=cache_eligible,
-            cache_observed=cache_observed,
-            agent_id=_usage_agent_id(),
+            cache_read_tokens=facts.cache_read_tokens,
+            cache_write_tokens=facts.cache_write_tokens,
+            cache_eligible_input_tokens=(facts.cache_eligible_input_tokens),
+            cache_observed=facts.cache_observed,
+            agent_id=(
+                attempt.agent_id
+                if attempt is not None and attempt.agent_id
+                else _usage_agent_id()
+            ),
             conversation_id=conversation_id,
             turn_id=turn_id,
         )
@@ -208,16 +244,18 @@ class TokenRecordingModelWrapper(ChatModelBase):
         usage_data = {
             "provider_id": self._provider_id,
             "model_name": self.model,
-            "prompt_tokens": pt,
-            "completion_tokens": ct,
-            "total_tokens": pt + ct,
-            "cache_read_tokens": cache_read,
-            "cache_write_tokens": cache_write,
-            "cache_eligible_input_tokens": cache_eligible,
-            "cache_observed": cache_observed,
+            "prompt_tokens": facts.input_tokens,
+            "completion_tokens": facts.output_tokens,
+            "total_tokens": facts.input_tokens + facts.output_tokens,
+            "cache_read_tokens": facts.cache_read_tokens,
+            "cache_write_tokens": facts.cache_write_tokens,
+            "cache_eligible_input_tokens": (facts.cache_eligible_input_tokens),
+            "cache_observed": facts.cache_observed,
             "cache_hit_rate": (
-                cache_read / cache_eligible * 100
-                if cache_eligible > 0
+                facts.cache_read_tokens
+                / facts.cache_eligible_input_tokens
+                * 100
+                if facts.cache_eligible_input_tokens > 0
                 else None
             ),
             # Context window of the wrapped model, so the UI can show how full
@@ -233,6 +271,14 @@ class TokenRecordingModelWrapper(ChatModelBase):
             "measurement": "provider_reported",
         }
         self._store_usage(usage_data)
+
+    def _record_usage(
+        self,
+        usage: ChatUsage | None,
+        attempt: ModelCallAttempt | None = None,
+    ) -> None:
+        """Compatibility entrypoint for callers without a durable attempt."""
+        self._record_usage_facts(self._normalize_usage(usage), attempt)
 
     async def _record_task_budget(self, usage: ChatUsage | None) -> None:
         """Charge descendant model calls to the root Task usage scope."""
@@ -284,12 +330,12 @@ class TokenRecordingModelWrapper(ChatModelBase):
             formatter_version=formatter_version,
         )
 
-    @staticmethod
     async def _complete_model_attempt(
+        self,
         attempt: ModelCallAttempt | None,
         *,
         status: ModelCallStatus,
-        usage: ChatUsage | None = None,
+        usage: _ModelUsageFacts | None = None,
         error: BaseException | None = None,
         emitted_content: bool = False,
         output_boundary: ModelOutputBoundary | None = None,
@@ -297,18 +343,6 @@ class TokenRecordingModelWrapper(ChatModelBase):
         """Record a content-free result after one concrete attempt."""
         from ..runtime.model_calls import complete_current_model_attempt
 
-        input_tokens = (
-            max(int(getattr(usage, "input_tokens", 0) or 0), 0)
-            if usage is not None
-            else None
-        )
-        output_tokens = (
-            max(int(getattr(usage, "output_tokens", 0) or 0), 0)
-            if usage is not None
-            else None
-        )
-        raw_cost = getattr(usage, "cost_micros", None)
-        cost_micros = max(int(raw_cost), 0) if raw_cost is not None else None
         error_kind = ""
         retryable = False
         failure_class: ModelFailureClass | None = None
@@ -343,10 +377,48 @@ class TokenRecordingModelWrapper(ChatModelBase):
             failure_class=failure_class,
             recovery_disposition=recovery_disposition,
             retry_after_seconds=retry_after_seconds,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cost_micros=cost_micros,
+            input_tokens=(usage.input_tokens if usage is not None else None),
+            output_tokens=(usage.output_tokens if usage is not None else None),
+            usage_measurement=(
+                "provider_reported" if usage is not None else None
+            ),
+            cache_read_tokens=(
+                usage.cache_read_tokens if usage is not None else 0
+            ),
+            cache_write_tokens=(
+                usage.cache_write_tokens if usage is not None else 0
+            ),
+            cache_eligible_input_tokens=(
+                usage.cache_eligible_input_tokens if usage is not None else 0
+            ),
+            cache_observed=(
+                usage.cache_observed if usage is not None else False
+            ),
+            cost_micros=(usage.cost_micros if usage is not None else None),
         )
+
+    async def _finish_model_attempt(
+        self,
+        attempt: ModelCallAttempt | None,
+        *,
+        status: ModelCallStatus,
+        usage: ChatUsage | None = None,
+        error: BaseException | None = None,
+        emitted_content: bool = False,
+        output_boundary: ModelOutputBoundary | None = None,
+    ) -> None:
+        """Charge usage, persist the fact, then update legacy projections."""
+        facts = self._normalize_usage(usage)
+        await self._record_task_budget(usage)
+        await self._complete_model_attempt(
+            attempt,
+            status=status,
+            usage=facts,
+            error=error,
+            emitted_content=emitted_content,
+            output_boundary=output_boundary,
+        )
+        self._record_usage_facts(facts, attempt)
 
     @classmethod
     def pop_usage_for_session(cls, session_id: str) -> dict[str, Any] | None:
@@ -402,7 +474,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
                 **kwargs,
             )
         except asyncio.CancelledError as exc:
-            await self._complete_model_attempt(
+            await self._finish_model_attempt(
                 attempt,
                 status=ModelCallStatus.CANCELLED,
                 error=exc,
@@ -410,16 +482,14 @@ class TokenRecordingModelWrapper(ChatModelBase):
             )
             raise
         except Exception as exc:
-            await self._complete_model_attempt(
+            await self._finish_model_attempt(
                 attempt,
                 status=ModelCallStatus.FAILED,
                 error=exc,
                 output_boundary=ModelOutputBoundary.PRE_OUTPUT,
             )
             raise
-        self._record_usage(safe_attr(result, "usage"), attempt)
-        await self._record_task_budget(safe_attr(result, "usage"))
-        await self._complete_model_attempt(
+        await self._finish_model_attempt(
             attempt,
             status=ModelCallStatus.SUCCEEDED,
             usage=safe_attr(result, "usage"),
@@ -458,7 +528,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
                 **kwargs,
             )
         except asyncio.CancelledError as exc:
-            await self._complete_model_attempt(
+            await self._finish_model_attempt(
                 attempt,
                 status=ModelCallStatus.CANCELLED,
                 error=exc,
@@ -466,7 +536,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
             )
             raise
         except Exception as exc:
-            await self._complete_model_attempt(
+            await self._finish_model_attempt(
                 attempt,
                 status=ModelCallStatus.FAILED,
                 error=exc,
@@ -476,9 +546,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
 
         if isinstance(result, AsyncGenerator):
             return self._wrap_stream(result, attempt)
-        self._record_usage(safe_attr(result, "usage"), attempt)
-        await self._record_task_budget(safe_attr(result, "usage"))
-        await self._complete_model_attempt(
+        await self._finish_model_attempt(
             attempt,
             status=ModelCallStatus.SUCCEEDED,
             usage=safe_attr(result, "usage"),
@@ -512,7 +580,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
                 )
                 yield chunk
         except asyncio.CancelledError as exc:
-            await self._complete_model_attempt(
+            await self._finish_model_attempt(
                 attempt,
                 status=ModelCallStatus.CANCELLED,
                 usage=last_usage,
@@ -526,7 +594,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
             )
             raise
         except GeneratorExit as exc:
-            await self._complete_model_attempt(
+            await self._finish_model_attempt(
                 attempt,
                 status=(
                     ModelCallStatus.SUCCEEDED
@@ -548,7 +616,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
             )
             raise
         except Exception as exc:
-            await self._complete_model_attempt(
+            await self._finish_model_attempt(
                 attempt,
                 status=ModelCallStatus.FAILED,
                 usage=last_usage,
@@ -563,7 +631,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
             raise
         else:
             if terminal_chunk_seen:
-                await self._complete_model_attempt(
+                await self._finish_model_attempt(
                     attempt,
                     status=ModelCallStatus.SUCCEEDED,
                     usage=last_usage,
@@ -578,7 +646,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
                 error = IncompleteModelStreamError(
                     "model stream ended without a terminal chunk",
                 )
-                await self._complete_model_attempt(
+                await self._finish_model_attempt(
                     attempt,
                     status=ModelCallStatus.FAILED,
                     usage=last_usage,
@@ -591,5 +659,3 @@ class TokenRecordingModelWrapper(ChatModelBase):
                 raise error
         finally:
             await stream.aclose()
-            self._record_usage(last_usage, attempt)
-            await self._record_task_budget(last_usage)

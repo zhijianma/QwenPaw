@@ -935,6 +935,27 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - 权威 Summary 收口新增后端 `51 passed`、Console 页面/API `16 passed`；Python
   文件级 pre-commit 与前端 ESLint/Prettier 通过。Task 页面仍未改动。
 
+### 2026-10-09 Token Usage 事实源收敛
+
+- 审计发现实现仍有两份事实：Model Call Result 与可丢弃队列写入的 token JSON；
+  进程崩溃、队列满或 Result 落盘失败均可能使两者分叉。此前文档把 JSON Summary
+  描述为“同一模型调用事实”并不准确，现已修正架构与迁移 Checklist。
+- `ModelCallAttempt` 新增可向后兼容的 `agent_id`，新调用由 `InvocationScope` 写入；
+  Chat 使用 `conversation_id=ChatSpec.id`，turn 使用 `invocation_id`，实际
+  Provider/Model 继续由 Attempt 记录。
+- `ModelCallResult` 现同时保存 `provider_reported` measurement、input/output、
+  cache read/write/eligible/observed 与 cost。缓存语义未验证时所有 cache counter
+  强制为零；历史 Result 缺少新字段时保持可读。
+- `TokenRecordingModelWrapper` 只在 Provider 边界归一化一次 usage；先给执行预算记账，
+  再持久化不可变 Result，成功后才更新旧 JSON 和 Chat turn projection。Result
+  持久化失败不会再产生 phantom token row。
+- 新设计文档为 `docs/design/qwenpaw-usage-accounting.md`。下一切片必须实现
+  attempt-id 幂等、可重建 projection index、legacy UTC cutover watermark 和 shadow
+  reconciliation，之后才能把 `/api/token-usage` 从 JSON 切换到 Model Call facts。
+  禁止把旧日期聚合与新 Attempt 事实直接相加。
+- 本切片 Model Call/Token Usage 定点测试 `84 passed`，Observation、Recovery 与 Chat
+  API 上下游定点测试 `50 passed`。Task 页面没有改动。
+
 ### 2026-10-09 Model Recovery Kernel Contract
 
 - `ModelRecoveryDecision` 已从 Provider 私有 dataclass 提升为 Kernel 不可变领域模型；

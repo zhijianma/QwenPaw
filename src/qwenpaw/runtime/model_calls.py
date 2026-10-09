@@ -8,7 +8,7 @@ import logging
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 from uuid import UUID, uuid5
 
 from ..kernel import (
@@ -324,6 +324,7 @@ class ModelCallSession:
             route_decision_id=route_id,
             invocation_id=route.invocation_id,
             correlation_id=route.correlation_id,
+            agent_id=self._scope.agent_id,
             conversation_id=route.conversation_id,
             registry_epoch_id=route.registry_epoch_id,
             registry_generation=route.registry_generation,
@@ -362,6 +363,11 @@ class ModelCallSession:
         retry_after_seconds: float | None = None,
         input_tokens: int | None = None,
         output_tokens: int | None = None,
+        usage_measurement: Literal["provider_reported"] | None = None,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
+        cache_eligible_input_tokens: int = 0,
+        cache_observed: bool = False,
         cost_micros: int | None = None,
     ) -> None:
         """Persist content-free terminal evidence for one attempt."""
@@ -379,6 +385,11 @@ class ModelCallSession:
             retry_after_seconds=retry_after_seconds,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            usage_measurement=usage_measurement,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
+            cache_eligible_input_tokens=cache_eligible_input_tokens,
+            cache_observed=cache_observed,
             cost_micros=cost_micros,
             cost_unknown=cost_micros is None,
         )
@@ -413,11 +424,7 @@ class ModelCallSession:
         """Persist recovery only after the logical model call has failed."""
         result = self._last_result
         attempt = self._previous_attempt
-        if (
-            self._resource_waits is None
-            or result is None
-            or attempt is None
-        ):
+        if self._resource_waits is None or result is None or attempt is None:
             return None
         try:
             if result.recovery_disposition in {
@@ -490,6 +497,11 @@ async def complete_current_model_attempt(
     retry_after_seconds: float | None = None,
     input_tokens: int | None = None,
     output_tokens: int | None = None,
+    usage_measurement: Literal["provider_reported"] | None = None,
+    cache_read_tokens: int = 0,
+    cache_write_tokens: int = 0,
+    cache_eligible_input_tokens: int = 0,
+    cache_observed: bool = False,
     cost_micros: int | None = None,
 ) -> None:
     """Complete an attempt when it belongs to the active logical call."""
@@ -510,6 +522,11 @@ async def complete_current_model_attempt(
         retry_after_seconds=retry_after_seconds,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
+        usage_measurement=usage_measurement,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_tokens=cache_write_tokens,
+        cache_eligible_input_tokens=cache_eligible_input_tokens,
+        cache_observed=cache_observed,
         cost_micros=cost_micros,
     )
 

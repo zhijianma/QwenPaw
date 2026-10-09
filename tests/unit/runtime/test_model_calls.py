@@ -7,12 +7,13 @@ import asyncio
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Literal
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
 from agentscope.message import TextBlock
 from agentscope.model._model_response import ChatResponse
+from agentscope.model._model_usage import ChatUsage
 
 from qwenpaw.kernel import (
     ContextManifest,
@@ -27,6 +28,7 @@ from qwenpaw.kernel import (
     ModelRouteReason,
 )
 from qwenpaw.runtime.model_calls import (
+    ModelCallPersistenceError,
     ModelCallSession,
     ModelStepRecoveryError,
     call_with_model_session,
@@ -152,6 +154,11 @@ async def test_session_classifies_retry_and_fallback_attempts(
         emitted_content=True,
         input_tokens=11,
         output_tokens=7,
+        usage_measurement="provider_reported",
+        cache_read_tokens=8,
+        cache_write_tokens=1,
+        cache_eligible_input_tokens=11,
+        cache_observed=True,
         cost_micros=23,
     )
 
@@ -170,6 +177,11 @@ async def test_session_classifies_retry_and_fallback_attempts(
     assert records[2].result is not None
     assert records[2].result.input_tokens == 11
     assert records[2].result.output_tokens == 7
+    assert records[2].result.usage_measurement == "provider_reported"
+    assert records[2].result.cache_read_tokens == 8
+    assert records[2].result.cache_write_tokens == 1
+    assert records[2].result.cache_eligible_input_tokens == 11
+    assert records[2].result.cache_observed is True
     assert records[2].result.cost_micros == 23
     assert records[2].result.cost_unknown is False
     assert records[2].route.requested_provider_id == "provider-a"
@@ -178,6 +190,7 @@ async def test_session_classifies_retry_and_fallback_attempts(
     assert records[2].attempt.registry_epoch_id == scope.registry_epoch_id
     assert records[2].attempt.adapter_version == "2.0.7.post1"
     assert records[2].attempt.formatter_version == "2.2.2b1"
+    assert records[2].attempt.agent_id == "default"
 
 
 @pytest.mark.asyncio
@@ -249,6 +262,98 @@ async def test_token_wrapper_records_actual_provider_attempt(
     )
     assert record.result.failure_class is None
     assert record.result.recovery_disposition is None
+
+
+@pytest.mark.asyncio
+async def test_token_wrapper_persists_complete_provider_usage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scope = _scope(tmp_path)
+    store = lite_model_call_store(tmp_path)
+    session = _session(scope, _manifest(scope), store)
+    provider = AsyncMock()
+    provider.model = "model-a"
+    provider.credential = None
+    provider.parameters = None
+    provider.stream = False
+    provider.context_size = 32_768
+    provider.formatter = object()
+    provider.return_value = ChatResponse(
+        content=[TextBlock(text="ok")],
+        is_last=True,
+        usage=ChatUsage(
+            input_tokens=100,
+            output_tokens=17,
+            time=0.25,
+            cache_input_tokens=70,
+            cache_creation_input_tokens=5,
+        ),
+    )
+    monkeypatch.setattr(
+        "qwenpaw.token_usage.model_wrapper._cache_usage_metrics",
+        lambda *_args: (True, 100),
+    )
+    wrapper = TokenRecordingModelWrapper("provider-a", provider)
+
+    await call_with_model_session(
+        session,
+        lambda: wrapper(messages=[]),
+    )
+    [record] = await store.list_for_conversation("chat-1")
+
+    assert record.result is not None
+    assert record.result.input_tokens == 100
+    assert record.result.output_tokens == 17
+    assert record.result.usage_measurement == "provider_reported"
+    assert record.result.cache_read_tokens == 70
+    assert record.result.cache_write_tokens == 5
+    assert record.result.cache_eligible_input_tokens == 100
+    assert record.result.cache_observed is True
+
+
+@pytest.mark.asyncio
+async def test_usage_projection_waits_for_durable_model_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scope = _scope(tmp_path)
+    store = AsyncMock(spec=ModelCallStore)
+    store.complete.side_effect = OSError("disk full")
+    session = _session(scope, _manifest(scope), store)
+    provider = AsyncMock()
+    provider.model = "model-a"
+    provider.credential = None
+    provider.parameters = None
+    provider.stream = False
+    provider.context_size = 32_768
+    provider.formatter = object()
+    provider.return_value = ChatResponse(
+        content=[TextBlock(text="ok")],
+        is_last=True,
+        usage=ChatUsage(
+            input_tokens=100,
+            output_tokens=17,
+            time=0.25,
+        ),
+    )
+    projected: list[object] = []
+    monkeypatch.setattr(
+        "qwenpaw.token_usage.model_wrapper.get_token_usage_manager",
+        lambda: MagicMock(enqueue=projected.append),
+    )
+    wrapper = TokenRecordingModelWrapper("provider-a", provider)
+
+    with pytest.raises(
+        ModelCallPersistenceError,
+        match="result could not be durably recorded",
+    ):
+        await call_with_model_session(
+            session,
+            lambda: wrapper(messages=[]),
+        )
+
+    assert not projected
 
 
 @pytest.mark.asyncio
@@ -803,6 +908,22 @@ def test_historical_result_defaults_to_unknown_cost() -> None:
     assert result.failure_class is None
     assert result.recovery_disposition is None
     assert result.output_boundary is None
+    assert result.usage_measurement is None
+    assert result.cache_observed is False
+
+
+def test_result_rejects_unobserved_cache_counters() -> None:
+    with pytest.raises(
+        ValueError,
+        match="unobserved model cache usage cannot contain counters",
+    ):
+        ModelCallResult(
+            attempt_id=uuid4(),
+            invocation_id=uuid4(),
+            conversation_id="chat-1",
+            status=ModelCallStatus.SUCCEEDED,
+            cache_read_tokens=1,
+        )
 
 
 def test_result_requires_complete_recovery_contract() -> None:
