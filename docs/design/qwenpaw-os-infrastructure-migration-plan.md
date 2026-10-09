@@ -832,7 +832,9 @@ Invocation，新 Invocation 自动使用新 generation。
     handler 异常或显式 retry 现在以 Cursor revision CAS 持久化
     `retry_not_before/retry_count`；due query 在冷却期跳过，重启后继续遵守 Definition
     `RetryPolicy.backoff_seconds` 与 Host 一秒防热循环下限。成功、misfire 或定义变更
-    清零 retry 状态，并发 Worker 只有一个 deferral 胜者。
+    清零 retry 状态，并发 Worker 只有一个 deferral 胜者。独立进程验收在第一进程
+    提交 retry Cursor 后强制终止，再由第二进程打开同一 SQLite：冷却前不触发，到期
+    后仍处理原 occurrence 并清零 retry 状态，证明恢复不依赖进程内对象或 sleep。
   - [x] `CronManager` 已启动独立 durable trigger polling lifecycle；判定为 migrated
     的 final/silent Agent Cron 同步 catalog 后不再注册 APScheduler job，暂停、恢复、
     更新、删除与重启均复用 Cursor。handler 明确区分“失败事实已记账后 handled”与

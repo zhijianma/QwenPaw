@@ -213,6 +213,8 @@ stream job 仍保留原 APScheduler 兼容路径，因此父
 - Worker 崩溃后，过期 lease 可恢复；旧 owner/revision 无法完成新 lease。
 - Trigger handler 暂态失败在持久化冷却期内不会被轮询热循环；重启后仍按原
   occurrence 重试，并发 Worker 只有一个 retry CAS 胜者。
+- 第一进程提交 retry Cursor 后被强制终止，第二个独立 Python 进程打开同一 SQLite
+  数据库：冷却到期前不调用 handler，到期后只处理原 occurrence，并清零 retry 状态。
 - Task 创建后启动失败时，相同 Fire 从持久化绑定恢复执行；并发恢复只有一个
   Worker 返回 `recovered`，其他 Worker 回放同一 Run。
 - 插件热替换后，已 claim Fire 保持原 generation，新 Fire 使用新 generation。

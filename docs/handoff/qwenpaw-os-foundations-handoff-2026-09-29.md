@@ -1218,6 +1218,19 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - Kernel/SQLite/Worker 定点测试 `36 passed`；Scheduling、Cron 与 system/plugin
   Scheduler 合同联合回归 `261 passed`。Task 页面未修改。
 
+### 2026-10-09 Scheduler Forced-Restart Recovery Evidence
+
+- 新增真实独立 Python 进程验收：第一进程通过
+  `DurableScheduleTriggerWorker` 将原 occurrence 写为 retry pending，在 SQLite 提交
+  后由测试父进程强制终止；第二进程只接收数据库路径，不共享 Python 对象。
+- 第二进程证明 `retry_not_before` 前 due query 不触发 handler；到期后仍派发原
+  `scheduled_for`，成功推进 Cursor，并将 `retry_not_before/retry_count` 清零。该测试
+  覆盖 Scheduler 核心 Worker/Store 的进程崩溃边界，不宣称模拟整个 HTTP 服务重启。
+- 独立进程用例与 Scheduling、Cron、system/plugin Scheduler 合同联合回归
+  `262 passed`；所改文件静态门禁通过。
+- Task 页面、前端与非必要 Task 后端均未修改。Scheduler 父迁移项仍因 stream Cron
+  兼容路径保持未完成。
+
 ## 5. 钉钉文档归档清单
 
 ### 框架分析目录
