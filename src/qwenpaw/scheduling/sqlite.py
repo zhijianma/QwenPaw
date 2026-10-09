@@ -133,10 +133,11 @@ class SQLiteSchedulerStore:
         *,
         owner_id: str,
         expected_revision: int,
-        task_id: UUID,
+        task_id: UUID | None = None,
         run_id: UUID | None = None,
+        completion_ref: str | None = None,
     ) -> ScheduleLease:
-        """Bind a claimed fire to its created Task exactly once."""
+        """Bind a claimed fire to one durable completion target."""
         await self._prepare()
         return await asyncio.to_thread(
             self._complete_sync,
@@ -145,6 +146,7 @@ class SQLiteSchedulerStore:
             expected_revision,
             task_id,
             run_id,
+            completion_ref,
         )
 
     async def fail(
@@ -174,13 +176,15 @@ class SQLiteSchedulerStore:
         *,
         agent_id: str,
         now: datetime,
+        schedule_id: str | None = None,
     ) -> tuple[ScheduleLease, ...]:
-        """Fail one Agent's expired claims in one transaction."""
+        """Fail scoped expired claims in one transaction."""
         await self._prepare()
         return await asyncio.to_thread(
             self._recover_expired_sync,
             agent_id,
             _utc(now),
+            schedule_id,
         )
 
     async def reconcile_cursor(
@@ -621,8 +625,9 @@ class SQLiteSchedulerStore:
         lease_id: UUID,
         owner_id: str,
         expected_revision: int,
-        task_id: UUID,
+        task_id: UUID | None,
         run_id: UUID | None,
+        completion_ref: str | None,
     ) -> ScheduleLease:
         now = datetime.now(timezone.utc)
         with self._connect() as connection:
@@ -642,6 +647,7 @@ class SQLiteSchedulerStore:
                     "finished_at": now,
                     "task_id": task_id,
                     "run_id": run_id,
+                    "completion_ref": completion_ref,
                 },
             )
             self._write_lease(connection, updated)
@@ -684,23 +690,26 @@ class SQLiteSchedulerStore:
         self,
         agent_id: str,
         now: datetime,
+        schedule_id: str | None,
     ) -> tuple[ScheduleLease, ...]:
         now_text = now.isoformat()
         recovered: list[ScheduleLease] = []
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            rows = connection.execute(
-                """
-                SELECT lease_json FROM schedule_fire_leases
-                WHERE agent_id = ? AND status = ? AND expires_at <= ?
-                ORDER BY expires_at, lease_id
-                """,
-                (
-                    agent_id,
-                    ScheduleLeaseStatus.CLAIMED.value,
-                    now_text,
-                ),
-            ).fetchall()
+            query = (
+                "SELECT lease_json FROM schedule_fire_leases "
+                "WHERE agent_id = ? AND status = ? AND expires_at <= ?"
+            )
+            parameters: tuple[str, ...] = (
+                agent_id,
+                ScheduleLeaseStatus.CLAIMED.value,
+                now_text,
+            )
+            if schedule_id is not None:
+                query += " AND schedule_id = ?"
+                parameters += (schedule_id,)
+            query += " ORDER BY expires_at, lease_id"
+            rows = connection.execute(query, parameters).fetchall()
             for row in rows:
                 current = ScheduleLease.model_validate_json(
                     row["lease_json"],

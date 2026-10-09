@@ -9,13 +9,16 @@ from datetime import datetime
 from typing import Any, Literal, Protocol
 
 from ...kernel import ScheduleDefinition
-from ...scheduling import ScheduleTriggerTickReport
+from ...scheduling import (
+    ScheduleOccurrenceHandling,
+    ScheduleTriggerTickReport,
+)
 
 from .models import CronJobSpec, CronRuntimeDecision
 
 ScheduleOccurrenceExecutor = Callable[
     [ScheduleDefinition, datetime],
-    Awaitable[None],
+    Awaitable[ScheduleOccurrenceHandling | None],
 ]
 # Compatibility name retained while callers migrate to the shared contract.
 CronOccurrenceExecutor = ScheduleOccurrenceExecutor
@@ -34,6 +37,39 @@ class ServiceCronJob:
     callback: Callable[[], Awaitable[None]]
     misfire_grace_seconds: int = 600
     jitter_seconds: int = 0
+
+
+class ServiceScheduleRuntime(Protocol):
+    """Durable catalog used for service-contributed callback schedules."""
+
+    async def synchronize(
+        self,
+        *,
+        source: str,
+        declaration: ServiceCronJob,
+        timezone: str,
+    ) -> str:
+        """Reconcile one service declaration and return its schedule ID."""
+
+    async def remove(self, *, source: str, key: str) -> bool:
+        """Remove one service declaration and cursor."""
+
+    async def prune(
+        self,
+        *,
+        source: str,
+        active_keys: set[str],
+    ) -> tuple[str, ...]:
+        """Remove declarations absent from the current source snapshot."""
+
+    async def execute(
+        self,
+        *,
+        definition: ScheduleDefinition,
+        declaration: ServiceCronJob,
+        scheduled_for: datetime,
+    ) -> ScheduleOccurrenceHandling:
+        """Fence and run one service callback occurrence."""
 
 
 class CronTaskRuntime(Protocol):

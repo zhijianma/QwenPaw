@@ -12,12 +12,19 @@ from typing import Any
 import pytest
 
 from qwenpaw.harnesses.events import HarnessEvent, HarnessEventKind
-from qwenpaw.kernel import ScheduleDefinition, ScheduleTrigger, TaskStatus
+from qwenpaw.kernel import (
+    ScheduleDefinition,
+    ScheduleTrigger,
+    ScheduleWorkKind,
+    TaskStatus,
+)
 from qwenpaw.kernel.models import CapabilityBundle
 from qwenpaw.plugins.architecture import PluginManifest
 from qwenpaw.plugins.generations import GenerationRegistry
 from qwenpaw.scheduling import (
     ScheduleDispatchDisposition,
+    ServiceScheduleDispatchDisposition,
+    ScheduledServiceCallbackDispatcher,
     ScheduledTaskDispatcher,
     SQLiteSchedulerStore,
     SchedulerStoreHost,
@@ -161,6 +168,54 @@ async def _dispatch_case(
     assert first.lease.fire.registry_generation == registry.generation
     assert first.lease.task_id == first.task.task_id
     assert definitions == (definition,)
+
+    service_definition = definition.model_copy(
+        update={
+            "schedule_id": f"{label}.service",
+            "name": f"{label.title()} service maintenance",
+            "objective": "Execute service maintenance",
+            "work_kind": ScheduleWorkKind.SERVICE,
+        },
+    )
+    callback_calls = 0
+
+    async def callback() -> None:
+        nonlocal callback_calls
+        callback_calls += 1
+
+    service_dispatcher = ScheduledServiceCallbackDispatcher(
+        capability_resolver=registry,
+        scheduler_capability_id=scheduler_id,
+        scheduler_host=SchedulerStoreHost(
+            SQLiteSchedulerStore(scheduler_database),
+        ),
+    )
+    service_first = await service_dispatcher.dispatch(
+        service_definition,
+        scheduled_for=scheduled_for,
+        idempotency_key=f"{label}:service:2026-09-29T09:00:00Z",
+        owner_id=f"worker.{label}.service",
+        callback=callback,
+    )
+    service_replay = await service_dispatcher.dispatch(
+        service_definition,
+        scheduled_for=scheduled_for,
+        idempotency_key=f"{label}:service:2026-09-29T09:00:00Z",
+        owner_id=f"worker.{label}.service.replay",
+        callback=callback,
+    )
+
+    assert service_first.disposition is (
+        ServiceScheduleDispatchDisposition.EXECUTED
+    )
+    assert service_first.lease.task_id is None
+    assert service_first.lease.completion_ref == (
+        f"service:{service_definition.schedule_id}"
+    )
+    assert service_replay.disposition is (
+        ServiceScheduleDispatchDisposition.REPLAYED
+    )
+    assert callback_calls == 1
     return first, events
 
 

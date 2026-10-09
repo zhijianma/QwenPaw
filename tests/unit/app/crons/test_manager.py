@@ -36,7 +36,13 @@ from qwenpaw.app.crons.models import (
     ScheduleSpec,
 )
 from qwenpaw.app.crons.schedule_adapter import cron_schedule_id
+from qwenpaw.kernel import (
+    ScheduleDefinition,
+    ScheduleTrigger,
+    ScheduleWorkKind,
+)
 from qwenpaw.scheduling import (
+    ScheduleOccurrenceHandling,
     ScheduleTriggerDisposition,
     ScheduleTriggerOutcome,
     ScheduleTriggerTickReport,
@@ -146,6 +152,7 @@ class _DurableTriggerRuntime(_CatalogRuntime):
                     self.due_job_id,
                 ),
                 metadata={"legacy_cron_job_id": self.due_job_id},
+                work_kind=ScheduleWorkKind.TASK,
             ),
             now,
         )
@@ -176,6 +183,22 @@ class _HeartbeatRuntime:
     @staticmethod
     def schedule_id() -> str:
         return "qwenpaw.system.heartbeat.test"
+
+
+class _ServiceScheduleRuntime:
+    """Minimal durable service catalog double."""
+
+    def __init__(self) -> None:
+        self.schedule_id = "qwenpaw.system.service-cron.test"
+        self.synchronize = AsyncMock(return_value=self.schedule_id)
+        self.remove = AsyncMock(return_value=True)
+        self.prune = AsyncMock(return_value=())
+
+        async def execute(*, declaration, **_kwargs):
+            await declaration.callback()
+            return ScheduleOccurrenceHandling.HANDLED
+
+        self.execute = AsyncMock(side_effect=execute)
 
 
 def _catalog_manager(
@@ -441,6 +464,7 @@ async def test_durable_definition_routes_heartbeat_through_current_inputs(
         SimpleNamespace(
             schedule_id=heartbeat_runtime.schedule_id(),
             metadata={"source": "heartbeat"},
+            work_kind=ScheduleWorkKind.TASK,
         ),
         scheduled_for,
     )
@@ -569,6 +593,98 @@ async def test_start_registers_jobs_declared_by_memory_manager(
 
     assert mgr._scheduler.get_job("_service:memory:maintenance") is not None
     await mgr.stop()
+
+
+@pytest.mark.asyncio
+async def test_start_migrates_service_job_without_apscheduler_wakeup(
+    repo: InMemoryJobRepository,
+) -> None:
+    callback = AsyncMock()
+    declaration = ServiceCronJob(
+        key="daily-paper",
+        cron="0 8 * * *",
+        callback=callback,
+    )
+    workspace = MagicMock()
+    workspace.agent_id = "default"
+    workspace.memory_manager.list_cron_jobs.return_value = [declaration]
+    runtime = _ServiceScheduleRuntime()
+    manager = CronManager(
+        repo=repo,
+        workspace=workspace,
+        channel_manager=AsyncMock(),
+        agent_id="default",
+        task_runtime=_DurableTriggerRuntime(),
+        service_schedule_runtime=runtime,
+    )
+
+    await manager.start()
+    try:
+        runtime.synchronize.assert_awaited_once_with(
+            source="memory",
+            declaration=declaration,
+            timezone="UTC",
+        )
+        assert (
+            manager._scheduler.get_job("_service:memory:daily-paper") is None
+        )
+        assert runtime.schedule_id in manager._service_schedule_ids
+        await manager._execute_durable_occurrence(
+            ScheduleDefinition(
+                schedule_id=runtime.schedule_id,
+                agent_id="default",
+                name="memory:daily-paper",
+                objective="Execute service callback.",
+                trigger=ScheduleTrigger(kind="cron", cron="0 8 * * *"),
+                work_kind=ScheduleWorkKind.SERVICE,
+                runner_id="qwenpaw.system.crons.service-callback",
+                metadata={
+                    "service_source": "memory",
+                    "service_key": "daily-paper",
+                },
+            ),
+            datetime(2030, 1, 1, tzinfo=timezone.utc),
+        )
+        callback.assert_awaited_once_with()
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_service_catalog_failure_removes_state_before_fallback(
+    repo: InMemoryJobRepository,
+) -> None:
+    declaration = ServiceCronJob(
+        key="daily-paper",
+        cron="0 8 * * *",
+        callback=AsyncMock(),
+    )
+    workspace = MagicMock()
+    workspace.agent_id = "default"
+    workspace.memory_manager.list_cron_jobs.return_value = [declaration]
+    runtime = _ServiceScheduleRuntime()
+    runtime.synchronize.side_effect = RuntimeError("catalog unavailable")
+    manager = CronManager(
+        repo=repo,
+        workspace=workspace,
+        channel_manager=AsyncMock(),
+        agent_id="default",
+        task_runtime=_DurableTriggerRuntime(),
+        service_schedule_runtime=runtime,
+    )
+
+    await manager.start()
+    try:
+        runtime.remove.assert_awaited_once_with(
+            source="memory",
+            key="daily-paper",
+        )
+        assert (
+            manager._scheduler.get_job("_service:memory:daily-paper")
+            is not None
+        )
+    finally:
+        await manager.stop()
 
 
 @pytest.mark.asyncio

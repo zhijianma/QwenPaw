@@ -780,6 +780,8 @@ Invocation，新 Invocation 自动使用新 generation。
   - [x] 新增纯 Kernel `ScheduleTrigger / ScheduleDefinition / ScheduleFire /
     ScheduleLease`，严格区分 cron/once/interval payload，并以
     `owner_id + revision + expires_at` 冻结 claim/renew/terminal 所有权。
+    `ScheduleWorkKind` 进一步区分 task/service/delivery；Task Dispatcher 对非 Task
+    失败关闭。cron jitter 使用稳定 seed 确定性计算，重启不重新抽样。
   - [x] `SchedulerPort` 公开 upsert/remove/list、claim、renew、complete、fail 和
     recover-expired；复用现有 `ExecutionContract` 与 `RetryPolicy`，不在调度层复制
     Budget、Approval、Artifact 或 Delivery 状态机。
@@ -833,7 +835,10 @@ Invocation，新 Invocation 自动使用新 generation。
     Cursor outcome 投影。Heartbeat 也已通过同一 worker 路由完整
     `ScheduleDefinition`，启动/热更新同步 definition + cursor，禁用同时移除两者，
     运行时重新解析 HEARTBEAT.md、active hours 与 last dispatch；迁移成功后不再注册
-    APScheduler，并通过新 Runtime 实例恢复旧 Cursor。text-only、stream 与 service
+    APScheduler，并通过新 Runtime 实例恢复旧 Cursor。workspace service Cron 也已
+    迁入同一 catalog/cursor worker：回调不伪装成 Task，每次 occurrence 先 claim
+    可续租 Fire Lease，成功写互斥 `completion_ref`，异常或进程过期保留失败事实且
+    不重放不确定副作用；callback registry 在重启时从声明重建。text-only 与 stream
     job 暂时继续走 APScheduler，因此父项保持未完成。
   - [x] APScheduler Trigger Adapter 为已迁移 Cron 与 Heartbeat 保存真实
     `scheduled_for` 并生成稳定 Fire 幂等键；手动触发使用独立操作键，不与定时槽

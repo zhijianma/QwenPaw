@@ -22,8 +22,11 @@ from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from qwenpaw.exceptions import ConfigurationException
 
-from ...kernel import ScheduleDefinition
-from ...scheduling import ScheduleTriggerDisposition
+from ...kernel import ScheduleDefinition, ScheduleWorkKind
+from ...scheduling import (
+    ScheduleOccurrenceHandling,
+    ScheduleTriggerDisposition,
+)
 
 from ...config import get_heartbeat_config
 from ..console_push_store import append as push_store_append
@@ -33,6 +36,7 @@ from ..operational_delivery import (
 from .contracts import (
     CronTaskRuntime,
     HeartbeatTaskRuntime,
+    ServiceScheduleRuntime,
     ServiceCronJob,
 )
 from .executor import CronExecutor
@@ -122,6 +126,7 @@ class CronManager(ManagerBase):
         agent_id: Optional[str] = None,
         task_runtime: CronTaskRuntime | None = None,
         heartbeat_task_runtime: HeartbeatTaskRuntime | None = None,
+        service_schedule_runtime: ServiceScheduleRuntime | None = None,
     ):
         self._repo = repo
         self._workspace = workspace
@@ -129,7 +134,13 @@ class CronManager(ManagerBase):
         self._agent_id = agent_id
         self._task_runtime = task_runtime
         self._heartbeat_task_runtime = heartbeat_task_runtime
+        self._service_schedule_runtime = service_schedule_runtime
         self._heartbeat_next_run_at: datetime | None = None
+        self._service_declarations: dict[
+            tuple[str, str],
+            ServiceCronJob,
+        ] = {}
+        self._service_schedule_ids: set[str] = set()
         self._scheduler = AsyncIOScheduler(timezone=timezone)
         self._executor = CronExecutor(
             workspace=workspace,
@@ -234,7 +245,7 @@ class CronManager(ManagerBase):
                     hb.every,
                 )
 
-            self._register_memory_jobs()
+            await self._register_memory_jobs()
 
             self._started = True
             self._keepalive_task = asyncio.create_task(
@@ -322,7 +333,7 @@ class CronManager(ManagerBase):
         runtime = self._task_runtime
         run_due = getattr(runtime, "run_due", None)
         if not callable(run_due):
-            return
+            return None
         report = await run_due(  # pylint: disable=not-callable
             now=datetime.now(timezone.utc),
             execute=self._execute_durable_occurrence,
@@ -347,6 +358,15 @@ class CronManager(ManagerBase):
                         outcome.scheduled_for.isoformat(),
                     )
                 continue
+            if outcome.schedule_id in self._service_schedule_ids:
+                if outcome.disposition is ScheduleTriggerDisposition.MISFIRED:
+                    logger.warning(
+                        "Durable service occurrence exceeded misfire grace: "
+                        "schedule_id=%s scheduled_for=%s",
+                        outcome.schedule_id,
+                        outcome.scheduled_for.isoformat(),
+                    )
+                continue
             job = by_schedule_id.get(outcome.schedule_id)
             if job is None:
                 continue
@@ -366,7 +386,32 @@ class CronManager(ManagerBase):
         self,
         definition: ScheduleDefinition,
         scheduled_for: datetime,
-    ) -> None:
+    ) -> ScheduleOccurrenceHandling | None:
+        if definition.work_kind is ScheduleWorkKind.SERVICE:
+            source = definition.metadata.get("service_source")
+            key = definition.metadata.get("service_key")
+            if not isinstance(source, str) or not isinstance(key, str):
+                raise KeyError("Durable service schedule identity is invalid")
+            declaration = self._service_declarations.get((source, key))
+            runtime = self._service_schedule_runtime
+            if declaration is None or runtime is None:
+                raise KeyError(
+                    f"Service schedule callback is unavailable: "
+                    f"{definition.schedule_id}",
+                )
+            try:
+                return await runtime.execute(
+                    definition=definition,
+                    declaration=declaration,
+                    scheduled_for=scheduled_for,
+                )
+            except Exception:
+                logger.exception(
+                    "Durable service callback failed: source=%s key=%s",
+                    source,
+                    key,
+                )
+                raise
         if definition.metadata.get("source") == "heartbeat":
             if self._heartbeat_task_runtime is None:
                 raise KeyError("Durable Heartbeat Runtime is unavailable")
@@ -374,7 +419,7 @@ class CronManager(ManagerBase):
                 trigger="scheduled",
                 scheduled_for=scheduled_for,
             )
-            return
+            return None
         job_id = definition.metadata.get("legacy_cron_job_id")
         if not isinstance(job_id, str) or not job_id:
             raise KeyError(
@@ -385,12 +430,13 @@ class CronManager(ManagerBase):
         if job is None:
             raise KeyError(f"Durable Cron declaration is absent: {job_id}")
         if not job.enabled or not self._uses_durable_trigger_worker(job):
-            return
+            return None
         await self._execute_once(
             job,
             trigger="scheduled",
             scheduled_for=scheduled_for,
         )
+        return None
 
     # ----- read/state -----
 
@@ -922,7 +968,7 @@ class CronManager(ManagerBase):
         value = runtime.schedule_id()
         return value if isinstance(value, str) and value else None
 
-    def _register_memory_jobs(self) -> None:
+    async def _register_memory_jobs(self) -> None:
         memory_manager = getattr(self._workspace, "memory_manager", None)
         if memory_manager is None:
             declarations: list[ServiceCronJob] = []
@@ -936,15 +982,21 @@ class CronManager(ManagerBase):
                     self._agent_id,
                 )
                 return
-        self._register_service_jobs("memory", declarations)
+        await self._register_service_jobs("memory", declarations)
 
-    def _register_service_jobs(
+    async def _register_service_jobs(
         self,
         source: str,
         declarations: list[ServiceCronJob],
     ) -> None:
         """Register jobs declared by one workspace service."""
         declared_ids: set[str] = set()
+        active_keys: set[str] = set()
+        self._service_declarations = {
+            identity: declaration
+            for identity, declaration in self._service_declarations.items()
+            if identity[0] != source
+        }
 
         for declaration in declarations:
             try:
@@ -980,6 +1032,24 @@ class CronManager(ManagerBase):
                     timezone=self._scheduler.timezone,
                     jitter=declaration.jitter_seconds or None,
                 )
+                active_keys.add(declaration.key)
+                self._service_declarations[
+                    (source, declaration.key)
+                ] = declaration
+                migrated = await self._synchronize_service_runtime(
+                    source=source,
+                    declaration=declaration,
+                )
+                if migrated:
+                    if self._scheduler.get_job(job_id):
+                        self._scheduler.remove_job(job_id)
+                    logger.info(
+                        "%s cron job migrated: key=%s cron=%s",
+                        source,
+                        declaration.key,
+                        declaration.cron,
+                    )
+                    continue
                 self._scheduler.add_job(
                     self._run_service_job,
                     trigger=trigger,
@@ -1003,6 +1073,49 @@ class CronManager(ManagerBase):
                     declaration.cron,
                     exc,
                 )
+        source_prefix = f"{SERVICE_JOB_ID_PREFIX}{source}:"
+        for scheduled_job in self._scheduler.get_jobs():
+            if (
+                scheduled_job.id.startswith(source_prefix)
+                and scheduled_job.id not in declared_ids
+            ):
+                self._scheduler.remove_job(scheduled_job.id)
+        runtime = self._service_schedule_runtime
+        if runtime is not None and self._has_durable_trigger_worker():
+            removed = await runtime.prune(
+                source=source,
+                active_keys=active_keys,
+            )
+            self._service_schedule_ids.difference_update(removed)
+
+    async def _synchronize_service_runtime(
+        self,
+        *,
+        source: str,
+        declaration: ServiceCronJob,
+    ) -> bool:
+        """Migrate one service callback without admitting dual wakeups."""
+        runtime = self._service_schedule_runtime
+        if runtime is None or not self._has_durable_trigger_worker():
+            return False
+        try:
+            schedule_id = await runtime.synchronize(
+                source=source,
+                declaration=declaration,
+                timezone=str(self._scheduler.timezone),
+            )
+        except Exception:  # pylint: disable=broad-except
+            await runtime.remove(source=source, key=declaration.key)
+            logger.exception(
+                "Durable service schedule synchronization failed; "
+                "using legacy wakeup after durable state removal: "
+                "source=%s key=%s",
+                source,
+                declaration.key,
+            )
+            return False
+        self._service_schedule_ids.add(schedule_id)
+        return True
 
     @staticmethod
     def _service_job_id(source: str, key: str) -> str:

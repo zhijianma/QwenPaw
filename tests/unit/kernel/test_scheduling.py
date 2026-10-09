@@ -14,6 +14,7 @@ from qwenpaw.kernel import (
     ScheduleLeaseStatus,
     ScheduleTrigger,
     ScheduleTriggerCursor,
+    ScheduleWorkKind,
     SchedulerPort,
 )
 
@@ -114,6 +115,7 @@ def test_schedule_definition_and_fire_round_trip() -> None:
     )
     assert ScheduleFire.model_validate_json(fire.model_dump_json()) == fire
     assert definition.conversation_id == "chat-reports"
+    assert definition.work_kind is ScheduleWorkKind.TASK
     assert fire.registry_generation == 1
 
 
@@ -162,7 +164,19 @@ def test_schedule_lease_requires_coherent_terminal_facts() -> None:
     )
 
     assert completed.status is ScheduleLeaseStatus.COMPLETED
-    with pytest.raises(ValidationError, match="requires task_id"):
+    service_completed = ScheduleLease.model_validate(
+        {
+            **claimed.model_dump(),
+            "status": ScheduleLeaseStatus.COMPLETED,
+            "revision": 2,
+            "completion_ref": "service:memory:dream",
+            "finished_at": now + timedelta(seconds=1),
+        },
+    )
+
+    assert service_completed.task_id is None
+    assert service_completed.completion_ref == "service:memory:dream"
+    with pytest.raises(ValidationError, match="one completion target"):
         ScheduleLease(
             fire=fire,
             owner_id="worker.local",
@@ -170,6 +184,17 @@ def test_schedule_lease_requires_coherent_terminal_facts() -> None:
             acquired_at=now,
             expires_at=now + timedelta(seconds=30),
             finished_at=now + timedelta(seconds=1),
+        )
+    with pytest.raises(ValidationError, match="one completion target"):
+        ScheduleLease(
+            fire=fire,
+            owner_id="worker.local",
+            status=ScheduleLeaseStatus.COMPLETED,
+            acquired_at=now,
+            expires_at=now + timedelta(seconds=30),
+            finished_at=now + timedelta(seconds=1),
+            task_id=uuid4(),
+            completion_ref="service:memory:dream",
         )
     with pytest.raises(ValidationError, match="requires error_code"):
         ScheduleLease(

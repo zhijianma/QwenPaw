@@ -41,6 +41,14 @@ class ScheduleCursorConflictError(RuntimeError):
     """Raised when trigger cursor identity or revision has changed."""
 
 
+class ScheduleWorkKind(str, Enum):
+    """Host routing boundary for one durable time declaration."""
+
+    TASK = "task"
+    SERVICE = "service"
+    DELIVERY = "delivery"
+
+
 class ScheduleTrigger(KernelModel):
     """One backend-neutral time trigger with exactly one value shape."""
 
@@ -51,6 +59,8 @@ class ScheduleTrigger(KernelModel):
     interval_seconds: float | None = Field(default=None, gt=0)
     start_at: AwareDatetime | None = None
     end_at: AwareDatetime | None = None
+    jitter_seconds: int = Field(default=0, ge=0)
+    jitter_seed: NonEmptyStr | None = None
 
     @model_validator(mode="after")
     def validate_trigger_shape(self) -> Self:
@@ -84,11 +94,19 @@ class ScheduleTrigger(KernelModel):
             and self.end_at < self.start_at
         ):
             raise ValueError("interval end_at cannot precede start_at")
+        if self.kind != "cron" and (
+            self.jitter_seconds > 0 or self.jitter_seed is not None
+        ):
+            raise ValueError("jitter is supported only for cron triggers")
+        if self.jitter_seconds > 0 and self.jitter_seed is None:
+            raise ValueError("cron jitter requires a stable seed")
+        if self.jitter_seconds == 0 and self.jitter_seed is not None:
+            raise ValueError("cron jitter seed requires a positive window")
         return self
 
 
 class ScheduleDefinition(KernelModel):
-    """Immutable Task-producing schedule selected by stable capabilities."""
+    """Immutable scheduled-work declaration selected by the Host."""
 
     schedule_id: NamespacedId
     agent_id: NonEmptyStr
@@ -96,6 +114,7 @@ class ScheduleDefinition(KernelModel):
     name: NonEmptyStr
     objective: NonEmptyStr
     trigger: ScheduleTrigger
+    work_kind: ScheduleWorkKind = ScheduleWorkKind.TASK
     planner_id: NamespacedId = "qwenpaw.system.tasks.basic-planner"
     runner_id: NamespacedId
     strategy_id: NamespacedId | None = None
@@ -193,7 +212,7 @@ class ScheduleLeaseStatus(str, Enum):
 
 
 class ScheduleLease(KernelModel):
-    """Revisioned ownership proof preventing duplicate Task creation."""
+    """Revisioned ownership proof preventing duplicate scheduled work."""
 
     lease_id: UUID = Field(default_factory=uuid4)
     fire: ScheduleFire
@@ -205,6 +224,7 @@ class ScheduleLease(KernelModel):
     finished_at: AwareDatetime | None = None
     task_id: UUID | None = None
     run_id: UUID | None = None
+    completion_ref: NonEmptyStr | None = None
     error_code: str = ""
     retry_at: AwareDatetime | None = None
 
@@ -219,8 +239,15 @@ class ScheduleLease(KernelModel):
         if self.run_id is not None and self.task_id is None:
             raise ValueError("schedule run_id requires task_id")
         if self.status is ScheduleLeaseStatus.COMPLETED:
-            if self.task_id is None:
-                raise ValueError("completed schedule lease requires task_id")
+            completion_count = sum(
+                value is not None
+                for value in (self.task_id, self.completion_ref)
+            )
+            if completion_count != 1:
+                raise ValueError(
+                    "completed schedule lease requires exactly one "
+                    "completion target",
+                )
             if self.error_code or self.retry_at is not None:
                 raise ValueError(
                     "completed schedule lease cannot contain failure state",
@@ -228,7 +255,11 @@ class ScheduleLease(KernelModel):
         if self.status is ScheduleLeaseStatus.FAILED:
             if not self.error_code:
                 raise ValueError("failed schedule lease requires error_code")
-            if self.task_id is not None or self.run_id is not None:
+            if (
+                self.task_id is not None
+                or self.run_id is not None
+                or self.completion_ref is not None
+            ):
                 raise ValueError(
                     "failed schedule lease cannot claim a created Task",
                 )
@@ -237,6 +268,7 @@ class ScheduleLease(KernelModel):
                 self.finished_at is not None,
                 self.task_id is not None,
                 self.run_id is not None,
+                self.completion_ref is not None,
                 bool(self.error_code),
                 self.retry_at is not None,
             ),
@@ -261,4 +293,5 @@ __all__ = [
     "ScheduleLeaseStatus",
     "ScheduleTrigger",
     "ScheduleTriggerCursor",
+    "ScheduleWorkKind",
 ]

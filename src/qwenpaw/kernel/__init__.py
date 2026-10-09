@@ -281,6 +281,7 @@ from .scheduling import (
     ScheduleLeaseNotFoundError,
     ScheduleLeaseStatus,
     ScheduleTrigger,
+    ScheduleWorkKind,
     ScheduleTriggerCursor,
 )
 from .conversations import (
@@ -677,6 +678,7 @@ __all__ = [
     "ScheduleLeaseNotFoundError",
     "ScheduleLeaseStatus",
     "ScheduleTrigger",
+    "ScheduleWorkKind",
     "ScheduleTriggerCursor",
     "ScheduleTriggerCursorStore",
     "ACTIVE_SUBMISSION_STATUSES",

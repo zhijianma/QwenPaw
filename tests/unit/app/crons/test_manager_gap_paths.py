@@ -591,54 +591,72 @@ class TestTaskDoneCb:
 
 
 class TestRegisterServiceJobs:
-    def test_invalid_key_is_skipped(self, manager):
+    async def test_invalid_key_is_skipped(self, manager):
         declaration = ServiceCronJob(
             key="bad:key",
             cron="0 0 * * *",
             callback=AsyncMock(),
         )
-        manager._register_service_jobs("memory", [declaration])
+        await manager._register_service_jobs("memory", [declaration])
         assert manager._scheduler.get_job("_service:memory:bad:key") is None
 
-    def test_duplicate_key_registers_once(self, manager):
+    async def test_duplicate_key_registers_once(self, manager):
         callback = AsyncMock()
         first = ServiceCronJob(key="k", cron="0 0 * * *", callback=callback)
         second = ServiceCronJob(key="k", cron="0 1 * * *", callback=callback)
-        manager._register_service_jobs("memory", [first, second])
+        await manager._register_service_jobs("memory", [first, second])
         job = manager._scheduler.get_job("_service:memory:k")
         assert job is not None
 
-    def test_invalid_cron_is_skipped(self, manager):
+    async def test_invalid_cron_is_skipped(self, manager):
         declaration = ServiceCronJob(
             key="k",
             cron="not a cron",
             callback=AsyncMock(),
         )
-        manager._register_service_jobs("memory", [declaration])
+        await manager._register_service_jobs("memory", [declaration])
         assert manager._scheduler.get_job("_service:memory:k") is None
 
-    def test_valid_declaration_is_registered(self, manager):
+    async def test_valid_declaration_is_registered(self, manager):
         declaration = ServiceCronJob(
             key="compact",
             cron="0 3 * * *",
             callback=AsyncMock(),
         )
-        manager._register_service_jobs("memory", [declaration])
+        await manager._register_service_jobs("memory", [declaration])
         job = manager._scheduler.get_job("_service:memory:compact")
         assert job is not None
 
-    def test_memory_manager_without_jobs_registers_nothing(self, manager):
+    async def test_removed_declaration_clears_legacy_wakeup(self, manager):
+        declaration = ServiceCronJob(
+            key="compact",
+            cron="0 3 * * *",
+            callback=AsyncMock(),
+        )
+        await manager._register_service_jobs("memory", [declaration])
+
+        await manager._register_service_jobs("memory", [])
+
+        assert manager._scheduler.get_job("_service:memory:compact") is None
+
+    async def test_memory_manager_without_jobs_registers_nothing(
+        self,
+        manager,
+    ):
         manager._workspace.memory_manager = None
-        manager._register_memory_jobs()
+        await manager._register_memory_jobs()
         # Nothing scheduled and no exception raised.
         assert manager._scheduler.get_jobs() == []
 
-    def test_memory_manager_listing_failure_is_tolerated(self, manager):
+    async def test_memory_manager_listing_failure_is_tolerated(
+        self,
+        manager,
+    ):
         manager._workspace.memory_manager.list_cron_jobs.side_effect = (
             RuntimeError("db down")
         )
         # Must not raise.
-        manager._register_memory_jobs()
+        await manager._register_memory_jobs()
         assert manager._scheduler.get_jobs() == []
 
 

@@ -19,13 +19,16 @@ from qwenpaw.kernel import (
     ScheduleLeaseStatus,
     ScheduleTrigger,
     ScheduleTriggerCursor,
+    ScheduleWorkKind,
     TaskSource,
     TaskStatus,
 )
 from qwenpaw.plugins.generations import GenerationRegistry
 from qwenpaw.scheduling import (
     ScheduleDispatchDisposition,
+    ServiceScheduleDispatchDisposition,
     ScheduleTriggerDisposition,
+    ScheduledServiceCallbackDispatcher,
     ScheduledTaskDispatcher,
     SQLiteSchedulerStore,
     first_schedule_fire_at,
@@ -134,6 +137,70 @@ def _bundle() -> CapabilityBundle:
             ),
         ),
     )
+
+
+@pytest.mark.asyncio
+async def test_task_dispatcher_rejects_service_schedule(
+    tmp_path: Path,
+) -> None:
+    """Non-Task schedules cannot accidentally materialize fake Tasks."""
+    dispatcher = ScheduledTaskDispatcher(
+        capability_resolver=None,  # type: ignore[arg-type]
+        task_application=None,  # type: ignore[arg-type]
+        task_orchestrator=None,  # type: ignore[arg-type]
+        ledger_workspace_dir=tmp_path,
+    )
+    definition = _definition().model_copy(
+        update={"work_kind": ScheduleWorkKind.SERVICE},
+    )
+
+    with pytest.raises(ValueError, match="task schedules only"):
+        await dispatcher.dispatch(
+            definition,
+            scheduled_for=datetime.now(timezone.utc),
+            idempotency_key="service:test",
+            owner_id="test",
+        )
+
+
+@pytest.mark.asyncio
+async def test_service_dispatcher_renews_lease_during_long_callback(
+    tmp_path: Path,
+) -> None:
+    """A live callback renews ownership before its short lease expires."""
+    scheduler = SQLiteSchedulerStore(tmp_path / "scheduler.db")
+    registry = GenerationRegistry()
+
+    await registry.activate_bundle(
+        _bundle(),
+        lambda declaration: {
+            "scheduler": scheduler,
+            "planner": _Planner(),
+            "runner": _Runner(asyncio.Event()),
+            "strategy": _Strategy(),
+        }[declaration.contribution_id],
+    )
+    definition = _definition().model_copy(
+        update={"work_kind": ScheduleWorkKind.SERVICE},
+    )
+
+    async def callback() -> None:
+        await asyncio.sleep(0.05)
+
+    result = await ScheduledServiceCallbackDispatcher(
+        capability_resolver=registry,
+        scheduler_capability_id=_SCHEDULER_ID,
+        lease_seconds=0.03,
+    ).dispatch(
+        definition,
+        scheduled_for=datetime.now(timezone.utc),
+        idempotency_key="service:renewal",
+        owner_id="worker.service",
+        callback=callback,
+    )
+
+    assert result.disposition is ServiceScheduleDispatchDisposition.EXECUTED
+    assert result.lease.revision >= 3
 
 
 @pytest.mark.asyncio

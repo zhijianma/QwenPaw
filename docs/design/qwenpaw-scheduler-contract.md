@@ -1,7 +1,7 @@
 # QwenPaw Scheduler Contract
 
 - 状态：Kernel API、公开 SDK、Lite SQLite Store、system Contribution、
-  `ScheduleFire → Task Runtime` Dispatcher，以及 Cron/Heartbeat 的可无损
+  Task/Service Dispatcher，以及 Cron/Heartbeat/Service Cron 的可无损
   Trigger/Delivery 迁移已实现；其余旧 Cron 类型保留显式兼容路径
 - 产品基线：OS / Chat-first；Task Workbench 页面继续后置
 - 非目标：在 Scheduler 中复制 Task Budget、Approval、Artifact 或 Delivery 状态机
@@ -10,10 +10,10 @@
 
 Scheduler 只拥有四类事实：
 
-1. `ScheduleDefinition`：何时、由哪个 Agent、Runner 和 Strategy 创建 Task。
+1. `ScheduleDefinition`：何时、由哪个 Agent 执行哪类 scheduled work。
 2. `ScheduleFire`：某个计划时间点产生的一次幂等触发。
 3. `ScheduleLease`：哪个本地或远端 Worker 拥有该 Fire，以及租约 revision。
-4. Fire 与其创建出的 `Task.id`、可选 `Run.id` 的绑定结果。
+4. Fire 与其创建出的 `Task.id`，或非 Task `completion_ref` 的互斥绑定结果。
 
 Task 的目标、预算、重试副作用、审批、取消、Artifact、Evidence 和恢复仍由现有
 `ExecutionContract` 与 Task Runtime 拥有。Delivery/Inbox 只能读取 Task 结果投影，
@@ -28,12 +28,18 @@ Task 的目标、预算、重试副作用、审批、取消、Artifact、Evidenc
 - `kind=interval`：要求大于 0 的 `interval_seconds`，并允许可选的 aware
   `start_at/end_at` 保存首次执行锚点与终止边界；`end_at` 不得早于 `start_at`。
 - `timezone` 始终显式存在；Kernel 不依赖 APScheduler，也不解释具体 Cron 方言。
+- cron 可声明 `jitter_seconds + jitter_seed`。Host 使用稳定 seed 与 nominal
+  occurrence 计算确定性偏移；重启不会重新抽样，interval/once 禁止携带 jitter。
 
 ### `ScheduleDefinition`
 
-定义包含稳定 `schedule_id`、Agent、目标、Trigger、Planner、Runner、可选 Strategy、已有
-`ExecutionContract`、`RetryPolicy`、并发上限、misfire grace 和公开 metadata。
+定义包含稳定 `schedule_id`、Agent、目标、Trigger、`work_kind`、Planner、Runner、
+可选 Strategy、已有 `ExecutionContract`、`RetryPolicy`、并发上限、misfire grace 和公开 metadata。
 它不包含 Python callback、APScheduler Trigger 或 Channel 实例。
+
+`work_kind=task/service/delivery` 是 Host 路由边界，默认 `task` 以保持旧插件兼容。
+`ScheduledTaskDispatcher` 对非 Task 失败关闭；Service callback 由专用 Host Dispatcher
+执行，不能借用虚假 Task ID。`delivery` 只冻结领域位置，尚未迁移 text-only Cron。
 
 可选 `conversation_id` 是稳定 Chat 绑定，必须来自已有 `ChatSpec.id`。它通过
 `RuntimeLaunchConfig` 进入 Task Runtime；未绑定的后台 Schedule 保持为空。Scheduler
@@ -69,7 +75,9 @@ Fire 显式包含 `agent_id`。一次计划时间只产生一个稳定 `idempote
 状态只有 `claimed / completed / failed`：
 
 - `claimed` 不允许 Task、错误或完成字段。
-- `completed` 必须绑定 `task_id`，可选绑定 `run_id`。
+- Task 的 `completed` 必须绑定 `task_id`，可选绑定 `run_id`。
+- 非 Task work 的 `completed` 改为绑定 `completion_ref`；它与 `task_id` 必须且只能
+  二选一。
 - `failed` 必须记录 `error_code`，可选 `retry_at`，不得伪称创建过 Task。
 - 所有 renew/terminal mutation 都使用 `owner_id + expected_revision`。
 - 租约过期只表示可以由恢复器判定失败或重新 claim，不代表 Task 被删除。
@@ -135,7 +143,13 @@ Cursor Store 是 Host-only Port，不从 Plugin SDK 导出；Scheduler Provider 
    Scheduler Provider，不能绕过插件/内置统一契约。并发 Worker 由下游 Fire Lease
    保证副作用幂等、由 Cursor CAS 选出唯一进度赢家。不同 Schedule 在同一 tick
    并发消费，单个 Cron 的并发上限仍由 Manager semaphore 约束。
-8. 旧 text-only Channel 定时发送先保留兼容 Adapter；迁移完成后再设弃用门槛。
+8. [已完成：service] ReMe 等 workspace service 声明使用
+   `work_kind=service`，启动时同步 catalog/cursor，迁移成功后移除 APScheduler
+   唤醒。每次 occurrence 先 claim Fire Lease；长 callback 自动 renew，成功写稳定
+   `completion_ref`，异常写 failed，进程崩溃留下的过期 lease 标为
+   `lease_expired` 且不自动重放不确定副作用。callback registry 仍由 Host 在重启时
+   从 service 声明重建，Python callback 不进入 Kernel 或 SQLite。
+9. 旧 text-only Channel 定时发送先保留兼容 Adapter；迁移完成后再设弃用门槛。
 
 HTTP Task、Cron 与 Heartbeat 在同一进程中按 Capability Registry 复用同一个
 `TaskApplicationHost`。因此三类入口共享 Workspace TaskService、Orchestrator 和
@@ -174,9 +188,10 @@ Cron 的 JSON 声明、APScheduler 唤醒器与 Scheduler catalog 现在由
 `CronManager` 作为一个迁移事务协调：新声明只有在 catalog 同步成功后才提交；更新
 失败恢复旧声明；删除底层仓库拒绝时恢复 catalog；启动恢复失败会把 job 持久化为
 disabled 并移除 APScheduler job。切换到 legacy path 时会主动删除确定性的 Kernel
-schedule definition，但不会删除既有 Fire/Lease 历史。final/silent Agent Cron 已由
+schedule definition，但不会删除既有 Fire/Lease 历史。final/silent Agent Cron、
+Heartbeat 与 service Cron 已由
 独立 durable polling lifecycle 消费 Cursor，不再向 APScheduler 注册同名 job；
-text-only、stream、service job 与 Heartbeat 仍保留原 APScheduler 兼容路径，因此父
+text-only 与 stream job 仍保留原 APScheduler 兼容路径，因此父
 迁移项尚未完成。
 
 ## 5. 验收门禁
@@ -187,6 +202,8 @@ text-only、stream、service job 与 Heartbeat 仍保留原 APScheduler 兼容�
   Worker 返回 `recovered`，其他 Worker 回放同一 Run。
 - 插件热替换后，已 claim Fire 保持原 generation，新 Fire 使用新 generation。
 - Cron 与 Heartbeat 均产生 `TaskSource.SCHEDULE` 和统一 Runtime Projection。
+- Service Cron 不创建伪 Task；并发 occurrence 复用同一 Fire Lease，成功绑定
+  `completion_ref`，失败与过期保留终态证据。
 - Inbox 已读、Delivery 失败或重试不改写 Task/Run/Artifact/Evidence 事实。
 
 ## 6. Lite SQLite Store
@@ -199,7 +216,8 @@ Lite 宿主 Adapter，不从公共 Plugin SDK 导出：
   `schedule_id`，相同 Fire 并发 claim 返回同一 Lease，相同键配不同 Fire 内容则
   抛出公开 `ScheduleFireConflictError`。
 - renew/complete/fail 都校验 owner、revision、claimed 状态和未过期边界。
-- terminal Lease 不可续租；Task 创建失败不会伪造 `task_id`。
+- terminal Lease 不可续租；Task 创建失败不会伪造 `task_id`，非 Task 完成也不能
+  同时填写 `task_id` 与 `completion_ref`。
 - `recover_expired()` 在同一事务内把过期 claim 变成
   `failed / lease_expired`，由上层 RetryPolicy 决定下一步。
 - 定义、Fire 和 Lease 均保存完整 canonical JSON，SQLite 辅助列只用于唯一约束与

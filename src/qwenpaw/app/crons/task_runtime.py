@@ -175,7 +175,7 @@ class LiteCronTaskRuntime:
 
         async def handle(definition, scheduled_for):
             try:
-                await execute(definition, scheduled_for)
+                handling = await execute(definition, scheduled_for)
             except Exception as error:  # noqa: BLE001 - policy decides
                 if isinstance(
                     error,
@@ -189,7 +189,7 @@ class LiteCronTaskRuntime:
                 ):
                     return ScheduleOccurrenceHandling.RETRY
                 return ScheduleOccurrenceHandling.HANDLED
-            return ScheduleOccurrenceHandling.HANDLED
+            return handling or ScheduleOccurrenceHandling.HANDLED
 
         return await self._scheduled.run_due(
             now=now,

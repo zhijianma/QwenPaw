@@ -3,6 +3,8 @@
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from qwenpaw.kernel import ScheduleDefinition, ScheduleTrigger
 from qwenpaw.plugins import sdk
 from qwenpaw.scheduling import (
@@ -156,3 +158,39 @@ def test_cron_evaluation_is_timezone_aware_and_stateless() -> None:
         previous=first,
         not_before=first + timedelta(days=2),
     ) == first + timedelta(days=3)
+
+
+def test_cron_jitter_is_deterministic_and_does_not_drift() -> None:
+    trigger = ScheduleTrigger(
+        kind="cron",
+        cron="0 9 * * *",
+        jitter_seconds=60,
+        jitter_seed="agent-a:memory:dream",
+    )
+    nominal = datetime(2026, 10, 9, 9, tzinfo=timezone.utc)
+    first = first_schedule_fire_at(
+        _definition(trigger),
+        now=nominal - timedelta(hours=1),
+    )
+    replay = first_schedule_fire_at(
+        _definition(trigger),
+        now=nominal - timedelta(hours=1),
+    )
+
+    assert first == replay
+    assert first is not None
+    assert nominal <= first <= nominal + timedelta(seconds=60)
+    following = next_schedule_fire_at(trigger, previous=first)
+    assert following is not None
+    assert nominal + timedelta(days=1) <= following
+    assert following <= nominal + timedelta(days=1, seconds=60)
+
+
+def test_non_cron_trigger_rejects_jitter() -> None:
+    with pytest.raises(ValueError, match="only for cron"):
+        ScheduleTrigger(
+            kind="interval",
+            interval_seconds=60,
+            jitter_seconds=5,
+            jitter_seed="invalid",
+        )

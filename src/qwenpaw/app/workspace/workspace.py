@@ -760,6 +760,9 @@ class Workspace:  # pylint: disable=too-many-public-methods
 
         # Priority 40: Cron manager
         from ..crons.heartbeat_task_runtime import LiteHeartbeatTaskRuntime
+        from ..crons.service_schedule_runtime import (
+            LiteServiceScheduleRuntime,
+        )
         from ..crons.task_runtime import LiteCronTaskRuntime
 
         sm.register(
@@ -781,6 +784,9 @@ class Workspace:  # pylint: disable=too-many-public-methods
                     "agent_id": ws.agent_id,
                     "task_runtime": LiteCronTaskRuntime(ws),
                     "heartbeat_task_runtime": LiteHeartbeatTaskRuntime(ws),
+                    "service_schedule_runtime": (
+                        LiteServiceScheduleRuntime(ws)
+                    ),
                 },
                 start_method="start",
                 stop_method="stop",

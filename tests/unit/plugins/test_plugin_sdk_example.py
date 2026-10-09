@@ -230,6 +230,12 @@ def test_public_sdk_exports_runtime_interaction_contract() -> None:
     assert sdk.ScheduleLeaseNotFoundError is not None
     assert sdk.ScheduleLeaseStatus is not None
     assert sdk.ScheduleTrigger is not None
+
+
+def test_public_sdk_exports_schedule_work_kind() -> None:
+    from qwenpaw.plugins import sdk
+
+    assert sdk.ScheduleWorkKind is not None
     assert sdk.SchedulerPort is not None
     assert sdk.SchedulerHost is not None
     assert sdk.SchedulerProvider is not None

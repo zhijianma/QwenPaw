@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,8 @@ from ...scheduling import (
     ScheduleOccurrenceHandler,
     ScheduleTriggerTickReport,
     ScheduledTaskDispatcher,
+    ScheduledServiceCallbackDispatcher,
+    ServiceScheduleDispatchResult,
 )
 from ...scheduling import SQLiteSchedulerStore, SchedulerStoreHost
 from ...scheduling import (
@@ -100,6 +103,28 @@ class LiteScheduledTaskRuntime:  # pylint: disable=too-few-public-methods
             deliveries,
         )
 
+    async def execute_service_callback(
+        self,
+        definition: ScheduleDefinition,
+        *,
+        scheduled_for: datetime,
+        idempotency_key: str,
+        owner_id: str,
+        callback: Callable[[], Awaitable[None]],
+    ) -> ServiceScheduleDispatchResult:
+        """Fence one service callback with the shared Scheduler lease."""
+        bindings, _dispatcher = await self._dependencies()
+        return await ScheduledServiceCallbackDispatcher(
+            capability_resolver=bindings.runtime.capability_resolver,
+            scheduler_host=SchedulerStoreHost(self._store()),
+        ).dispatch(
+            definition,
+            scheduled_for=scheduled_for,
+            idempotency_key=idempotency_key,
+            owner_id=owner_id,
+            callback=callback,
+        )
+
     async def upsert_definition(
         self,
         definition: ScheduleDefinition,
@@ -137,6 +162,15 @@ class LiteScheduledTaskRuntime:  # pylint: disable=too-few-public-methods
             schedule_id=schedule_id,
         )
         return definition_removed or cursor_removed
+
+    async def list_definitions(
+        self,
+        *,
+        agent_id: str,
+    ) -> tuple[ScheduleDefinition, ...]:
+        """Read durable declarations without exposing Scheduler internals."""
+        _bindings, dispatcher = await self._dependencies()
+        return await dispatcher.list_definitions(agent_id=agent_id)
 
     async def run_due(
         self,

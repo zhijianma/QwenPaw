@@ -715,14 +715,18 @@ new generation fails closed before the Runner starts.
 Scheduler plugins implement the process-scoped `scheduler.provider` Slot.
 Implement `SchedulerProvider.open(host)` and obtain the admitted
 `SchedulerPort` through `SchedulerHost.scheduler_store()`. Import
-`ScheduleDefinition`, `ScheduleTrigger`, `ScheduleFire`, `ScheduleLease`,
+`ScheduleDefinition`, `ScheduleWorkKind`, `ScheduleTrigger`, `ScheduleFire`,
+`ScheduleLease`,
 `SchedulerHost`, `SchedulerPort`, and `SchedulerProvider` only from
 `qwenpaw.plugins.sdk`. The plugin must not choose a database path, read a
 storage environment variable, or close Host-owned persistence. A scheduler
-owns time triggers and revisioned Fire leases; it must create
-`TaskSource.SCHEDULE` work through the host's Task application boundary instead
-of calling a Chat Runtime directly. Task budget, approval, artifacts, evidence,
-and delivery remain outside the Scheduler.
+owns time triggers and revisioned Fire leases. For `ScheduleWorkKind.TASK`, it
+must create `TaskSource.SCHEDULE` work through the host's Task application
+boundary instead of calling a Chat Runtime directly. Host-owned `SERVICE` work
+binds the completed Lease to `completion_ref` rather than inventing a Task ID;
+third-party Providers persist the same contract but never receive Python
+callbacks. Task budget, approval, artifacts, evidence, and delivery remain
+outside the Scheduler.
 `schedule_id` is Agent-scoped: definitions and fires both carry `agent_id`,
 and the idempotency domain is
 `agent_id + schedule_id + idempotency_key`. Implementations must never bind a

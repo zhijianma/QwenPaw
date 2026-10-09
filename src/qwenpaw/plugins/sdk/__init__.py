@@ -30,6 +30,7 @@ from ...kernel.scheduling import (
     ScheduleLeaseNotFoundError,
     ScheduleLeaseStatus,
     ScheduleTrigger,
+    ScheduleWorkKind,
 )
 from ...kernel.conversations import (
     ConversationForkBoundary,
@@ -463,6 +464,7 @@ __all__ = [
     "ScheduleLeaseNotFoundError",
     "ScheduleLeaseStatus",
     "ScheduleTrigger",
+    "ScheduleWorkKind",
     "SchedulerPort",
     "SchedulerHost",
     "SchedulerProvider",

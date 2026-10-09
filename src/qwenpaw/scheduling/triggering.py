@@ -32,6 +32,23 @@ def _utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+def _apply_cron_jitter(
+    trigger: ScheduleTrigger,
+    nominal: datetime,
+) -> datetime:
+    """Apply stable per-occurrence jitter without persisting RNG state."""
+    value = _utc(nominal)
+    if trigger.jitter_seconds <= 0:
+        return value
+    assert trigger.jitter_seed is not None
+    payload = f"{trigger.jitter_seed}\x00{value.isoformat()}".encode("utf-8")
+    offset = int.from_bytes(
+        hashlib.sha256(payload).digest()[:8],
+        "big",
+    ) % (trigger.jitter_seconds + 1)
+    return value + timedelta(seconds=offset)
+
+
 def first_schedule_fire_at(
     definition: ScheduleDefinition,
     *,
@@ -64,7 +81,7 @@ def first_schedule_fire_at(
         trigger.cron,
         timezone=trigger.timezone,
     ).get_next_fire_time(None, current)
-    return _utc(candidate) if candidate is not None else None
+    return _apply_cron_jitter(trigger, candidate) if candidate else None
 
 
 def next_schedule_fire_at(
@@ -87,7 +104,7 @@ def next_schedule_fire_at(
         trigger.cron,
         timezone=trigger.timezone,
     ).get_next_fire_time(committed, committed)
-    return _utc(candidate) if candidate is not None else None
+    return _apply_cron_jitter(trigger, candidate) if candidate else None
 
 
 def next_schedule_fire_after(
@@ -119,9 +136,21 @@ def next_schedule_fire_after(
         timezone=trigger.timezone,
     )
     candidate = cron.get_next_fire_time(committed, boundary)
-    while candidate is not None and _utc(candidate) <= boundary:
+    jittered = (
+        _apply_cron_jitter(trigger, candidate)
+        if candidate is not None
+        else None
+    )
+    while (
+        candidate is not None and jittered is not None and jittered <= boundary
+    ):
         candidate = cron.get_next_fire_time(candidate, candidate)
-    return _utc(candidate) if candidate is not None else None
+        jittered = (
+            _apply_cron_jitter(trigger, candidate)
+            if candidate is not None
+            else None
+        )
+    return jittered
 
 
 __all__ = [

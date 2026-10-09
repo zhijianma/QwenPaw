@@ -364,6 +364,30 @@ async def test_renew_and_complete_enforce_owner_revision_and_expiry(
 
 
 @pytest.mark.asyncio
+async def test_complete_supports_non_task_completion_reference(
+    tmp_path,
+) -> None:
+    store = SQLiteSchedulerStore(tmp_path / "scheduler.db")
+    await store.upsert(_definition())
+    claimed = await store.claim(
+        _fire(idempotency_key="service:memory:dream"),
+        owner_id="worker.service",
+        lease_seconds=30,
+    )
+
+    completed = await store.complete(
+        claimed.lease_id,
+        owner_id="worker.service",
+        expected_revision=claimed.revision,
+        completion_ref="service:memory:dream",
+    )
+
+    assert completed.status is ScheduleLeaseStatus.COMPLETED
+    assert completed.task_id is None
+    assert completed.completion_ref == "service:memory:dream"
+
+
+@pytest.mark.asyncio
 async def test_fail_and_recover_expired_create_terminal_facts(
     tmp_path,
 ) -> None:
@@ -415,6 +439,41 @@ async def test_fail_and_recover_expired_create_terminal_facts(
         )
         == ()
     )
+
+
+@pytest.mark.asyncio
+async def test_expired_recovery_can_be_scoped_to_one_schedule(
+    tmp_path,
+) -> None:
+    store = SQLiteSchedulerStore(tmp_path / "scheduler.db")
+    await store.upsert(_definition("reports.first"))
+    await store.upsert(_definition("reports.second"))
+    fires = {}
+    for schedule_id in ("reports.first", "reports.second"):
+        fires[schedule_id] = await store.claim(
+            _fire(
+                schedule_id=schedule_id,
+                idempotency_key=f"{schedule_id}:fire",
+            ),
+            owner_id="worker.local",
+            lease_seconds=0.01,
+        )
+
+    recovered = await store.recover_expired(
+        agent_id="default",
+        schedule_id="reports.first",
+        now=_now() + timedelta(seconds=1),
+    )
+
+    assert [item.fire.schedule_id for item in recovered] == [
+        "reports.first",
+    ]
+    second = await store.claim(
+        fires["reports.second"].fire,
+        owner_id="worker.other",
+        lease_seconds=30,
+    )
+    assert second.status is ScheduleLeaseStatus.CLAIMED
 
 
 @pytest.mark.asyncio

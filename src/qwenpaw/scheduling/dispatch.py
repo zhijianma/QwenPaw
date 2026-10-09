@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -19,6 +20,7 @@ from ..kernel import (
     ScheduleLease,
     ScheduleLeaseStatus,
     ScheduleTriggerCursorStore,
+    ScheduleWorkKind,
     SchedulerHost,
     SchedulerPort,
     SchedulerProvider,
@@ -50,6 +52,22 @@ class ScheduleDispatchDisposition(str, Enum):
     RECOVERED = "recovered"
     OWNED_ELSEWHERE = "owned_elsewhere"
     REPLAYED = "replayed"
+
+
+class ServiceScheduleDispatchDisposition(str, Enum):
+    """Outcome of one service callback occurrence admission."""
+
+    EXECUTED = "executed"
+    REPLAYED = "replayed"
+    OWNED_ELSEWHERE = "owned_elsewhere"
+
+
+@dataclass(frozen=True, slots=True)
+class ServiceScheduleDispatchResult:
+    """Lease evidence for one service callback occurrence."""
+
+    lease: ScheduleLease
+    disposition: ServiceScheduleDispatchDisposition
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,10 +121,13 @@ class ScheduledTaskDispatcher:
         owner_id: str,
     ) -> ScheduleDispatchResult:
         """Claim, materialize, bind, and start one scheduled Task."""
+        if definition.work_kind is not ScheduleWorkKind.TASK:
+            raise ValueError(
+                "ScheduledTaskDispatcher accepts task schedules only",
+            )
         generation_lease = await self._capability_resolver.pin()
         claimed: ScheduleLease | None = None
         task: Task | None = None
-        bound: ScheduleLease | None = None
         try:
             scheduler = await self._resolve_scheduler(generation_lease)
             fire = ScheduleFire(
@@ -117,31 +138,32 @@ class ScheduledTaskDispatcher:
                 idempotency_key=idempotency_key,
             )
             await scheduler.upsert(definition)
-            claimed = await scheduler.claim(
+            lease = await scheduler.claim(
                 fire,
                 owner_id=owner_id,
                 lease_seconds=self._lease_seconds,
             )
-            if claimed.status is not ScheduleLeaseStatus.CLAIMED:
+            claimed = lease
+            if lease.status is not ScheduleLeaseStatus.CLAIMED:
                 return await self._replay_bound_task(
                     definition,
-                    claimed,
+                    lease,
                 )
-            if claimed.owner_id != owner_id:
+            if lease.owner_id != owner_id:
                 return ScheduleDispatchResult(
-                    lease=claimed,
+                    lease=lease,
                     disposition=(ScheduleDispatchDisposition.OWNED_ELSEWHERE),
                 )
             task = await self._create_task(definition, fire)
-            bound = await scheduler.complete(
-                claimed.lease_id,
+            completed = await scheduler.complete(
+                lease.lease_id,
                 owner_id=owner_id,
-                expected_revision=claimed.revision,
+                expected_revision=lease.revision,
                 task_id=task.task_id,
             )
             return await self._start_bound_task(
                 definition,
-                bound,
+                completed,
                 task,
                 started_disposition=ScheduleDispatchDisposition.STARTED,
             )
@@ -193,6 +215,19 @@ class ScheduledTaskDispatcher:
                 agent_id=agent_id,
                 schedule_id=schedule_id,
             )
+        finally:
+            await generation_lease.close()
+
+    async def list_definitions(
+        self,
+        *,
+        agent_id: str,
+    ) -> tuple[ScheduleDefinition, ...]:
+        """Read one Agent catalog through the pinned Scheduler Provider."""
+        generation_lease = await self._capability_resolver.pin()
+        try:
+            scheduler = await self._resolve_scheduler(generation_lease)
+            return await scheduler.list_definitions(agent_id=agent_id)
         finally:
             await generation_lease.close()
 
@@ -353,40 +388,174 @@ class ScheduledTaskDispatcher:
         )
 
     async def _resolve_scheduler(self, lease) -> SchedulerPort:
-        descriptor = lease.resolve(self._scheduler_capability_id)
-        if descriptor is None:
-            raise SchedulerCapabilityUnavailableError(
-                f"scheduler capability '{self._scheduler_capability_id}' "
-                "is absent",
-            )
-        if descriptor.slot not in {"scheduler", "scheduler.provider"}:
-            raise SchedulerCapabilityUnavailableError(
-                f"capability '{self._scheduler_capability_id}' declares "
-                f"slot '{descriptor.slot}'",
-            )
-        if not isinstance(lease, ExecutableCapabilityLease):
-            raise SchedulerCapabilityUnavailableError(
-                "scheduler resolver does not expose implementations",
-            )
-        implementation = lease.implementation(
-            self._scheduler_capability_id,
+        return await _resolve_scheduler(
+            lease,
+            capability_id=self._scheduler_capability_id,
+            scheduler_host=self._scheduler_host,
         )
-        if descriptor.slot == "scheduler.provider":
-            if not isinstance(implementation, SchedulerProvider):
-                raise SchedulerCapabilityUnavailableError(
-                    f"capability '{self._scheduler_capability_id}' does not "
-                    "implement SchedulerProvider",
-                )
-            if self._scheduler_host is None:
-                raise SchedulerCapabilityUnavailableError(
-                    "scheduler provider requires a Host-owned Store",
-                )
-            implementation = await implementation.open(
-                self._scheduler_host,
+
+
+class ScheduledServiceCallbackDispatcher:
+    """Fence one process-local service callback with a durable Fire lease."""
+
+    def __init__(
+        self,
+        *,
+        capability_resolver: CapabilityResolver,
+        scheduler_capability_id: str = DEFAULT_SCHEDULER_CAPABILITY_ID,
+        scheduler_host: SchedulerHost | None = None,
+        lease_seconds: float = 30.0,
+    ) -> None:
+        if lease_seconds <= 0:
+            raise ValueError("schedule lease duration must be positive")
+        self._capability_resolver = capability_resolver
+        self._scheduler_capability_id = scheduler_capability_id
+        self._scheduler_host = scheduler_host
+        self._lease_seconds = lease_seconds
+
+    async def dispatch(
+        self,
+        definition: ScheduleDefinition,
+        *,
+        scheduled_for: datetime,
+        idempotency_key: str,
+        owner_id: str,
+        callback: Callable[[], Awaitable[None]],
+    ) -> ServiceScheduleDispatchResult:
+        """Execute at most once; expired uncertain work is not replayed."""
+        if definition.work_kind is not ScheduleWorkKind.SERVICE:
+            raise ValueError(
+                "ScheduledServiceCallbackDispatcher accepts service "
+                "schedules only",
             )
-        if not isinstance(implementation, SchedulerPort):
+        generation_lease = await self._capability_resolver.pin()
+        try:
+            scheduler = await _resolve_scheduler(
+                generation_lease,
+                capability_id=self._scheduler_capability_id,
+                scheduler_host=self._scheduler_host,
+            )
+            await scheduler.upsert(definition)
+            await scheduler.recover_expired(
+                agent_id=definition.agent_id,
+                now=datetime.now(scheduled_for.tzinfo),
+                schedule_id=definition.schedule_id,
+            )
+            fire = ScheduleFire(
+                agent_id=definition.agent_id,
+                schedule_id=definition.schedule_id,
+                registry_generation=generation_lease.generation,
+                scheduled_for=scheduled_for,
+                idempotency_key=idempotency_key,
+            )
+            lease = await scheduler.claim(
+                fire,
+                owner_id=owner_id,
+                lease_seconds=self._lease_seconds,
+            )
+            if lease.status is not ScheduleLeaseStatus.CLAIMED:
+                return ServiceScheduleDispatchResult(
+                    lease=lease,
+                    disposition=ServiceScheduleDispatchDisposition.REPLAYED,
+                )
+            if lease.owner_id != owner_id:
+                return ServiceScheduleDispatchResult(
+                    lease=lease,
+                    disposition=(
+                        ServiceScheduleDispatchDisposition.OWNED_ELSEWHERE
+                    ),
+                )
+            current = lease
+
+            async def invoke_callback() -> None:
+                await callback()
+
+            callback_task = asyncio.create_task(invoke_callback())
+            try:
+                while True:
+                    done, _pending = await asyncio.wait(
+                        {callback_task},
+                        timeout=self._lease_seconds / 3,
+                    )
+                    if done:
+                        await callback_task
+                        break
+                    current = await scheduler.renew(
+                        current.lease_id,
+                        owner_id=owner_id,
+                        expected_revision=current.revision,
+                        lease_seconds=self._lease_seconds,
+                    )
+            except asyncio.CancelledError:
+                callback_task.cancel()
+                try:
+                    await callback_task
+                except asyncio.CancelledError:
+                    pass
+                raise
+            except Exception as error:
+                try:
+                    await scheduler.fail(
+                        current.lease_id,
+                        owner_id=owner_id,
+                        expected_revision=current.revision,
+                        error_code=type(error).__name__,
+                    )
+                except Exception as accounting_error:
+                    raise ScheduleDispatchAccountingError(
+                        "service schedule callback failure was not "
+                        "persisted",
+                    ) from accounting_error
+                raise
+            completed = await scheduler.complete(
+                current.lease_id,
+                owner_id=owner_id,
+                expected_revision=current.revision,
+                completion_ref=f"service:{definition.schedule_id}",
+            )
+            return ServiceScheduleDispatchResult(
+                lease=completed,
+                disposition=ServiceScheduleDispatchDisposition.EXECUTED,
+            )
+        finally:
+            await generation_lease.close()
+
+
+async def _resolve_scheduler(
+    lease,
+    *,
+    capability_id: str,
+    scheduler_host: SchedulerHost | None,
+) -> SchedulerPort:
+    """Resolve one generation-pinned Scheduler implementation."""
+    descriptor = lease.resolve(capability_id)
+    if descriptor is None:
+        raise SchedulerCapabilityUnavailableError(
+            f"scheduler capability '{capability_id}' is absent",
+        )
+    if descriptor.slot not in {"scheduler", "scheduler.provider"}:
+        raise SchedulerCapabilityUnavailableError(
+            f"capability '{capability_id}' declares "
+            f"slot '{descriptor.slot}'",
+        )
+    if not isinstance(lease, ExecutableCapabilityLease):
+        raise SchedulerCapabilityUnavailableError(
+            "scheduler resolver does not expose implementations",
+        )
+    implementation = lease.implementation(capability_id)
+    if descriptor.slot == "scheduler.provider":
+        if not isinstance(implementation, SchedulerProvider):
             raise SchedulerCapabilityUnavailableError(
-                f"capability '{self._scheduler_capability_id}' does not "
-                "implement SchedulerPort",
+                f"capability '{capability_id}' does not "
+                "implement SchedulerProvider",
             )
-        return implementation
+        if scheduler_host is None:
+            raise SchedulerCapabilityUnavailableError(
+                "scheduler provider requires a Host-owned Store",
+            )
+        implementation = await implementation.open(scheduler_host)
+    if not isinstance(implementation, SchedulerPort):
+        raise SchedulerCapabilityUnavailableError(
+            f"capability '{capability_id}' does not implement SchedulerPort",
+        )
+    return implementation

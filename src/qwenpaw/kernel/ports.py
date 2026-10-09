@@ -333,10 +333,11 @@ class SchedulerPort(Protocol):
         *,
         owner_id: str,
         expected_revision: int,
-        task_id: UUID,
+        task_id: UUID | None = None,
         run_id: UUID | None = None,
+        completion_ref: str | None = None,
     ) -> ScheduleLease:
-        """Bind one fire to the Task created from it exactly once."""
+        """Bind one fire to exactly one Task or non-Task completion."""
 
     async def fail(
         self,
@@ -354,8 +355,9 @@ class SchedulerPort(Protocol):
         *,
         agent_id: str,
         now: datetime,
+        schedule_id: str | None = None,
     ) -> tuple[ScheduleLease, ...]:
-        """Fail one Agent's expired claims and return terminal records."""
+        """Fail scoped expired claims and return terminal records."""
 
 
 @runtime_checkable
