@@ -878,6 +878,21 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 
 这些结果是分组定点验证，不等价于全仓测试通过。
 
+### 2026-10-09 长程交互模型正式裁决
+
+- 不采用一问一答作为长程 Agent Runtime 生命周期；Handbook 中请求/响应示例只视为
+  传输或短 Chat 快速路径，不作为执行调度模型。
+- 3.0 采用 intent-driven continuous execution：同一 `ChatSpec.id + correlation_id`
+  下由 Submission、Invocation、Action、typed wait、durable continuation 和 Outcome
+  持续推进。Assistant final、HTTP response 与 SSE 断线都不是完成事实。
+- Ask User 只允许必要事实、实质偏好、范围授权和高影响裁决；Approval、Suggestion、
+  Steer 与 Interrupt 保持独立类型，禁止用“是否继续”驱动每一步。
+- 现有 `ConversationExecutionChain`、`UserInputReason`、Interaction outbox、Goal
+  Execution Store 与 Outcome Broker 已构成可执行骨架。相关 Kernel、Projection、
+  Interaction、Dispatcher、Outcome 与 Goal 定点验证为 `69 passed`。
+- Task Workbench 继续后置；当前剩余工作聚焦 Model Recovery Contract、恢复终态和
+  非插件来源的通用人工授权策略，不为本裁决新增第二套状态机。
+
 ## 5. 钉钉文档归档清单
 
 ### 框架分析目录

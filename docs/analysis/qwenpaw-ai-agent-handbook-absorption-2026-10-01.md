@@ -527,6 +527,21 @@ WaitCondition，或预算/恢复终态才结束执行链。Assistant Message 是
 投影，HTTP response 与 SSE 断开只是传输事件。该模型仍兼容短问答，因为最简单的
 执行链自然只有一个 Submission、一个 Invocation 和一个最终 Message。
 
+替换边界固定如下：
+
+| 旧的一问一答假设 | 3.0 持续执行契约 |
+|---|---|
+| 用户消息启动一次 turn | Submission 接受一次输入，correlation 标识完整意图 |
+| assistant final 表示任务完成 | 只有具名 Producer 提交的 Outcome 表示业务结果 |
+| 遇到等待就询问“是否继续” | Runtime 写入 typed wait，条件成熟后 durable continuation 自动续行 |
+| HTTP/SSE 断开等于执行结束 | 连接只是传输；已接受 Submission 继续运行并可重取投影 |
+| 工具结果依附当前调用栈 | Action、Artifact、Evidence 和 Checkpoint 独立持久化并按因果身份恢复 |
+| 每轮都可自然语言改变执行 | Steer、Interrupt、Approval 与 Ask User 使用各自类型化控制契约 |
+
+这不是把 Chat 改成隐藏的 Task 页面。短问答仍可退化为单 Submission、单 Invocation；
+长程执行才按需要扩展出 Action、wait、continuation 和 Outcome。Task 后续只消费同一
+组权威事实，不重新定义运行时生命周期。
+
 该裁决现已进入 Chat Runtime 公开契约：`ConversationExecutionChain` 按 correlation
 聚合同一意图的 Submission、Invocation 与阻塞 Interaction。技术执行成功后状态为
 `inactive`，而不是 `completed`；只有独立 `ConversationOutcome` 事实才能声明业务

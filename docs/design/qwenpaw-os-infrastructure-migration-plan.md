@@ -4,12 +4,22 @@
 - 状态：实施中
 - 当前产品基线：Lite / Chat-first
 - UI 冻结：暂停 Task Workbench 功能开发，仅保留既有回归验证
+- 长程交互基线：Runtime 使用 intent-driven continuous execution；一问一答仅是
+  短 Chat 快速路径和 Conversation 投影
 
 ## 1. 本阶段目标
 
 先完成 OS R0 的基础设施契约、运行装配和兼容迁移，再恢复 Task 页面开发。
 Chat 是当前唯一真实交互验收入口。Lite 提供本地实现；Workstation 与 Hub 在
 本阶段只冻结公共 Port 和 Profile 组合边界，不提前实现分布式能力。
+
+当前执行目标以本计划为准：先完成 Chat-first Kernel、Harness 与 OS Adapter，
+Task Workbench 后置。一个长程意图由 `ChatSpec.id + correlation_id` 聚合，可跨多个
+Submission、Invocation、Action、typed wait 和 continuation 自主推进。Assistant
+Message、HTTP response、SSE 断线或一次 Invocation 成功都不能单独终止该意图；只有
+显式 Outcome、Stop / Interrupt、不可自动化的 typed wait，或预算与恢复终态可以
+结束执行链。Ask User 只用于必要事实、实质偏好、范围授权和高影响裁决，禁止用
+“是否继续”充当调度器。
 
 本阶段完成后，业务代码不再直接依赖旧 Workspace Registry、具体存储、具体
 AgentBuilder、DriverManager、Harness 或 Scheduler；这些实现只能作为系统

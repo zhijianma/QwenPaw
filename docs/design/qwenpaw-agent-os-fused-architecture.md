@@ -572,7 +572,7 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
   retry、流式成功/取消/失败和 usage，并提供 Chat-owned 只读查询。Route 区分逻辑
   请求与实际 Provider/Model，Attempt 记录 Adapter/Formatter 身份和版本；缺失价格
   以 `cost_unknown` 留证，不折算为零。
-- [ ] 将 Chat 运行模型从隐含的一问一答升级为 Conversation Execution Chain：
+- [x] 将 Chat 运行模型从隐含的一问一答升级为 Conversation Execution Chain：
   `Submission` 是输入，`Invocation` 是一次运行尝试，`correlation_id` 贯穿同一意图
   的多次等待与恢复；短问答继续使用单 Invocation 快速路径。
   - [x] 已冻结退出边界：Outcome、显式 Stop / Interrupt、不可自动化的 typed Wait，
