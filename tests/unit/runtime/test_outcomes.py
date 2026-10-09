@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Tests for explicit Conversation Outcome persistence."""
 
+import json
+import sqlite3
 import stat
 from datetime import timedelta
 from uuid import uuid4
@@ -116,3 +118,42 @@ async def test_outcome_identity_conflict_fails_closed(tmp_path) -> None:
         await store.append(
             outcome.model_copy(update={"summary": "Conflicting summary."}),
         )
+
+
+@pytest.mark.asyncio
+async def test_legacy_outcome_json_replays_without_identity_conflict(
+    tmp_path,
+) -> None:
+    store = lite_conversation_outcome_store(tmp_path)
+    outcome = ConversationOutcome(
+        agent_id="default",
+        chat_id="chat-1",
+        correlation_id=uuid4(),
+        status=ConversationOutcomeStatus.PARTIAL,
+        producer_id="qwenpaw.system.runtime",
+        summary="A legacy row remains replayable after schema migration.",
+    )
+    await store.append(outcome)
+    legacy = outcome.model_dump(mode="json")
+    legacy["conversation_id"] = legacy.pop("chat_id")
+    with sqlite3.connect(store.database_path) as connection:
+        connection.execute(
+            "UPDATE conversation_outcomes SET model_json = ? "
+            "WHERE outcome_id = ?",
+            (
+                json.dumps(
+                    legacy,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+                str(outcome.outcome_id),
+            ),
+        )
+
+    await store.append(outcome)
+
+    restored = await store.get(outcome.outcome_id)
+    assert restored == outcome
+    assert restored is not None
+    assert restored.chat_id == "chat-1"

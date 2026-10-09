@@ -291,7 +291,8 @@ Workbench。前端只能提交命令、订阅事件和展示服务端投影；�
     `ConversationRuntimeProjection` 公共合同已统一使用
     `chat_id = ChatSpec.id`。旧 SQLite 行与 dispatcher 继续通过只读 Python
     `conversation_id` 属性工作；HTTP、SSE 与 Console 新类型只产生 `chat_id`。
-    嵌套 Outcome / Observation 仍是独立事实合同，另按各自迁移切片处理。
+    嵌套 Outcome / Observation 是独立事实合同，按各自迁移切片处理；Outcome 已完成，
+    Observation 仍保留在后续独立切片。
   - [x] `InvocationScope.conversation_id` 已冻结为可空的一等 `ChatSpec.id`；Chat
     Adapter 在装配时只写入一次，Memory Host、Interaction 和控制面从固定 Scope
     传播。没有 Conversation 的 transport 保持 `None`，禁止回退到 `session_id`。
@@ -1268,6 +1269,10 @@ Cron 不形成独立审批或产物事实源。
       correlation、Artifact/Evidence/Verification 引用和显式 supersession 保存不可变
       Outcome。Chat Runtime 只有读取到晚于最近 Submission 且当前无 live work 的显式
       Outcome，才投影 achieved / partial / not_achieved / abandoned。
+      `ConversationOutcomeDeclaration` 与 `ConversationOutcome` 的公共 JSON/OpenAPI 已统一
+      使用 `chat_id = ChatSpec.id`；旧 JSON/插件输入和只读 Python 属性保持兼容。
+      SQLite 继续使用内部 `conversation_id` 列，但同 Outcome ID 的新旧字段 JSON 会先
+      解析成领域对象再比较，避免升级后幂等重放被误判为内容冲突。
     - [x] 冻结 Outcome producer admission：Host Outcome Broker 对 system/plugin 使用
       同一声明入口和热注册机制，普通 Chat 校验 Artifact/Evidence 的 ChatSpec 归属；
       Task-owned 声明校验 Agent、ChatSpec、Task、Run 与 correlation，只有既有

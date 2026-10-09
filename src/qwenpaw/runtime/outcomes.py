@@ -120,7 +120,7 @@ class SQLiteConversationOutcomeStore:
                 (str(outcome.outcome_id),),
             ).fetchone()
             if existing is not None:
-                if existing["model_json"] != encoded:
+                if self._parse(existing) != outcome:
                     raise ConversationOutcomeConflictError(
                         "outcome identity already has conflicting content",
                     )
@@ -133,7 +133,7 @@ class SQLiteConversationOutcomeStore:
                 "ORDER BY created_at DESC, outcome_id DESC LIMIT 1",
                 (
                     outcome.agent_id,
-                    outcome.conversation_id,
+                    outcome.chat_id,
                     str(outcome.correlation_id),
                 ),
             ).fetchone()
@@ -161,7 +161,7 @@ class SQLiteConversationOutcomeStore:
                 (
                     str(outcome.outcome_id),
                     outcome.agent_id,
-                    outcome.conversation_id,
+                    outcome.chat_id,
                     str(outcome.correlation_id),
                     outcome.created_at.isoformat(),
                     encoded,

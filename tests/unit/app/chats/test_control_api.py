@@ -462,6 +462,8 @@ async def test_runtime_api_exposes_inactive_execution_not_completion(
     [chain] = completed.json()["execution_chains"]
     assert chain["state"] == "achieved"
     assert chain["outcome"]["outcome_id"] == str(outcome.outcome_id)
+    assert chain["outcome"]["chat_id"] == "chat-spec-1"
+    assert "conversation_id" not in chain["outcome"]
     await service.close()
 
 

@@ -50,7 +50,7 @@ def _outcome_observation(
         ),
         task_id=outcome.task_id,
         run_id=outcome.run_id,
-        conversation_id=outcome.conversation_id,
+        conversation_id=outcome.chat_id,
         invocation_id=outcome.invocation_id,
         correlation_id=outcome.correlation_id,
         registry_generation=outcome.registry_generation,

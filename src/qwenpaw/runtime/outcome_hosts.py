@@ -50,12 +50,10 @@ class InvocationOutcomeHost:
             ConversationOutcomeDeclaration(
                 outcome_id=request.outcome_id,
                 agent_id=self._scope.agent_id,
-                conversation_id=self._scope.conversation_id,
+                chat_id=self._scope.conversation_id,
                 correlation_id=self._scope.correlation_id,
                 status=request.status,
-                producer_id=(
-                    self._producer_lease.registration.producer_id
-                ),
+                producer_id=(self._producer_lease.registration.producer_id),
                 summary=request.summary,
                 invocation_id=self._scope.invocation_id,
                 registry_generation=self._scope.registry_generation,

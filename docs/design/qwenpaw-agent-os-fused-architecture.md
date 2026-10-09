@@ -370,7 +370,8 @@ Receipt、Queue、Execution Chain 与 Runtime Projection 公共 Kernel/HTTP 合�
 `chat_id`。持久化适配器仍可读取旧 `conversation_id`，SDK 也暂时保留只读 Python
 属性，但新 JSON、SSE、Console 类型与插件代码不得继续产生第二个 Chat 身份名称。
 Outcome 与 Observation 等嵌套权威事实按各自合同独立迁移，不能因为被 Runtime
-Projection 引用就隐式改写其 schema。
+Projection 引用就隐式改写其 schema。Outcome 声明与事实合同现已使用 `chat_id`；
+Observation 仍作为下一独立迁移边界。
 
 Chat Runtime 已按 `correlation_id` 从权威 Submission 与 Interaction 派生
 `ConversationExecutionChain`：同一意图的多次 Submission / Invocation 保持一个执行
@@ -391,6 +392,11 @@ not_achieved 与 abandoned 都必须由具名 producer 显式提交，并通过 
 属于当前 `ChatSpec.id`，Task-owned achieved 还必须通过既有 Execution Contract、
 Verification Policy 与 Result Package 完成门禁。Producer 支持热注册/注销，不要求
 Runtime 重启；模型文本仍不能自动补写 Outcome。
+
+Outcome 的公共声明和不可变事实只输出 `chat_id = ChatSpec.id`；Invocation-bound
+Request 仍不携带 Chat 身份，由 Host 强制绑定，避免 system/plugin producer 伪造。
+Lite SQLite 的旧列和历史 JSON 无需重写：读取时接受 `conversation_id`，幂等比较先
+恢复成同一领域对象，因此滚动升级不会制造虚假 Outcome 冲突。
 
 Runtime 装配使用独立的可选 `OutcomeHostAccess`，不修改既有 `ToolHost`、
 `DriverHost` 的必选协议，因此旧插件保持结构兼容。实际 `OutcomeHost` 由当前 pinned

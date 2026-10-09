@@ -488,7 +488,7 @@ class ConversationExecutionChain(_ChatIdentity):
             raise ValueError("outcome state requires an explicit outcome")
         if self.outcome is not None:
             if (
-                self.outcome.conversation_id != self.chat_id
+                self.outcome.chat_id != self.chat_id
                 or self.outcome.correlation_id != self.correlation_id
             ):
                 raise ValueError("execution chain outcome ownership mismatch")

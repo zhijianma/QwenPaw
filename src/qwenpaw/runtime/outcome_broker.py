@@ -117,7 +117,7 @@ class HostOutcomeBroker:
         if declaration.verification_ids:
             raise OutcomeAdmissionError("chat_verification_not_task_owned")
         records = await self._conversation_artifacts.list_for_conversation(
-            declaration.conversation_id,
+            declaration.chat_id,
             limit=1000,
         )
         self._require_subset(
@@ -147,7 +147,7 @@ class HostOutcomeBroker:
             raise OutcomeAdmissionError("run_not_owned_by_task")
         if task.agent_id != declaration.agent_id:
             raise OutcomeAdmissionError("task_not_owned_by_agent")
-        if declaration.conversation_id not in (
+        if declaration.chat_id not in (
             task.metadata.get("conversation_id"),
             task.metadata.get("chat_id"),
         ):
@@ -254,7 +254,7 @@ class HostOutcomeBroker:
         outcome = ConversationOutcome(
             outcome_id=declaration.outcome_id,
             agent_id=declaration.agent_id,
-            conversation_id=declaration.conversation_id,
+            chat_id=declaration.chat_id,
             correlation_id=declaration.correlation_id,
             status=declaration.status,
             producer_id=declaration.producer_id,
@@ -294,7 +294,7 @@ class HostOutcomeBroker:
         comparable = (
             "outcome_id",
             "agent_id",
-            "conversation_id",
+            "chat_id",
             "correlation_id",
             "status",
             "producer_id",
