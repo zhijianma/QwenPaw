@@ -155,6 +155,19 @@ class LiteScheduledTaskRuntime:  # pylint: disable=too-few-public-methods
             batch_size=batch_size,
         )
 
+    async def next_fire_at(
+        self,
+        *,
+        agent_id: str,
+        schedule_id: str,
+    ) -> datetime | None:
+        """Return the durable next occurrence for one exact definition."""
+        cursor = await self._store().get_cursor(
+            agent_id=agent_id,
+            schedule_id=schedule_id,
+        )
+        return cursor.next_fire_at if cursor is not None else None
+
     async def _dependencies(self):
         bindings = await self._host.compose(self._workspace)
         dispatcher = ScheduledTaskDispatcher(

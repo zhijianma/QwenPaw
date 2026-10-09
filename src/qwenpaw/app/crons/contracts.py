@@ -8,7 +8,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, Protocol
 
+from ...scheduling import ScheduleTriggerTickReport
+
 from .models import CronJobSpec, CronRuntimeDecision
+
+CronOccurrenceExecutor = Callable[[str, datetime], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -35,7 +39,7 @@ class CronTaskRuntime(Protocol):
     def supports(self, job: CronJobSpec) -> bool:
         """Compatibility alias for older host integrations."""
 
-    async def synchronize(self, job: CronJobSpec) -> None:
+    async def synchronize(self, job: CronJobSpec) -> datetime | None:
         """Reconcile one declaration into the durable schedule catalog."""
 
     async def remove(self, job: CronJobSpec) -> bool:
@@ -49,6 +53,14 @@ class CronTaskRuntime(Protocol):
         scheduled_for: datetime,
     ) -> dict[str, Any]:
         """Wait through Task and Delivery terminal accounting."""
+
+    async def run_due(
+        self,
+        *,
+        now: datetime,
+        execute: CronOccurrenceExecutor,
+    ) -> ScheduleTriggerTickReport:
+        """Consume one durable trigger batch through manager accounting."""
 
 
 @dataclass(frozen=True, slots=True)

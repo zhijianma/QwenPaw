@@ -345,3 +345,50 @@ async def test_concurrent_workers_report_one_cursor_cas_winner(
         ScheduleTriggerDisposition.DISPATCHED,
         ScheduleTriggerDisposition.RACE_LOST,
     }
+
+
+@pytest.mark.asyncio
+async def test_one_tick_does_not_serialize_independent_schedules(
+    tmp_path,
+) -> None:
+    store = SQLiteSchedulerStore(tmp_path / "scheduler.db")
+    scheduled_for = datetime(2026, 10, 9, tzinfo=timezone.utc)
+    first = _definition()
+    second = first.model_copy(
+        update={
+            "schedule_id": "reports.second",
+            "name": "Second report",
+        },
+    )
+    await _register(store, first, now=scheduled_for)
+    await _register(store, second, now=scheduled_for)
+    release = asyncio.Event()
+    ready = 0
+
+    async def synchronize(
+        _definition_value: ScheduleDefinition,
+        _scheduled_for: datetime,
+    ) -> None:
+        nonlocal ready
+        ready += 1
+        if ready == 2:
+            release.set()
+        await release.wait()
+
+    report = await asyncio.wait_for(
+        DurableScheduleTriggerWorker(
+            catalog=store,
+            cursors=store,
+        ).tick(
+            agent_id="agent-a",
+            now=scheduled_for,
+            handle=synchronize,
+        ),
+        timeout=1,
+    )
+
+    assert ready == 2
+    assert [item.schedule_id for item in report.outcomes] == [
+        first.schedule_id,
+        second.schedule_id,
+    ]

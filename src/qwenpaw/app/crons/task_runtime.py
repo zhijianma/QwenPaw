@@ -8,6 +8,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from .conversation_binding import CronConversationBinder
+from .contracts import CronOccurrenceExecutor
 from .executor import cron_session_id_for_job
 from .models import (
     CronJobSpec,
@@ -22,6 +23,12 @@ from .schedule_adapter import (
     cron_schedule_id,
 )
 from .scheduled_task_runtime import LiteScheduledTaskRuntime
+from ...scheduling import (
+    ScheduleDispatchAccountingError,
+    ScheduleOccurrenceHandling,
+    ScheduleTriggerTickReport,
+    SchedulerCapabilityUnavailableError,
+)
 
 
 class LiteCronTaskRuntime:
@@ -86,13 +93,13 @@ class LiteCronTaskRuntime:
         """Return the legacy boolean projection of :meth:`decision`."""
         return self.decision(job).uses_durable_runtime
 
-    async def synchronize(self, job: CronJobSpec) -> None:
+    async def synchronize(self, job: CronJobSpec) -> datetime | None:
         """Reconcile one Cron declaration into the durable catalog."""
         if job.id is None:
             raise ValueError("Cron job has no stable ID")
         if not self.supports(job):
             await self.remove(job)
-            return
+            return None
         binding = await CronConversationBinder(self._workspace).bind(
             job,
             session_id=cron_session_id_for_job(job),
@@ -106,6 +113,10 @@ class LiteCronTaskRuntime:
             binding=binding,
         )
         await self._scheduled.upsert_definition(definition)
+        return await self._scheduled.next_fire_at(
+            agent_id=definition.agent_id,
+            schedule_id=definition.schedule_id,
+        )
 
     async def remove(self, job: CronJobSpec) -> bool:
         """Remove one Cron definition from the durable catalog."""
@@ -152,6 +163,40 @@ class LiteCronTaskRuntime:
             idempotency_key=fire_key,
             timeout_seconds=job.runtime.timeout_seconds,
             owner_prefix="cron",
+        )
+
+    async def run_due(
+        self,
+        *,
+        now: datetime,
+        execute: CronOccurrenceExecutor,
+    ) -> ScheduleTriggerTickReport:
+        """Consume due Cron definitions with explicit failure accounting."""
+
+        async def handle(definition, scheduled_for):
+            raw_job_id = definition.metadata.get("legacy_cron_job_id")
+            if not isinstance(raw_job_id, str) or not raw_job_id:
+                return ScheduleOccurrenceHandling.RETRY
+            try:
+                await execute(raw_job_id, scheduled_for)
+            except Exception as error:  # noqa: BLE001 - policy decides
+                if isinstance(
+                    error,
+                    (
+                        KeyError,
+                        ScheduleDispatchAccountingError,
+                        SchedulerCapabilityUnavailableError,
+                    ),
+                ) or type(error).__name__ in (
+                    definition.retry_policy.retryable_error_codes
+                ):
+                    return ScheduleOccurrenceHandling.RETRY
+                return ScheduleOccurrenceHandling.HANDLED
+            return ScheduleOccurrenceHandling.HANDLED
+
+        return await self._scheduled.run_due(
+            now=now,
+            handle=handle,
         )
 
 

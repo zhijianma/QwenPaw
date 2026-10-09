@@ -22,6 +22,8 @@ from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from qwenpaw.exceptions import ConfigurationException
 
+from ...scheduling import ScheduleTriggerDisposition
+
 from ...config import get_heartbeat_config
 from ..console_push_store import append as push_store_append
 from ..operational_delivery import (
@@ -47,6 +49,7 @@ from .models import (
     CronRuntimeDecisionCode,
     CronRuntimePath,
 )
+from .schedule_adapter import cron_schedule_id
 from .repo.base import BaseJobRepository
 from ...api_action import ManagerBase, api_action
 
@@ -63,6 +66,7 @@ CRON_HISTORY_LIMIT = 50
 # A short, always-on keepalive task keeps loop._run_once sweeping due
 # timers regardless of the heartbeat config.
 CRON_KEEPALIVE_INTERVAL_SECONDS = 60
+DURABLE_TRIGGER_POLL_INTERVAL_SECONDS = 1
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +140,7 @@ class CronManager(ManagerBase):
         self._rt: Dict[str, _Runtime] = {}
         self._started = False
         self._keepalive_task: Optional[asyncio.Task] = None
+        self._durable_trigger_task: Optional[asyncio.Task] = None
 
     async def start(self) -> None:
         async with self._lock:
@@ -234,6 +239,11 @@ class CronManager(ManagerBase):
                 self._keepalive_loop(),
                 name="cron-keepalive",
             )
+            if self._has_durable_trigger_worker():
+                self._durable_trigger_task = asyncio.create_task(
+                    self._durable_trigger_loop(),
+                    name="cron-durable-trigger",
+                )
 
     async def stop(self) -> None:
         async with self._lock:
@@ -251,6 +261,19 @@ class CronManager(ManagerBase):
                 except Exception as exc:  # pylint: disable=broad-except
                     logger.debug(
                         "Error cancelling cron keepalive task: %s",
+                        repr(exc),
+                    )
+            durable_trigger = self._durable_trigger_task
+            self._durable_trigger_task = None
+            if durable_trigger is not None:
+                durable_trigger.cancel()
+                try:
+                    await asyncio.wait_for(durable_trigger, timeout=5)
+                except (asyncio.CancelledError, asyncio.TimeoutError):
+                    pass
+                except Exception as exc:  # pylint: disable=broad-except
+                    logger.debug(
+                        "Error cancelling durable trigger task: %s",
                         repr(exc),
                     )
             self._scheduler.shutdown(wait=False)
@@ -271,6 +294,77 @@ class CronManager(ManagerBase):
                 await asyncio.sleep(CRON_KEEPALIVE_INTERVAL_SECONDS)
         except asyncio.CancelledError:
             pass
+
+    async def _durable_trigger_loop(self) -> None:
+        """Poll Host-owned cursors independently from APScheduler."""
+        try:
+            while self._started:
+                try:
+                    await self._run_durable_due()
+                except Exception:  # pylint: disable=broad-except
+                    logger.exception("Durable Cron trigger tick failed")
+                await asyncio.sleep(DURABLE_TRIGGER_POLL_INTERVAL_SECONDS)
+        except asyncio.CancelledError:
+            pass
+
+    def _has_durable_trigger_worker(self) -> bool:
+        return callable(getattr(self._task_runtime, "run_due", None))
+
+    def _uses_durable_trigger_worker(self, job: CronJobSpec) -> bool:
+        return (
+            self._has_durable_trigger_worker()
+            and self.runtime_decision(job).uses_durable_runtime
+        )
+
+    async def _run_durable_due(self) -> None:
+        runtime = self._task_runtime
+        run_due = getattr(runtime, "run_due", None)
+        if not callable(run_due):
+            return
+        report = await run_due(  # pylint: disable=not-callable
+            now=datetime.now(timezone.utc),
+            execute=self._execute_durable_occurrence,
+        )
+        owner_id = getattr(self._workspace, "agent_id", None)
+        if not isinstance(owner_id, str) or not owner_id:
+            owner_id = self._agent_id or "default"
+        jobs = await self._repo.list_jobs()
+        by_schedule_id = {
+            cron_schedule_id(owner_id, job.id): job
+            for job in jobs
+            if job.id is not None
+        }
+        for outcome in report.outcomes:
+            job = by_schedule_id.get(outcome.schedule_id)
+            if job is None:
+                continue
+            if outcome.disposition is ScheduleTriggerDisposition.MISFIRED:
+                await self._record_skipped(
+                    job,
+                    "durable scheduled occurrence exceeded misfire grace: "
+                    f"{outcome.scheduled_for.isoformat()}",
+                )
+            if outcome.disposition is ScheduleTriggerDisposition.RACE_LOST:
+                continue
+            state = self._states.get(job.id, CronJobState())
+            state.next_run_at = outcome.next_fire_at
+            self._states[job.id] = state
+
+    async def _execute_durable_occurrence(
+        self,
+        job_id: str,
+        scheduled_for: datetime,
+    ) -> None:
+        job = await self._repo.get_job(job_id)
+        if job is None:
+            raise KeyError(f"Durable Cron declaration is absent: {job_id}")
+        if not job.enabled or not self._uses_durable_trigger_worker(job):
+            return
+        await self._execute_once(
+            job,
+            trigger="scheduled",
+            scheduled_for=scheduled_for,
+        )
 
     # ----- read/state -----
 
@@ -325,12 +419,16 @@ class CronManager(ManagerBase):
             removal_gates=("Implement CronTaskRuntime.decision().",),
         )
 
-    async def _synchronize_task_runtime(self, job: CronJobSpec) -> None:
+    async def _synchronize_task_runtime(
+        self,
+        job: CronJobSpec,
+    ) -> datetime | None:
         """Synchronize optional durable catalog support fail closed."""
         runtime = self._task_runtime
         synchronize = getattr(runtime, "synchronize", None)
         if callable(synchronize):
-            await synchronize(job)  # pylint: disable=not-callable
+            return await synchronize(job)  # pylint: disable=not-callable
+        return None
 
     async def _remove_task_runtime_definition(
         self,
@@ -1007,6 +1105,18 @@ class CronManager(ManagerBase):
         # without mutating scheduler/runtime state.
         assert spec.id is not None, "Job must have an id"
         trigger = self._build_trigger(spec)
+
+        if self._uses_durable_trigger_worker(spec):
+            next_run_at = await self._synchronize_task_runtime(spec)
+            if self._scheduler.get_job(spec.id):
+                self._scheduler.remove_job(spec.id)
+            self._rt[spec.id] = _Runtime(
+                sem=asyncio.Semaphore(spec.runtime.max_concurrency),
+            )
+            state = self._states.get(spec.id, CronJobState())
+            state.next_run_at = next_run_at
+            self._states[spec.id] = state
+            return
 
         add_job_kwargs: Dict[str, Any] = {}
         if not spec.enabled or self._requires_portability_review(spec):

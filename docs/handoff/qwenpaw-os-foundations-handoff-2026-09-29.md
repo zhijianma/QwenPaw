@@ -1149,9 +1149,25 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   把真正未记账的基础设施故障标记 retry，避免终态 FAILED Fire 永久热循环。
 - 核心 Worker/Store/evaluator 共 34 项定点测试通过；扩大到 scheduling、Cron 应用层、
   portability 与 Kernel 合同后 238 项通过。所改文件 mypy、Black、flake8、pylint
-  全部通过。未运行全仓测试，Task 页面未修改。下一步是把 Worker 接入
-  `CronManager` 的生命周期轮询，并对失败 Task 的“已记录终态/可重试”语义做显式
-  适配；完成前 APScheduler 不能移除。
+  全部通过。未运行全仓测试，Task 页面未修改。该切片留下的 Manager 接入与失败
+  回执边界已由下节 cutover 完成；Heartbeat 和 legacy 类型仍保留 APScheduler。
+
+### 2026-10-09 Cron Durable Trigger Cutover
+
+- `CronManager` 新增独立 durable polling lifecycle。只有 runtime 同时提供
+  `run_due` 且 job 判定为 migrated 时才切换；final/silent Agent Cron 同步 Cursor
+  成功后移除同名 APScheduler job，legacy stream/text、service job 与 Heartbeat 不变。
+- Runtime handler 将 Scheduler capability/记账失败和显式 retryable error 保留为
+  `retry`；默认 Task 终态失败在 `_execute_once` 写入状态与 history 后返回 `handled`，
+  防止同一 FAILED Fire 热循环。misfire 也写入既有 skipped history。
+- Worker 同批并发不同 Schedule，避免一个长任务阻塞全部计划；同一 job 继续受
+  Manager semaphore、Fire Lease 与 Cursor CAS 三层约束。Outcome 返回 durable
+  `next_fire_at`，Cron 状态不再从 APScheduler 猜测 migrated job 的下一次执行时间。
+- 已补真实 SQLite Cursor → generation-pinned Scheduler → Fire → Task → Delivery →
+  Cursor advance 端到端用例，并以新 Runtime 实例读取原数据库完成恢复执行。扩大到
+  scheduling、Cron、portability 与 Kernel 合同共 247 项定点测试通过，所改文件
+  mypy、Black、flake8、pylint 全绿；Task 页面未修改。Heartbeat 切换、retry backoff
+  持久化及真实进程级 kill/restart 演练仍是后续边界，Scheduler 父迁移项不能标记完成。
 
 ## 5. 钉钉文档归档清单
 

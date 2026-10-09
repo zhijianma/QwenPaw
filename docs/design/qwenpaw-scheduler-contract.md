@@ -119,8 +119,9 @@ Cursor Store 是 Host-only Port，不从 Plugin SDK 导出；Scheduler Provider 
    Task metadata 保存 schedule、fire、幂等键和 generation，Runtime 再独立持有同一
    generation lease 直到运行终态。Task 已绑定但 Runner 尚未启动时，相同 Fire
    回放会恢复该 Task，而不是等待 Delivery 超时；并发恢复只产生一个 Run。
-4. [已完成] APScheduler 只作为 Trigger Adapter；已迁移 Cron 与 Heartbeat 回调使用
-   捕获的真实 `scheduled_for` 生成稳定 `ScheduleFire` 并 claim，手动触发使用独立键。
+4. [已完成：兼容层] APScheduler Trigger Adapter 为 Heartbeat 与 legacy Cron 回调
+   捕获真实 `scheduled_for`；migrated final/silent Cron 已在后续切换到 Cursor Worker。
+   手动触发始终使用独立键。
 5. [已完成：final/silent] Agent Cron 将 Fire 转成 `TaskSource.SCHEDULE` 的
    Task/Run，不再调用 `workspace.stream_query()`。创建、更新、暂停、恢复、删除与
    Workspace 启动恢复也会在首次 Fire 前同步 durable catalog；stream/text-only
@@ -132,8 +133,8 @@ Cursor Store 是 Host-only Port，不从 Plugin SDK 导出；Scheduler Provider 
    advance；handler 通过 `handled/retry` 显式回执区分“失败已记账”和“基础设施暂态
    失败”，未捕获异常等同 retry。Worker 的 catalog 读取通过同一 generation-pinned
    Scheduler Provider，不能绕过插件/内置统一契约。并发 Worker 由下游 Fire Lease
-   保证副作用幂等、由 Cursor CAS 选出唯一进度赢家。该 Worker 尚未接入
-   `CronManager` 的生产唤醒循环。
+   保证副作用幂等、由 Cursor CAS 选出唯一进度赢家。不同 Schedule 在同一 tick
+   并发消费，单个 Cron 的并发上限仍由 Manager semaphore 约束。
 8. 旧 text-only Channel 定时发送先保留兼容 Adapter；迁移完成后再设弃用门槛。
 
 HTTP Task、Cron 与 Heartbeat 在同一进程中按 Capability Registry 复用同一个
@@ -173,9 +174,10 @@ Cron 的 JSON 声明、APScheduler 唤醒器与 Scheduler catalog 现在由
 `CronManager` 作为一个迁移事务协调：新声明只有在 catalog 同步成功后才提交；更新
 失败恢复旧声明；删除底层仓库拒绝时恢复 catalog；启动恢复失败会把 job 持久化为
 disabled 并移除 APScheduler job。切换到 legacy path 时会主动删除确定性的 Kernel
-schedule definition，但不会删除既有 Fire/Lease 历史。durable trigger worker 核心已
-实现，但 `CronManager` 尚未用它替换 APScheduler 的到期唤醒，因此不能把父迁移项
-标为完成。
+schedule definition，但不会删除既有 Fire/Lease 历史。final/silent Agent Cron 已由
+独立 durable polling lifecycle 消费 Cursor，不再向 APScheduler 注册同名 job；
+text-only、stream、service job 与 Heartbeat 仍保留原 APScheduler 兼容路径，因此父
+迁移项尚未完成。
 
 ## 5. 验收门禁
 

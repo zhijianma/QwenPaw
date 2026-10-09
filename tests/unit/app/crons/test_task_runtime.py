@@ -19,8 +19,14 @@ from qwenpaw.app.crons.models import (
 )
 from qwenpaw.app.task_runtime import task_application_host
 from qwenpaw.inbox import SQLiteInboxProjectionStore
+from qwenpaw.kernel import ScheduleDefinition, ScheduleTrigger
 from qwenpaw.plugins.generations import GenerationRegistry
-from qwenpaw.scheduling import SQLiteSchedulerStore
+from qwenpaw.scheduling import (
+    SQLiteSchedulerStore,
+    ScheduleDispatchAccountingError,
+    ScheduleOccurrenceHandling,
+    ScheduleTriggerTickReport,
+)
 from qwenpaw.tasks.bootstrap import task_service_for_workspace
 from tests.unit.app.conftest import make_cron_job_spec
 
@@ -58,6 +64,32 @@ class _ChatManager:
         return None
 
 
+class _ScheduledTriggerStub:
+    def __init__(self, definition: ScheduleDefinition) -> None:
+        self.definition = definition
+        self.handling = None
+
+    async def run_due(self, *, now, handle, batch_size=100):
+        del batch_size
+        self.handling = await handle(self.definition, now)
+        return ScheduleTriggerTickReport(outcomes=())
+
+
+def _trigger_definition() -> ScheduleDefinition:
+    return ScheduleDefinition(
+        schedule_id="cron.test",
+        agent_id="default",
+        name="Test Cron",
+        objective="Run test",
+        trigger=ScheduleTrigger(
+            kind="once",
+            run_at=datetime(2030, 1, 1, tzinfo=timezone.utc),
+        ),
+        runner_id="qwenpaw.system.tasks.console-agent",
+        metadata={"legacy_cron_job_id": "daily"},
+    )
+
+
 def test_scheduled_runtimes_share_the_registry_host(tmp_path: Path) -> None:
     registry = GenerationRegistry()
     workspace = SimpleNamespace(
@@ -71,6 +103,54 @@ def test_scheduled_runtimes_share_the_registry_host(tmp_path: Path) -> None:
 
     assert first._host is second._host  # pylint: disable=protected-access
     assert first._host is task_application_host(registry)  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_due_cron_failure_is_handled_when_policy_forbids_retry(
+    tmp_path: Path,
+) -> None:
+    workspace = SimpleNamespace(
+        agent_id="default",
+        workspace_dir=tmp_path,
+        capability_registry=GenerationRegistry(),
+    )
+    runtime = LiteCronTaskRuntime(workspace)
+    scheduled = _ScheduledTriggerStub(_trigger_definition())
+    runtime._scheduled = scheduled
+
+    async def fail(_job_id, _scheduled_for):
+        raise RuntimeError("terminal task failure")
+
+    await runtime.run_due(
+        now=datetime(2030, 1, 1, tzinfo=timezone.utc),
+        execute=fail,
+    )
+
+    assert scheduled.handling is ScheduleOccurrenceHandling.HANDLED
+
+
+@pytest.mark.asyncio
+async def test_due_cron_accounting_failure_remains_retryable(
+    tmp_path: Path,
+) -> None:
+    workspace = SimpleNamespace(
+        agent_id="default",
+        workspace_dir=tmp_path,
+        capability_registry=GenerationRegistry(),
+    )
+    runtime = LiteCronTaskRuntime(workspace)
+    scheduled = _ScheduledTriggerStub(_trigger_definition())
+    runtime._scheduled = scheduled
+
+    async def fail(_job_id, _scheduled_for):
+        raise ScheduleDispatchAccountingError("not accounted")
+
+    await runtime.run_due(
+        now=datetime(2030, 1, 1, tzinfo=timezone.utc),
+        execute=fail,
+    )
+
+    assert scheduled.handling is ScheduleOccurrenceHandling.RETRY
 
 
 def test_lite_cron_runtime_explains_each_compatibility_path(
@@ -184,6 +264,60 @@ async def test_lite_cron_runtime_synchronizes_catalog_before_first_fire(
         )
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_durable_trigger_runs_real_task_and_advances_once_cursor(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("qwenpaw.constant.WORKING_DIR", tmp_path)
+    channels = _ChannelManager()
+    workspace = SimpleNamespace(
+        agent_id="default",
+        workspace_dir=tmp_path,
+        capability_registry=GenerationRegistry(),
+        channel_manager=channels,
+        chat_manager=_ChatManager(),
+    )
+    runtime = LiteCronTaskRuntime(workspace)
+    scheduled_for = datetime(2030, 1, 1, tzinfo=timezone.utc)
+    job = make_cron_job_spec(job_id="worker-once")
+    job.dispatch.mode = "final"
+    job.save_result_to_inbox = False
+    job.schedule = ScheduleSpec(type="once", run_at=scheduled_for)
+    await runtime.synchronize(job)
+    runtime = LiteCronTaskRuntime(workspace)
+    executions = []
+
+    async def execute(job_id: str, occurrence: datetime) -> None:
+        assert job_id == "worker-once"
+        executions.append(
+            await runtime.execute(
+                job,
+                trigger="scheduled",
+                scheduled_for=occurrence,
+            ),
+        )
+
+    report = await runtime.run_due(
+        now=scheduled_for,
+        execute=execute,
+    )
+
+    assert report.outcomes[0].disposition.value == "dispatched"
+    assert report.outcomes[0].next_fire_at is None
+    assert len(executions) == 1
+    assert executions[0]["task_id"]
+    assert executions[0]["delivery_status"] == "success"
+    assert len(channels.deliveries) == 1
+
+    replay = await runtime.run_due(
+        now=scheduled_for,
+        execute=execute,
+    )
+    assert replay.outcomes == ()
+    assert len(executions) == 1
 
 
 @pytest.mark.asyncio

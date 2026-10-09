@@ -14,7 +14,7 @@ concurrent writes — already fixed upstream).
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -25,7 +25,16 @@ from qwenpaw.app.crons.manager import CronManager
 from qwenpaw.app.crons.models import (
     CronJobSpec,
     CronJobState,
+    CronRuntimeDecision,
+    CronRuntimeDecisionCode,
+    CronRuntimePath,
     ScheduleSpec,
+)
+from qwenpaw.app.crons.schedule_adapter import cron_schedule_id
+from qwenpaw.scheduling import (
+    ScheduleTriggerDisposition,
+    ScheduleTriggerOutcome,
+    ScheduleTriggerTickReport,
 )
 from tests.unit.app.conftest import (
     InMemoryJobRepository,
@@ -71,14 +80,74 @@ class _CatalogRuntime:
         self.removed: list[CronJobSpec] = []
         self.fail_name: str | None = None
 
-    async def synchronize(self, job: CronJobSpec) -> None:
+    async def synchronize(self, job: CronJobSpec) -> datetime | None:
         if job.name == self.fail_name:
             raise RuntimeError("catalog unavailable")
         self.synchronized.append(job.model_copy(deep=True))
+        return None
 
     async def remove(self, job: CronJobSpec) -> bool:
         self.removed.append(job.model_copy(deep=True))
         return True
+
+
+class _DurableTriggerRuntime(_CatalogRuntime):
+    """Runtime double exposing the durable trigger lifecycle contract."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.next_run_at = datetime(2030, 1, 1, tzinfo=timezone.utc)
+        self.execute = AsyncMock(
+            return_value={
+                "run_id": "durable-run",
+                "delivery_status": "success",
+            },
+        )
+        self.due_job_id: str | None = None
+        self.due_next_run_at: datetime | None = None
+        self.run_due_calls = 0
+        self.migrated = True
+
+    def decision(self, _job: CronJobSpec) -> CronRuntimeDecision:
+        return CronRuntimeDecision(
+            path=(
+                CronRuntimePath.DURABLE_TASK
+                if self.migrated
+                else CronRuntimePath.LEGACY_EXECUTOR
+            ),
+            reason_code=(
+                CronRuntimeDecisionCode.MIGRATED
+                if self.migrated
+                else CronRuntimeDecisionCode.RUNTIME_DECLINED
+            ),
+            reason="test trigger routing",
+        )
+
+    def supports(self, _job: CronJobSpec) -> bool:
+        return self.migrated
+
+    async def synchronize(self, job: CronJobSpec) -> datetime | None:
+        await super().synchronize(job)
+        return self.next_run_at if job.enabled else None
+
+    async def run_due(self, *, now: datetime, execute):
+        self.run_due_calls += 1
+        if self.due_job_id is None:
+            return ScheduleTriggerTickReport(outcomes=())
+        await execute(self.due_job_id, now)
+        return ScheduleTriggerTickReport(
+            outcomes=(
+                ScheduleTriggerOutcome(
+                    schedule_id=cron_schedule_id(
+                        "default",
+                        self.due_job_id,
+                    ),
+                    scheduled_for=now,
+                    disposition=ScheduleTriggerDisposition.DISPATCHED,
+                    next_fire_at=self.due_next_run_at,
+                ),
+            ),
+        )
 
 
 def _catalog_manager(
@@ -154,6 +223,95 @@ async def test_keepalive_task_lifecycle(manager: CronManager):
     await manager.stop()
     assert manager._keepalive_task is None
     assert task.done()
+
+
+@pytest.mark.asyncio
+async def test_durable_trigger_lifecycle_replaces_job_apscheduler(
+    repo: InMemoryJobRepository,
+) -> None:
+    runtime = _DurableTriggerRuntime()
+    workspace = MagicMock()
+    workspace.agent_id = "default"
+    manager = CronManager(
+        repo=repo,
+        workspace=workspace,
+        channel_manager=AsyncMock(),
+        agent_id="default",
+        task_runtime=runtime,
+    )
+    await manager.start()
+    trigger_task = manager._durable_trigger_task
+    assert trigger_task is not None
+
+    job = make_cron_job_spec(job_id="durable")
+    await manager.create_or_replace_job(job)
+
+    assert manager._scheduler.get_job("durable") is None
+    assert manager.get_state("durable").next_run_at == runtime.next_run_at
+    assert runtime.synchronized[-1] == job
+    await manager.stop()
+    assert manager._durable_trigger_task is None
+    assert trigger_task.done()
+
+
+@pytest.mark.asyncio
+async def test_trigger_capability_keeps_declined_job_on_apscheduler(
+    repo: InMemoryJobRepository,
+) -> None:
+    runtime = _DurableTriggerRuntime()
+    runtime.migrated = False
+    workspace = MagicMock()
+    workspace.agent_id = "default"
+    manager = CronManager(
+        repo=repo,
+        workspace=workspace,
+        channel_manager=AsyncMock(),
+        agent_id="default",
+        task_runtime=runtime,
+    )
+    await manager.start()
+    try:
+        await manager.create_or_replace_job(
+            make_cron_job_spec(job_id="legacy"),
+        )
+        assert manager._scheduler.get_job("legacy") is not None
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_durable_tick_uses_cron_accounting_and_updates_next_run(
+    repo: InMemoryJobRepository,
+) -> None:
+    runtime = _DurableTriggerRuntime()
+    runtime.due_job_id = "durable"
+    runtime.due_next_run_at = datetime(
+        2030,
+        1,
+        2,
+        tzinfo=timezone.utc,
+    )
+    workspace = MagicMock()
+    workspace.agent_id = "default"
+    manager = CronManager(
+        repo=repo,
+        workspace=workspace,
+        channel_manager=AsyncMock(),
+        agent_id="default",
+        task_runtime=runtime,
+    )
+    job = make_cron_job_spec(job_id="durable")
+    job.save_result_to_inbox = False
+    await repo.upsert_job(job)
+
+    await manager._run_durable_due()
+
+    runtime.execute.assert_awaited_once()
+    assert manager.get_state("durable").last_status == "success"
+    assert manager.get_state("durable").next_run_at == runtime.due_next_run_at
+    history = await manager.get_history("durable")
+    assert history[-1].trigger == "scheduled"
+    assert history[-1].status == "success"
 
 
 @pytest.mark.asyncio

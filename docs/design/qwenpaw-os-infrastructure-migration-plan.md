@@ -811,9 +811,9 @@ Invocation，新 Invocation 自动使用新 generation。
   - [x] 已迁移 Cron 的创建、更新、暂停、恢复、删除与 Workspace 启动恢复会在首次
     Fire 之前同步 Host-owned Scheduler catalog；降级到 legacy path 会删除旧定义，
     防止双重事实。JSON、APScheduler 和 catalog 任一步失败会恢复前一声明；启动恢复
-    失败则禁用并移除唤醒器。APScheduler 当前只保留到期唤醒责任，尚未被 durable
-    trigger worker 替换，因此父项保持未完成。Scheduler SQLite、system/plugin 合同、
-    Cron/Heartbeat 与 Manager 共 79 项定点测试通过。
+    失败则禁用并移除唤醒器。该 catalog 切片完成时 APScheduler 仍负责唤醒；后续
+    final/silent cutover 见下方独立完成项。Scheduler SQLite、system/plugin 合同、
+    Cron/Heartbeat 与 Manager 当时共 79 项定点测试通过。
   - [x] Kernel 已冻结 Host-only `ScheduleTriggerCursor` / Store Port；Lite SQLite
     保存 definition hash、next/last occurrence 与 revision CAS，支持 due 有界查询、
     定义变更 reset、删除和跨 Agent 隔离。cron/once/interval 使用无状态 evaluator；
@@ -824,8 +824,14 @@ Invocation，新 Invocation 自动使用新 generation。
     异常或显式 `retry` 不推进，显式/默认 `handled` 才以 revision CAS 提交。Worker
     通过 generation-pinned Scheduler Provider 读取 catalog，不旁路统一 Capability
     契约。孤儿清理同样使用 hash + revision 条件删除；并发 Worker 只有一个进度赢家，
-    业务副作用继续由 Fire Lease 幂等保护。Worker 尚未接入 `CronManager` 生产循环，
-    因此 APScheduler 仍未退出，父项保持未完成。
+    业务副作用继续由 Fire Lease 幂等保护。不同 Schedule 同批并发消费，单个 Cron
+    继续由既有 semaphore 限流。
+  - [x] `CronManager` 已启动独立 durable trigger polling lifecycle；判定为 migrated
+    的 final/silent Agent Cron 同步 catalog 后不再注册 APScheduler job，暂停、恢复、
+    更新、删除与重启均复用 Cursor。handler 明确区分“失败事实已记账后 handled”与
+    “Scheduler/记账暂态故障 retry”，misfire 写回既有 Cron history，next-run 从
+    Cursor outcome 投影。text-only、stream、service job 与 Heartbeat 暂时继续走
+    APScheduler，因此父项保持未完成。
   - [x] APScheduler Trigger Adapter 为已迁移 Cron 与 Heartbeat 保存真实
     `scheduled_for` 并生成稳定 Fire 幂等键；手动触发使用独立操作键，不与定时槽
     竞争。尚未迁移的 Cron 类型继续走显式兼容路径。

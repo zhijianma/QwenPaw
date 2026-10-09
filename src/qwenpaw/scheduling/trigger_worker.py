@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -54,6 +55,7 @@ class ScheduleTriggerOutcome:
     schedule_id: str
     scheduled_for: datetime
     disposition: ScheduleTriggerDisposition
+    next_fire_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,16 +103,17 @@ class DurableScheduleTriggerWorker:
             now=current,
             limit=self._batch_size,
         )
-        outcomes = []
-        for cursor in due:
-            outcomes.append(
-                await self._consume(
+        outcomes = await asyncio.gather(
+            *(
+                self._consume(
                     cursor=cursor,
                     definition=definitions.get(cursor.schedule_id),
                     now=current,
                     handle=handle,
-                ),
-            )
+                )
+                for cursor in due
+            ),
+        )
         return ScheduleTriggerTickReport(outcomes=tuple(outcomes))
 
     async def _consume(
@@ -138,11 +141,12 @@ class DurableScheduleTriggerWorker:
                     if removed
                     else ScheduleTriggerDisposition.RACE_LOST
                 ),
+                next_fire_at=None,
             )
 
         definition_hash = schedule_definition_hash(definition)
         if cursor.definition_hash != definition_hash or not definition.enabled:
-            await self._cursors.reconcile_cursor(
+            reconciled = await self._cursors.reconcile_cursor(
                 ScheduleTriggerCursor(
                     agent_id=definition.agent_id,
                     schedule_id=definition.schedule_id,
@@ -157,6 +161,7 @@ class DurableScheduleTriggerWorker:
                 cursor,
                 scheduled_for,
                 ScheduleTriggerDisposition.RECONCILED,
+                next_fire_at=reconciled.next_fire_at,
             )
 
         lateness = (now - scheduled_for).total_seconds()
@@ -180,12 +185,14 @@ class DurableScheduleTriggerWorker:
                 cursor,
                 scheduled_for,
                 ScheduleTriggerDisposition.RETRY_PENDING,
+                next_fire_at=scheduled_for,
             )
         if handling is ScheduleOccurrenceHandling.RETRY:
             return self._outcome(
                 cursor,
                 scheduled_for,
                 ScheduleTriggerDisposition.RETRY_PENDING,
+                next_fire_at=scheduled_for,
             )
 
         next_fire_at = next_schedule_fire_at(
@@ -214,7 +221,7 @@ class DurableScheduleTriggerWorker:
         disposition: ScheduleTriggerDisposition,
     ) -> ScheduleTriggerOutcome:
         try:
-            await self._cursors.advance_cursor(
+            advanced = await self._cursors.advance_cursor(
                 agent_id=cursor.agent_id,
                 schedule_id=cursor.schedule_id,
                 definition_hash=cursor.definition_hash,
@@ -223,19 +230,31 @@ class DurableScheduleTriggerWorker:
                 next_fire_at=next_fire_at,
             )
         except ScheduleCursorConflictError:
-            disposition = ScheduleTriggerDisposition.RACE_LOST
-        return self._outcome(cursor, scheduled_for, disposition)
+            return self._outcome(
+                cursor,
+                scheduled_for,
+                ScheduleTriggerDisposition.RACE_LOST,
+            )
+        return self._outcome(
+            cursor,
+            scheduled_for,
+            disposition,
+            next_fire_at=advanced.next_fire_at,
+        )
 
     @staticmethod
     def _outcome(
         cursor: ScheduleTriggerCursor,
         scheduled_for: datetime,
         disposition: ScheduleTriggerDisposition,
+        *,
+        next_fire_at: datetime | None = None,
     ) -> ScheduleTriggerOutcome:
         return ScheduleTriggerOutcome(
             schedule_id=cursor.schedule_id,
             scheduled_for=scheduled_for,
             disposition=disposition,
+            next_fire_at=next_fire_at,
         )
 
     @staticmethod
