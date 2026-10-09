@@ -26,6 +26,9 @@ from qwenpaw.kernel import (
     ModelOutputBoundary,
     ModelRecoveryDisposition,
     ModelRouteReason,
+    ModelTransportProtocol,
+    ModelTransportRecoveryMode,
+    ModelTransportValidationReason,
 )
 from qwenpaw.runtime.model_calls import (
     ModelCallPersistenceError,
@@ -288,6 +291,9 @@ async def test_token_wrapper_records_actual_provider_attempt(
     assert record.attempt.model_id == "model-a"
     assert record.attempt.context_window_tokens == 32_768
     assert record.attempt.compaction_threshold == 0.8
+    assert record.attempt.transport_contract.protocol is (
+        ModelTransportProtocol.HTTP
+    )
     assert record.attempt.adapter_id is not None
     assert record.attempt.adapter_version is None
     assert record.attempt.formatter_id == "builtins.object"
@@ -788,6 +794,7 @@ async def test_stream_can_be_consumed_and_closed_in_different_contexts(
     assert record.result.output_boundary is (
         ModelOutputBoundary.PARTIAL_STREAM
     )
+    assert record.result.transport_recovery_mode is None
 
 
 @pytest.mark.asyncio
@@ -840,6 +847,12 @@ async def test_partial_stream_records_continue_model_step(
     )
     assert record.result.output_boundary is (
         ModelOutputBoundary.PARTIAL_STREAM
+    )
+    assert record.result.transport_recovery_mode is (
+        ModelTransportRecoveryMode.DURABLE_CONTEXT_REBUILD
+    )
+    assert record.result.transport_validation_reason is (
+        ModelTransportValidationReason.CAPABILITY_UNAVAILABLE
     )
     [continuation] = await recovery.list_ready_model_steps()
     assert captured.value.continuation_id == continuation.continuation_id
@@ -934,6 +947,9 @@ async def test_incomplete_stream_end_is_failure_not_success(
     )
     assert record.result.output_boundary is (
         ModelOutputBoundary.INCOMPLETE_STREAM_END
+    )
+    assert record.result.transport_recovery_mode is (
+        ModelTransportRecoveryMode.DURABLE_CONTEXT_REBUILD
     )
 
 

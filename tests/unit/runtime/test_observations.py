@@ -159,6 +159,9 @@ async def test_model_call_projects_policy_execution_and_evidence(
     assert observations[0].facts["cost_unknown"] is True
     assert observations[0].facts["output_boundary"] == "complete_response"
     assert observations[1].status is ObservationStatus.STARTED
+    assert observations[1].facts["transport_protocol"] == "http"
+    assert observations[1].facts["stream_resume_mode"] == "none"
+    assert observations[0].facts["transport_recovery_mode"] is None
     assert observations[2].facts["reason"] == "primary"
     assert "messages" not in "".join(
         item.model_dump_json() for item in observations
@@ -199,9 +202,7 @@ async def test_model_step_recovery_projects_content_safe_blocker(
         emitted_content=True,
         output_boundary=ModelOutputBoundary.PARTIAL_STREAM,
         failure_class=ModelFailureClass.STREAM_INTERRUPTED,
-        recovery_disposition=(
-            ModelRecoveryDisposition.CONTINUE_MODEL_STEP
-        ),
+        recovery_disposition=(ModelRecoveryDisposition.CONTINUE_MODEL_STEP),
         cost_unknown=True,
         completed_at=completed_at,
     )
@@ -214,9 +215,7 @@ async def test_model_step_recovery_projects_content_safe_blocker(
     await recovery.require_action_reconciliation(
         continuation.continuation_id,
         ModelStepReconciliation(
-            reason=(
-                ModelStepReconciliationReason.UNCERTAIN_SIDE_EFFECT
-            ),
+            reason=(ModelStepReconciliationReason.UNCERTAIN_SIDE_EFFECT),
             action_count=2,
             pending_result_count=0,
             uncertain_side_effect_count=1,
@@ -241,9 +240,7 @@ async def test_model_step_recovery_projects_content_safe_blocker(
     assert observation.facts["reconciliation_reason"] == (
         "uncertain_side_effect"
     )
-    assert observation.facts[
-        "reconciliation_uncertain_side_effect_count"
-    ] == 1
+    assert observation.facts["reconciliation_uncertain_side_effect_count"] == 1
     serialized = observation.model_dump_json()
     assert "partial output text" not in serialized
     assert "messages" not in serialized
@@ -297,9 +294,7 @@ async def test_model_resource_wait_projects_content_safe_activity(
 
     assert len(observations) == 1
     observation = observations[0]
-    assert observation.source.source_type == (
-        "qwenpaw.model.resource-wait"
-    )
+    assert observation.source.source_type == ("qwenpaw.model.resource-wait")
     assert observation.category is ObservationCategory.MODEL
     assert observation.stage is ObservationStage.EXECUTION
     assert observation.status is ObservationStatus.PENDING
@@ -415,9 +410,7 @@ async def test_submission_projects_immutable_intent_and_terminal_evidence(
 
     assert len(terminal) == 2
     evidence = next(
-        item
-        for item in terminal
-        if item.stage is ObservationStage.EVIDENCE
+        item for item in terminal if item.stage is ObservationStage.EVIDENCE
     )
     assert evidence.status is ObservationStatus.SUCCEEDED
     assert evidence.invocation_id == invocation_id
@@ -467,9 +460,7 @@ async def test_conversation_artifact_projects_content_safe_registry_facts(
         ObservationCategory.EVIDENCE,
     }
     assert all(item.invocation_id == invocation_id for item in observations)
-    assert all(
-        item.correlation_id == correlation_id for item in observations
-    )
+    assert all(item.correlation_id == correlation_id for item in observations)
     assert all(item.registry_generation == 9 for item in observations)
     assert all(item.source.source_id == receipt_id for item in observations)
     serialized = "".join(item.model_dump_json() for item in observations)
@@ -561,9 +552,7 @@ async def test_task_results_replace_duplicate_chat_receipt_with_causality(
     )
     assert artifact_observation.facts["version"] == 2
     assert artifact_observation.facts["artifact_status"] == "ready"
-    serialized = "".join(
-        item.model_dump_json() for item in observations
-    )
+    serialized = "".join(item.model_dump_json() for item in observations)
     assert "PRIVATE TASK CLAIM" not in serialized
     assert "private-task-report.md" not in serialized
     assert "qwenpaw-artifact://" not in serialized
@@ -1053,8 +1042,7 @@ async def test_control_projects_safe_audit_without_instruction_content(
         in {"qwenpaw.control.command", "qwenpaw.control.receipt"}
     ]
     assert all(
-        item.correlation_id == correlation_id
-        for item in control_observations
+        item.correlation_id == correlation_id for item in control_observations
     )
     intent = next(
         item

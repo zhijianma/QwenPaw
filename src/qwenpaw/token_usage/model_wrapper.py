@@ -18,6 +18,8 @@ from ..kernel.models import (
     ModelFailureClass,
     ModelOutputBoundary,
     ModelRecoveryDisposition,
+    ModelTransportContract,
+    evaluate_model_transport_recovery,
     UsageDelta,
     UsageMeter,
 )
@@ -122,6 +124,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
         provider_id: str,
         model: ChatModelBase,
         compact_threshold: float | None = None,
+        transport_contract: ModelTransportContract | None = None,
     ) -> None:
         # agentscope 2.0 ChatModelBase requires credential/model/parameters.
         # Forward the wrapped model's own values so the base attributes stay
@@ -148,6 +151,9 @@ class TokenRecordingModelWrapper(ChatModelBase):
         # Auto-compaction threshold (fraction of the window) for the UI, or
         # None when compaction is disabled/unknown.
         self._compact_threshold = compact_threshold
+        self._transport_contract = (
+            transport_contract or ModelTransportContract()
+        )
 
     @property
     def formatter(self) -> Any:
@@ -342,6 +348,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
                 context_window_tokens if context_window_tokens > 0 else None
             ),
             compaction_threshold=compaction_threshold,
+            transport_contract=self._transport_contract,
             adapter_id=adapter_id or type(self._model).__qualname__,
             adapter_version=adapter_version,
             formatter_id=formatter_id,
@@ -385,6 +392,21 @@ class TokenRecordingModelWrapper(ChatModelBase):
                 retryable = is_retryable_same_model(error)
             else:
                 error_kind = type(error).__name__.lower()
+        transport_recovery = None
+        if recovery_disposition in {
+            ModelRecoveryDisposition.CONTINUE_MODEL_STEP,
+            ModelRecoveryDisposition.RECONCILE_SIDE_EFFECT,
+        }:
+            # Provider Adapters may perform a verified in-place resume before
+            # propagating an error. Once an interruption reaches this outer
+            # boundary there is no trusted resume evidence, so recovery must
+            # fall back to the contract's safe durable path.
+            transport_recovery = evaluate_model_transport_recovery(
+                attempt.transport_contract
+                if attempt is not None
+                else self._transport_contract,
+                None,
+            )
         return await complete_current_model_attempt(
             attempt,
             status=status,
@@ -394,6 +416,16 @@ class TokenRecordingModelWrapper(ChatModelBase):
             output_boundary=output_boundary,
             failure_class=failure_class,
             recovery_disposition=recovery_disposition,
+            transport_recovery_mode=(
+                transport_recovery.mode
+                if transport_recovery is not None
+                else None
+            ),
+            transport_validation_reason=(
+                transport_recovery.reason
+                if transport_recovery is not None
+                else None
+            ),
             retry_after_seconds=retry_after_seconds,
             input_tokens=(usage.input_tokens if usage is not None else None),
             output_tokens=(usage.output_tokens if usage is not None else None),

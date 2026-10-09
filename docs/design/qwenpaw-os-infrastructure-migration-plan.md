@@ -609,6 +609,17 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
 - [ ] 把 WebSocket 增量续传、sticky route 和 HTTP fallback 保持为 Provider
   Adapter capability；严格验证 response identity/prefix，失败时回退持久上下文重建，
   Kernel 不感知具体传输。
+  - [x] Kernel 已冻结 `ModelTransportContract`、Host-keyed HMAC Resume Evidence 与统一
+    fail-closed validator；Provider 在建模时按实际 Model 声明能力，Attempt 在网络前
+    固化。cursor resume 必须同时验证 response identity 与 prefix，sticky route 和
+    WebSocket → HTTP continuation 必须显式声明；任一缺证或不一致直接选择 durable
+    context rebuild。历史 Attempt 缺省为 HTTP/non-resumable，保持兼容。
+  - [x] Lite 当前所有内置 Provider 明确落入安全默认：部分流到达通用 Wrapper 时不
+    信任异常或 metadata 猜测续传，Result 记录 `durable_context_rebuild` 及原因，继续
+    使用既有 Model Step checkpoint/outbox；成功、pre-output retry 和用户 Interrupt
+    不伪造 transport recovery。
+  - [ ] 至少一个真实支持 cursor resume 的 Provider Adapter 仍需接入，并完成 response
+    identity、prefix、sticky route、HTTP continuation 的故障注入及真实断流验收。
 - [ ] 完成跨平台长程时间语义：
   - [x] 首次 Run 保存 wall-clock durable deadline，恢复/replay 继承同一 deadline；
     每次进入执行边界只换算一次剩余时长，再由 `asyncio.timeout` 使用事件循环的

@@ -24,6 +24,11 @@ except ImportError:
 from qwenpaw.agents import model_factory
 from qwenpaw.config import config as config_module
 from qwenpaw.config.config import ModelSlotConfig
+from qwenpaw.kernel import (
+    ModelStreamResumeMode,
+    ModelTransportContract,
+    ModelTransportProtocol,
+)
 from qwenpaw.providers import fallback_chat_model
 from qwenpaw.providers import provider as provider_module
 from qwenpaw.providers.dashscope_provider import DashScopeProvider
@@ -140,6 +145,49 @@ def test_override_with_model_slot_config(_patch_dependencies):
     assert model.identifier == "p/m"
     assert fmt == "formatter"
     assert _patch_dependencies == ["p"]
+
+
+def test_factory_pins_provider_transport_contract(
+    monkeypatch,
+    _patch_dependencies,
+):
+    """Pass the selected model's explicit transport contract to recording."""
+    contract = ModelTransportContract(
+        protocol=ModelTransportProtocol.WEBSOCKET,
+        resume_mode=ModelStreamResumeMode.CURSOR,
+        validates_response_identity=True,
+        validates_prefix=True,
+    )
+    model = _FakeChatModel("provider/model")
+    provider = SimpleNamespace(
+        id="provider",
+        get_chat_model_instance=lambda _model_id: model,
+        get_model_transport_contract=lambda _model_id: contract,
+    )
+    monkeypatch.setattr(
+        model_factory,
+        "ProviderManager",
+        SimpleNamespace(
+            get_instance=lambda: SimpleNamespace(
+                get_provider=lambda _provider_id: provider,
+            ),
+        ),
+    )
+    captured = []
+    monkeypatch.setattr(
+        model_factory,
+        "TokenRecordingModelWrapper",
+        lambda _provider_id, actual, **kwargs: (
+            captured.append(kwargs["transport_contract"]) or actual
+        ),
+    )
+
+    model_factory.create_model_and_formatter(
+        agent_id="agent-1",
+        model_slot_override="provider:model",
+    )
+
+    assert captured == [contract]
 
 
 def test_context_size_is_restored_when_missing():

@@ -700,7 +700,10 @@ Slot 已实现；对应工作保留在 R0/R1/R2 路线图中。
 8. `ContextManifestStore` 已具备按 `ChatSpec.id` 查询的公共 Port，当前尚未开放
    HTTP / UI 查看入口；Task Workbench 继续按既定顺序后置。
 9. 模型流与受控 Harness 已具备 typed outcome、Resource Wait 或 fenced continuation；
-   尚未完成 Provider token 级原地续传和浏览器级真实断流/进程重启演练。
+   Provider 传输能力已从 Kernel 恢复逻辑中分离：Kernel 只冻结 transport contract、
+   哈希化 response/prefix/route evidence 与 fail-closed 裁决；当前内置 Provider 均使用
+   HTTP/non-resumable 安全默认，部分流进入 durable context rebuild。尚未完成首个真实
+   cursor-resume Adapter，以及浏览器级真实断流/进程重启演练。
 
 ### 13.2 回滚原则
 

@@ -23,6 +23,14 @@ from qwenpaw.kernel.models import (
     ExecutionBudget,
     ExecutionContract,
     ExitCondition,
+    ModelRouteAffinity,
+    ModelStreamResumeMode,
+    ModelTransportContract,
+    ModelTransportFallback,
+    ModelTransportProtocol,
+    ModelTransportRecoveryMode,
+    ModelTransportResumeEvidence,
+    ModelTransportValidationReason,
     Plan,
     PlanStep,
     Proposal,
@@ -35,11 +43,103 @@ from qwenpaw.kernel.models import (
     TaskSource,
     TaskStatus,
     VerificationPolicy,
+    evaluate_model_transport_recovery,
 )
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _digest(character: str) -> str:
+    return f"hmac-sha256:{character * 64}"
+
+
+def test_model_transport_resume_requires_verified_identity_and_prefix() -> (
+    None
+):
+    with pytest.raises(ValidationError, match="transport continuation"):
+        ModelTransportContract(
+            protocol=ModelTransportProtocol.WEBSOCKET,
+            resume_mode=ModelStreamResumeMode.CURSOR,
+        )
+
+    with pytest.raises(ValidationError, match="non-resumable transport"):
+        ModelTransportContract(validates_prefix=True)
+
+
+def test_model_transport_resume_fails_closed_on_every_mismatch() -> None:
+    contract = ModelTransportContract(
+        protocol=ModelTransportProtocol.WEBSOCKET,
+        resume_mode=ModelStreamResumeMode.CURSOR,
+        route_affinity=ModelRouteAffinity.STICKY,
+        fallback=ModelTransportFallback.HTTP_CONTINUATION,
+        validates_response_identity=True,
+        validates_prefix=True,
+    )
+    verified = ModelTransportResumeEvidence(
+        expected_response_identity_hash=_digest("a"),
+        actual_response_identity_hash=_digest("a"),
+        expected_prefix_hash=_digest("b"),
+        actual_prefix_hash=_digest("b"),
+        expected_prefix_bytes=120,
+        actual_prefix_bytes=120,
+        expected_route_hash=_digest("c"),
+        actual_route_hash=_digest("c"),
+    )
+
+    decision = evaluate_model_transport_recovery(contract, verified)
+    assert decision.mode is ModelTransportRecoveryMode.INLINE_RESUME
+    assert decision.reason is ModelTransportValidationReason.VERIFIED
+
+    mismatch = verified.model_copy(
+        update={"actual_prefix_hash": _digest("d")},
+    )
+    decision = evaluate_model_transport_recovery(contract, mismatch)
+    assert decision.mode is (
+        ModelTransportRecoveryMode.DURABLE_CONTEXT_REBUILD
+    )
+    assert decision.reason is ModelTransportValidationReason.PREFIX_MISMATCH
+
+    decision = evaluate_model_transport_recovery(contract, None)
+    assert decision.mode is (
+        ModelTransportRecoveryMode.DURABLE_CONTEXT_REBUILD
+    )
+    assert decision.reason is (
+        ModelTransportValidationReason.EVIDENCE_UNAVAILABLE
+    )
+
+    http_evidence = verified.model_copy(
+        update={
+            "candidate_mode": ModelTransportRecoveryMode.HTTP_FALLBACK,
+        },
+    )
+    decision = evaluate_model_transport_recovery(contract, http_evidence)
+    assert decision.mode is ModelTransportRecoveryMode.HTTP_FALLBACK
+    assert decision.reason is ModelTransportValidationReason.VERIFIED
+
+    http_only = ModelTransportContract(
+        protocol=ModelTransportProtocol.WEBSOCKET,
+        fallback=ModelTransportFallback.HTTP_CONTINUATION,
+        validates_response_identity=True,
+        validates_prefix=True,
+    )
+    decision = evaluate_model_transport_recovery(http_only, http_evidence)
+    assert decision.mode is ModelTransportRecoveryMode.HTTP_FALLBACK
+
+
+def test_default_model_transport_uses_durable_context_rebuild() -> None:
+    decision = evaluate_model_transport_recovery(
+        ModelTransportContract(),
+        None,
+    )
+
+    assert decision.mode is (
+        ModelTransportRecoveryMode.DURABLE_CONTEXT_REBUILD
+    )
+    assert decision.reason is (
+        ModelTransportValidationReason.CAPABILITY_UNAVAILABLE
+    )
 
 
 def test_task_is_immutable_and_round_trips_as_json() -> None:

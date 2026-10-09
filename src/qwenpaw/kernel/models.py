@@ -33,6 +33,10 @@ NamespacedId = Annotated[
         pattern=r"^[a-z0-9][a-z0-9_.-]*$",
     ),
 ]
+HmacSha256Digest = Annotated[
+    str,
+    StringConstraints(pattern=r"^hmac-sha256:[0-9a-f]{64}$"),
+]
 JsonObject = dict[str, JsonValue]
 TOOL_ARTIFACT_OUTPUTS_METADATA_KEY = "qwenpaw_artifact_outputs"
 COMMITTED_ACTION_ITEM_METADATA_KEY = "qwenpaw_committed_action_item"
@@ -324,6 +328,181 @@ class ModelOutputBoundary(str, Enum):
     PARTIAL_STREAM = "partial_stream"
     TERMINAL_STREAM = "terminal_stream"
     INCOMPLETE_STREAM_END = "incomplete_stream_end"
+
+
+class ModelTransportProtocol(str, Enum):
+    """Upstream transport used by one concrete model Adapter."""
+
+    HTTP = "http"
+    WEBSOCKET = "websocket"
+    OTHER = "other"
+
+
+class ModelStreamResumeMode(str, Enum):
+    """Provider capability for continuing one interrupted response."""
+
+    NONE = "none"
+    CURSOR = "cursor"
+
+
+class ModelRouteAffinity(str, Enum):
+    """Whether a resumed response must reach the original upstream route."""
+
+    NONE = "none"
+    STICKY = "sticky"
+
+
+class ModelTransportFallback(str, Enum):
+    """Safe fallback after an in-place stream continuation is unavailable."""
+
+    DURABLE_CONTEXT_REBUILD = "durable_context_rebuild"
+    HTTP_CONTINUATION = "http_continuation"
+
+
+class ModelTransportRecoveryMode(str, Enum):
+    """Validated transport-level recovery selected for an interrupted call."""
+
+    INLINE_RESUME = "inline_resume"
+    HTTP_FALLBACK = "http_fallback"
+    DURABLE_CONTEXT_REBUILD = "durable_context_rebuild"
+
+
+class ModelTransportValidationReason(str, Enum):
+    """Content-safe reason for one transport recovery decision."""
+
+    VERIFIED = "verified"
+    CAPABILITY_UNAVAILABLE = "capability_unavailable"
+    EVIDENCE_UNAVAILABLE = "evidence_unavailable"
+    RESPONSE_IDENTITY_MISMATCH = "response_identity_mismatch"
+    PREFIX_MISMATCH = "prefix_mismatch"
+    ROUTE_MISMATCH = "route_mismatch"
+
+
+class ModelTransportContract(KernelModel):
+    """Provider-neutral transport capability fixed before network I/O."""
+
+    schema_version: Literal[
+        "qwenpaw.model-transport.v1"
+    ] = "qwenpaw.model-transport.v1"
+    protocol: ModelTransportProtocol = ModelTransportProtocol.HTTP
+    resume_mode: ModelStreamResumeMode = ModelStreamResumeMode.NONE
+    route_affinity: ModelRouteAffinity = ModelRouteAffinity.NONE
+    fallback: ModelTransportFallback = (
+        ModelTransportFallback.DURABLE_CONTEXT_REBUILD
+    )
+    validates_response_identity: bool = False
+    validates_prefix: bool = False
+
+    @model_validator(mode="after")
+    def validate_resume_capability(self) -> Self:
+        """Require cursor resume to validate identity and emitted prefix."""
+        has_continuation = (
+            self.resume_mode is ModelStreamResumeMode.CURSOR
+            or self.fallback is ModelTransportFallback.HTTP_CONTINUATION
+        )
+        if has_continuation and not (
+            self.validates_response_identity and self.validates_prefix
+        ):
+            raise ValueError(
+                "transport continuation requires response identity and prefix "
+                "validation",
+            )
+        if not has_continuation and any(
+            (
+                self.route_affinity is ModelRouteAffinity.STICKY,
+                self.validates_response_identity,
+                self.validates_prefix,
+            ),
+        ):
+            raise ValueError(
+                "non-resumable transport cannot declare resume validation",
+            )
+        if (
+            self.fallback is ModelTransportFallback.HTTP_CONTINUATION
+            and self.protocol is not ModelTransportProtocol.WEBSOCKET
+        ):
+            raise ValueError(
+                "HTTP continuation fallback requires WebSocket transport",
+            )
+        return self
+
+
+class ModelTransportResumeEvidence(KernelModel):
+    """Hashed Provider evidence used to validate an in-place continuation."""
+
+    candidate_mode: Literal[
+        ModelTransportRecoveryMode.INLINE_RESUME,
+        ModelTransportRecoveryMode.HTTP_FALLBACK,
+    ] = ModelTransportRecoveryMode.INLINE_RESUME
+    expected_response_identity_hash: HmacSha256Digest
+    actual_response_identity_hash: HmacSha256Digest
+    expected_prefix_hash: HmacSha256Digest
+    actual_prefix_hash: HmacSha256Digest
+    expected_prefix_bytes: int = Field(ge=0)
+    actual_prefix_bytes: int = Field(ge=0)
+    expected_route_hash: HmacSha256Digest | None = None
+    actual_route_hash: HmacSha256Digest | None = None
+
+    @model_validator(mode="after")
+    def validate_route_pair(self) -> Self:
+        """Keep optional sticky-route evidence paired."""
+        if (self.expected_route_hash is None) != (
+            self.actual_route_hash is None
+        ):
+            raise ValueError("transport route evidence must be paired")
+        return self
+
+
+class ModelTransportRecoveryDecision(KernelModel):
+    """Fail-closed decision at a Provider stream recovery boundary."""
+
+    mode: ModelTransportRecoveryMode
+    reason: ModelTransportValidationReason
+
+
+def evaluate_model_transport_recovery(
+    contract: ModelTransportContract,
+    evidence: ModelTransportResumeEvidence | None,
+) -> ModelTransportRecoveryDecision:
+    """Allow in-place resume only when every declared invariant matches."""
+    mode = ModelTransportRecoveryMode.DURABLE_CONTEXT_REBUILD
+    reason = ModelTransportValidationReason.VERIFIED
+    has_continuation = (
+        contract.resume_mode is ModelStreamResumeMode.CURSOR
+        or contract.fallback is ModelTransportFallback.HTTP_CONTINUATION
+    )
+    if not has_continuation:
+        reason = ModelTransportValidationReason.CAPABILITY_UNAVAILABLE
+    elif evidence is None:
+        reason = ModelTransportValidationReason.EVIDENCE_UNAVAILABLE
+    elif (
+        evidence.candidate_mode is ModelTransportRecoveryMode.INLINE_RESUME
+        and contract.resume_mode is not ModelStreamResumeMode.CURSOR
+    ):
+        reason = ModelTransportValidationReason.CAPABILITY_UNAVAILABLE
+    elif (
+        evidence.candidate_mode is ModelTransportRecoveryMode.HTTP_FALLBACK
+        and contract.fallback is not ModelTransportFallback.HTTP_CONTINUATION
+    ):
+        reason = ModelTransportValidationReason.CAPABILITY_UNAVAILABLE
+    elif (
+        evidence.expected_response_identity_hash
+        != evidence.actual_response_identity_hash
+    ):
+        reason = ModelTransportValidationReason.RESPONSE_IDENTITY_MISMATCH
+    elif (
+        evidence.expected_prefix_hash != evidence.actual_prefix_hash
+        or evidence.expected_prefix_bytes != evidence.actual_prefix_bytes
+    ):
+        reason = ModelTransportValidationReason.PREFIX_MISMATCH
+    elif contract.route_affinity is ModelRouteAffinity.STICKY and (
+        evidence.expected_route_hash is None
+        or evidence.expected_route_hash != evidence.actual_route_hash
+    ):
+        reason = ModelTransportValidationReason.ROUTE_MISMATCH
+    else:
+        mode = evidence.candidate_mode
+    return ModelTransportRecoveryDecision(mode=mode, reason=reason)
 
 
 class EnvironmentIsolation(str, Enum):
@@ -2008,6 +2187,9 @@ class ModelCallAttempt(KernelModel):
     attempt_index: int = Field(ge=1)
     provider_id: NonEmptyStr
     model_id: NonEmptyStr
+    transport_contract: ModelTransportContract = Field(
+        default_factory=ModelTransportContract,
+    )
     context_window_tokens: int | None = Field(default=None, gt=0)
     compaction_threshold: float | None = Field(
         default=None,
@@ -2035,6 +2217,8 @@ class ModelCallResult(KernelModel):
     output_boundary: ModelOutputBoundary | None = None
     failure_class: ModelFailureClass | None = None
     recovery_disposition: ModelRecoveryDisposition | None = None
+    transport_recovery_mode: ModelTransportRecoveryMode | None = None
+    transport_validation_reason: (ModelTransportValidationReason | None) = None
     retry_after_seconds: float | None = Field(
         default=None,
         ge=0,
@@ -2147,6 +2331,41 @@ class ModelCallResult(KernelModel):
             raise ValueError("partial stream requires emitted content")
         return self
 
+    @model_validator(mode="after")
+    def validate_transport_recovery(self) -> Self:
+        """Keep transport recovery explicit and fail closed."""
+        if (self.transport_recovery_mode is None) != (
+            self.transport_validation_reason is None
+        ):
+            raise ValueError(
+                "transport recovery mode and validation reason must agree",
+            )
+        if self.transport_recovery_mode is None:
+            return self
+        if self.status is ModelCallStatus.SUCCEEDED:
+            if (
+                self.transport_recovery_mode
+                is ModelTransportRecoveryMode.DURABLE_CONTEXT_REBUILD
+                or self.transport_validation_reason
+                is not ModelTransportValidationReason.VERIFIED
+            ):
+                raise ValueError(
+                    "successful transport recovery must be verified",
+                )
+            return self
+        stream_recovery = self.recovery_disposition in {
+            ModelRecoveryDisposition.CONTINUE_MODEL_STEP,
+            ModelRecoveryDisposition.RECONCILE_SIDE_EFFECT,
+        }
+        if not stream_recovery or (
+            self.transport_recovery_mode
+            is not ModelTransportRecoveryMode.DURABLE_CONTEXT_REBUILD
+        ):
+            raise ValueError(
+                "failed stream recovery must rebuild durable context",
+            )
+        return self
+
 
 class ModelCallRecord(KernelModel):
     """Queryable route, attempt intent and optional terminal result."""
@@ -2174,6 +2393,20 @@ class ModelCallRecord(KernelModel):
             raise ValueError("model result invocation mismatch")
         if self.result.conversation_id != self.attempt.conversation_id:
             raise ValueError("model result conversation mismatch")
+        if (
+            self.result.transport_recovery_mode
+            is ModelTransportRecoveryMode.INLINE_RESUME
+            and self.attempt.transport_contract.resume_mode
+            is not ModelStreamResumeMode.CURSOR
+        ):
+            raise ValueError("model result used undeclared cursor resume")
+        if (
+            self.result.transport_recovery_mode
+            is ModelTransportRecoveryMode.HTTP_FALLBACK
+            and self.attempt.transport_contract.fallback
+            is not ModelTransportFallback.HTTP_CONTINUATION
+        ):
+            raise ValueError("model result used undeclared HTTP continuation")
         return self
 
 

@@ -46,6 +46,7 @@ from .utils.message_request_normalizer import (
     normalize_messages_for_model_request,
 )
 from ..exceptions import ProviderError, ModelFormatterError
+from ..kernel.models import ModelTransportContract
 from ..providers import ProviderManager
 from ..providers.capping_formatter import MAX_INLINE_MEDIA_BYTES
 from ..utils.tool_call_extra import tool_call_extras_for_provider
@@ -2042,6 +2043,22 @@ class _AgentModelSettings:
     compact_threshold: Optional[float] = None
 
 
+def _model_transport_contract(
+    provider: Any,
+    model_id: str,
+) -> ModelTransportContract:
+    """Resolve an explicit Provider contract with a safe legacy fallback."""
+    resolver = getattr(provider, "get_model_transport_contract", None)
+    if not callable(resolver):
+        return ModelTransportContract()
+    contract = resolver(model_id)
+    if not isinstance(contract, ModelTransportContract):
+        raise TypeError(
+            "provider returned an invalid model transport contract",
+        )
+    return contract
+
+
 def _load_agent_model_settings(
     agent_id: str | None,
     agent_config: Any = None,
@@ -2169,6 +2186,10 @@ def _apply_model_fallbacks(
             fallback_provider_id,
             fallback_model,
             compact_threshold=compact_threshold,
+            transport_contract=_model_transport_contract(
+                fallback_provider,
+                fallback_slot.model,
+            ),
         )
         fallback_models.append(
             RetryChatModel(
@@ -2292,6 +2313,10 @@ def create_model_and_formatter(
         provider_id,
         model,
         compact_threshold=settings.compact_threshold,
+        transport_contract=_model_transport_contract(
+            provider,
+            selected_model_id,
+        ),
     )
     wrapped_model = RetryChatModel(
         wrapped_model,

@@ -15,6 +15,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from qwenpaw.exceptions import ProviderError
 
+from ..kernel.models import ModelTransportContract
+
 from .context_windows import DEFAULT_CONTEXT_WINDOW, resolve_context_window
 
 if TYPE_CHECKING:
@@ -1146,6 +1148,18 @@ class Provider(ProviderInfo, ABC):  # pylint: disable=too-many-public-methods
     def _get_context_size(self, model_id: str) -> int:
         """Alias of :meth:`get_context_size` kept for provider internals."""
         return self.get_context_size(model_id)
+
+    def get_model_transport_contract(
+        self,
+        model_id: str,  # pylint: disable=unused-argument
+    ) -> ModelTransportContract:
+        """Return the explicit transport capability for one model.
+
+        Providers must override this before using cursor resume, sticky
+        routing, or a WebSocket-to-HTTP continuation. The safe default keeps
+        interrupted streams on QwenPaw's durable context-rebuild path.
+        """
+        return ModelTransportContract()
 
     @abstractmethod
     def get_chat_model_instance(self, model_id: str) -> ChatModelBase:

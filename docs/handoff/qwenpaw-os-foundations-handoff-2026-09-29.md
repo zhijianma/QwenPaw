@@ -995,6 +995,25 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   Agent 聚合 `124 passed`；启动及 Token Usage/Console Metadata API `19 passed`；
   Console Token Usage 与 i18n `22 passed`。
 
+### 2026-10-09 Model Transport Capability
+
+- Kernel 新增 Provider-neutral `ModelTransportContract`、Host-keyed HMAC Resume Evidence 与
+  fail-closed validator。cursor resume 必须验证 response identity 与 prefix；sticky
+  route 及 WebSocket → HTTP continuation 均需 Provider 显式声明，不能由 Kernel 猜测。
+- `Provider.get_model_transport_contract(model_id)` 在模型装配时解析，实际 Contract 在
+  网络请求前固化到 `ModelCallAttempt`。旧 Provider/旧 Attempt 均使用
+  HTTP/non-resumable 默认值，保持向后兼容。
+- 任一 response identity、prefix 哈希/长度、route 不一致或证据缺失都回退
+  `durable_context_rebuild`。新部分流失败把恢复模式和内容安全原因写入
+  `ModelCallResult`/Observation；成功、pre-output retry 与用户 Interrupt 不生成伪
+  transport decision。
+- 当前 Lite 没有宣称任何内置 Provider 支持原地续传；既有 durable model-step
+  checkpoint/outbox 仍是权威恢复路径。首个真实 cursor-resume Adapter 与断流故障注入
+  保持未完成。详细合同见 `docs/design/qwenpaw-model-transport-contract.md`。
+- 定点验证：Kernel/Model Call/Observation/Usage `130 passed`；Provider
+  Transport/Retry/Fallback/Factory `157 passed`；Chat API、Provider startup 与 Console Metadata
+  `25 passed`。Python 文件级 mypy、Black、Flake8、Pylint 全部通过。
+
 ### 2026-10-09 Model Recovery Kernel Contract
 
 - `ModelRecoveryDecision` 已从 Provider 私有 dataclass 提升为 Kernel 不可变领域模型；

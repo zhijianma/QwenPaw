@@ -210,6 +210,14 @@ def _model_observations(
             "attempt_index": attempt.attempt_index,
             "provider_id": attempt.provider_id,
             "model_id": attempt.model_id,
+            "transport_protocol": (attempt.transport_contract.protocol.value),
+            "stream_resume_mode": (
+                attempt.transport_contract.resume_mode.value
+            ),
+            "route_affinity": (
+                attempt.transport_contract.route_affinity.value
+            ),
+            "transport_fallback": (attempt.transport_contract.fallback.value),
             "context_window_tokens": attempt.context_window_tokens,
             "compaction_threshold": attempt.compaction_threshold,
             "adapter_id": attempt.adapter_id,
@@ -253,6 +261,16 @@ def _model_observations(
             "recovery_disposition": (
                 result.recovery_disposition.value
                 if result.recovery_disposition is not None
+                else None
+            ),
+            "transport_recovery_mode": (
+                result.transport_recovery_mode.value
+                if result.transport_recovery_mode is not None
+                else None
+            ),
+            "transport_validation_reason": (
+                result.transport_validation_reason.value
+                if result.transport_validation_reason is not None
                 else None
             ),
             "input_tokens": result.input_tokens,
