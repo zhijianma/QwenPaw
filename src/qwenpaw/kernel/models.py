@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated, Literal, Protocol, Self, runtime_checkable
@@ -2239,6 +2239,24 @@ class ModelCallResult(_ChatIdentity):
     cost_micros: int | None = Field(default=None, ge=0)
     cost_unknown: bool = True
     completed_at: AwareDatetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_usage_measurement(cls, value: object) -> object:
+        """Upgrade complete legacy counters into measured usage evidence."""
+        if not isinstance(value, Mapping):
+            return value
+        has_input = value.get("input_tokens") is not None
+        has_output = value.get("output_tokens") is not None
+        if has_input != has_output:
+            raise ValueError(
+                "model usage requires both input and output tokens",
+            )
+        if has_input and value.get("usage_measurement") is None:
+            normalized = dict(value)
+            normalized["usage_measurement"] = "provider_reported"
+            return normalized
+        return value
 
     @model_validator(mode="after")
     def validate_usage_evidence(self) -> Self:

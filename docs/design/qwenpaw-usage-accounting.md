@@ -117,6 +117,12 @@ they are never described as measured zero-token calls. Their context window is
 also excluded from utilization because a known denominator without observed
 input would manufacture a false `0%` ratio.
 
+Historical Result facts written before `usage_measurement` existed are upgraded
+at the Kernel model boundary: a complete input/output pair means
+`provider_reported`, while a partial pair is rejected as ambiguous. This keeps
+the immutable files untouched and makes a projection rebuild repair coverage
+instead of simultaneously counting their tokens and calling them unobserved.
+
 The completed Chat turn snapshot follows the same rule. A successful call
 without Provider usage is persisted as `measurement=unavailable` with its
 actual Provider/Model and call count. Mixed turns use `measurement=partial`:

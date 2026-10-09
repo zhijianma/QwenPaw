@@ -1274,6 +1274,10 @@ Cron 不形成独立审批或产物事实源。
       cutover：新代码在水位前双写作 shadow，水位后停止有归属的 JSON 写入；查询过滤
       水位后的有归属 legacy row 后再合并投影，因此不按日期直接相加或双算。诊断 API
       返回 cutover、索引量、最后 rebuild 时间与条数，不暴露 Prompt 或消息。
+    - [x] Model Call usage evidence 已补齐历史规范化：Kernel 读取到成对的 legacy
+      input/output counter 时补为 `provider_reported`，只出现一侧时失败关闭。真实 Lite
+      的 17 条 Result 中有 14 条属于缺 measurement 的旧格式；无需修改事实文件，下一次
+      projection rebuild 即可同时修正 Token 总量与 observed/unobserved coverage 口径。
     - [x] 同一 Summary/Details 契约已加入 Context Window 事实统计：Model Call Attempt
       固化实际 context window 与 compaction threshold；投影按缓存语义选择有效输入，
       并为 global/Agent/Chat/turn/date/model 输出加权利用率、峰值、可观测调用和临近

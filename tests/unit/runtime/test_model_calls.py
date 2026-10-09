@@ -1013,6 +1013,37 @@ def test_historical_result_defaults_to_unknown_cost() -> None:
     assert result.cache_observed is False
 
 
+def test_legacy_result_infers_provider_usage() -> None:
+    result = ModelCallResult.model_validate(
+        {
+            "attempt_id": str(uuid4()),
+            "invocation_id": str(uuid4()),
+            "conversation_id": "chat-1",
+            "status": "succeeded",
+            "input_tokens": 21,
+            "output_tokens": 5,
+        },
+    )
+
+    assert result.input_tokens == 21
+    assert result.output_tokens == 5
+    assert result.usage_measurement == "provider_reported"
+
+
+def test_result_rejects_partial_usage_counters() -> None:
+    with pytest.raises(
+        ValueError,
+        match="requires both input and output tokens",
+    ):
+        ModelCallResult(
+            attempt_id=uuid4(),
+            invocation_id=uuid4(),
+            conversation_id="chat-1",
+            status=ModelCallStatus.SUCCEEDED,
+            input_tokens=21,
+        )
+
+
 def test_result_rejects_unobserved_cache_counters() -> None:
     with pytest.raises(
         ValueError,

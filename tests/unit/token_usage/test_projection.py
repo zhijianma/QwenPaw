@@ -203,6 +203,35 @@ async def test_projection_keeps_calls_without_provider_usage(
 
 
 @pytest.mark.asyncio
+async def test_projection_upgrades_legacy_complete_usage_counters(
+    tmp_path: Path,
+) -> None:
+    projection = LiteUsageProjection(
+        tmp_path / "usage.sqlite3",
+        initial_cutover_date=date(2026, 10, 9),
+    )
+    record = _record(
+        completed_at=datetime(2026, 10, 9, 1, tzinfo=timezone.utc),
+    )
+    assert record.result is not None
+    historical = record.result.model_dump(mode="json")
+    historical.pop("usage_measurement")
+    restored = ModelCallResult.model_validate(historical)
+
+    await projection.record(record.attempt, restored)
+    _, rows = await projection.query(
+        date(2026, 10, 9),
+        date(2026, 10, 9),
+    )
+
+    assert len(rows) == 1
+    assert rows[0].prompt_tokens == 100
+    assert rows[0].completion_tokens == 20
+    assert rows[0].usage_observed_calls == 1
+    assert rows[0].usage_unobserved_calls == 0
+
+
+@pytest.mark.asyncio
 async def test_manager_reconciles_usage_coverage_across_scopes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
