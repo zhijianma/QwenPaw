@@ -308,6 +308,10 @@ Workbench。前端只能提交命令、订阅事件和展示服务端投影；�
     Lite 从 Interaction 权威表投影 Approval 与 Ask User 的等待、解决、过期和取消，
     重启后可查询且不复制 prompt、选项或回答；waiter / hook 的 attached 状态区分
     活跃与孤立 continuation。
+    `WaitCondition` 的公共 JSON 已同步统一为 `chat_id = ChatSpec.id`，历史投影继续
+    接受 `conversation_id`；checkpoint、outbox 与 SQLite 内部命名留在存储适配层。
+    2026-10-10 固定 Chat 的历史 Ask User satisfied/cancelled 与 Approval satisfied
+    三条记录均直接恢复，并只返回 `chat_id`。
   - [x] Task Approval Interaction 已关联真实 Ledger Checkpoint；丢失进程内 waiter
     后，决定先提交，并行 blocker 全部解除后以原始 run_id fencing 旧 Run，再通过
     稳定幂等键创建恢复 Run。恢复失败保留决定与 Checkpoint，并返回

@@ -8,7 +8,13 @@ from enum import Enum
 from typing import Annotated, Self
 from uuid import UUID
 
-from pydantic import AwareDatetime, Field, StringConstraints, model_validator
+from pydantic import (
+    AliasChoices,
+    AwareDatetime,
+    Field,
+    StringConstraints,
+    model_validator,
+)
 
 from .models import (
     ActionRetryInputCheckpoint,
@@ -150,16 +156,14 @@ class ModelStepReconciliation(KernelModel):
                 "uncertain side effects cannot exceed terminal actions",
             )
         if (
-            self.reason
-            is ModelStepReconciliationReason.UNCERTAIN_SIDE_EFFECT
+            self.reason is ModelStepReconciliationReason.UNCERTAIN_SIDE_EFFECT
             and self.uncertain_side_effect_count == 0
         ):
             raise ValueError(
                 "uncertain reason requires an uncertain side effect",
             )
         if (
-            self.reason
-            is ModelStepReconciliationReason.PENDING_ACTION_RESULT
+            self.reason is ModelStepReconciliationReason.PENDING_ACTION_RESULT
             and (
                 self.pending_result_count == 0
                 or self.uncertain_side_effect_count != 0
@@ -261,9 +265,7 @@ class HarnessStepContinuation(KernelModel):
     correlation_id: UUID
     agent_id: NonEmptyStr
     recovery_cycle: int = Field(ge=1)
-    status: HarnessStepContinuationStatus = (
-        HarnessStepContinuationStatus.READY
-    )
+    status: HarnessStepContinuationStatus = HarnessStepContinuationStatus.READY
     submission_id: UUID | None = None
     revision: int = Field(default=1, ge=1)
     created_at: AwareDatetime = Field(default_factory=utc_now)
@@ -386,9 +388,7 @@ class ModelStepContinuation(KernelModel):
     agent_id: NonEmptyStr
     conversation_id: NonEmptyStr
     output_boundary: ModelOutputBoundary
-    status: ModelStepContinuationStatus = (
-        ModelStepContinuationStatus.READY
-    )
+    status: ModelStepContinuationStatus = ModelStepContinuationStatus.READY
     reconciliation: ModelStepReconciliation | None = None
     context_checkpoint: ModelStepContextCheckpoint | None = None
     retry_authorization: ModelStepRetryAuthorization | None = None
@@ -407,9 +407,7 @@ class ModelStepContinuation(KernelModel):
             raise ValueError(
                 "model-step continuation requires partial output boundary",
             )
-        dispatched = (
-            self.status is ModelStepContinuationStatus.DISPATCHED
-        )
+        dispatched = self.status is ModelStepContinuationStatus.DISPATCHED
         if dispatched != (self.submission_id is not None):
             raise ValueError(
                 "dispatched model-step continuation requires submission_id",
@@ -616,7 +614,10 @@ class WaitCondition(KernelModel):
     kind: WaitConditionKind
     status: WaitConditionStatus
     agent_id: NonEmptyStr
-    conversation_id: NonEmptyStr
+    chat_id: NonEmptyStr = Field(
+        validation_alias=AliasChoices("chat_id", "conversation_id"),
+        description="Owning ChatSpec.id",
+    )
     source_type: NonEmptyStr
     source_id: UUID
     policy_source_id: UUID | None = None
@@ -625,6 +626,11 @@ class WaitCondition(KernelModel):
     created_at: AwareDatetime
     not_before: AwareDatetime | None = None
     resolved_at: AwareDatetime | None = None
+
+    @property
+    def conversation_id(self) -> str:
+        """Return the deprecated Python alias during migration."""
+        return self.chat_id
 
     @model_validator(mode="after")
     def validate_terminal_time(self) -> Self:

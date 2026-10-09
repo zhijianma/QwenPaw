@@ -131,6 +131,9 @@ async def test_list_and_resolve_chat_owned_interaction(tmp_path) -> None:
     assert len(conditions) == 1
     assert conditions[0].status is WaitConditionStatus.SATISFIED
     assert conditions[0].condition_id == interaction.interaction_id
+    condition_payload = conditions[0].model_dump(mode="json")
+    assert condition_payload["chat_id"] == "chat-spec-1"
+    assert "conversation_id" not in condition_payload
 
 
 @pytest.mark.asyncio
