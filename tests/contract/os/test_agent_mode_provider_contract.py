@@ -179,10 +179,8 @@ async def test_plugin_mode_flows_through_runtime_lifecycle(
         assert session.conversation_resets == 1
         persisted = await session.host.read_state("lifecycle")
         assert persisted is not None
-        assert persisted.value == {
-            "turn_starts": 1,
-            "conversation_resets": 1,
-        }
+        assert persisted.value == {}
+        assert persisted.revision == 2
         assert assembly.scope.registry_generation == registry.generation
     finally:
         if session is not None:

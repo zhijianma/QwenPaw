@@ -855,6 +855,10 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   显式升级 schema，旧 Session 的陈旧写入失败。系统与插件 Host 使用同一 API。
 - Lite 使用 owner-only SQLite WAL，单值限制 64 KiB；大内容继续走 Artifact，不进入
   Mode State。示例插件已改为通过 Host 持久化 lifecycle counter。
+- `clear_state()` 以空值 revision 实现 reset，不物理删除记录；`/clear`、`/new` 后旧
+  Invocation 无法利用 revision ABA 恢复已清理状态。示例 Mode reset 已切换到该路径。
+- Mode State、Provider contract、Runtime lifecycle 与 `/clear`、`/new` 命令相邻路径
+  共 124 项定点测试通过；未执行全仓测试。
 - Mode Host、Runtime Assembly、SDK 示例与热替换相邻路径共 64 项定点测试通过；
   AST、mypy、Black、Flake8、Pylint 文件级门禁通过。
 - Chat durable submission 在 active/pending Goal 中继承原 correlation，Goal terminal

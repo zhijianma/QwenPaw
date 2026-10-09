@@ -678,8 +678,8 @@ hook, and stop-gate behavior belongs in those independent public Slots rather
 than being hidden inside a Mode Provider. See
 `examples/plugins/runtime-provider-kit/runtime_provider_kit/mode.py`.
 
-The SDK exports `AgentModeState` and the Host methods `read_state()` /
-`write_state()`. State is automatically namespaced by Provider, Agent,
+The SDK exports `AgentModeState` and the Host methods `read_state()`,
+`write_state()`, and `clear_state()`. State is automatically namespaced by Provider, Agent,
 `ChatSpec.id`, and `state_key`; writes require the revision returned by the
 previous read. A new plugin generation may read the previous generation's
 state and explicitly advance `state_schema_version`, while a stale Session
@@ -687,6 +687,10 @@ cannot overwrite a newer revision. Each value is limited to 64 KiB. The SDK
 does not export the backing Store: never open `.qwenpaw/lite/mode-state.db` or
 `.qwenpaw/lite/goals.db` directly from a plugin. Domain-specific Goal outcome
 state remains in `GoalExecutionStore`; generic Mode State does not replace it.
+
+`reset_conversation()` must call `clear_state()` for every known state key.
+Clear writes an empty value and advances revision instead of deleting the row,
+so an older invocation cannot recreate pre-clear state with revision zero.
 
 See `examples/plugins/runtime-provider-kit/runtime_provider_kit/mode.py` for
 a lifecycle counter that persists through the Host without accessing

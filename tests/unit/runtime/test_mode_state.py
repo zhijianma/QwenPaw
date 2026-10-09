@@ -169,6 +169,30 @@ async def test_mode_host_survives_provider_generation_replacement(
 
 
 @pytest.mark.asyncio
+async def test_mode_host_clear_preserves_revision_fence(tmp_path) -> None:
+    host = ProviderAgentModeHost(
+        {},
+        bind_agent_mode_state("example.mode", _scope(tmp_path)),
+    )
+    first = await host.write_state(
+        {"phase": "active"},
+        expected_revision=0,
+        state_schema_version=3,
+    )
+    cleared = await host.clear_state(expected_revision=first.revision)
+
+    assert cleared.value == {}
+    assert cleared.revision == 2
+    assert cleared.state_schema_version == 3
+    assert await host.read_state() == cleared
+    with pytest.raises(AgentModeStateConflictError):
+        await host.write_state(
+            {"phase": "stale"},
+            expected_revision=first.revision,
+        )
+
+
+@pytest.mark.asyncio
 async def test_system_and_plugin_hosts_use_isolated_namespaces(
     tmp_path,
 ) -> None:

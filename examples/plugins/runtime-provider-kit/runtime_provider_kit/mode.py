@@ -29,7 +29,13 @@ class ExampleModeSession:
 
     async def reset_conversation(self) -> None:
         """Clear only conversation state owned by this plugin session."""
-        await self._increment("conversation_resets")
+        current = await self.host.read_state("lifecycle")
+        await self.host.clear_state(
+            expected_revision=(current.revision if current else 0),
+            state_key="lifecycle",
+        )
+        self.turn_starts = 0
+        self.conversation_resets += 1
 
     async def _increment(self, field: str) -> None:
         """Persist lifecycle state without opening Host storage directly."""

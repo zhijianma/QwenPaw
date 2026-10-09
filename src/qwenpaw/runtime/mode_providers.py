@@ -69,6 +69,23 @@ class _BoundAgentModeState:
             expected_revision=expected_revision,
         )
 
+    async def clear(
+        self,
+        *,
+        expected_revision: int,
+        state_key: str,
+    ) -> AgentModeState:
+        current = await self.read(state_key)
+        state_schema_version = (
+            current.state_schema_version if current is not None else 1
+        )
+        return await self.write(
+            {},
+            expected_revision=expected_revision,
+            state_key=state_key,
+            state_schema_version=state_schema_version,
+        )
+
 
 def bind_agent_mode_state(
     provider_id: str,
@@ -123,6 +140,20 @@ class ProviderAgentModeHost:
             expected_revision=expected_revision,
             state_key=state_key,
             state_schema_version=state_schema_version,
+        )
+
+    async def clear_state(
+        self,
+        *,
+        expected_revision: int,
+        state_key: str = "default",
+    ) -> AgentModeState:
+        """CAS-clear provider state without deleting its revision fence."""
+        if self._state is None:
+            raise RuntimeError("agent mode state Host is not bound")
+        return await self._state.clear(
+            expected_revision=expected_revision,
+            state_key=state_key,
         )
 
 
@@ -180,6 +211,20 @@ class WorkspaceAgentModeHost:
             expected_revision=expected_revision,
             state_key=state_key,
             state_schema_version=state_schema_version,
+        )
+
+    async def clear_state(
+        self,
+        *,
+        expected_revision: int,
+        state_key: str = "default",
+    ) -> AgentModeState:
+        """CAS-clear built-in state without deleting its revision fence."""
+        if self._state is None:
+            raise RuntimeError("agent mode state Host is not bound")
+        return await self._state.clear(
+            expected_revision=expected_revision,
+            state_key=state_key,
         )
 
     def active_mode_names(self) -> tuple[str, ...]:

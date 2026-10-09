@@ -1001,6 +1001,14 @@ class AgentModeHost(Protocol):
     ) -> AgentModeState:
         """CAS-write state without exposing the backing adapter."""
 
+    async def clear_state(
+        self,
+        *,
+        expected_revision: int,
+        state_key: str = "default",
+    ) -> AgentModeState:
+        """CAS-clear one value while retaining its revision fence."""
+
 
 @runtime_checkable
 class AgentModeStateStore(Protocol):

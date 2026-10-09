@@ -39,11 +39,20 @@ saved = await host.write_state(
     state_key="lifecycle",
     state_schema_version=1,
 )
+cleared = await host.clear_state(
+    expected_revision=saved.revision,
+    state_key="lifecycle",
+)
 ```
 
 Host 自动绑定 provider、Agent、Chat 和当前 pinned generation。插件不能指定这些身份，
 也不能拿到底层 `AgentModeStateStore`。陈旧 revision 以
 `AgentModeStateConflictError` 失败，不做 last-write-wins。
+
+`clear_state()` 写入空 JSON 并递增 revision，不物理删除记录。这样 `/clear`、`/new`
+与并发旧 Session 之间仍保留 CAS 栅栏，不会因删除后 revision 回到 0 产生 ABA 覆盖。
+Provider 的 `reset_conversation()` 应清理每个已知 state key；Host 不允许插件枚举或清理
+其他 Provider 的 namespace。
 
 ## 4. 热替换语义
 
@@ -70,6 +79,7 @@ declare / finalize 状态机，不能退化成无类型 JSON。Mode State 用于
 ## 6. 验收
 
 - Provider/Agent/Chat/state-key 之间不可串读；
+- clear/reset 保留 revision 栅栏，旧 writer 不能在清理后复活状态；
 - 新进程和新 Provider generation 可恢复相同 namespace；
 - 陈旧 writer 无法覆盖新 revision；
 - 系统与插件 Mode Host 使用同一 API 和 Adapter；
