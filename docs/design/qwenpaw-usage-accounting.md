@@ -86,6 +86,14 @@ price is unavailable. The two fields remain separate, so a partially known
 aggregate is never presented as a complete bill or as zero-cost usage. The
 contract does not infer a currency or convert Provider prices.
 
+Every terminal Model Call remains visible even when its Provider omits token
+usage. `call_count` therefore means actual terminal attempts, while
+`usage_observed_calls` and `usage_unobserved_calls` expose measurement
+coverage. Unobserved calls contribute zero only to the arithmetic token sum;
+they are never described as measured zero-token calls. Their context window is
+also excluded from utilization because a known denominator without observed
+input would manufacture a false `0%` ratio.
+
 Retry and fallback are separate attempts and separate calls. Multiple calls in
 one tool loop share the Invocation turn. Composite public keys remain
 collision-safe JSON tuples until the API moves to structured rows.
@@ -154,5 +162,6 @@ Agent, Chat, or Turn ownership remain explicitly unattributed.
 - Summary values remain stable across restart and projection rebuild.
 - Global, Agent, Chat and Turn totals reconcile to the same attempt set.
 - Known cost and unknown-cost call counts reconcile across every scope.
+- Calls without Provider usage remain countable and report unknown coverage.
 - A multi-call Turn preserves per-route token totals after message refresh.
 - Task pages and Task-specific frontend work remain out of scope.

@@ -25,6 +25,7 @@ export interface DateTokenRow {
   near_compaction_calls: number;
   cost_micros: number;
   cost_unknown_calls: number;
+  usage_unobserved_calls: number;
   context_usage_ratio: number | null;
   max_context_usage_ratio: number | null;
   call_count: number;
@@ -43,6 +44,7 @@ export interface DateTokenStats {
   near_compaction_calls: number;
   cost_micros: number;
   cost_unknown_calls: number;
+  usage_unobserved_calls?: number;
   context_usage_ratio: number | null;
   max_context_usage_ratio: number | null;
   call_count: number;
@@ -72,6 +74,7 @@ export function buildByDateRows(
       near_compaction_calls: stats.near_compaction_calls,
       cost_micros: stats.cost_micros ?? 0,
       cost_unknown_calls: stats.cost_unknown_calls ?? 0,
+      usage_unobserved_calls: stats.usage_unobserved_calls ?? 0,
       context_usage_ratio: stats.context_usage_ratio,
       max_context_usage_ratio: stats.max_context_usage_ratio,
       call_count: stats.call_count,

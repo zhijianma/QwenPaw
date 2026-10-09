@@ -81,5 +81,10 @@ describe("Token Usage cost evidence", () => {
     expect(cost.render(tokenRow.cost_micros)).toBe("125 µ");
     expect(unknown.title).toBe("tokenUsage.costUnknown");
     expect(unknown.render(tokenRow.cost_unknown_calls)).toBe("2");
+    const unavailable = columns.find(
+      (column: any) => column.key === "usage_unobserved_calls",
+    );
+    expect(unavailable.title).toBe("tokenUsage.usageUnavailable");
+    expect(unavailable.render(undefined)).toBe("0");
   });
 });

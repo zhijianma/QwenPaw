@@ -71,6 +71,7 @@ class LiteUsageProjection:
                 cache_write_tokens INTEGER NOT NULL,
                 cache_eligible_input_tokens INTEGER NOT NULL,
                 cache_observed INTEGER NOT NULL,
+                usage_observed INTEGER NOT NULL DEFAULT 1,
                 cost_micros INTEGER,
                 cost_unknown INTEGER NOT NULL
             );
@@ -94,6 +95,11 @@ class LiteUsageProjection:
             connection,
             "compaction_threshold",
             "REAL",
+        )
+        self._ensure_column(
+            connection,
+            "usage_observed",
+            "INTEGER NOT NULL DEFAULT 1",
         )
         self._ensure_cutover(connection)
         return connection
@@ -138,13 +144,8 @@ class LiteUsageProjection:
     def _values(
         attempt: ModelCallAttempt,
         result: ModelCallResult,
-    ) -> tuple[object, ...] | None:
-        if (
-            result.usage_measurement != "provider_reported"
-            or result.input_tokens is None
-            or result.output_tokens is None
-        ):
-            return None
+    ) -> tuple[object, ...]:
+        usage_observed = result.usage_measurement == "provider_reported"
         completed_at = result.completed_at.astimezone(timezone.utc)
         return (
             str(attempt.attempt_id),
@@ -157,12 +158,13 @@ class LiteUsageProjection:
             attempt.model_id,
             attempt.context_window_tokens,
             attempt.compaction_threshold,
-            result.input_tokens,
-            result.output_tokens,
+            result.input_tokens or 0,
+            result.output_tokens or 0,
             result.cache_read_tokens,
             result.cache_write_tokens,
             result.cache_eligible_input_tokens,
             int(result.cache_observed),
+            int(usage_observed),
             result.cost_micros,
             int(result.cost_unknown),
         )
@@ -175,8 +177,6 @@ class LiteUsageProjection:
         values = self._values(attempt, result)
         with self._connect() as connection:
             cutover = self._ensure_cutover(connection)
-            if values is None:
-                return cutover
             connection.execute(
                 """
                 INSERT OR IGNORE INTO model_usage_attempts (
@@ -185,9 +185,9 @@ class LiteUsageProjection:
                     context_window_tokens, compaction_threshold,
                     input_tokens, output_tokens, cache_read_tokens,
                     cache_write_tokens, cache_eligible_input_tokens,
-                    cache_observed, cost_micros, cost_unknown
+                    cache_observed, usage_observed, cost_micros, cost_unknown
                 ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 values,
@@ -199,7 +199,8 @@ class LiteUsageProjection:
                        context_window_tokens, compaction_threshold,
                        input_tokens, output_tokens, cache_read_tokens,
                        cache_write_tokens, cache_eligible_input_tokens,
-                       cache_observed, cost_micros, cost_unknown
+                       cache_observed, usage_observed, cost_micros,
+                       cost_unknown
                 FROM model_usage_attempts WHERE attempt_id = ?
                 """,
                 (str(attempt.attempt_id),),
@@ -288,13 +289,15 @@ class LiteUsageProjection:
             )
             current = grouped.get(key)
             context_window = int(row["context_window_tokens"] or 0)
+            usage_observed = bool(row["usage_observed"])
+            observed_context_window = context_window if usage_observed else 0
             context_input = (
                 (
                     int(row["cache_eligible_input_tokens"])
                     if bool(row["cache_observed"])
                     else int(row["input_tokens"])
                 )
-                if context_window > 0
+                if usage_observed and context_window > 0
                 else 0
             )
             context_ratio = (
@@ -309,7 +312,9 @@ class LiteUsageProjection:
                 current.context_window_tokens if current else 0
             )
             total_context_input = current_context_input + context_input
-            total_context_window = current_context_window + context_window
+            total_context_window = (
+                current_context_window + observed_context_window
+            )
             current_max = current.max_context_usage_ratio if current else None
             maxima = (current_max, context_ratio)
             max_context_ratio = (
@@ -355,7 +360,7 @@ class LiteUsageProjection:
                 context_window_tokens=total_context_window,
                 context_observed_calls=(
                     (current.context_observed_calls if current else 0)
-                    + int(context_window > 0)
+                    + int(observed_context_window > 0)
                 ),
                 near_compaction_calls=(
                     (current.near_compaction_calls if current else 0)
@@ -368,6 +373,14 @@ class LiteUsageProjection:
                 cost_unknown_calls=(
                     (current.cost_unknown_calls if current else 0)
                     + int(row["cost_unknown"])
+                ),
+                usage_observed_calls=(
+                    (current.usage_observed_calls if current else 0)
+                    + int(usage_observed)
+                ),
+                usage_unobserved_calls=(
+                    (current.usage_unobserved_calls if current else 0)
+                    + int(not usage_observed)
                 ),
                 context_usage_ratio=(
                     total_context_input / total_context_window * 100
@@ -446,7 +459,6 @@ class LiteUsageProjection:
             for record in records
             if record.result is not None
             for projected in [self._values(record.attempt, record.result)]
-            if projected is not None
         ]
         rebuilt_at = datetime.now(timezone.utc).isoformat()
         with self._connect() as connection:
@@ -459,9 +471,9 @@ class LiteUsageProjection:
                     context_window_tokens, compaction_threshold,
                     input_tokens, output_tokens, cache_read_tokens,
                     cache_write_tokens, cache_eligible_input_tokens,
-                    cache_observed, cost_micros, cost_unknown
+                    cache_observed, usage_observed, cost_micros, cost_unknown
                 ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 values,

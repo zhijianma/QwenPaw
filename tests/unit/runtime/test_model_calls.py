@@ -363,6 +363,47 @@ async def test_token_wrapper_persists_complete_provider_usage(
 
 
 @pytest.mark.asyncio
+async def test_token_wrapper_projects_calls_without_provider_usage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scope = _scope(tmp_path)
+    store = lite_model_call_store(tmp_path)
+    session = _session(scope, _manifest(scope), store)
+    provider = AsyncMock()
+    provider.model = "model-a"
+    provider.credential = None
+    provider.parameters = None
+    provider.stream = False
+    provider.context_size = 32_768
+    provider.formatter = object()
+    provider.return_value = ChatResponse(
+        content=[TextBlock(text="ok")],
+        is_last=True,
+        usage=None,
+    )
+    usage_manager = MagicMock()
+    usage_manager.project_model_call = AsyncMock(return_value=False)
+    monkeypatch.setattr(
+        "qwenpaw.token_usage.model_wrapper.get_token_usage_manager",
+        lambda: usage_manager,
+    )
+    wrapper = TokenRecordingModelWrapper("provider-a", provider)
+
+    await call_with_model_session(
+        session,
+        lambda: wrapper(messages=[]),
+    )
+
+    usage_manager.project_model_call.assert_awaited_once()
+    attempt, result = usage_manager.project_model_call.await_args.args
+    assert attempt.conversation_id == "chat-1"
+    assert result.usage_measurement is None
+    assert result.input_tokens is None
+    assert result.output_tokens is None
+
+
+@pytest.mark.asyncio
 async def test_usage_projection_waits_for_durable_model_result(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

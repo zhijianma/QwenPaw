@@ -2364,6 +2364,7 @@
     "title": "Penggunaan Token",
     "totalTokens": "Total Token",
     "totalCalls": "Panggilan LLM",
+    "usageUnavailable": "Penggunaan token tidak tersedia",
     "toolCalls": "Panggilan Alat",
     "llmAndToolTrend": "Tren Panggilan LLM & Alat",
     "llmAndToolTrendTooltip": "Giliran asisten dengan metadata pemakaian plus intent alat di semua agen. Bukan Total Calls (jumlah API mentah); sesi lama mungkin 0 giliran tercatat.",

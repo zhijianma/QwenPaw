@@ -175,6 +175,7 @@ function TokenUsagePage() {
       near_compaction_calls: stats.near_compaction_calls,
       cost_micros: stats.cost_micros ?? 0,
       cost_unknown_calls: stats.cost_unknown_calls ?? 0,
+      usage_unobserved_calls: stats.usage_unobserved_calls ?? 0,
       call_count: stats.call_count,
     }));
   }, [aggregatedData?.by_model]);
@@ -209,6 +210,7 @@ function TokenUsagePage() {
           near_compaction_calls: stats.near_compaction_calls,
           cost_micros: stats.cost_micros ?? 0,
           cost_unknown_calls: stats.cost_unknown_calls ?? 0,
+          usage_unobserved_calls: stats.usage_unobserved_calls ?? 0,
           call_count: stats.call_count,
         };
       })
@@ -246,6 +248,7 @@ function TokenUsagePage() {
           near_compaction_calls: stats.near_compaction_calls,
           cost_micros: stats.cost_micros ?? 0,
           cost_unknown_calls: stats.cost_unknown_calls ?? 0,
+          usage_unobserved_calls: stats.usage_unobserved_calls ?? 0,
           call_count: stats.call_count,
         };
       })
@@ -288,6 +291,7 @@ function TokenUsagePage() {
           near_compaction_calls: stats.near_compaction_calls,
           cost_micros: stats.cost_micros ?? 0,
           cost_unknown_calls: stats.cost_unknown_calls ?? 0,
+          usage_unobserved_calls: stats.usage_unobserved_calls ?? 0,
           call_count: stats.call_count,
         };
       })
@@ -344,6 +348,9 @@ function TokenUsagePage() {
             {aggregatedData && (
               <SummaryCards
                 totalCalls={aggregatedData.total_calls}
+                usageUnobservedCalls={
+                  aggregatedData.usage_unobserved_calls ?? 0
+                }
                 totalPromptTokens={aggregatedData.total_prompt_tokens}
                 totalCompletionTokens={aggregatedData.total_completion_tokens}
                 totalCacheReadTokens={aggregatedData.total_cache_read_tokens}

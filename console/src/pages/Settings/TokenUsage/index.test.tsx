@@ -12,6 +12,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import type { TokenUsageSummary } from "../../../api/types/tokenUsage";
 import userEvent from "@testing-library/user-event";
 import React from "react";
 
@@ -175,7 +176,9 @@ function makeRecord(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function makeSummary(records: ReturnType<typeof makeRecord>[]) {
+function makeSummary(
+  records: ReturnType<typeof makeRecord>[],
+): TokenUsageSummary {
   const totals = records.reduce(
     (acc, record) => ({
       prompt_tokens: acc.prompt_tokens + record.prompt_tokens,
@@ -348,6 +351,7 @@ describe("TokenUsagePage", () => {
     );
     expect(capturedProps.summary).toMatchObject({
       totalCalls: 3,
+      usageUnobservedCalls: 0,
       totalPromptTokens: 100,
       totalCompletionTokens: 50,
       totalCacheReadTokens: 10,
@@ -361,6 +365,22 @@ describe("TokenUsagePage", () => {
     expect(screen.getByTestId("data-tables")).toBeInTheDocument();
     expect(screen.getByTestId("model-trend-chart")).toBeInTheDocument();
     expect(screen.getByTestId("token-type-chart")).toBeInTheDocument();
+  });
+
+  it("shows calls whose provider usage is unavailable", async () => {
+    const summary = makeSummary([makeRecord()]);
+    summary.usage_observed_calls = 2;
+    summary.usage_unobserved_calls = 1;
+    apiMocks.getTokenUsage.mockResolvedValue(summary);
+
+    render(<TokenUsagePage />);
+
+    await waitFor(() =>
+      expect(capturedProps.summary).toMatchObject({
+        totalCalls: 3,
+        usageUnobservedCalls: 1,
+      }),
+    );
   });
 
   it("builds model and agent table rows from the records", async () => {

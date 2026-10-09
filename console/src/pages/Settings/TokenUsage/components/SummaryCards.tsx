@@ -6,6 +6,7 @@ import styles from "../index.module.less";
 
 interface SummaryCardsProps {
   totalCalls: number;
+  usageUnobservedCalls?: number;
   totalPromptTokens: number;
   totalCompletionTokens: number;
   totalCacheReadTokens: number;
@@ -19,6 +20,7 @@ interface SummaryCardsProps {
 
 export function SummaryCards({
   totalCalls,
+  usageUnobservedCalls = 0,
   totalPromptTokens,
   totalCompletionTokens,
   totalCacheReadTokens,
@@ -40,6 +42,14 @@ export function SummaryCards({
       <Card className={styles.card}>
         <div className={styles.cardValue}>{formatCompact(totalCalls)}</div>
         <div className={styles.cardLabel}>{t("tokenUsage.totalCalls")}</div>
+      </Card>
+      <Card className={styles.card}>
+        <div className={styles.cardValue}>
+          {formatCompact(usageUnobservedCalls)}
+        </div>
+        <div className={styles.cardLabel}>
+          {t("tokenUsage.usageUnavailable")}
+        </div>
       </Card>
       <Card className={styles.card}>
         <div className={styles.cardValue}>

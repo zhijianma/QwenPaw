@@ -486,7 +486,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
             output_boundary=output_boundary,
         )
         record_legacy = True
-        if attempt is not None and result is not None and facts is not None:
+        if attempt is not None and result is not None:
             record_legacy = await get_token_usage_manager().project_model_call(
                 attempt,
                 result,

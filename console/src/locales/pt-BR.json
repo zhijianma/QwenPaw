@@ -1907,6 +1907,7 @@
     "description": "View LLM token consumption over time, by date and model.",
     "totalTokens": "Total Tokens",
     "totalCalls": "Chamadas LLM",
+    "usageUnavailable": "Uso de tokens indisponível",
     "toolCalls": "Tool Calls",
     "llmAndToolTrend": "Tendência de LLM & Tool Calls",
     "llmAndToolTrendTooltip": "Turnos do assistente com metadados de uso mais intents de ferramenta em todos os agentes. Não é Total Calls (contagem bruta de API); sessões antigas podem ter 0 turnos registrados.",

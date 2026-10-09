@@ -51,6 +51,8 @@ class TokenUsageStats(BaseModel):
     cost_unknown_calls: int = Field(0, ge=0)
     context_usage_ratio: Optional[float] = Field(None, ge=0)
     max_context_usage_ratio: Optional[float] = Field(None, ge=0)
+    usage_observed_calls: int = Field(0, ge=0)
+    usage_unobserved_calls: int = Field(0, ge=0)
     call_count: int = Field(0, ge=0)
 
 
@@ -141,6 +143,8 @@ class TokenUsageSummary(BaseModel):
     context_usage_ratio: Optional[float] = Field(None, ge=0)
     max_context_usage_ratio: Optional[float] = Field(None, ge=0)
     total_calls: int = Field(0, ge=0)
+    usage_observed_calls: int = Field(0, ge=0)
+    usage_unobserved_calls: int = Field(0, ge=0)
     by_model: dict[str, TokenUsageByModel] = Field(
         default_factory=dict,
         description="Per model (provider:model key) aggregation",
@@ -198,6 +202,8 @@ def _new_stats(**identity: str | None) -> dict:
         "cost_unknown_calls": 0,
         "context_usage_ratio": None,
         "max_context_usage_ratio": None,
+        "usage_observed_calls": 0,
+        "usage_unobserved_calls": 0,
         "call_count": 0,
     }
 
@@ -230,6 +236,8 @@ def _add_stats(target: dict, record: TokenUsageRecord) -> None:
         if any(value is not None for value in maxima)
         else None
     )
+    target["usage_observed_calls"] += record.usage_observed_calls
+    target["usage_unobserved_calls"] += record.usage_unobserved_calls
     target["call_count"] += record.call_count
 
 
@@ -501,6 +509,8 @@ class TokenUsageManager:
                         ),
                         cost_micros=0,
                         cost_unknown_calls=entry.get("call_count", 0),
+                        usage_observed_calls=entry.get("call_count", 0),
+                        usage_unobserved_calls=0,
                         call_count=entry.get("call_count", 0),
                         agent_id=rec_agent,
                         conversation_id=rec_conversation,
@@ -655,6 +665,8 @@ class TokenUsageManager:
             context_usage_ratio=total_stats["context_usage_ratio"],
             max_context_usage_ratio=total_stats["max_context_usage_ratio"],
             total_calls=total_stats["call_count"],
+            usage_observed_calls=total_stats["usage_observed_calls"],
+            usage_unobserved_calls=total_stats["usage_unobserved_calls"],
             by_model={
                 k: TokenUsageByModel.model_validate(v)
                 for k, v in sorted(by_model_raw.items())

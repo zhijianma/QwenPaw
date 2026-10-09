@@ -17,6 +17,8 @@ export interface TokenUsageRecord {
   cost_unknown_calls: number;
   context_usage_ratio: number | null;
   max_context_usage_ratio: number | null;
+  usage_observed_calls?: number;
+  usage_unobserved_calls?: number;
   call_count: number;
   agent_id?: string | null;
   conversation_id?: string | null;
@@ -41,6 +43,8 @@ export interface TokenUsageStats {
   cost_unknown_calls: number;
   context_usage_ratio: number | null;
   max_context_usage_ratio: number | null;
+  usage_observed_calls?: number;
+  usage_unobserved_calls?: number;
   call_count: number;
 }
 
@@ -84,6 +88,8 @@ export interface TokenUsageSummary {
   context_usage_ratio: number | null;
   max_context_usage_ratio: number | null;
   total_calls: number;
+  usage_observed_calls?: number;
+  usage_unobserved_calls?: number;
   by_model: Record<string, TokenUsageByModel>;
   by_date: Record<string, TokenUsageStats>;
   by_date_model: Record<string, Record<string, TokenUsageByModel>>;

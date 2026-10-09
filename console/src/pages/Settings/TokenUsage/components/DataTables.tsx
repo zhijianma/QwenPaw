@@ -14,6 +14,7 @@ interface TokenRow {
   near_compaction_calls: number;
   cost_micros: number;
   cost_unknown_calls: number;
+  usage_unobserved_calls?: number;
   call_count: number;
 }
 
@@ -64,6 +65,7 @@ function tokenStatColumns<T extends TokenRow>(titles: {
   nearCompaction: string;
   reportedCost: string;
   costUnknown: string;
+  usageUnavailable: string;
   calls: string;
 }) {
   return [
@@ -135,6 +137,14 @@ function tokenStatColumns<T extends TokenRow>(titles: {
       sorter: (a: T, b: T) => a.cost_unknown_calls - b.cost_unknown_calls,
     },
     {
+      title: titles.usageUnavailable,
+      dataIndex: "usage_unobserved_calls",
+      key: "usage_unobserved_calls",
+      render: (v?: number) => formatCompact(v ?? 0),
+      sorter: (a: T, b: T) =>
+        (a.usage_unobserved_calls ?? 0) - (b.usage_unobserved_calls ?? 0),
+    },
+    {
       title: titles.completion,
       dataIndex: "completion_tokens",
       key: "completion_tokens",
@@ -180,6 +190,7 @@ export function DataTables({
     nearCompaction: t("tokenUsage.nearCompaction"),
     reportedCost: t("tokenUsage.reportedCost"),
     costUnknown: t("tokenUsage.costUnknown"),
+    usageUnavailable: t("tokenUsage.usageUnavailable"),
     calls: t("tokenUsage.totalCalls"),
   };
 

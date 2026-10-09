@@ -1670,6 +1670,7 @@
     "completionTokens": "Token đầu ra",
     "totalTokens": "Tổng token",
     "totalCalls": "Lượt gọi LLM",
+    "usageUnavailable": "Không có dữ liệu token",
     "toolCalls": "Lời gọi công cụ",
     "llmAndToolTrend": "Xu hướng LLM & công cụ",
     "llmAndToolTrendTooltip": "Lượt trợ lý có metadata sử dụng cộng ý định gọi công cụ trên mọi agent. Không phải Total Calls (API thô); phiên cũ có thể 0 lượt ghi nhận.",

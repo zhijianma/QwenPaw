@@ -33,6 +33,7 @@ def _record(
     compaction_threshold: float | None = 0.8,
     cache_eligible_input_tokens: int | None = None,
     cost_micros: int | None = None,
+    usage_observed: bool = True,
 ) -> ModelCallRecord:
     attempt_id = uuid4()
     invocation_id = uuid4()
@@ -73,16 +74,18 @@ def _record(
         invocation_id=invocation_id,
         conversation_id="chat-1",
         status=ModelCallStatus.SUCCEEDED,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        usage_measurement="provider_reported",
-        cache_read_tokens=60,
+        input_tokens=input_tokens if usage_observed else None,
+        output_tokens=output_tokens if usage_observed else None,
+        usage_measurement=("provider_reported" if usage_observed else None),
+        cache_read_tokens=60 if usage_observed else 0,
         cache_eligible_input_tokens=(
             cache_eligible_input_tokens
             if cache_eligible_input_tokens is not None
             else input_tokens
+            if usage_observed
+            else 0
         ),
-        cache_observed=True,
+        cache_observed=usage_observed,
         cost_micros=cost_micros,
         cost_unknown=cost_micros is None,
         completed_at=completed_at,
@@ -165,6 +168,81 @@ async def test_projection_queries_only_at_or_after_cutover(
     assert rows[0].near_compaction_calls == 0
     assert rows[0].cost_micros == 0
     assert rows[0].cost_unknown_calls == 1
+    assert rows[0].usage_observed_calls == 1
+    assert rows[0].usage_unobserved_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_projection_keeps_calls_without_provider_usage(
+    tmp_path: Path,
+) -> None:
+    projection = LiteUsageProjection(
+        tmp_path / "usage.sqlite3",
+        initial_cutover_date=date(2026, 10, 9),
+    )
+    record = _record(
+        completed_at=datetime(2026, 10, 9, 1, tzinfo=timezone.utc),
+        usage_observed=False,
+    )
+    assert record.result is not None
+
+    await projection.record(record.attempt, record.result)
+    _, rows = await projection.query(
+        date(2026, 10, 9),
+        date(2026, 10, 9),
+    )
+
+    assert len(rows) == 1
+    assert rows[0].prompt_tokens == 0
+    assert rows[0].completion_tokens == 0
+    assert rows[0].call_count == 1
+    assert rows[0].usage_observed_calls == 0
+    assert rows[0].usage_unobserved_calls == 1
+    assert rows[0].context_observed_calls == 0
+    assert rows[0].context_usage_ratio is None
+
+
+@pytest.mark.asyncio
+async def test_manager_reconciles_usage_coverage_across_scopes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "qwenpaw.token_usage.manager.WORKING_DIR",
+        tmp_path,
+    )
+    manager = TokenUsageManager(
+        projection_path=tmp_path / "projection.sqlite3",
+        projection_cutover_date=date(2026, 10, 9),
+    )
+    measured = _record(
+        completed_at=datetime(2026, 10, 9, 1, tzinfo=timezone.utc),
+    )
+    unmeasured = _record(
+        completed_at=datetime(2026, 10, 9, 2, tzinfo=timezone.utc),
+        usage_observed=False,
+    )
+    assert measured.result is not None
+    assert unmeasured.result is not None
+    await manager.project_model_call(measured.attempt, measured.result)
+    await manager.project_model_call(unmeasured.attempt, unmeasured.result)
+
+    summary = await manager.get_summary(
+        date(2026, 10, 9),
+        date(2026, 10, 9),
+    )
+
+    assert summary.total_calls == 2
+    assert summary.usage_observed_calls == 1
+    assert summary.usage_unobserved_calls == 1
+    assert summary.total_prompt_tokens == 100
+    assert summary.by_model["provider-a:model-a"].call_count == 2
+    [agent] = summary.scopes.agents
+    [chat] = summary.scopes.chats
+    assert agent.usage_unobserved_calls == 1
+    assert chat.usage_unobserved_calls == 1
+    assert sum(row.call_count for row in summary.scopes.turns) == 2
+    assert sum(row.usage_unobserved_calls for row in summary.scopes.turns) == 1
 
 
 @pytest.mark.asyncio
@@ -240,6 +318,7 @@ async def test_existing_projection_schema_adds_context_columns(
         }
     assert "context_window_tokens" in columns
     assert "compaction_threshold" in columns
+    assert "usage_observed" in columns
 
 
 @pytest.mark.asyncio
@@ -272,6 +351,33 @@ async def test_projection_rebuild_replaces_disposable_index(
     assert status.last_rebuild_at is not None
     assert len(rows) == 1
     assert rows[0].prompt_tokens == 300
+
+
+@pytest.mark.asyncio
+async def test_projection_rebuild_keeps_unobserved_calls(
+    tmp_path: Path,
+) -> None:
+    projection = LiteUsageProjection(
+        tmp_path / "usage.sqlite3",
+        initial_cutover_date=date(2026, 10, 9),
+    )
+    measured = _record(
+        completed_at=datetime(2026, 10, 9, 1, tzinfo=timezone.utc),
+    )
+    unmeasured = _record(
+        completed_at=datetime(2026, 10, 9, 2, tzinfo=timezone.utc),
+        usage_observed=False,
+    )
+
+    assert await projection.rebuild([measured, unmeasured]) == 2
+    _, rows = await projection.query(
+        date(2026, 10, 9),
+        date(2026, 10, 9),
+    )
+
+    assert sum(row.call_count for row in rows) == 2
+    assert sum(row.usage_observed_calls for row in rows) == 1
+    assert sum(row.usage_unobserved_calls for row in rows) == 1
 
 
 @pytest.mark.asyncio
