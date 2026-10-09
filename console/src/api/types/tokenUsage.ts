@@ -13,6 +13,8 @@ export interface TokenUsageRecord {
   context_window_tokens: number;
   context_observed_calls: number;
   near_compaction_calls: number;
+  cost_micros: number;
+  cost_unknown_calls: number;
   context_usage_ratio: number | null;
   max_context_usage_ratio: number | null;
   call_count: number;
@@ -35,9 +37,16 @@ export interface TokenUsageStats {
   context_window_tokens: number;
   context_observed_calls: number;
   near_compaction_calls: number;
+  cost_micros: number;
+  cost_unknown_calls: number;
   context_usage_ratio: number | null;
   max_context_usage_ratio: number | null;
   call_count: number;
+}
+
+export interface TokenUsageByModel extends TokenUsageStats {
+  provider_id: string;
+  model: string;
 }
 
 export interface TokenUsageByAgent extends TokenUsageStats {
@@ -64,12 +73,14 @@ export interface TokenUsageSummary {
   total_context_window_tokens: number;
   context_observed_calls: number;
   near_compaction_calls: number;
+  total_cost_micros: number;
+  cost_unknown_calls: number;
   context_usage_ratio: number | null;
   max_context_usage_ratio: number | null;
   total_calls: number;
-  by_model: Record<string, TokenUsageStats>;
+  by_model: Record<string, TokenUsageByModel>;
   by_date: Record<string, TokenUsageStats>;
-  by_date_model: Record<string, Record<string, TokenUsageStats>>;
+  by_date_model: Record<string, Record<string, TokenUsageByModel>>;
   by_agent: Record<string, TokenUsageByAgent>;
   by_chat: Record<string, TokenUsageByChat>;
   by_turn: Record<string, TokenUsageByTurn>;

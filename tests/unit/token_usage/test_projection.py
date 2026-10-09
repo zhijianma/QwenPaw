@@ -32,6 +32,7 @@ def _record(
     context_window_tokens: int | None = 200,
     compaction_threshold: float | None = 0.8,
     cache_eligible_input_tokens: int | None = None,
+    cost_micros: int | None = None,
 ) -> ModelCallRecord:
     attempt_id = uuid4()
     invocation_id = uuid4()
@@ -82,6 +83,8 @@ def _record(
             else input_tokens
         ),
         cache_observed=True,
+        cost_micros=cost_micros,
+        cost_unknown=cost_micros is None,
         completed_at=completed_at,
     )
     return ModelCallRecord(route=route, attempt=attempt, result=result)
@@ -160,6 +163,8 @@ async def test_projection_queries_only_at_or_after_cutover(
     assert rows[0].context_usage_ratio == 50
     assert rows[0].max_context_usage_ratio == 50
     assert rows[0].near_compaction_calls == 0
+    assert rows[0].cost_micros == 0
+    assert rows[0].cost_unknown_calls == 1
 
 
 @pytest.mark.asyncio
@@ -288,6 +293,7 @@ async def test_manager_merges_cutover_without_double_counting(
     )
     record = _record(
         completed_at=datetime(2026, 10, 9, 1, tzinfo=timezone.utc),
+        cost_micros=125,
     )
     assert record.result is not None
     assert not await manager.project_model_call(
@@ -320,6 +326,30 @@ async def test_manager_merges_cutover_without_double_counting(
     assert summary.total_prompt_tokens == 107
     assert summary.total_completion_tokens == 23
     assert summary.total_calls == 2
+    assert summary.total_cost_micros == 125
+    assert summary.cost_unknown_calls == 1
+    model_cost = summary.by_model["provider-a:model-a"]
+    assert model_cost.cost_micros == 125
+    assert model_cost.cost_unknown_calls == 0
+    assert summary.by_date["2026-10-09"].cost_micros == 125
+    agent_cost = next(
+        item
+        for item in summary.by_agent.values()
+        if item.agent_id == "agent-a"
+    )
+    assert agent_cost.cost_micros == 125
+    chat_cost = next(
+        item
+        for item in summary.by_chat.values()
+        if item.conversation_id == "chat-1"
+    )
+    assert chat_cost.cost_micros == 125
+    turn_cost = next(
+        item
+        for item in summary.by_turn.values()
+        if item.turn_id == str(record.attempt.invocation_id)
+    )
+    assert turn_cost.cost_micros == 125
     assert summary.total_context_input_tokens == 100
     assert summary.total_context_window_tokens == 200
     assert summary.context_observed_calls == 1
@@ -343,6 +373,7 @@ async def test_pre_cutover_shadow_adds_context_without_duplicate_tokens(
     record = _record(
         completed_at=datetime(2026, 10, 9, 1, tzinfo=timezone.utc),
         cache_eligible_input_tokens=180,
+        cost_micros=250,
     )
     assert record.result is not None
     assert await manager.project_model_call(record.attempt, record.result)
@@ -370,6 +401,8 @@ async def test_pre_cutover_shadow_adds_context_without_duplicate_tokens(
     assert summary.total_context_input_tokens == 180
     assert summary.context_usage_ratio == 90
     assert summary.near_compaction_calls == 1
+    assert summary.total_cost_micros == 250
+    assert summary.cost_unknown_calls == 0
 
 
 @pytest.mark.asyncio

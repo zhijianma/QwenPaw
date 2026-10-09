@@ -1156,6 +1156,11 @@ Cron 不形成独立审批或产物事实源。
       `cost_unknown=true`，不冒充零成本。固定 Chat 再次 `/clear` 后真实返回
       `MODEL_CALL_FACTS_E2E_OK`，记录 requested/actual 均为 DashScope
       `qwen3.8-max`，Adapter/Formatter 版本为 `2.2.2b1`，调用成功且价格未知。
+    - [x] Token Usage Summary 已把 Model Call 成本事实投影到 global、Agent、
+      `ChatSpec.id`、Invocation turn、日期和实际 Provider/Model：`cost_micros` 只累计
+      已报告微单位，`cost_unknown_calls` 独立累计未知价格调用。legacy JSON 全部明确
+      视为未知，cutover 前 shadow 只补成本而不重复 token/call；Console 同时显示两者，
+      不推断币种或把部分已知成本冒充完整账单。
     - [x] Model Call 写入不再丢失运行归属：Attempt 保存 Agent、`ChatSpec.id`、
       Invocation turn 与实际 Provider/Model；Result 保存 Provider 报告的 input/output、
       cache 和 cost。一次 turn 内工具循环的多个模型调用共享 Invocation，实际

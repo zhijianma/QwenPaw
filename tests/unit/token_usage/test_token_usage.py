@@ -442,6 +442,8 @@ class TestTokenUsageStats:
         stats = TokenUsageStats()
         assert stats.prompt_tokens == 0
         assert stats.completion_tokens == 0
+        assert stats.cost_micros == 0
+        assert stats.cost_unknown_calls == 0
         assert stats.call_count == 0
 
     def test_custom_values(self):
@@ -472,11 +474,15 @@ class TestTokenUsageModels:
             model="gpt-4",
             prompt_tokens=100,
             completion_tokens=50,
+            cost_micros=25,
+            cost_unknown_calls=2,
             call_count=3,
         )
         assert record.date == "2026-04-24"
         assert record.provider_id == "openai"
         assert record.model == "gpt-4"
+        assert record.cost_micros == 25
+        assert record.cost_unknown_calls == 2
         assert record.agent_id is None
 
     def test_empty_summary(self):
@@ -484,6 +490,8 @@ class TestTokenUsageModels:
         summary = TokenUsageSummary()
         assert summary.total_prompt_tokens == 0
         assert summary.total_completion_tokens == 0
+        assert summary.total_cost_micros == 0
+        assert summary.cost_unknown_calls == 0
         assert summary.total_calls == 0
         assert summary.by_model == {}
         assert summary.by_date == {}
@@ -858,6 +866,8 @@ class TestTokenUsageManagerCore:
                 "context_window_tokens": 0,
                 "context_observed_calls": 0,
                 "near_compaction_calls": 0,
+                "cost_micros": 0,
+                "cost_unknown_calls": 1,
                 "context_usage_ratio": None,
                 "max_context_usage_ratio": None,
                 "call_count": 1,
@@ -879,6 +889,8 @@ class TestTokenUsageManagerCore:
                 "context_window_tokens": 0,
                 "context_observed_calls": 0,
                 "near_compaction_calls": 0,
+                "cost_micros": 0,
+                "cost_unknown_calls": 2,
                 "context_usage_ratio": None,
                 "max_context_usage_ratio": None,
                 "call_count": 2,
@@ -911,6 +923,8 @@ class TestTokenUsageManagerCore:
                 "context_window_tokens": 0,
                 "context_observed_calls": 0,
                 "near_compaction_calls": 0,
+                "cost_micros": 0,
+                "cost_unknown_calls": 1,
                 "context_usage_ratio": None,
                 "max_context_usage_ratio": None,
                 "call_count": 1,

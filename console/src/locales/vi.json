@@ -1683,6 +1683,8 @@
     "contextUsage": "Mức dùng ngữ cảnh có trọng số",
     "maxContextUsage": "Mức dùng ngữ cảnh cao nhất",
     "nearCompaction": "Lượt gọi gần ngưỡng nén",
+    "reportedCost": "Chi phí đã báo cáo (đơn vị vi mô)",
+    "costUnknown": "Lượt gọi chưa rõ chi phí",
     "noData": "Chưa có dữ liệu",
     "period": "Khoảng thời gian"
   },

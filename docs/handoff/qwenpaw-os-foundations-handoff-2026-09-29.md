@@ -940,6 +940,14 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   route 优先读取 `ModelCallAttempt`，避免 Wrapper 标识与权威 Attempt 分叉。
   Model Call/Turn Usage 后端定点回归 `132 passed`，Chat usage 前端定点回归
   `68 passed`，相关文件 pre-commit 全部通过；未执行全仓测试。
+- Usage Summary 现保留 Model Call 已有但此前被 API 丢弃的成本事实：所有统计维度
+  同时返回已报告的 `cost_micros` 与 `cost_unknown_calls`。legacy 调用按未知处理，
+  pre-cutover shadow 只补事实字段而不重复累计；Console 以微单位显示已知成本并单列
+  未知价格调用，未增加竞争性计费 Store，也不假定币种。
+  Usage/Projection/API 后端定点回归 `66 passed`，Console/API 前端定点回归
+  `23 passed`，改动文件 ESLint/Prettier 通过。全量 TypeScript typecheck 仍被既有的
+  ES lib 目标、Chat/Task/Harness 测试 fixture 与插件 enum 错误阻断；本次发现的
+  `by_date_model` 过宽类型已收紧，Token Usage 不再保留该错误。
 
 ### 2026-10-09 Token Usage 事实源收敛
 

@@ -173,6 +173,8 @@ function TokenUsagePage() {
       context_usage_ratio: stats.context_usage_ratio,
       max_context_usage_ratio: stats.max_context_usage_ratio,
       near_compaction_calls: stats.near_compaction_calls,
+      cost_micros: stats.cost_micros ?? 0,
+      cost_unknown_calls: stats.cost_unknown_calls ?? 0,
       call_count: stats.call_count,
     }));
   }, [aggregatedData?.by_model]);
@@ -203,6 +205,8 @@ function TokenUsagePage() {
           context_usage_ratio: stats.context_usage_ratio,
           max_context_usage_ratio: stats.max_context_usage_ratio,
           near_compaction_calls: stats.near_compaction_calls,
+          cost_micros: stats.cost_micros ?? 0,
+          cost_unknown_calls: stats.cost_unknown_calls ?? 0,
           call_count: stats.call_count,
         };
       })
@@ -236,6 +240,8 @@ function TokenUsagePage() {
           context_usage_ratio: stats.context_usage_ratio,
           max_context_usage_ratio: stats.max_context_usage_ratio,
           near_compaction_calls: stats.near_compaction_calls,
+          cost_micros: stats.cost_micros ?? 0,
+          cost_unknown_calls: stats.cost_unknown_calls ?? 0,
           call_count: stats.call_count,
         };
       })
@@ -270,6 +276,8 @@ function TokenUsagePage() {
           context_usage_ratio: stats.context_usage_ratio,
           max_context_usage_ratio: stats.max_context_usage_ratio,
           near_compaction_calls: stats.near_compaction_calls,
+          cost_micros: stats.cost_micros ?? 0,
+          cost_unknown_calls: stats.cost_unknown_calls ?? 0,
           call_count: stats.call_count,
         };
       })
@@ -335,6 +343,8 @@ function TokenUsagePage() {
                 contextUsageRatio={aggregatedData.context_usage_ratio}
                 maxContextUsageRatio={aggregatedData.max_context_usage_ratio}
                 nearCompactionCalls={aggregatedData.near_compaction_calls}
+                totalCostMicros={aggregatedData.total_cost_micros ?? 0}
+                costUnknownCalls={aggregatedData.cost_unknown_calls ?? 0}
               />
             )}
 

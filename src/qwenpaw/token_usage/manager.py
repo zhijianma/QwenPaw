@@ -47,6 +47,8 @@ class TokenUsageStats(BaseModel):
     context_window_tokens: int = Field(0, ge=0)
     context_observed_calls: int = Field(0, ge=0)
     near_compaction_calls: int = Field(0, ge=0)
+    cost_micros: int = Field(0, ge=0)
+    cost_unknown_calls: int = Field(0, ge=0)
     context_usage_ratio: Optional[float] = Field(None, ge=0)
     max_context_usage_ratio: Optional[float] = Field(None, ge=0)
     call_count: int = Field(0, ge=0)
@@ -62,6 +64,8 @@ class TokenUsageRecord(TokenUsageStats):
     date: str = Field(..., description="Date (YYYY-MM-DD)")
     provider_id: str = Field("", description="Provider ID")
     model: str = Field(..., description="Model name")
+    cost_micros: int = Field(..., ge=0)
+    cost_unknown_calls: int = Field(..., ge=0)
     agent_id: Optional[str] = Field(
         None,
         description=(
@@ -124,6 +128,8 @@ class TokenUsageSummary(BaseModel):
     total_context_window_tokens: int = Field(0, ge=0)
     context_observed_calls: int = Field(0, ge=0)
     near_compaction_calls: int = Field(0, ge=0)
+    total_cost_micros: int = Field(0, ge=0)
+    cost_unknown_calls: int = Field(0, ge=0)
     context_usage_ratio: Optional[float] = Field(None, ge=0)
     max_context_usage_ratio: Optional[float] = Field(None, ge=0)
     total_calls: int = Field(0, ge=0)
@@ -176,6 +182,8 @@ def _new_stats(**identity: str | None) -> dict:
         "context_window_tokens": 0,
         "context_observed_calls": 0,
         "near_compaction_calls": 0,
+        "cost_micros": 0,
+        "cost_unknown_calls": 0,
         "context_usage_ratio": None,
         "max_context_usage_ratio": None,
         "call_count": 0,
@@ -194,6 +202,8 @@ def _add_stats(target: dict, record: TokenUsageRecord) -> None:
     target["context_window_tokens"] += record.context_window_tokens
     target["context_observed_calls"] += record.context_observed_calls
     target["near_compaction_calls"] += record.near_compaction_calls
+    target["cost_micros"] += record.cost_micros
+    target["cost_unknown_calls"] += record.cost_unknown_calls
     target["context_usage_ratio"] = (
         target["context_input_tokens"] / target["context_window_tokens"] * 100
         if target["context_window_tokens"] > 0
@@ -249,11 +259,11 @@ def _record_identity(record: TokenUsageRecord) -> tuple[str | None, ...]:
     )
 
 
-def _overlay_context_stats(
+def _overlay_fact_stats(
     legacy: TokenUsageRecord,
     shadow: TokenUsageRecord,
 ) -> TokenUsageRecord:
-    """Add fact-derived context fields without duplicating token totals."""
+    """Add fact-only fields without duplicating compatibility totals."""
     return legacy.model_copy(
         update={
             "context_input_tokens": shadow.context_input_tokens,
@@ -262,6 +272,8 @@ def _overlay_context_stats(
             "near_compaction_calls": shadow.near_compaction_calls,
             "context_usage_ratio": shadow.context_usage_ratio,
             "max_context_usage_ratio": shadow.max_context_usage_ratio,
+            "cost_micros": shadow.cost_micros,
+            "cost_unknown_calls": shadow.cost_unknown_calls,
         },
     )
 
@@ -475,6 +487,8 @@ class TokenUsageManager:
                             "cache_observed_calls",
                             0,
                         ),
+                        cost_micros=0,
+                        cost_unknown_calls=entry.get("call_count", 0),
                         call_count=entry.get("call_count", 0),
                         agent_id=rec_agent,
                         conversation_id=rec_conversation,
@@ -612,6 +626,8 @@ class TokenUsageManager:
             total_context_window_tokens=total_stats["context_window_tokens"],
             context_observed_calls=total_stats["context_observed_calls"],
             near_compaction_calls=total_stats["near_compaction_calls"],
+            total_cost_micros=total_stats["cost_micros"],
+            cost_unknown_calls=total_stats["cost_unknown_calls"],
             context_usage_ratio=total_stats["context_usage_ratio"],
             max_context_usage_ratio=total_stats["max_context_usage_ratio"],
             total_calls=total_stats["call_count"],
@@ -728,7 +744,7 @@ class TokenUsageManager:
                 continue
             shadow = shadow_by_identity.get(_record_identity(record))
             compatible.append(
-                _overlay_context_stats(record, shadow)
+                _overlay_fact_stats(record, shadow)
                 if before_cutover and shadow is not None
                 else record,
             )

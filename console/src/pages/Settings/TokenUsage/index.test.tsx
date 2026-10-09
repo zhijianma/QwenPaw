@@ -163,6 +163,8 @@ function makeRecord(overrides: Record<string, unknown> = {}) {
     context_window_tokens: 200,
     context_observed_calls: 1,
     near_compaction_calls: 0,
+    cost_micros: 125,
+    cost_unknown_calls: 1,
     context_usage_ratio: 50,
     max_context_usage_ratio: 50,
     call_count: 3,
@@ -192,6 +194,8 @@ function makeSummary(records: ReturnType<typeof makeRecord>[]) {
         acc.context_observed_calls + record.context_observed_calls,
       near_compaction_calls:
         acc.near_compaction_calls + record.near_compaction_calls,
+      cost_micros: acc.cost_micros + record.cost_micros,
+      cost_unknown_calls: acc.cost_unknown_calls + record.cost_unknown_calls,
       call_count: acc.call_count + record.call_count,
     }),
     {
@@ -205,6 +209,8 @@ function makeSummary(records: ReturnType<typeof makeRecord>[]) {
       context_window_tokens: 0,
       context_observed_calls: 0,
       near_compaction_calls: 0,
+      cost_micros: 0,
+      cost_unknown_calls: 0,
       call_count: 0,
     },
   );
@@ -219,6 +225,8 @@ function makeSummary(records: ReturnType<typeof makeRecord>[]) {
     context_window_tokens: record.context_window_tokens,
     context_observed_calls: record.context_observed_calls,
     near_compaction_calls: record.near_compaction_calls,
+    cost_micros: record.cost_micros,
+    cost_unknown_calls: record.cost_unknown_calls,
     context_usage_ratio: record.context_usage_ratio,
     max_context_usage_ratio: record.max_context_usage_ratio,
     call_count: record.call_count,
@@ -235,6 +243,8 @@ function makeSummary(records: ReturnType<typeof makeRecord>[]) {
     total_context_window_tokens: totals.context_window_tokens,
     context_observed_calls: totals.context_observed_calls,
     near_compaction_calls: totals.near_compaction_calls,
+    total_cost_micros: totals.cost_micros,
+    cost_unknown_calls: totals.cost_unknown_calls,
     context_usage_ratio:
       totals.context_window_tokens > 0
         ? (totals.context_input_tokens / totals.context_window_tokens) * 100
@@ -328,6 +338,8 @@ describe("TokenUsagePage", () => {
       contextUsageRatio: 50,
       maxContextUsageRatio: 50,
       nearCompactionCalls: 0,
+      totalCostMicros: 125,
+      costUnknownCalls: 1,
     });
     expect(screen.getByTestId("data-tables")).toBeInTheDocument();
     expect(screen.getByTestId("model-trend-chart")).toBeInTheDocument();
@@ -354,7 +366,11 @@ describe("TokenUsagePage", () => {
     // The named agent resolves through the store; the null agent id is
     // labelled unattributed; rows sort by total tokens descending.
     expect(capturedProps.tables.byAgentData).toEqual([
-      expect.objectContaining({ agent: "Agent A" }),
+      expect.objectContaining({
+        agent: "Agent A",
+        cost_micros: 125,
+        cost_unknown_calls: 1,
+      }),
       expect.objectContaining({ agent: "tokenUsage.unattributed" }),
     ]);
     expect(capturedProps.tables.byChatData).toEqual([

@@ -1666,6 +1666,8 @@
     "contextUsage": "加重コンテキスト使用率",
     "maxContextUsage": "最大コンテキスト使用率",
     "nearCompaction": "圧縮直前の呼び出し",
+    "reportedCost": "報告済み費用（マイクロ単位）",
+    "costUnknown": "費用不明の呼び出し",
     "byModel": "モデル別",
     "byDate": "日付別",
     "model": "モデル",

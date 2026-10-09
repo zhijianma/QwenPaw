@@ -361,6 +361,14 @@ class LiteUsageProjection:
                     (current.near_compaction_calls if current else 0)
                     + near_compaction
                 ),
+                cost_micros=(
+                    (current.cost_micros if current else 0)
+                    + int(row["cost_micros"] or 0)
+                ),
+                cost_unknown_calls=(
+                    (current.cost_unknown_calls if current else 0)
+                    + int(row["cost_unknown"])
+                ),
                 context_usage_ratio=(
                     total_context_input / total_context_window * 100
                     if total_context_window > 0

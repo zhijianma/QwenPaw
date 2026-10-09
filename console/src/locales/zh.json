@@ -2051,6 +2051,8 @@
     "contextUsage": "加权上下文占用",
     "maxContextUsage": "峰值上下文占用",
     "nearCompaction": "临近压缩调用",
+    "reportedCost": "已报告费用（微单位）",
+    "costUnknown": "费用未知调用",
     "byModel": "按模型",
     "byDate": "按日期",
     "model": "模型",

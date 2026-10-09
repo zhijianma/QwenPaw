@@ -2379,6 +2379,8 @@
     "contextUsage": "Penggunaan Konteks Tertimbang",
     "maxContextUsage": "Puncak Penggunaan Konteks",
     "nearCompaction": "Panggilan Mendekati Kompaksi",
+    "reportedCost": "Biaya Dilaporkan (unit mikro)",
+    "costUnknown": "Panggilan dengan Biaya Tidak Diketahui",
     "byModel": "Berdasarkan Model",
     "byDate": "Berdasarkan Tanggal",
     "model": "Model",

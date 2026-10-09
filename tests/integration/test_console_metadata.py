@@ -74,9 +74,13 @@ def test_api_token_usage_summary_and_details_contract(app_server) -> None:
     assert isinstance(body.get("total_prompt_tokens"), int)
     assert isinstance(body.get("total_completion_tokens"), int)
     assert isinstance(body.get("total_calls"), int)
+    assert isinstance(body.get("total_cost_micros"), int)
+    assert isinstance(body.get("cost_unknown_calls"), int)
     assert body["total_prompt_tokens"] >= 0
     assert body["total_completion_tokens"] >= 0
     assert body["total_calls"] >= 0
+    assert body["total_cost_micros"] >= 0
+    assert body["cost_unknown_calls"] >= 0
     assert isinstance(body.get("by_date"), dict)
 
     details = app_server.api_request("GET", "/api/token-usage/details")
@@ -89,6 +93,8 @@ def test_api_token_usage_summary_and_details_contract(app_server) -> None:
         assert isinstance(row.get("prompt_tokens"), int)
         assert isinstance(row.get("completion_tokens"), int)
         assert isinstance(row.get("call_count"), int)
+        assert isinstance(row.get("cost_micros"), int)
+        assert isinstance(row.get("cost_unknown_calls"), int)
 
 
 @pytest.mark.integration

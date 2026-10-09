@@ -61,6 +61,12 @@ All scopes are filters over the same facts:
 - turn: `agent_id + ChatSpec.id + invocation_id`;
 - date/model: UTC `completed_at` plus actual Provider/Model from the Attempt.
 
+Every scope exposes cost evidence alongside tokens. `cost_micros` sums only
+Provider-reported monetary micro-units; `cost_unknown_calls` counts calls whose
+price is unavailable. The two fields remain separate, so a partially known
+aggregate is never presented as a complete bill or as zero-cost usage. The
+contract does not infer a currency or convert Provider prices.
+
 Retry and fallback are separate attempts and separate calls. Multiple calls in
 one tool loop share the Invocation turn. Composite public keys remain
 collision-safe JSON tuples until the API moves to structured rows.
@@ -128,5 +134,6 @@ Agent, Chat, or Turn ownership remain explicitly unattributed.
 - Historical Model Call files without Agent/cache fields remain readable.
 - Summary values remain stable across restart and projection rebuild.
 - Global, Agent, Chat and Turn totals reconcile to the same attempt set.
+- Known cost and unknown-cost call counts reconcile across every scope.
 - A multi-call Turn preserves per-route token totals after message refresh.
 - Task pages and Task-specific frontend work remain out of scope.

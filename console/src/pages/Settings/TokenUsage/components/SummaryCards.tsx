@@ -13,6 +13,8 @@ interface SummaryCardsProps {
   contextUsageRatio: number | null;
   maxContextUsageRatio: number | null;
   nearCompactionCalls: number;
+  totalCostMicros: number;
+  costUnknownCalls: number;
 }
 
 export function SummaryCards({
@@ -24,6 +26,8 @@ export function SummaryCards({
   contextUsageRatio,
   maxContextUsageRatio,
   nearCompactionCalls,
+  totalCostMicros,
+  costUnknownCalls,
 }: SummaryCardsProps) {
   const { t } = useTranslation();
   const hitRate = cacheHitRate(
@@ -56,6 +60,18 @@ export function SummaryCards({
           {formatCompact(nearCompactionCalls)}
         </div>
         <div className={styles.cardLabel}>{t("tokenUsage.nearCompaction")}</div>
+      </Card>
+      <Card className={styles.card}>
+        <div className={styles.cardValue}>
+          {formatCompact(totalCostMicros)} µ
+        </div>
+        <div className={styles.cardLabel}>{t("tokenUsage.reportedCost")}</div>
+      </Card>
+      <Card className={styles.card}>
+        <div className={styles.cardValue}>
+          {formatCompact(costUnknownCalls)}
+        </div>
+        <div className={styles.cardLabel}>{t("tokenUsage.costUnknown")}</div>
       </Card>
       <Card className={styles.card}>
         <div className={styles.cardValue}>

@@ -1922,6 +1922,8 @@
     "contextUsage": "Uso ponderado de contexto",
     "maxContextUsage": "Pico de uso de contexto",
     "nearCompaction": "Chamadas perto da compactação",
+    "reportedCost": "Custo informado (microunidades)",
+    "costUnknown": "Chamadas com custo desconhecido",
     "byModel": "By Modelo",
     "byDate": "By Date",
     "provider": "Provedor",
