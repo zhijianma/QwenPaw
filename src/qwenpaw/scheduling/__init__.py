@@ -13,8 +13,16 @@ from .dispatch import (
 )
 from .triggering import (
     first_schedule_fire_at,
+    next_schedule_fire_after,
     next_schedule_fire_at,
     schedule_definition_hash,
+)
+from .trigger_worker import (
+    DurableScheduleTriggerWorker,
+    ScheduleOccurrenceHandler,
+    ScheduleTriggerDisposition,
+    ScheduleTriggerOutcome,
+    ScheduleTriggerTickReport,
 )
 
 __all__ = [
@@ -27,7 +35,13 @@ __all__ = [
     "ScheduleDispatchResult",
     "ScheduledTaskDispatcher",
     "SchedulerCapabilityUnavailableError",
+    "DurableScheduleTriggerWorker",
+    "ScheduleOccurrenceHandler",
+    "ScheduleTriggerDisposition",
+    "ScheduleTriggerOutcome",
+    "ScheduleTriggerTickReport",
     "first_schedule_fire_at",
+    "next_schedule_fire_after",
     "next_schedule_fire_at",
     "schedule_definition_hash",
 ]

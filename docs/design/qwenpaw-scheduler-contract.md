@@ -100,7 +100,8 @@ Fire 显式包含 `agent_id`。一次计划时间只产生一个稳定 `idempote
 - Definition 内容改变时提升 revision 并按新 Trigger 重建进度。
 - Worker 只有在处理一个 occurrence 后才能 CAS advance；崩溃后再次读取同一 due
   occurrence，并依靠 Schedule Fire 幂等键回放，不会丢任务。
-- 删除 Cursor 不删除 Definition 之外的历史 Fire/Lease。
+- 删除 Cursor 不删除 Definition 之外的历史 Fire/Lease；Worker 清理孤儿 Cursor
+  也必须携带 definition hash + revision，避免与 catalog 重建发生删除竞争。
 
 cron/once/interval 的 recurrence evaluator 是纯函数。cron 从当前时间计算下一次；
 once 保留已经过去的时间点，让 Worker 根据 misfire grace 裁决；interval 的首次进度
@@ -126,7 +127,12 @@ Cursor Store 是 Host-only Port，不从 Plugin SDK 导出；Scheduler Provider 
    仍属于具名兼容路径。
 6. [已完成] Heartbeat 使用同一 Port；`DeliveryPolicy.suppress_exact_text` 将
    `HEARTBEAT_OK` 表达为“保留 Task 事实但不产生 Delivery/Inbox”。
-7. 旧 text-only Channel 定时发送先保留兼容 Adapter；迁移完成后再设弃用门槛。
+7. [已完成：基础设施] Host-owned durable trigger worker 按 Agent 有界读取 due
+   Cursor，执行前裁决 definition 变更与 misfire，只有处理成功或明确跳过后才 CAS
+   advance；处理异常保持同一 occurrence 待重试，并发 Worker 由下游 Fire Lease
+   保证副作用幂等、由 Cursor CAS 选出唯一进度赢家。该 Worker 尚未接入
+   `CronManager` 的生产唤醒循环。
+8. 旧 text-only Channel 定时发送先保留兼容 Adapter；迁移完成后再设弃用门槛。
 
 HTTP Task、Cron 与 Heartbeat 在同一进程中按 Capability Registry 复用同一个
 `TaskApplicationHost`。因此三类入口共享 Workspace TaskService、Orchestrator 和
@@ -165,8 +171,9 @@ Cron 的 JSON 声明、APScheduler 唤醒器与 Scheduler catalog 现在由
 `CronManager` 作为一个迁移事务协调：新声明只有在 catalog 同步成功后才提交；更新
 失败恢复旧声明；删除底层仓库拒绝时恢复 catalog；启动恢复失败会把 job 持久化为
 disabled 并移除 APScheduler job。切换到 legacy path 时会主动删除确定性的 Kernel
-schedule definition，但不会删除既有 Fire/Lease 历史。当前 APScheduler 仍负责计算
-下一个到期时间；在 durable trigger worker 接管前，不能把父迁移项标为完成。
+schedule definition，但不会删除既有 Fire/Lease 历史。durable trigger worker 核心已
+实现，但 `CronManager` 尚未用它替换 APScheduler 的到期唤醒，因此不能把父迁移项
+标为完成。
 
 ## 5. 验收门禁
 

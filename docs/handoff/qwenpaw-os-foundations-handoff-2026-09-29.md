@@ -1127,9 +1127,26 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - 新增纯 cron/once/interval evaluator。once 的过期点保留给后续 misfire policy；
   interval 初次注册从当前时间对齐下一周期，不会因旧 start time 补跑全部历史。
   Cron durable catalog 同步现在同时写 Cursor，降级/删除同时移除 Cursor。
-- Cursor 尚未被 trigger worker 消费，因此 APScheduler 仍负责唤醒，父迁移项保持
-  未完成。本切片 73 项 Kernel/SQLite/evaluator/Cron 定点测试通过；Task 页面未改，
-  未运行全仓测试。
+- Cursor 基础设施之后已由下节 durable trigger worker 消费；`CronManager` 生产循环
+  尚未切换，因此 APScheduler 仍负责实际唤醒，父迁移项保持未完成。本切片 73 项
+  Kernel/SQLite/evaluator/Cron 定点测试通过；Task 页面未改，未运行全仓测试。
+
+### 2026-10-09 Durable Schedule Trigger Worker
+
+- 新增 framework-neutral Worker：每次按 Agent 有界读取 due Cursor，以 catalog
+  Definition hash 做迁移栅栏，处理成功或明确 misfire 后才推进 durable progress；
+  handler 异常保留同一 occurrence，等待下一 tick 重试。
+- misfire 不逐项补跑历史，而是记录当前 due occurrence 已处理并跳到严格晚于当前时间
+  的第一个周期。Worker 发现一个正常但已积压多个周期的 occurrence 时同样 coalesce，
+  避免恢复风暴。
+- 并发 Worker 可以同时到达幂等 handler，但最终由 Fire Lease 防止重复 Task、副作用，
+  Cursor revision CAS 只允许一个进度赢家；孤儿 Cursor 删除也携带 definition hash 与
+  revision，目录重建竞争会返回 `race_lost` 而非误删新进度。
+- 核心 Worker/Store/evaluator 共 34 项定点测试通过；扩大到 scheduling、Cron 应用层、
+  portability 与 Kernel 合同后 238 项通过。所改文件 mypy、Black、flake8、pylint
+  全部通过。未运行全仓测试，Task 页面未修改。下一步是把 Worker 接入
+  `CronManager` 的生命周期轮询，并对失败 Task 的“已记录终态/可重试”语义做显式
+  适配；完成前 APScheduler 不能移除。
 
 ## 5. 钉钉文档归档清单
 

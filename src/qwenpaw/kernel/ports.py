@@ -402,8 +402,10 @@ class ScheduleTriggerCursorStore(Protocol):
         *,
         agent_id: str,
         schedule_id: str,
+        expected_definition_hash: str | None = None,
+        expected_revision: int | None = None,
     ) -> bool:
-        """Remove active progress without deleting Fire history."""
+        """Remove progress, optionally only when its identity still matches."""
 
 
 @runtime_checkable

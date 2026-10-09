@@ -818,8 +818,13 @@ Invocation，新 Invocation 自动使用新 generation。
     保存 definition hash、next/last occurrence 与 revision CAS，支持 due 有界查询、
     定义变更 reset、删除和跨 Agent 隔离。cron/once/interval 使用无状态 evaluator；
     once 保留过期点交给 misfire 判定，interval 首次注册对齐到不早于当前时间的周期，
-    避免迁移时补跑全部历史。Cursor 已随 durable catalog 同步，但消费它的 trigger
-    worker 尚未接入，因此 APScheduler 仍未退出。
+    避免迁移时补跑全部历史。Cursor 已随 durable catalog 同步。
+  - [x] durable trigger worker 基础设施已实现：按 Agent 有界消费 due Cursor；
+    definition hash 变化先 reconcile；超过 misfire grace 跳到首个未来周期；handler
+    失败不推进；处理成功才以 revision CAS 提交。孤儿清理同样使用 hash + revision
+    条件删除；并发 Worker 只有一个进度赢家，业务副作用继续由 Fire Lease 幂等保护。
+    Worker 尚未接入 `CronManager` 生产循环，因此 APScheduler 仍未退出，父项保持
+    未完成。
   - [x] APScheduler Trigger Adapter 为已迁移 Cron 与 Heartbeat 保存真实
     `scheduled_for` 并生成稳定 Fire 幂等键；手动触发使用独立操作键，不与定时槽
     竞争。尚未迁移的 Cron 类型继续走显式兼容路径。

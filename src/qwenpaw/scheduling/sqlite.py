@@ -252,13 +252,21 @@ class SQLiteSchedulerStore:
         *,
         agent_id: str,
         schedule_id: str,
+        expected_definition_hash: str | None = None,
+        expected_revision: int | None = None,
     ) -> bool:
-        """Delete active progress without touching immutable Fire history."""
+        """Delete active progress, optionally guarded by cursor identity."""
+        if (expected_definition_hash is None) != (expected_revision is None):
+            raise ValueError(
+                "schedule cursor removal guard requires hash and revision",
+            )
         await self._prepare()
         return await asyncio.to_thread(
             self._remove_cursor_sync,
             agent_id,
             schedule_id,
+            expected_definition_hash,
+            expected_revision,
         )
 
     async def _prepare(self) -> None:
@@ -881,15 +889,32 @@ class SQLiteSchedulerStore:
             connection.commit()
         return updated
 
-    def _remove_cursor_sync(self, agent_id: str, schedule_id: str) -> bool:
+    def _remove_cursor_sync(
+        self,
+        agent_id: str,
+        schedule_id: str,
+        expected_definition_hash: str | None,
+        expected_revision: int | None,
+    ) -> bool:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             cursor = connection.execute(
                 """
                 DELETE FROM schedule_trigger_cursors
                 WHERE agent_id = ? AND schedule_id = ?
+                  AND (
+                    ? IS NULL OR (
+                        definition_hash = ? AND revision = ?
+                    )
+                  )
                 """,
-                (agent_id, schedule_id),
+                (
+                    agent_id,
+                    schedule_id,
+                    expected_definition_hash,
+                    expected_definition_hash,
+                    expected_revision,
+                ),
             )
             connection.commit()
         return cursor.rowcount > 0

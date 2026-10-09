@@ -7,6 +7,7 @@ from qwenpaw.kernel import ScheduleDefinition, ScheduleTrigger
 from qwenpaw.plugins import sdk
 from qwenpaw.scheduling import (
     first_schedule_fire_at,
+    next_schedule_fire_after,
     next_schedule_fire_at,
     schedule_definition_hash,
 )
@@ -107,6 +108,34 @@ def test_interval_respects_start_and_end_bounds() -> None:
         _definition(unbounded),
         now=start + timedelta(hours=2, minutes=10),
     ) == start + timedelta(hours=3)
+    assert next_schedule_fire_after(
+        unbounded,
+        previous=start,
+        not_before=start + timedelta(hours=2),
+    ) == start + timedelta(hours=3)
+
+
+def test_next_occurrence_after_boundary_is_strict_and_respects_end() -> None:
+    start = datetime(2026, 10, 10, 9, tzinfo=timezone.utc)
+    bounded = ScheduleTrigger(
+        kind="interval",
+        interval_seconds=3600,
+        end_at=start + timedelta(hours=2),
+    )
+
+    assert next_schedule_fire_after(
+        bounded,
+        previous=start,
+        not_before=start + timedelta(minutes=30),
+    ) == start + timedelta(hours=1)
+    assert (
+        next_schedule_fire_after(
+            bounded,
+            previous=start,
+            not_before=start + timedelta(hours=2),
+        )
+        is None
+    )
 
 
 def test_cron_evaluation_is_timezone_aware_and_stateless() -> None:
@@ -122,3 +151,8 @@ def test_cron_evaluation_is_timezone_aware_and_stateless() -> None:
     assert next_schedule_fire_at(trigger, previous=first) == (
         first + timedelta(days=1)
     )
+    assert next_schedule_fire_after(
+        trigger,
+        previous=first,
+        not_before=first + timedelta(days=2),
+    ) == first + timedelta(days=3)

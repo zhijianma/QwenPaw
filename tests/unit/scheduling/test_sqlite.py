@@ -510,8 +510,43 @@ async def test_definition_change_resets_cursor_without_cross_agent_leak(
     assert await store.remove_cursor(
         agent_id="agent-a",
         schedule_id="reports.daily",
+        expected_definition_hash="sha256:changed",
+        expected_revision=changed.revision,
     )
     assert not await store.remove_cursor(
         agent_id="agent-a",
         schedule_id="reports.daily",
     )
+
+
+@pytest.mark.asyncio
+async def test_cursor_guarded_remove_rejects_stale_identity(tmp_path) -> None:
+    store = SQLiteSchedulerStore(tmp_path / "scheduler.db")
+    cursor = await store.reconcile_cursor(
+        ScheduleTriggerCursor(
+            agent_id="agent-a",
+            schedule_id="reports.daily",
+            definition_hash="sha256:current",
+            next_fire_at=_now(),
+        ),
+    )
+
+    assert not await store.remove_cursor(
+        agent_id=cursor.agent_id,
+        schedule_id=cursor.schedule_id,
+        expected_definition_hash="sha256:stale",
+        expected_revision=cursor.revision,
+    )
+    assert (
+        await store.get_cursor(
+            agent_id=cursor.agent_id,
+            schedule_id=cursor.schedule_id,
+        )
+        == cursor
+    )
+    with pytest.raises(ValueError, match="hash and revision"):
+        await store.remove_cursor(
+            agent_id=cursor.agent_id,
+            schedule_id=cursor.schedule_id,
+            expected_revision=cursor.revision,
+        )

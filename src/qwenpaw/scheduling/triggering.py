@@ -90,8 +90,43 @@ def next_schedule_fire_at(
     return _utc(candidate) if candidate is not None else None
 
 
+def next_schedule_fire_after(
+    trigger: ScheduleTrigger,
+    *,
+    previous: datetime,
+    not_before: datetime,
+) -> datetime | None:
+    """Calculate the first occurrence strictly after one time boundary."""
+    committed = _utc(previous)
+    boundary = _utc(not_before)
+    if trigger.kind == "once":
+        return None
+    if trigger.kind == "interval":
+        assert trigger.interval_seconds is not None
+        candidate = committed + timedelta(seconds=trigger.interval_seconds)
+        if candidate <= boundary:
+            elapsed = (boundary - committed).total_seconds()
+            periods = int(elapsed // trigger.interval_seconds) + 1
+            candidate = committed + timedelta(
+                seconds=periods * trigger.interval_seconds,
+            )
+        if trigger.end_at is not None and candidate > _utc(trigger.end_at):
+            return None
+        return candidate
+    assert trigger.cron is not None
+    cron = CronTrigger.from_crontab(
+        trigger.cron,
+        timezone=trigger.timezone,
+    )
+    candidate = cron.get_next_fire_time(committed, boundary)
+    while candidate is not None and _utc(candidate) <= boundary:
+        candidate = cron.get_next_fire_time(candidate, candidate)
+    return _utc(candidate) if candidate is not None else None
+
+
 __all__ = [
     "first_schedule_fire_at",
+    "next_schedule_fire_after",
     "next_schedule_fire_at",
     "schedule_definition_hash",
 ]
