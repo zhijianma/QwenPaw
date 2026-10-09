@@ -3,6 +3,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -463,6 +464,60 @@ async def test_execution_contract_duration_budget_fails_the_run(
     assert events[-1].payload == {
         "error_summary": "TaskExecutionBudgetExceededError",
     }
+
+
+@pytest.mark.asyncio
+async def test_expired_durable_duration_budget_never_calls_runner(
+    tmp_path: Path,
+) -> None:
+    started_at = datetime(2026, 10, 9, 8, 0, tzinfo=timezone.utc)
+    called = False
+
+    async def should_not_start(
+        _order: TaskOrder,
+        _run: Run,
+    ) -> AsyncIterator[RunnerSignal]:
+        nonlocal called
+        called = True
+        yield RunnerSignal(event_type="runner.unreachable")
+
+    contract = ExecutionContract(
+        goal="Respect the durable deadline",
+        budget=ExecutionBudget(max_duration_seconds=10),
+    )
+    service = TaskService(
+        store=SQLiteExecutionLedger(tmp_path / "ledger.db"),
+        registry_generation=1,
+        clock=lambda: started_at,
+    )
+    task = await service.create_task(
+        objective=contract.goal,
+        agent_id="default",
+        execution_contract=contract,
+    )
+    await service.plan_task(
+        task.task_id,
+        steps=(PlanStep(title="Run", objective=task.objective),),
+    )
+
+    with pytest.raises(TaskExecutionBudgetExceededError):
+        await TaskExecutionCoordinator(
+            service,
+            GenerationRegistry(),
+            clock=lambda: started_at + timedelta(seconds=11),
+        ).execute(
+            TaskOrder(
+                task_id=task.task_id,
+                objective=task.objective,
+                execution_contract=contract,
+            ),
+            LocalAgentRunner("runner.must-not-start", should_not_start),
+        )
+
+    [run] = await service.list_runs(task.task_id)
+    assert called is False
+    assert run.execution_deadline_at == started_at + timedelta(seconds=10)
+    assert run.status is RunStatus.FAILED
 
 
 @pytest.mark.asyncio

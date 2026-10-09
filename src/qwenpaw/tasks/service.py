@@ -8,7 +8,7 @@ import hashlib
 import json
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Protocol
 from uuid import UUID, uuid4
 
@@ -185,6 +185,31 @@ class TaskService:  # pylint: disable=too-many-public-methods
         if task is None:
             raise TaskNotFoundError(str(task_id))
         return task
+
+    @staticmethod
+    def _execution_deadline(
+        task: Task,
+        attempts: Sequence[Run],
+        started_at: datetime,
+    ) -> datetime | None:
+        """Return one durable duration deadline shared by every attempt."""
+        contract = task.execution_contract
+        if contract is None or contract.budget.max_duration_seconds is None:
+            return None
+        for attempt in reversed(attempts):
+            if attempt.execution_deadline_at is not None:
+                return attempt.execution_deadline_at
+        first_started_at = next(
+            (
+                attempt.started_at
+                for attempt in attempts
+                if attempt.started_at is not None
+            ),
+            started_at,
+        )
+        return first_started_at + timedelta(
+            seconds=contract.budget.max_duration_seconds,
+        )
 
     async def _active_run(self, task: Task) -> Run:
         if task.active_run_id is None:
@@ -770,6 +795,11 @@ class TaskService:  # pylint: disable=too-many-public-methods
         validate_task_transition(current.status, TaskStatus.RUNNING)
         attempts = await self._store.list_runs(task_id)
         now = self._clock()
+        execution_deadline_at = self._execution_deadline(
+            current,
+            attempts,
+            now,
+        )
         run_generation = registry_generation or self._registry_generation
         invocation_id = uuid4()
         run = Run(
@@ -782,6 +812,7 @@ class TaskService:  # pylint: disable=too-many-public-methods
             invocation_id=invocation_id,
             correlation_id=invocation_id,
             started_at=now,
+            execution_deadline_at=execution_deadline_at,
         )
         updated = Task.model_validate(
             {
@@ -804,6 +835,15 @@ class TaskService:  # pylint: disable=too-many-public-methods
                 "attempt": run.attempt,
                 "runner_id": runner_id,
                 "strategy_id": strategy_id,
+                **(
+                    {
+                        "execution_deadline_at": (
+                            execution_deadline_at.isoformat()
+                        ),
+                    }
+                    if execution_deadline_at is not None
+                    else {}
+                ),
             },
             registry_generation=run_generation,
         )
@@ -1658,6 +1698,11 @@ class TaskService:  # pylint: disable=too-many-public-methods
             )
         attempts = await self._store.list_runs(task_id)
         now = self._clock()
+        execution_deadline_at = self._execution_deadline(
+            current,
+            attempts,
+            now,
+        )
         invocation_id = uuid4()
         run = Run(
             task_id=task_id,
@@ -1670,6 +1715,7 @@ class TaskService:  # pylint: disable=too-many-public-methods
             correlation_id=(attempts[-1].correlation_id or uuid4()),
             checkpoint_id=checkpoint.checkpoint_id,
             started_at=now,
+            execution_deadline_at=execution_deadline_at,
             metadata={"resumed_from_run_id": str(checkpoint.run_id)},
         )
         sequence = await self._next_sequence(task_id)
@@ -1704,6 +1750,15 @@ class TaskService:  # pylint: disable=too-many-public-methods
                     "strategy_id": run.strategy_id,
                     "resumed_from_checkpoint_id": str(
                         checkpoint.checkpoint_id,
+                    ),
+                    **(
+                        {
+                            "execution_deadline_at": (
+                                execution_deadline_at.isoformat()
+                            ),
+                        }
+                        if execution_deadline_at is not None
+                        else {}
                     ),
                 },
                 registry_generation=run.registry_generation,

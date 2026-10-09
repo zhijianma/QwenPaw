@@ -934,6 +934,18 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - Model Error Policy、Model Call、Resource Wait、Runtime Save 与 Observation 相关
   `111 passed`；Task 页面没有改动。
 
+### 2026-10-09 Durable Execution Deadline
+
+- `ExecutionBudget.max_duration_seconds` 不再在每次 resume 时重新获得完整预算。首次
+  Run 固化 `execution_deadline_at`，后续 attempt 继承同一截止点；历史 Run 没有该
+  字段时，以首次 `started_at` 兼容补算，不需要数据迁移。
+- Coordinator 在每次进入执行边界时只读取一次 wall clock，把 deadline 剩余时间与
+  attempt/host timeout 取最严格值；实际活动计时交给 `asyncio.timeout` 的事件循环
+  monotonic clock。deadline 已过时会先失败化 Run，不调用 Runner。
+- service/runner/replay/runtime 共 53 项定点测试通过，覆盖跨 service 实例恢复沿用
+  deadline 和过期后不启动 Runner；未运行全仓测试。macOS、Linux、Windows 的
+  suspend/sleep、系统时间跳变与进程重启 E2E 仍未验证，迁移计划保留独立未完成项。
+
 ## 5. 钉钉文档归档清单
 
 ### 框架分析目录

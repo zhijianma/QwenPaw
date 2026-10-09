@@ -1437,6 +1437,7 @@ class Run(KernelModel):
     correlation_id: UUID | None = None
     checkpoint_id: UUID | None = None
     started_at: AwareDatetime | None = None
+    execution_deadline_at: AwareDatetime | None = None
     finished_at: AwareDatetime | None = None
     metadata: JsonObject = Field(default_factory=dict)
 

@@ -125,7 +125,9 @@ Task Strategy 来自同一 Task Run 固定的 generation，并以有界参数进
 - [x] 冻结自治级别、预算、重试、超时、退出条件、必需产物和验证策略的
   类型化契约；L3 缺少 Acceptance、Permission、四类资源上限、退出条件或验证
   策略时 fail closed，副作用自动重试策略不一致时拒绝创建。
-  - [x] `max_duration_seconds` 与 attempt/host timeout 取最严格边界，耗尽时以
+  - [x] `max_duration_seconds` 在首次 Run 固化为 durable wall-clock deadline，恢复
+    attempt 沿用同一截止点，不重置总预算；进入执行边界时换算为 monotonic timeout，
+    并与 attempt/host timeout 取最严格边界，耗尽时以
     `TaskExecutionBudgetExceededError` 失败化 Run。
   - [x] Token、工具调用和重试次数进入统一 Usage Meter；实际用量先入 Ledger，
     越界后以 `TaskExecutionBudgetExceededError` 失败化 Run，恢复 attempt 延续累计。
@@ -603,8 +605,13 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
 - [ ] 把 WebSocket 增量续传、sticky route 和 HTTP fallback 保持为 Provider
   Adapter capability；严格验证 response identity/prefix，失败时回退持久上下文重建，
   Kernel 不感知具体传输。
-- [ ] 使用 monotonic 计算活动耗时、wall-clock 保存 durable deadline，并分别在
-  macOS、Linux、Windows 验证 suspend/sleep 语义。
+- [ ] 完成跨平台长程时间语义：
+  - [x] 首次 Run 保存 wall-clock durable deadline，恢复/replay 继承同一 deadline；
+    每次进入执行边界只换算一次剩余时长，再由 `asyncio.timeout` 使用事件循环的
+    monotonic clock 计时。deadline 已过时不调用 Runner，历史无 deadline 的 Run 以
+    首次 `started_at` 兼容补算。
+  - [ ] 分别在 macOS、Linux、Windows 验证 suspend/sleep、系统时间跳变和进程重启
+    语义；本地单元测试不替代三平台真实运行验证。
 
 验收：浏览器断连不停止执行；连接前失败可安全重试；部分流断开不误判成功或盲目
 重放；Action 成功后不会重复执行；Interaction 回答或资源恢复在崩溃窗口内恰好创建

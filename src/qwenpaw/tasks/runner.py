@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator, Callable
+from datetime import datetime, timezone
 
 from pydantic import TypeAdapter
 
@@ -66,6 +67,11 @@ ContextualExecution = Callable[
 _MAX_STRATEGY_PARAMETERS_BYTES = 32 * 1024
 _STRATEGY_PARAMETERS_ADAPTER = TypeAdapter(JsonObject)
 _RUNNER_SLOTS = frozenset({"runner", "harness.runner"})
+
+
+def _utc_now() -> datetime:
+    """Return wall time only at a durable deadline conversion boundary."""
+    return datetime.now(timezone.utc)
 
 
 class TaskExecutionTimeoutError(TimeoutError):
@@ -182,33 +188,42 @@ class TaskExecutionCoordinator:
         self,
         service: TaskService,
         capability_resolver: CapabilityResolver,
+        *,
+        clock: Callable[[], datetime] = _utc_now,
     ) -> None:
         self._service = service
         self._capability_resolver = capability_resolver
+        self._clock = clock
 
     @staticmethod
     def _execution_timeout(
         order: TaskOrder,
+        run: Run,
         requested: float | None,
+        now: datetime,
     ) -> tuple[float | None, str | None]:
-        """Select the strictest host or Execution Contract deadline."""
+        """Convert durable wall deadline to one monotonic timeout span."""
         candidates: list[tuple[float, str]] = []
         if requested is not None:
             candidates.append((requested, "host"))
         contract = order.execution_contract
         if contract is not None:
-            max_duration = getattr(
-                contract.budget,
-                "max_duration_seconds",
-            )
-            if max_duration is not None:
-                candidates.append((max_duration, "budget"))
             attempt_timeout = getattr(
                 contract.timeout_policy,
                 "attempt_seconds",
             )
             if attempt_timeout is not None:
                 candidates.append((attempt_timeout, "attempt"))
+        if run.execution_deadline_at is not None:
+            remaining = max(
+                (run.execution_deadline_at - now).total_seconds(),
+                0.0,
+            )
+            candidates.append((remaining, "budget"))
+        elif contract is not None:
+            max_duration = contract.budget.max_duration_seconds
+            if max_duration is not None:
+                candidates.append((max_duration, "budget"))
         if not candidates:
             return None, None
         timeout = min(value for value, _ in candidates)
@@ -453,10 +468,16 @@ class TaskExecutionCoordinator:
         """Drive one already-started run and always release its lease."""
         effective_timeout, timeout_source = self._execution_timeout(
             order,
+            run,
             timeout_seconds,
+            self._clock(),
         )
         try:
             try:
+                if effective_timeout is not None and effective_timeout <= 0:
+                    raise TaskExecutionBudgetExceededError(
+                        "task execution exhausted its duration budget",
+                    )
                 if effective_timeout is None:
                     await self._record_signals(
                         order,

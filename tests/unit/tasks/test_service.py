@@ -2,6 +2,7 @@
 """Tests for the durable Lite task application service."""
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -13,6 +14,7 @@ from qwenpaw.kernel.models import (
     ApprovalContinuation,
     ApprovalDecisionValue,
     ApprovalStatus,
+    ExecutionBudget,
     ExecutionContract,
     PlanStep,
     RiskLevel,
@@ -231,6 +233,53 @@ async def test_resume_from_safe_checkpoint_creates_new_attempt(
         RunStatus.SUSPENDED,
         RunStatus.RUNNING,
     ]
+
+
+@pytest.mark.asyncio
+async def test_resume_inherits_durable_execution_deadline(
+    tmp_path: Path,
+) -> None:
+    started_at = datetime(2026, 10, 9, 8, 0, tzinfo=timezone.utc)
+    current = [started_at]
+    store = SQLiteExecutionLedger(tmp_path / "ledger.db")
+    await store.initialize()
+    service = TaskService(
+        store=store,
+        registry_generation=1,
+        clock=lambda: current[0],
+    )
+    contract = ExecutionContract(
+        goal="Resume within one duration budget",
+        budget=ExecutionBudget(max_duration_seconds=60),
+    )
+    task = await service.create_task(
+        objective=contract.goal,
+        agent_id="default",
+        execution_contract=contract,
+    )
+    await service.plan_task(
+        task.task_id,
+        steps=(PlanStep(title="Work", objective=task.objective),),
+    )
+    _, first_run = await service.start_task(
+        task.task_id,
+        runner_id="runner.local",
+    )
+    await service.suspend_task(task.task_id)
+
+    current[0] = started_at + timedelta(seconds=20)
+    reopened = TaskService(
+        store=store,
+        registry_generation=2,
+        clock=lambda: current[0],
+    )
+    _, resumed_run = await reopened.resume_task(task.task_id)
+
+    expected = started_at + timedelta(seconds=60)
+    assert first_run.execution_deadline_at == expected
+    assert resumed_run.execution_deadline_at == expected
+    assert resumed_run.started_at == current[0]
+    assert resumed_run.registry_generation == 2
 
 
 @pytest.mark.asyncio
