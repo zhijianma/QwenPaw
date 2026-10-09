@@ -737,6 +737,14 @@ same `ArtifactRenderService`; it verifies generation pinning, preview
 selection, content lineage, bounded safe output, and the system attachment
 fallback. Protocol checks alone do not satisfy this row.
 
+The Runner row is enforced by
+`tests/contract/os/test_runner_contract.py`. The suite compares the system
+Console runner and the public-SDK `task-insights` runner in the `runner` slot,
+uses the same side-effect-free preflight contract, and then executes both via
+`TaskExecutionCoordinator` through Task/Run terminal state and
+Artifact/Evidence persistence. The separate `harness.runner` contract does not
+stand in for this row.
+
 ## 11. Deprecation sequence
 
 1. Add new models, projection queries, and adapters without redirecting calls.

@@ -957,6 +957,19 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
 - 合同、Renderer 单元、系统 Contribution 与真实 Task Artifact API 共 20 项定点测试
   通过；文件级 AST、mypy、Black、flake8、pylint 门禁通过，未运行全仓测试。
 
+### 2026-10-09 Task Runner Behavioral Contract
+
+- `runner` Slot 现在有独立的 system/plugin 行为合同；不再用已经通过的
+  `harness.runner` 合同代替。系统 Console Runner 与真实 `task-insights` SDK Runner
+  都经过同一 side-effect-free preflight 和 `TaskExecutionCoordinator`。
+- 两条路径均验证固定 generation、Run 成功、Task 完成、Ledger 终态，以及
+  Artifact/Evidence 的真实持久化和 producer identity。首次测试还发现
+  `health_check()` 只是系统实现附加能力，不属于公开 `TaskRunner` Port；合同已改为
+  强制双方实际共有的 `PreflightTaskRunner`，没有误扩张插件 API。
+- Runner、Planner/Strategy、Harness 与系统 Contribution 相关 35 项定点测试通过；
+  文件级 AST、mypy、Black、flake8、pylint 门禁通过，未运行全仓测试，也没有修改
+  Task 页面。
+
 ## 5. 钉钉文档归档清单
 
 ### 框架分析目录

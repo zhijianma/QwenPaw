@@ -1358,6 +1358,9 @@ Cron 不形成独立审批或产物事实源。
     - [x] `artifact.renderer` 的系统安全实现与真实 `task-insights` 插件实现通过
       同一 `ArtifactRenderService` 行为套件，覆盖 generation pin、预览选择、来源
       hash、MIME/大小边界和附件 fallback；协议存在性检查不计为通过。
+    - [x] `runner` 的系统 Console 实现与真实 `task-insights` 插件实现通过同一
+      preflight、`TaskExecutionCoordinator`、Task/Run 终态和 Artifact/Evidence
+      行为套件；`harness.runner` 的通过不能替代普通 `runner` Slot 的证据。
 - [ ] Python 定点测试、pre-commit 与前端 Chat 定点测试通过。
 - [ ] 真实固定 Chat 先 `/clear`，再逐模块完成可见验收。
   - [x] STRICT internal tool 不再绕过 Governance；请求级 execution level 不修改
