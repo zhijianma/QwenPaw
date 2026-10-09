@@ -5,12 +5,14 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 
 from qwenpaw.kernel import (
     AcceptanceVerification,
     ActorRef,
     ActorType,
     ArtifactRef,
+    ConversationTaskResultRecords,
     EvidenceRef,
     Task,
     TaskSource,
@@ -43,6 +45,23 @@ class _TaskLedger:
             for event in self._events.get(task_id, ())
             if event.sequence > after_sequence
         ][:limit]
+
+
+def test_result_snapshot_restores_and_validates_legacy_chat_identity() -> None:
+    restored = ConversationTaskResultRecords.model_validate(
+        {"conversation_id": "chat-results"},
+    )
+
+    assert restored.chat_id == "chat-results"
+    assert restored.conversation_id == "chat-results"
+    assert restored.model_dump(mode="json")["chat_id"] == "chat-results"
+    with pytest.raises(ValidationError, match="must identify one Chat"):
+        ConversationTaskResultRecords.model_validate(
+            {
+                "chat_id": "chat-results",
+                "conversation_id": "chat-other",
+            },
+        )
 
 
 def _verification_event(task: Task, occurred_at: datetime) -> ExecutionEvent:
@@ -191,7 +210,11 @@ async def test_result_history_reads_artifact_evidence_and_verification_once():
         ledger,
     ).read_for_conversation("chat-results")
 
+    assert snapshot.chat_id == "chat-results"
     assert snapshot.conversation_id == "chat-results"
+    payload = snapshot.model_dump(mode="json")
+    assert payload["chat_id"] == "chat-results"
+    assert "conversation_id" not in payload
     assert [record.artifact for record in snapshot.artifacts] == [artifact]
     assert [record.evidence for record in snapshot.evidence] == [evidence]
     assert len(snapshot.verifications) == 1

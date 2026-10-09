@@ -500,7 +500,7 @@ async def test_task_results_replace_duplicate_chat_receipt_with_causality(
         correlation_id=correlation_id,
     )
     snapshot = ConversationTaskResultRecords(
-        conversation_id=conversation_id,
+        chat_id=conversation_id,
         artifacts=(
             ArtifactRecord(
                 artifact=artifact,

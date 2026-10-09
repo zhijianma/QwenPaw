@@ -588,6 +588,8 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
   Evidence 不进入旧快照，且权威事实仍从原 Store 动态投影，不形成第二份事实库。
   Observation 与 Trajectory Page 的公共 JSON 只使用 `chat_id = ChatSpec.id`；旧
   `conversation_id` 只在恢复输入和 Python 兼容属性中保留，不改变索引与游标所有权。
+  Chat-owned Artifact/Evidence ownership record 与 Task-result snapshot 也遵循同一
+  身份规则；私有 receipt、Task Ledger 和查询 Port 保持原存储结构，无需数据重写。
 - [x] 冻结 `ModelCallAttempt` / `RouteDecision` / `ModelCallResult` 和 Store Port；
   Lite 已在真实 Provider 网络边界记录直连、同模型重试、跨模型 fallback、overflow
   retry、流式成功/取消/失败和 usage，并提供 Chat-owned 只读查询。Route 区分逻辑

@@ -175,7 +175,7 @@ class ConversationArtifactReceiptStore:
             return None
         return ConversationArtifactRecord(
             record_id=receipt.receipt_id,
-            conversation_id=receipt.chat_id,
+            chat_id=receipt.chat_id,
             artifact=receipt.artifact,
             evidence=receipt.evidence,
             invocation_id=receipt.invocation_id,
@@ -247,7 +247,7 @@ class ConversationArtifactReceiptStore:
         return tuple(
             item
             for item in records
-            if item.conversation_id == conversation_id
+            if item.chat_id == conversation_id
         )[:limit]
 
     async def scan_for_conversation(
@@ -261,7 +261,7 @@ class ConversationArtifactReceiptStore:
         return tuple(
             item
             for item in records
-            if item.conversation_id == conversation_id
+            if item.chat_id == conversation_id
         )
 
     async def resolve(

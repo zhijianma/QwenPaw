@@ -414,6 +414,10 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     回指同一 ownership record。工具产物新记录保留 invocation、correlation 和固定
     generation；Activity 不暴露 URI、文件名、metadata 或 Evidence claim。固定真实
     Chat 的完整 Observation 分页恢复出 6 个 Artifact 和 6 个 Evidence 权威投影。
+    `ConversationArtifactRecord` 和 `ConversationTaskResultRecords` 公共 JSON/schema
+    已统一为 `chat_id = ChatSpec.id`；旧 `conversation_id` 仅兼容读取，冲突双身份
+    失败关闭。2026-10-10 固定 Chat 的 373 条 observation 中 12 条 Artifact/Evidence
+    均只输出同一 `chat_id`，旧字段计数为 0。
   - [x] Task-owned `ArtifactRecord/EvidenceRecord` 已通过统一
     `TaskResultHistoryPort` 接入 Observation；一次 Ledger 回放同时返回 Artifact、
     Evidence 与 Verification，并保留 Task/Run/Event/Step/Correlation 因果。若同一

@@ -122,7 +122,7 @@ class TaskResultHistory(TaskResultHistoryPort, VerificationHistoryPort):
             reverse=True,
         )
         return ConversationTaskResultRecords(
-            conversation_id=conversation_id,
+            chat_id=conversation_id,
             artifacts=tuple(artifacts),
             evidence=tuple(evidence),
             verifications=tuple(verifications),

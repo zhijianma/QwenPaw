@@ -1000,7 +1000,7 @@ def _conversation_artifact_observations(
     record: ConversationArtifactRecord,
 ) -> tuple[RuntimeObservation, RuntimeObservation]:
     common = {
-        "chat_id": record.conversation_id,
+        "chat_id": record.chat_id,
         "invocation_id": record.invocation_id,
         "correlation_id": record.correlation_id,
         "registry_generation": record.registry_generation,
@@ -1086,7 +1086,7 @@ async def _empty_conversation_artifacts() -> Sequence[
 async def _empty_task_results(
     conversation_id: str,
 ) -> ConversationTaskResultRecords:
-    return ConversationTaskResultRecords(conversation_id=conversation_id)
+    return ConversationTaskResultRecords(chat_id=conversation_id)
 
 
 async def _scan_source(

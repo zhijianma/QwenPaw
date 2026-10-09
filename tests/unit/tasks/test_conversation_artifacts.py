@@ -7,9 +7,13 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from qwenpaw.app.routers.console import _claim_conversation_artifacts
-from qwenpaw.kernel import ConversationArtifactHistoryPort
+from qwenpaw.kernel import (
+    ConversationArtifactHistoryPort,
+    ConversationArtifactRecord,
+)
 from qwenpaw.kernel.models import ArtifactRef, EvidenceRef
 from qwenpaw.schemas import FileContent
 from qwenpaw.tasks.conversation_artifacts import (
@@ -60,6 +64,11 @@ async def test_receipt_claim_is_idempotent_for_owner(tmp_path) -> None:
     [record] = await store.list_for_conversation("chat-a")
     assert isinstance(store, ConversationArtifactHistoryPort)
     assert record.record_id.hex == receipt_id.replace("-", "")
+    assert record.chat_id == "chat-a"
+    assert record.conversation_id == "chat-a"
+    payload = record.model_dump(mode="json")
+    assert payload["chat_id"] == "chat-a"
+    assert "conversation_id" not in payload
     assert record.artifact == artifact
     assert record.evidence == evidence
     assert await store.resolve(
@@ -101,6 +110,31 @@ async def test_receipt_rejects_cross_chat_and_forged_identity(
             chat_id="chat-a",
             artifact_id=_artifact(b"forged").artifact_id,
             evidence_id=evidence.evidence_id,
+        )
+
+
+def test_artifact_record_restores_and_validates_legacy_chat_identity() -> None:
+    artifact = _artifact()
+    evidence = EvidenceRef(
+        artifact_id=artifact.artifact_id,
+        claim="Uploaded attachment",
+        producer="test",
+    )
+    payload = {
+        "record_id": str(uuid4()),
+        "conversation_id": "chat-a",
+        "artifact": artifact.model_dump(mode="json"),
+        "evidence": evidence.model_dump(mode="json"),
+        "created_at": evidence.captured_at.isoformat(),
+    }
+
+    restored = ConversationArtifactRecord.model_validate(payload)
+
+    assert restored.chat_id == "chat-a"
+    assert "conversation_id" not in restored.model_dump(mode="json")
+    with pytest.raises(ValidationError, match="must identify one Chat"):
+        ConversationArtifactRecord.model_validate(
+            {**payload, "chat_id": "chat-other"},
         )
 
 
