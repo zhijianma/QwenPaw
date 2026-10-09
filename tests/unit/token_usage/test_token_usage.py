@@ -17,6 +17,7 @@ from qwenpaw.token_usage.buffer import (
     _UsageEvent,
     _apply_event,
 )
+from qwenpaw.token_usage.compatibility import query_legacy_usage
 from qwenpaw.token_usage.manager import (
     TokenUsageByDateModel,
     TokenUsageByModel,
@@ -853,10 +854,8 @@ class TestTokenUsageManagerCore:
         assert named.model == "gpt-4"
         await manager.stop()
 
-    @pytest.mark.asyncio
-    async def test_query_legacy_key_fallback_without_model_name(self):
+    def test_query_legacy_key_fallback_without_model_name(self):
         """Legacy colon keys should recover the model name from the key."""
-        manager = TokenUsageManager()
         merged = {
             "2026-04-24": {
                 "prov2:model-from-key": {
@@ -874,13 +873,10 @@ class TestTokenUsageManagerCore:
             },
         }
 
-        # pylint: disable=protected-access
-        rows = await manager._query(
+        rows = query_legacy_usage(
             merged,
             date(2026, 4, 24),
             date(2026, 4, 24),
-            None,
-            None,
         )
 
         assert [row.model_dump() for row in rows] == [
@@ -936,13 +932,11 @@ class TestTokenUsageManagerCore:
             },
         ]
 
-        # pylint: disable=protected-access
-        filtered = await manager._query(
+        filtered = query_legacy_usage(
             merged,
             date(2026, 4, 24),
             date(2026, 4, 24),
-            "model-from-key",
-            None,
+            model_name="model-from-key",
         )
         assert [row.model_dump() for row in filtered] == [
             {
@@ -972,11 +966,8 @@ class TestTokenUsageManagerCore:
             },
         ]
 
-    @pytest.mark.asyncio
-    async def test_query_filters_global_agent_chat_and_turn_scopes(self):
+    def test_query_filters_global_agent_chat_and_turn_scopes(self):
         """Every ownership level should use the same usage facts."""
-        # pylint: disable=protected-access
-        manager = TokenUsageManager()
         merged: dict = {}
         _apply_event(
             merged,
@@ -997,39 +988,31 @@ class TestTokenUsageManagerCore:
             ),
         )
 
-        global_rows = await manager._query(
+        global_rows = query_legacy_usage(
             merged,
             date(2026, 4, 24),
             date(2026, 4, 24),
-            None,
-            None,
         )
-        agent_rows = await manager._query(
+        agent_rows = query_legacy_usage(
             merged,
             date(2026, 4, 24),
             date(2026, 4, 24),
-            None,
-            None,
-            "bot-a",
+            agent_id="bot-a",
         )
-        chat_rows = await manager._query(
+        chat_rows = query_legacy_usage(
             merged,
             date(2026, 4, 24),
             date(2026, 4, 24),
-            None,
-            None,
-            "bot-a",
-            "chat-1",
+            agent_id="bot-a",
+            conversation_id="chat-1",
         )
-        turn_rows = await manager._query(
+        turn_rows = query_legacy_usage(
             merged,
             date(2026, 4, 24),
             date(2026, 4, 24),
-            None,
-            None,
-            "bot-a",
-            "chat-1",
-            "turn-1",
+            agent_id="bot-a",
+            conversation_id="chat-1",
+            turn_id="turn-1",
         )
 
         assert len(global_rows) == 2

@@ -11,6 +11,7 @@ from ..constant import WORKING_DIR, TOKEN_USAGE_FILE
 from ..kernel import ModelCallAttempt, ModelCallRecord, ModelCallResult
 from .aggregation import summarize_usage
 from .buffer import TokenUsageBuffer, _UsageEvent
+from .compatibility import merge_cutover_usage, query_legacy_usage
 from .models import (
     TokenUsageByAgent,
     TokenUsageByConversation,
@@ -41,63 +42,6 @@ def _usage_agent_id() -> str:
             exc_info=True,
         )
         return ""
-
-
-def _matches_filters(
-    *,
-    model: str,
-    provider_id: str,
-    agent_id: str | None,
-    conversation_id: str | None,
-    turn_id: str | None,
-    expected_model: str | None,
-    expected_provider: str | None,
-    expected_agent: str | None,
-    expected_conversation: str | None,
-    expected_turn: str | None,
-) -> bool:
-    """Return whether one usage row belongs to the requested scope."""
-    return all(
-        (
-            expected_model is None or model == expected_model,
-            expected_provider is None or provider_id == expected_provider,
-            expected_agent is None or agent_id == expected_agent,
-            expected_conversation is None
-            or conversation_id == expected_conversation,
-            expected_turn is None or turn_id == expected_turn,
-        ),
-    )
-
-
-def _record_identity(record: TokenUsageRecord) -> tuple[str | None, ...]:
-    """Return the exact aggregation identity shared by both projections."""
-    return (
-        record.date,
-        record.agent_id,
-        record.conversation_id,
-        record.turn_id,
-        record.provider_id,
-        record.model,
-    )
-
-
-def _overlay_fact_stats(
-    legacy: TokenUsageRecord,
-    shadow: TokenUsageRecord,
-) -> TokenUsageRecord:
-    """Add fact-only fields without duplicating compatibility totals."""
-    return legacy.model_copy(
-        update={
-            "context_input_tokens": shadow.context_input_tokens,
-            "context_window_tokens": shadow.context_window_tokens,
-            "context_observed_calls": shadow.context_observed_calls,
-            "near_compaction_calls": shadow.near_compaction_calls,
-            "context_usage_ratio": shadow.context_usage_ratio,
-            "max_context_usage_ratio": shadow.max_context_usage_ratio,
-            "cost_micros": shadow.cost_micros,
-            "cost_unknown_calls": shadow.cost_unknown_calls,
-        },
-    )
 
 
 class TokenUsageManager:
@@ -238,91 +182,6 @@ class TokenUsageManager:
             ),
         )
 
-    async def _query(
-        self,
-        merged: dict,
-        start_date: date,
-        end_date: date,
-        model_name: Optional[str],
-        provider_id: Optional[str],
-        agent_id: Optional[str] = None,
-        conversation_id: Optional[str] = None,
-        turn_id: Optional[str] = None,
-    ) -> list[TokenUsageRecord]:
-        """Return per-day records from the merged data dict."""
-        results: list[TokenUsageRecord] = []
-
-        current = start_date
-        while current <= end_date:
-            date_str = current.isoformat()
-            by_key = merged.get(date_str, {})
-            for _key, entry in by_key.items():
-                rec_provider = entry.get("provider_id", "") or ""
-                if "agent_id" not in entry:
-                    rec_agent = None
-                else:
-                    rec_agent = entry.get("agent_id") or ""
-                rec_conversation = entry.get("conversation_id") or None
-                rec_turn = entry.get("turn_id") or None
-                rec_model = entry.get("model_name") or ""
-                if not rec_model:
-                    key = str(_key)
-                    if "\x1f" in key:
-                        rec_model = key.rsplit("\x1f", 1)[-1]
-                    elif ":" in key:
-                        rec_model = key.split(":", 1)[1]
-                    else:
-                        rec_model = key
-                if not _matches_filters(
-                    model=rec_model,
-                    provider_id=rec_provider,
-                    agent_id=rec_agent,
-                    conversation_id=rec_conversation,
-                    turn_id=rec_turn,
-                    expected_model=model_name,
-                    expected_provider=provider_id,
-                    expected_agent=agent_id,
-                    expected_conversation=conversation_id,
-                    expected_turn=turn_id,
-                ):
-                    continue
-                results.append(
-                    TokenUsageRecord(
-                        date=date_str,
-                        provider_id=rec_provider,
-                        model=rec_model,
-                        prompt_tokens=entry.get("prompt_tokens", 0),
-                        completion_tokens=entry.get("completion_tokens", 0),
-                        cache_read_tokens=entry.get(
-                            "cache_read_tokens",
-                            0,
-                        ),
-                        cache_write_tokens=entry.get(
-                            "cache_write_tokens",
-                            0,
-                        ),
-                        cache_eligible_input_tokens=entry.get(
-                            "cache_eligible_input_tokens",
-                            0,
-                        ),
-                        cache_observed_calls=entry.get(
-                            "cache_observed_calls",
-                            0,
-                        ),
-                        cost_micros=0,
-                        cost_unknown_calls=entry.get("call_count", 0),
-                        usage_observed_calls=entry.get("call_count", 0),
-                        usage_unobserved_calls=0,
-                        call_count=entry.get("call_count", 0),
-                        agent_id=rec_agent,
-                        conversation_id=rec_conversation,
-                        turn_id=rec_turn,
-                    ),
-                )
-            current += timedelta(days=1)
-
-        return results
-
     async def get_summary(
         self,
         start_date: Optional[date] = None,
@@ -410,15 +269,15 @@ class TokenUsageManager:
     ) -> list[TokenUsageRecord]:
         """Merge pre-cutover compatibility rows with fact projections."""
         merged = await self._buffer.get_merged_data()
-        legacy = await self._query(
+        legacy = query_legacy_usage(
             merged,
             start_date,
             end_date,
-            model_name,
-            provider_id,
-            agent_id,
-            conversation_id,
-            turn_id,
+            model_name=model_name,
+            provider_id=provider_id,
+            agent_id=agent_id,
+            conversation_id=conversation_id,
+            turn_id=turn_id,
         )
         cutover, projected = await self._projection.query(
             start_date,
@@ -430,31 +289,7 @@ class TokenUsageManager:
             turn_id=turn_id,
             include_shadow=True,
         )
-        shadow_by_identity = {
-            _record_identity(record): record
-            for record in projected
-            if date.fromisoformat(record.date) < cutover
-        }
-        compatible: list[TokenUsageRecord] = []
-        for record in legacy:
-            before_cutover = date.fromisoformat(record.date) < cutover
-            unscoped = (
-                record.conversation_id is None and record.turn_id is None
-            )
-            if not before_cutover and not unscoped:
-                continue
-            shadow = shadow_by_identity.get(_record_identity(record))
-            compatible.append(
-                _overlay_fact_stats(record, shadow)
-                if before_cutover and shadow is not None
-                else record,
-            )
-        projected = [
-            record
-            for record in projected
-            if date.fromisoformat(record.date) >= cutover
-        ]
-        return [*compatible, *projected]
+        return merge_cutover_usage(legacy, projected, cutover)
 
     @classmethod
     def get_instance(cls) -> "TokenUsageManager":

@@ -15,7 +15,9 @@ so the disposable SQLite projection never imports orchestration or singleton
 state. `manager.py` continues to re-export these names for source compatibility
 with existing extensions. Cross-scope reduction lives in the pure
 `token_usage/aggregation.py` function, keeping weighting, coverage and
-collision-safe compatibility keys independent from storage lifecycle.
+collision-safe compatibility keys independent from storage lifecycle. Legacy
+JSON decoding and cutover overlay live in `token_usage/compatibility.py`; the
+Manager only coordinates the buffer, fact projection and those pure adapters.
 
 The ownership path is:
 
