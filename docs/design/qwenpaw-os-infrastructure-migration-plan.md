@@ -1432,6 +1432,10 @@ Cron 不形成独立审批或产物事实源。
     - [x] 5 个 `ui.*` Slot 仅标记 activation/projection 已覆盖，Task Workbench
       行为仍按 Chat-first 顺序后置，不计入运行语义完成项。
 - [ ] Python 定点测试、pre-commit 与前端 Chat 定点测试通过。
+  - [x] Console 全量 `tsc -b --noEmit` 已恢复为 0 error；SSE、Chat durable
+    admission/reconnect、Harness capability fixture、UI Contribution activation 与
+    Task Strategy fallback descriptor 已对齐当前稳定契约。相关行为定点回归
+    `207 passed`，Task 仅修类型漂移，未继续页面开发。
 - [ ] 真实固定 Chat 先 `/clear`，再逐模块完成可见验收。
   - [x] STRICT internal tool 不再绕过 Governance；请求级 execution level 不修改
     共享 Policy，批准后工具执行并完成对话。

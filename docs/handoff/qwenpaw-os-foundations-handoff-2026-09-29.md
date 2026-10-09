@@ -945,9 +945,14 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   pre-cutover shadow 只补事实字段而不重复累计；Console 以微单位显示已知成本并单列
   未知价格调用，未增加竞争性计费 Store，也不假定币种。
   Usage/Projection/API 后端定点回归 `66 passed`，Console/API 前端定点回归
-  `23 passed`，改动文件 ESLint/Prettier 通过。全量 TypeScript typecheck 仍被既有的
-  ES lib 目标、Chat/Task/Harness 测试 fixture 与插件 enum 错误阻断；本次发现的
-  `by_date_model` 过宽类型已收紧，Token Usage 不再保留该错误。
+  `23 passed`，改动文件 ESLint/Prettier 通过；`by_date_model` 过宽类型已收紧。
+- Console 全量 TypeScript `tsc -b --noEmit` 门禁已恢复为 0 error：旧 ES target
+  不支持的 `replaceAll/.at` 改为等价兼容写法，Chat identity 和 Harness
+  `conversation_queue` fixture 跟随稳定契约，UI Contribution 移除
+  `erasableSyntaxOnly` 禁止的参数属性，Task 只补完整 Strategy descriptor，未新增页面
+  行为。SSE、Chat、Harness、Plugin activation 定点回归 `207 passed`；生产改动文件
+  ESLint/Prettier 通过。两个大型 Chat 旧测试仍有历史 ESLint `any` 债务，但完整
+  typecheck 与行为测试均通过，本次没有扩张该债务。
 
 ### 2026-10-09 Token Usage 事实源收敛
 

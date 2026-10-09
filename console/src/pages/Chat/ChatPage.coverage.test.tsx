@@ -11,7 +11,6 @@ import { useNavigate } from "react-router-dom";
 import { renderWithProviders } from "@/test/common_setup";
 import { useMessageQueueStore } from "@/stores/messageQueueStore";
 import ChatPage from "./index";
-import { ChatRunLifecycle } from "@agentscope-ai/chat/lib/AgentScopeRuntimeWebUI/core/Execution/runLifecycle";
 import sessionApi from "./sessionApi";
 import { stopBackgroundQueue } from "./backgroundQueueRegistry";
 import { chatExtensions } from "@/plugins/registry/chatExtensions";
@@ -1433,6 +1432,7 @@ describe("ChatPage coverage", () => {
     const chatId = "11111111-1111-4111-8111-111111111112";
     vi.mocked(sessionApi.getSessionIdentity).mockReturnValue({
       sdkSessionId: chatId,
+      sessionId: chatId,
       userId: "test-user",
       channel: "console",
     });

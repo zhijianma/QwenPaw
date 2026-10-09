@@ -47,12 +47,13 @@ const declaredSlots = new Map<string, ReadonlySet<string>>();
 let active: UiContributionActivation | undefined;
 
 export class UiContributionActivation {
+  readonly pluginId: string;
   private readonly allowedSlots: ReadonlySet<string>;
   private readonly staged: StagedRegistration[] = [];
   private closed = false;
 
   constructor(
-    readonly pluginId: string,
+    pluginId: string,
     declarations: readonly UiContributionDeclaration[],
   ) {
     if (active) {
@@ -60,6 +61,7 @@ export class UiContributionActivation {
         `UI Contribution activation already running for '${active.pluginId}'`,
       );
     }
+    this.pluginId = pluginId;
     this.allowedSlots = new Set(declarations.map((item) => item.slot));
     declaredSlots.set(this.pluginId, this.allowedSlots);
     // The host permits one synchronous UI activation transaction at a time.
@@ -103,12 +105,7 @@ export class UiContributionActivation {
       if (item.deferred.isDisposed()) continue;
       const live =
         item.kind === "fill"
-          ? slotRegistry.fill(
-              this.pluginId,
-              item.name,
-              item.render,
-              item.opts,
-            )
+          ? slotRegistry.fill(this.pluginId, item.name, item.render, item.opts)
           : slotRegistry.replace(
               this.pluginId,
               item.name,
@@ -132,9 +129,7 @@ export class UiContributionActivation {
       );
     }
     if (!this.allowedSlots.has(slot)) {
-      throw new Error(
-        `Plugin '${pluginId}' did not declare UI slot '${slot}'`,
-      );
+      throw new Error(`Plugin '${pluginId}' did not declare UI slot '${slot}'`);
     }
   }
 

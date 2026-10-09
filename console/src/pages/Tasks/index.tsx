@@ -168,7 +168,7 @@ export default function TasksPage() {
     () => tasks.find((task) => task.task_id === selectedId) ?? null,
     [selectedId, tasks],
   );
-  const latestRun = runs.at(-1) ?? null;
+  const latestRun = runs[runs.length - 1] ?? null;
   const activeStrategy = capabilities.find(
     (capability) => capability.slot === "strategy",
   );
@@ -894,8 +894,12 @@ export default function TasksPage() {
               : [
                   {
                     capability_id: DEFAULT_STRATEGY_ID,
+                    slot: "strategy",
+                    provider_id: "qwenpaw.system",
+                    provider_kind: "system",
+                    version: "1",
                     metadata: { label: "Default" },
-                  } as TaskCapabilityDescriptor,
+                  },
                 ]
             ).map((strategy) => ({
               value: strategy.capability_id,

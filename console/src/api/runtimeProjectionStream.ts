@@ -92,7 +92,7 @@ export async function streamRuntimeProjection(
     while (true) {
       const result = await reader.read();
       buffer += decoder.decode(result.value, { stream: !result.done });
-      buffer = buffer.replaceAll("\r\n", "\n");
+      buffer = buffer.split("\r\n").join("\n");
       buffer = consumeEventBlocks(buffer, onEvent);
       if (result.done) {
         const finalEvent = parseEvent(buffer);

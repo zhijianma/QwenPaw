@@ -2004,7 +2004,8 @@ describe("ChatPage coverage", () => {
         submissionId: "submission-1",
       }),
     );
-    const reconnect = vi.mocked(fetch).mock.calls.at(-1);
+    const fetchCalls = vi.mocked(fetch).mock.calls;
+    const reconnect = fetchCalls[fetchCalls.length - 1];
     expect(reconnect?.[0]).toContain("/console/chat");
     expect(JSON.parse(String(reconnect?.[1]?.body))).toMatchObject({
       reconnect: true,
