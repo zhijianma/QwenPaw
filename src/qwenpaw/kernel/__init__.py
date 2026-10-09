@@ -325,6 +325,11 @@ from .goals import (
     GoalExecutionConflictError,
     GoalExecutionStatus,
 )
+from .mode_state import (
+    AgentModeState,
+    AgentModeStateConflictError,
+    MAX_MODE_STATE_BYTES,
+)
 from .artifacts import (
     ConversationArtifactRecord,
     ConversationTaskResultRecords,
@@ -369,6 +374,7 @@ from .ports import (
     ActionRetryInputStore,
     ActionStore,
     AgentFactory,
+    AgentModeStateStore,
     CapabilityLease,
     CapabilityLockStore,
     CapabilityPromotionEvidenceStore,
@@ -674,6 +680,10 @@ __all__ = [
     "GoalExecutionConflictError",
     "GoalExecutionStatus",
     "GoalExecutionStore",
+    "AgentModeState",
+    "AgentModeStateConflictError",
+    "AgentModeStateStore",
+    "MAX_MODE_STATE_BYTES",
     "OutcomeHost",
     "OutcomeHostAccess",
     "OutcomeProducerRegistration",

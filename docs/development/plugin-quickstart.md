@@ -678,13 +678,19 @@ hook, and stop-gate behavior belongs in those independent public Slots rather
 than being hidden inside a Mode Provider. See
 `examples/plugins/runtime-provider-kit/runtime_provider_kit/mode.py`.
 
-The SDK exports `GoalExecution`, `GoalExecutionStore`, and
-`ConversationCorrelationResolver` so Edition adapters and contract tests can
-implement the same durable long-running model. This does not grant a plugin
-access to the built-in Goal database. The current `AgentModeHost` intentionally
-has no shared state accessor; plugin-owned long-running mode state must remain
-behind its own capability until a provider-namespaced Mode State Host is
-available. Never open `.qwenpaw/lite/goals.db` directly from a plugin.
+The SDK exports `AgentModeState` and the Host methods `read_state()` /
+`write_state()`. State is automatically namespaced by Provider, Agent,
+`ChatSpec.id`, and `state_key`; writes require the revision returned by the
+previous read. A new plugin generation may read the previous generation's
+state and explicitly advance `state_schema_version`, while a stale Session
+cannot overwrite a newer revision. Each value is limited to 64 KiB. The SDK
+does not export the backing Store: never open `.qwenpaw/lite/mode-state.db` or
+`.qwenpaw/lite/goals.db` directly from a plugin. Domain-specific Goal outcome
+state remains in `GoalExecutionStore`; generic Mode State does not replace it.
+
+See `examples/plugins/runtime-provider-kit/runtime_provider_kit/mode.py` for
+a lifecycle counter that persists through the Host without accessing
+Workspace internals.
 
 `agent.factory` is deliberately a system-only Contribution Slot. It pins the
 QwenPaw/AgentScope framework adapter to an invocation generation, but it is not

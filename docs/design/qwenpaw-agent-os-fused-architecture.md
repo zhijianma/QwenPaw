@@ -124,7 +124,7 @@ Model Call Plane 和可派生的 Budget Lease 是 Handbook 比对后确认的增
 | Cron / Heartbeat | `app/crons/*` | Scheduler adapter | 保留调度，触发 `TaskSource.SCHEDULE` | 已有能力待接 Task |
 | Channels | `app/channels/*` | scoped Contribution | 复用 BaseChannel，按 workspace scoped reload | 已有插件能力 |
 | MCP / Drivers | `app/mcp/*`、`drivers/*` | `driver.provider` / scoped runtime | 保留策略与凭据边界 | 系统 Driver 已接入固定 generation；原生插件治理契约待冻结 |
-| Modes | `modes/*` | `agent.mode.provider` + 细分 Contributions | 与 Task `strategy` 分离 | 生命周期已适配，内部贡献待拆分 |
+| Modes | `modes/*` | `agent.mode.provider` + 细分 Contributions | 与 Task `strategy` 分离 | 生命周期与 namespaced Mode State Host 已适配，内部贡献待拆分 |
 | Commands | `runtime/slash_command_registry.py` | `command.provider` | 系统保留名优先，普通冲突显式报错 | 固定 Catalog、三态分发与 Skill fallback 已接入 |
 | Lifecycle Hooks | `runtime/hooks.py`、`hooks/*` | `hook.provider` | 八阶段、依赖图、短路与清理语义保留 | 固定 Catalog 与跨 Provider Router 已接入 |
 | ReAct Stop Gates | `loop/stop.py`、Mode stop handlers | `loop.gate.provider` | 只控制推理循环，不承担请求取消 | 固定 Catalog、scope 选择与延迟停止已接入 |
@@ -288,7 +288,7 @@ tenant-aware adapters 实现 Kernel ports。
 |---|---|---|---|---|
 | `engine` | backend | Agent assembly | scoped | 已声明 |
 | `agent.factory` | system backend | Chat Runtime Assembly | hot | 系统核心；固定 generation 构建 Agent，不向插件开放 |
-| `agent.mode.provider` | backend | Chat mode lifecycle | hot | 已固定 mode snapshot 并迁移 turn start |
+| `agent.mode.provider` | backend | Chat mode lifecycle + namespaced state | hot | 已固定 mode snapshot、turn start 与 CAS State Host |
 | `command.provider` | backend | Chat command router | hot | Catalog、保留名、冲突规则与三态结果已接入 |
 | `hook.provider` | backend | Chat lifecycle router | hot | 固定 snapshot、依赖排序、短路与清理已接入 |
 | `loop.gate.provider` | backend | ReAct loop router | hot | 固定 snapshot、scope 选择、继续/终止与延迟停止已接入 |

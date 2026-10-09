@@ -12,8 +12,9 @@ PROVIDER_ID = "runtime-provider-kit.review-mode"
 class ExampleModeSession:
     """Own one plugin Mode lifecycle without accessing Workspace modes."""
 
-    def __init__(self, mode_name: str) -> None:
+    def __init__(self, mode_name: str, host: AgentModeHost) -> None:
         self.mode_name = mode_name
+        self.host = host
         self.turn_starts = 0
         self.conversation_resets = 0
         self.closed = False
@@ -24,11 +25,26 @@ class ExampleModeSession:
 
     async def start_turn(self) -> None:
         """Prepare only state owned by this plugin session."""
-        self.turn_starts += 1
+        await self._increment("turn_starts")
 
     async def reset_conversation(self) -> None:
         """Clear only conversation state owned by this plugin session."""
-        self.conversation_resets += 1
+        await self._increment("conversation_resets")
+
+    async def _increment(self, field: str) -> None:
+        """Persist lifecycle state without opening Host storage directly."""
+        current = await self.host.read_state("lifecycle")
+        value = dict(current.value) if current is not None else {}
+        value[field] = int(value.get(field, 0)) + 1
+        persisted = await self.host.write_state(
+            value,
+            expected_revision=(current.revision if current else 0),
+            state_key="lifecycle",
+        )
+        self.turn_starts = int(persisted.value.get("turn_starts", 0))
+        self.conversation_resets = int(
+            persisted.value.get("conversation_resets", 0),
+        )
 
     async def close(self) -> None:
         """Release only invocation-scoped plugin resources."""
@@ -52,7 +68,10 @@ class ExampleModeProvider:
         """Bind one configured Mode name to the pinned invocation."""
         del scope
         config = host.config_snapshot()
-        return ExampleModeSession(str(config.get("mode_name", "review")))
+        return ExampleModeSession(
+            str(config.get("mode_name", "review")),
+            host,
+        )
 
 
 def create_provider() -> ExampleModeProvider:

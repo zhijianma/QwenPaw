@@ -94,11 +94,10 @@ session 变化被拆成新意图。Interaction、资源恢复和 Action retry �
 ## 6. 内置与插件边界
 
 `GoalExecution`、`GoalExecutionStore` 与 `ConversationCorrelationResolver` 从 Kernel 和
-Plugin SDK 导出，Edition Adapter 可以实现相同契约。当前 `AgentModeHost` 尚未向任意
-插件授予共享 Goal Store 写权限；插件若需要自有长程状态，应由后续 namespaced Mode
-State Host 提供，不能直接打开 Lite SQLite 或修改内置 Goal。
-
-这项限制是待完成边界，不以导出类型冒充插件运行能力已经对齐。
+Plugin SDK 导出，Edition Adapter 可以实现相同契约，但这不授予插件共享 Goal Store
+写权限。插件自有的轻量长程状态使用 namespaced `AgentModeHost.read_state/write_state`；
+Host 自动绑定 Provider、Agent、Chat 和 generation。插件不能直接打开 Lite SQLite，
+也不能用无类型 Mode State 修改内置 Goal 的 Outcome 状态机。
 
 ## 7. 验收
 

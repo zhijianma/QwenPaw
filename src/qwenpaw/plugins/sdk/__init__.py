@@ -83,6 +83,11 @@ from ...kernel.goals import (
     GoalExecutionConflictError,
     GoalExecutionStatus,
 )
+from ...kernel.mode_state import (
+    AgentModeState,
+    AgentModeStateConflictError,
+    MAX_MODE_STATE_BYTES,
+)
 from ...kernel.models import (
     ACTION_RETRY_DECISION_METADATA_KEY,
     ACTION_RETRY_HINT_METADATA_KEY,
@@ -279,6 +284,9 @@ __all__ = [
     "AgentModeHost",
     "AgentModeProvider",
     "AgentModeSession",
+    "AgentModeState",
+    "AgentModeStateConflictError",
+    "MAX_MODE_STATE_BYTES",
     "ApprovalBroker",
     "CapabilityDescriptor",
     "CapabilityCredentialHandle",

@@ -327,8 +327,7 @@ class Runtime:
             )
             await self._run_hook_phase(ctx, Phase.ON_ERROR)
             exhausted = (
-                e.status
-                is ModelStepContinuationStatus.RECOVERY_EXHAUSTED
+                e.status is ModelStepContinuationStatus.RECOVERY_EXHAUSTED
             )
             async for ev in envelope.error_envelope(
                 (
@@ -822,6 +821,7 @@ class Runtime:
         from .mode_providers import (
             ProviderAgentModeHost,
             WorkspaceAgentModeHost,
+            bind_agent_mode_state,
         )
         from .provider_config import validate_provider_config
 
@@ -834,10 +834,15 @@ class Runtime:
             provider_config,
             descriptor.config_schema,
         )
+        state = bind_agent_mode_state(provider_id, assembly.scope)
         if provider_id == DEFAULT_AGENT_MODE_PROVIDER_ID:
-            host = WorkspaceAgentModeHost.capture(ctx, provider_config)
+            host = WorkspaceAgentModeHost.capture(
+                ctx,
+                provider_config,
+                state,
+            )
         else:
-            host = ProviderAgentModeHost(provider_config)
+            host = ProviderAgentModeHost(provider_config, state)
 
         session = await open_session(
             assembly.scope,

@@ -1302,6 +1302,10 @@ Cron 不形成独立审批或产物事实源。
     Session 获取 active names，Runtime 统一执行 turn start，`/clear` 与 `/new` 统一
     reset。插件 Host 仅提供 schema 校验后的 detached config，不含 Workspace context、
     系统 Mode snapshot 或兼容 lifecycle；热替换后的旧 Session 行为不漂移。
+    - [x] Kernel/SDK 已冻结 namespaced `AgentModeState` 与 Host
+      `read_state/write_state`：Provider/Agent/Chat/state-key 隔离，revision CAS 阻止旧
+      generation 覆盖，新 generation 可显式升级 state schema。Lite Store 由 Host 持有，
+      插件拿不到 SQLite；单值限制 64 KiB，系统与插件 Host 共用同一契约。
   - [x] `scheduler.provider` 具有 system/plugin 行为合同：Provider 通过最小
     `SchedulerHost` 绑定宿主持有的 Store，从 generation-pinned Fire lease 创建唯一
     Task，继续进入 Planner/Strategy/Runner 与 Artifact/Evidence 管线；持久化重开与

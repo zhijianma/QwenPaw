@@ -846,6 +846,17 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   不调用模型、不生成对话消息，也不依赖用户再次输入。重复扫描与 orphan 重试保持幂等。
 - 本切片 Goal、Submission Dispatcher、Outcome、Chat API 与 Mode lifecycle 共 64 项
   定点测试通过；相关 Python 文件 AST、mypy、Black、Flake8、Pylint 门禁通过。
+
+### 2026-10-09 Agent Mode namespaced State Host
+
+- Kernel/SDK 新增 `AgentModeState`；Host 为每个 Provider 绑定 Agent、`ChatSpec.id`、
+  state key 与 pinned generation，插件不能伪造 owner 或取得 Store。
+- `AgentModeHost.read_state/write_state` 使用 revision CAS；新 generation 可恢复旧状态并
+  显式升级 schema，旧 Session 的陈旧写入失败。系统与插件 Host 使用同一 API。
+- Lite 使用 owner-only SQLite WAL，单值限制 64 KiB；大内容继续走 Artifact，不进入
+  Mode State。示例插件已改为通过 Host 持久化 lifecycle counter。
+- Mode Host、Runtime Assembly、SDK 示例与热替换相邻路径共 64 项定点测试通过；
+  AST、mypy、Black、Flake8、Pylint 文件级门禁通过。
 - Chat durable submission 在 active/pending Goal 中继承原 correlation，Goal terminal
   后恢复新意图分配；transport session 或 HTTP request 不再切断长程因果链。
 - Goal、Outcome、Chat API、Stop Gate、Runtime lifecycle 与 Plugin SDK 共 88 项定点

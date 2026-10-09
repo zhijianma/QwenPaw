@@ -122,6 +122,7 @@ from .operational import OperationalEvent
 from .observations import ObservationPage, RuntimeObservation
 from .outcomes import ConversationOutcome, ConversationOutcomeRequest
 from .goals import GoalExecution
+from .mode_state import AgentModeState
 from .waits import ConversationContinuation, WaitCondition
 from .artifacts import (
     ConversationArtifactRecord,
@@ -983,6 +984,45 @@ class AgentModeHost(Protocol):
 
     def config_snapshot(self) -> JsonObject:
         """Return validated non-secret configuration for this provider."""
+
+    async def read_state(
+        self,
+        state_key: str = "default",
+    ) -> AgentModeState | None:
+        """Read state owned by this provider and ChatSpec."""
+
+    async def write_state(
+        self,
+        value: JsonObject,
+        *,
+        expected_revision: int,
+        state_key: str = "default",
+        state_schema_version: int = 1,
+    ) -> AgentModeState:
+        """CAS-write state without exposing the backing adapter."""
+
+
+@runtime_checkable
+class AgentModeStateStore(Protocol):
+    """Host-private persistence for namespaced Agent Mode state."""
+
+    async def read(
+        self,
+        *,
+        provider_id: str,
+        agent_id: str,
+        conversation_id: str,
+        state_key: str,
+    ) -> AgentModeState | None:
+        """Read one exact provider-owned state value."""
+
+    async def write(
+        self,
+        state: AgentModeState,
+        *,
+        expected_revision: int,
+    ) -> AgentModeState:
+        """Create or replace one exact observed state revision."""
 
 
 @runtime_checkable
