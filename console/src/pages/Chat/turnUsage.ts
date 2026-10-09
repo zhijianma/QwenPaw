@@ -8,6 +8,15 @@ import type { TurnUsageToken } from "./turnUsageStore";
 
 export const TURN_USAGE_META_KEY = "qwenpaw_turn_usage";
 
+export interface TurnUsageModelRoute {
+  provider_id: string;
+  model_name: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  call_count: number;
+}
+
 export interface TurnUsage {
   provider_id?: string;
   model_name?: string;
@@ -28,6 +37,7 @@ export interface TurnUsage {
   conversation_id?: string | null;
   turn_id?: string | null;
   observed_at?: string;
+  model_routes?: TurnUsageModelRoute[];
 }
 
 export interface ContextUsage {
@@ -124,7 +134,8 @@ function getResponseCardData(
 ): Record<string, unknown> | null {
   const card = (
     cards as
-      Array<{ code?: string; data?: Record<string, unknown> }> | undefined
+      | Array<{ code?: string; data?: Record<string, unknown> }>
+      | undefined
   )?.find((c) => c?.code === "AgentScopeRuntimeResponseCard");
   return card?.data ?? null;
 }

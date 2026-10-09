@@ -223,6 +223,9 @@ function TurnUsageSummary({ data }: { data: IAgentScopeRuntimeResponse }) {
   const estimated =
     usage.measurement === "local_estimate" || usage.estimated === true;
   const model = [usage.provider_id, usage.model_name].filter(Boolean).join("/");
+  const modelRoutes = Array.isArray(usage.model_routes)
+    ? usage.model_routes.filter((route) => route.total_tokens > 0)
+    : [];
 
   return (
     <div className={styles.turnUsage} data-testid="turn-usage-summary">
@@ -242,7 +245,24 @@ function TurnUsageSummary({ data }: { data: IAgentScopeRuntimeResponse }) {
           outTok: formatCompact(completionTokens),
         })}
       </span>
-      {model ? <span className={styles.turnUsageModel}>{model}</span> : null}
+      {modelRoutes.length > 1 ? (
+        modelRoutes.map((route) => {
+          const routeName = [route.provider_id, route.model_name]
+            .filter(Boolean)
+            .join("/");
+          return (
+            <span
+              className={styles.turnUsageModel}
+              key={`${route.provider_id}:${route.model_name}`}
+            >
+              {routeName} · {formatCompact(route.total_tokens)}{" "}
+              {t("chat.turnUsagePopover.tok")}
+            </span>
+          );
+        })
+      ) : model ? (
+        <span className={styles.turnUsageModel}>{model}</span>
+      ) : null}
     </div>
   );
 }

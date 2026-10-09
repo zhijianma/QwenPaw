@@ -934,6 +934,12 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   `34.6K tok` 及实际模型，刷新后保持一致。Task 页面没有改动。
 - 权威 Summary 收口新增后端 `51 passed`、Console 页面/API `16 passed`；Python
   文件级 pre-commit 与前端 ESLint/Prettier 通过。Task 页面仍未改动。
+- Chat Turn usage 已补齐多模型路由语义：同一 Provider/Model 的重复调用合并 token
+  并累计 `call_count`，fallback 或 Turn 内切换模型保留独立 `model_routes`。卡片不再
+  把所有调用的总 token 错标成最后一个模型，并继续随消息 metadata 持久化。实际
+  route 优先读取 `ModelCallAttempt`，避免 Wrapper 标识与权威 Attempt 分叉。
+  Model Call/Turn Usage 后端定点回归 `132 passed`，Chat usage 前端定点回归
+  `68 passed`，相关文件 pre-commit 全部通过；未执行全仓测试。
 
 ### 2026-10-09 Token Usage 事实源收敛
 

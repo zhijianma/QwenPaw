@@ -1173,12 +1173,16 @@ class TestTokenRecordingModelWrapper:
         attempt = MagicMock(
             conversation_id="chat-1",
             invocation_id="turn-1",
+            provider_id="actual-provider",
+            model_id="actual-model",
         )
 
         wrapper._record_usage(usage, attempt)
 
         assert captured[0].conversation_id == "chat-1"
         assert captured[0].turn_id == "turn-1"
+        assert captured[0].provider_id == "actual-provider"
+        assert captured[0].model_name == "actual-model"
 
     def test_record_usage_carries_cache_metrics(self, tmp_path, monkeypatch):
         """Provider cache counters should reach both event and turn usage."""
@@ -1284,6 +1288,72 @@ class TestTokenRecordingModelWrapper:
         assert stored["cache_read_tokens"] == 180
         assert stored["cache_eligible_input_tokens"] == 220
         assert stored["cache_hit_rate"] == pytest.approx(180 / 220 * 100)
+        assert stored["model_routes"] == [
+            {
+                "provider_id": "openai",
+                "model_name": "gpt-4",
+                "prompt_tokens": 220,
+                "completion_tokens": 30,
+                "total_tokens": 250,
+                "call_count": 2,
+            },
+        ]
+
+    def test_record_usage_preserves_each_model_route(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        """A fallback turn must not attribute all tokens to its final model."""
+        monkeypatch.setattr(
+            "qwenpaw.app.agent_context.get_current_session_id",
+            lambda: "sess-fallback",
+        )
+        primary, _captured = self._stream_harness(tmp_path, monkeypatch)
+        fallback_model = MagicMock()
+        fallback_model.model = "claude-sonnet"
+        fallback = TokenRecordingModelWrapper("anthropic", fallback_model)
+
+        primary._record_usage(
+            MagicMock(
+                input_tokens=100,
+                output_tokens=10,
+                cache_input_tokens=0,
+                cache_creation_input_tokens=0,
+            ),
+        )
+        fallback._record_usage(
+            MagicMock(
+                input_tokens=20,
+                output_tokens=5,
+                cache_input_tokens=0,
+                cache_creation_input_tokens=0,
+            ),
+        )
+
+        stored = TokenRecordingModelWrapper.pop_usage_for_session(
+            "sess-fallback",
+        )
+        assert stored is not None
+        assert stored["total_tokens"] == 135
+        assert stored["model_routes"] == [
+            {
+                "provider_id": "openai",
+                "model_name": "gpt-4",
+                "prompt_tokens": 100,
+                "completion_tokens": 10,
+                "total_tokens": 110,
+                "call_count": 1,
+            },
+            {
+                "provider_id": "anthropic",
+                "model_name": "claude-sonnet",
+                "prompt_tokens": 20,
+                "completion_tokens": 5,
+                "total_tokens": 25,
+                "call_count": 1,
+            },
+        ]
 
     def test_session_cache_usage_uses_latest_persisted_checkpoint(self):
         """Session totals should extend the newest durable checkpoint."""

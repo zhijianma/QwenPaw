@@ -65,6 +65,12 @@ Retry and fallback are separate attempts and separate calls. Multiple calls in
 one tool loop share the Invocation turn. Composite public keys remain
 collision-safe JSON tuples until the API moves to structured rows.
 
+The persisted Chat turn snapshot keeps aggregate input/output totals for
+compact rendering and a `model_routes` breakdown keyed by actual
+Provider/Model. Repeated calls to one route increase its `call_count`; a
+fallback or mid-turn route switch creates another row. The UI must not label
+the aggregate total as belonging only to the final route.
+
 ### Context-window statistics
 
 Context utilization is a Model Call fact, not a scan of message content. Each
@@ -122,4 +128,5 @@ Agent, Chat, or Turn ownership remain explicitly unattributed.
 - Historical Model Call files without Agent/cache fields remain readable.
 - Summary values remain stable across restart and projection rebuild.
 - Global, Agent, Chat and Turn totals reconcile to the same attempt set.
+- A multi-call Turn preserves per-route token totals after message refresh.
 - Task pages and Task-specific frontend work remain out of scope.

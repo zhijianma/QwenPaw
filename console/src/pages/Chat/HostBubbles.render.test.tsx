@@ -243,6 +243,51 @@ describe("merged host bubbles behavior", () => {
     expect(screen.queryByTestId("turn-usage-summary")).toBeNull();
   });
 
+  it("renders every model route for a fallback turn", () => {
+    render(
+      provider(
+        <HostResponseCard
+          id="fallback-usage-message"
+          data={{
+            id: "fallback-usage-response",
+            status: AgentScopeRuntimeRunStatus.Completed,
+            output: [],
+            usage: {
+              prompt_tokens: 120,
+              completion_tokens: 15,
+              total_tokens: 135,
+              provider_id: "anthropic",
+              model_name: "claude-sonnet",
+              measurement: "provider_reported",
+              model_routes: [
+                {
+                  provider_id: "openai",
+                  model_name: "gpt-4",
+                  prompt_tokens: 100,
+                  completion_tokens: 10,
+                  total_tokens: 110,
+                  call_count: 1,
+                },
+                {
+                  provider_id: "anthropic",
+                  model_name: "claude-sonnet",
+                  prompt_tokens: 20,
+                  completion_tokens: 5,
+                  total_tokens: 25,
+                  call_count: 1,
+                },
+              ],
+            },
+          }}
+        />,
+      ),
+    );
+
+    const summary = screen.getByTestId("turn-usage-summary");
+    expect(summary).toHaveTextContent("openai/gpt-4 · 110");
+    expect(summary).toHaveTextContent("anthropic/claude-sonnet · 25");
+  });
+
   it("retains the original request card's content and ordered prepend/append fallback", () => {
     extensions.lists[ChatList.requestPrepend] = [
       {

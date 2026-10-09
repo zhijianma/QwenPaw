@@ -1161,6 +1161,9 @@ Cron 不形成独立审批或产物事实源。
       cache 和 cost。一次 turn 内工具循环的多个模型调用共享 Invocation，实际
       retry/fallback 仍各有 Attempt。Chat 消息继续携带本 turn usage 和上下文窗口投影，
       并显式区分 `provider_reported` 与 `local_estimate`。
+    - [x] Chat Turn usage 对工具循环的同路由调用按 Provider/Model 合并并保留
+      `call_count`；fallback 或中途切换路由时保存独立 `model_routes` 明细。Turn
+      总量不再被误标为最后一个模型的用量，刷新后仍从消息 metadata 恢复同一明细。
     - [x] Token Usage Summary 已成为服务端权威统计契约：同一查询同时返回全局、
       日期、实际 Provider/Model、日期×模型、Agent、`ChatSpec.id` 和 Invocation turn
       聚合。Console 不再下载明细并维护第二套页面私有聚合口径；`/details` 仅保留为

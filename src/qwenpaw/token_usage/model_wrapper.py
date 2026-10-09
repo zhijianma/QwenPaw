@@ -220,6 +220,14 @@ class TokenRecordingModelWrapper(ChatModelBase):
             return
 
         observed_at = datetime.now(tz=timezone.utc)
+        provider_id = (
+            str(attempt.provider_id)
+            if attempt is not None
+            else self._provider_id
+        )
+        model_name = (
+            str(attempt.model_id) if attempt is not None else self.model
+        )
         conversation_id = (
             str(attempt.conversation_id)
             if attempt is not None and attempt.conversation_id
@@ -228,8 +236,8 @@ class TokenRecordingModelWrapper(ChatModelBase):
         turn_id = str(attempt.invocation_id) if attempt is not None else ""
         if record_legacy:
             event = _UsageEvent(
-                provider_id=self._provider_id,
-                model_name=self.model,
+                provider_id=provider_id,
+                model_name=model_name,
                 prompt_tokens=facts.input_tokens,
                 completion_tokens=facts.output_tokens,
                 date_str=observed_at.date().isoformat(),
@@ -253,8 +261,8 @@ class TokenRecordingModelWrapper(ChatModelBase):
             get_token_usage_manager().enqueue(event)
 
         usage_data = {
-            "provider_id": self._provider_id,
-            "model_name": self.model,
+            "provider_id": provider_id,
+            "model_name": model_name,
             "prompt_tokens": facts.input_tokens,
             "completion_tokens": facts.output_tokens,
             "total_tokens": facts.input_tokens + facts.output_tokens,
@@ -281,6 +289,16 @@ class TokenRecordingModelWrapper(ChatModelBase):
             "observed_at": observed_at.isoformat(timespec="seconds"),
             "measurement": "provider_reported",
         }
+        usage_data["model_routes"] = [
+            {
+                "provider_id": provider_id,
+                "model_name": model_name,
+                "prompt_tokens": facts.input_tokens,
+                "completion_tokens": facts.output_tokens,
+                "total_tokens": facts.input_tokens + facts.output_tokens,
+                "call_count": 1,
+            },
+        ]
         self._store_usage(usage_data)
 
     def _record_usage(
@@ -497,15 +515,50 @@ class TokenRecordingModelWrapper(ChatModelBase):
                     session_id
                 ] = usage
                 return
-            for key in (
+            routes: dict[tuple[str, str], dict[str, Any]] = {}
+            for item in [
+                *previous.get("model_routes", []),
+                *usage.get("model_routes", []),
+            ]:
+                if not isinstance(item, dict):
+                    continue
+                route_key = (
+                    str(item.get("provider_id", "")),
+                    str(item.get("model_name", "")),
+                )
+                route = routes.setdefault(
+                    route_key,
+                    {
+                        "provider_id": route_key[0],
+                        "model_name": route_key[1],
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                        "total_tokens": 0,
+                        "call_count": 0,
+                    },
+                )
+                route["prompt_tokens"] += int(
+                    item.get("prompt_tokens", 0) or 0,
+                )
+                route["completion_tokens"] += int(
+                    item.get("completion_tokens", 0) or 0,
+                )
+                route["total_tokens"] = (
+                    route["prompt_tokens"] + route["completion_tokens"]
+                )
+                route["call_count"] += int(item.get("call_count", 1) or 1)
+            usage["model_routes"] = list(routes.values())
+            for field_name in (
                 "prompt_tokens",
                 "completion_tokens",
                 "cache_read_tokens",
                 "cache_write_tokens",
                 "cache_eligible_input_tokens",
             ):
-                usage[key] = int(previous.get(key, 0) or 0) + int(
-                    usage.get(key, 0) or 0,
+                usage[field_name] = int(
+                    previous.get(field_name, 0) or 0,
+                ) + int(
+                    usage.get(field_name, 0) or 0,
                 )
             usage["total_tokens"] = (
                 usage["prompt_tokens"] + usage["completion_tokens"]
