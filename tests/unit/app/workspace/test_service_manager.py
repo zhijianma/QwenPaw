@@ -29,6 +29,25 @@ async def _wait_for(event: threading.Event) -> None:
         await asyncio.sleep(0)
 
 
+@pytest.mark.asyncio
+async def test_workspace_registers_legacy_approval_observer(tmp_path) -> None:
+    instance = Workspace("agent-1", str(tmp_path))
+    descriptor = instance._service_manager.descriptors[
+        "legacy_approval_compatibility"
+    ]
+    assert descriptor.service_class is not None
+    assert descriptor.init_args is not None
+    service = descriptor.service_class(**descriptor.init_args(instance))
+
+    await service.start()
+    instance._service_manager.services[
+        "legacy_approval_compatibility"
+    ] = service
+
+    assert instance.legacy_approval_compatibility is service
+    assert (await service.report()).agent_id == "agent-1"
+
+
 @pytest.fixture
 def workspace(monkeypatch, tmp_path) -> Workspace:
     instance = Workspace("agent-1", str(tmp_path))

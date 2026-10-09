@@ -21,7 +21,7 @@
 | QwenPaw Chat 提交 | `active-adapter` | `InvocationControlService` + SQLite Submission Queue | HTTP/Console 将消息与附件转换为版本化 envelope | Runtime Projection、Control Receipt、Queue revision | 固定 Chat 多标签 FIFO、浏览器关闭后继续、进程重启恢复全部真实通过 |
 | 外部 backend Chat 队列 | `legacy-fallback` | 外部 backend 自身能力 | Console 保留旧本地队列，不冒充 OS Queue；仅已知外部 backend 的 `agentId` 可启动 compatibility sender，QwenPaw 与未知 Agent 的遗留项失败关闭 | Harness `conversation_queue` 能力位；实际 fallback 通过幂等收据写入 agent/backend-scoped SQLite 汇总；`/api/chats/compatibility/external-queue` 只读查询 | 外部 backend 公开 Conversation/Queue capability，通过相同隔离与恢复套件，并建立旧队列零使用观察窗口 |
 | `/stop` 与旧取消入口 | `active-adapter` | Invocation cancellation root | 显式映射 `interrupt_current`；清队列必须走 `stop_and_clear` | Control Receipt、Invocation 终态；Workspace 启动即建立 7 天零使用窗口，旧 Console API 与 Channel `/stop` 只记录入口、处置和时间，`/api/chats/compatibility/legacy-stop` 返回 agent-scoped 删除门禁 | 所有客户端迁移到显式 `interrupt` / `stop-and-clear`，连续 7 天旧调用量为零，并由迁移负责人确认后方可删除 |
-| 旧 Approval waiter | `active-adapter` | durable Interaction / Approval Broker | 唤醒旧 Future，不拥有审批状态 | Tool、Governance Tool、Driver、Codex/Qoder Harness 与 ReMe 共用 Execution Contract deadline；Task Ledger 持久化 `expires_at`；Interaction Projection、Audit、桥接失败 fail closed | 固定 Chat 及真实 Scheduler Task 的批准/拒绝/超时/取消验收全部通过，且进程丢失恢复无孤立审批 |
+| 旧 Approval waiter | `active-adapter` | durable Interaction / Approval Broker | 唤醒旧 Future，不拥有审批状态；仅缺失 Interaction、Chat 或 Invocation 身份时保留 legacy-only wait | Tool、Governance Tool、Driver、Codex/Qoder Harness 与 ReMe 共用 Execution Contract deadline；Workspace SQLite 只记录 legacy-only 的 source、缺失身份原因、时间和次数；`/api/approval/compatibility/legacy-waiter` 返回 7 天删除门禁 | 固定 Chat 及真实 Scheduler Task 的批准/拒绝/超时/取消验收全部通过，进程丢失恢复无孤立审批，连续 7 天 legacy-only 命中为零，并由迁移负责人确认调用方已迁移 |
 | PawApp `UIBridge.confirm()` | `active-adapter` | workspace `InteractionService`，以 `ChatSpec.id + invocation_id` 归属 | `pawapp:confirm_request` 仅投递兼容事件；响应进入通用 Chat Interaction API | durable request/resolution、revision、expires_at、Task cancel 联动；SDK 保留完整交互 envelope | 完成浏览器断线重连与热替换中的真实 PawApp 验收，并观察旧 request-only 客户端为零 |
 | Cron `final` / `silent` agent job | `active-adapter` | Scheduler Fire + Task Ledger + Delivery Receipt | `CronManager` 仅选择新 Task Runtime 并回写旧 history | Task/Run、Delivery Receipt、Cron history | 保持兼容 history 期间不删；新管理入口替代旧 Job schema 后再评估 |
 | Cron `stream` | `legacy-fallback` | 旧 Cron Executor | 保留实时外部 Channel 语义 | 公共 Reply/Activity 事件；每次使用写 Cron history，首次同 Job/decision/trigger 通过幂等 Operational Event 持久化迁移告警与删除门槛 | 浏览器与至少一个真实外部媒体 Channel 等价验收，且观察窗口内不再新增 fallback history 后启用新 Runtime |
@@ -54,7 +54,10 @@
 Channel 命令及 OS Interrupt、兼容取消与无活动运行；新 Control API 不计入旧入口命中，
 观察幂等键只保存 SHA-256；报告不保存 Chat、Session、消息或用户内容。即使零使用
 窗口完成，客户端迁移确认仍是
-独立删除门槛。旧 Task capability ID 已记录真实解析命中，并提供精确的新 ID、
+独立删除门槛。旧 Approval waiter 已对真正缺少 Interaction Service、`ChatSpec.id` 或
+Invocation identity 的 fallback 建立独立观察窗口；完整 OS Interaction 路径不计入命中，
+观察 ID 只保存 SHA-256，不落审批参数、Tool、Chat、Session 或用户内容。即使连续 7 天
+无命中，旧调用方迁移确认仍是独立删除门槛。旧 Task capability ID 已记录真实解析命中，并提供精确的新 ID、
 Slot 建议和可重置的 7 天零使用窗口；服务启动时持久化观察起点，任一旧 ID 命中都会
 重置窗口。即使窗口完成，持久化引用迁移仍是独立阻塞条件。外部 backend Queue 已
 冻结 `conversation_queue` 能力位，并在唯一 legacy admission 点记录不含消息内容和

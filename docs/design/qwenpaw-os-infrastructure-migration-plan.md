@@ -967,6 +967,9 @@ Invocation，新 Invocation 自动使用新 generation。
   - [x] 冻结 Chat、Queue、Approval、Cron、Inbox、Plugin、Capability、Artifact 与
     transport 身份的兼容状态、事实源和删除门槛；详见
     `docs/design/qwenpaw-compatibility-matrix.md`。
+  - [x] 旧 Approval waiter 的合法 fallback 已建立 agent-scoped SQLite 观察窗口，
+    只记录受控 source、缺失 Interaction/Chat/Invocation 身份原因和哈希幂等键；完整
+    Interaction 路径不计数，只读 API 不泄露审批内容，7 天零使用仍不自动授权删除。
   - [x] 可替换 Plugin 注册入口提供结构化迁移诊断，不只写日志。
   - [x] 运行时 `/api/plugins` 已将诊断聚合为去重的 v2 manifest
     patch、逐项 action 和 blocker；`qwenpaw plugin migration-plan` 提供

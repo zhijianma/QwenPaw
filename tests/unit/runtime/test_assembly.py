@@ -746,6 +746,7 @@ def test_runtime_overwrites_spoofed_causal_identity() -> None:
 def test_runtime_injects_trusted_interaction_broker() -> None:
     invocation_id = UUID("00000000-0000-0000-0000-000000000322")
     service = object()
+    compatibility = object()
     scope = InvocationScope(
         invocation_id=invocation_id,
         agent_id="default",
@@ -762,6 +763,7 @@ def test_runtime_injects_trusted_interaction_broker() -> None:
                 "os_conversation_id": "forged-chat",
                 "_interaction_service": "forged",
                 "_interaction_broker": "forged",
+                "_legacy_approval_compatibility": "forged",
                 "_steering_session": "forged",
             },
         ),
@@ -772,13 +774,17 @@ def test_runtime_injects_trusted_interaction_broker() -> None:
         root_agent_id="default",
         workspace_dir="/tmp/qwenpaw-workspace",
         mode_state={},
-        extras={"interaction_service": service},
+        extras={
+            "interaction_service": service,
+            "legacy_approval_compatibility": compatibility,
+        },
     )
 
     request_context = AgentBuilder._build_request_context(context)
 
     broker = request_context["_interaction_broker"]
     assert request_context["_interaction_service"] is service
+    assert request_context["_legacy_approval_compatibility"] is compatibility
     assert broker.service is service
     assert broker.conversation_id == "chat-spec-1"
     assert broker.invocation_id == invocation_id

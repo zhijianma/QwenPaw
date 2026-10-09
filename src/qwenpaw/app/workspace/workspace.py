@@ -260,6 +260,13 @@ class Workspace:  # pylint: disable=too-many-public-methods
         )
 
     @property
+    def legacy_approval_compatibility(self):
+        """Return removal evidence for the process-local approval waiter."""
+        return self._service_manager.services.get(
+            "legacy_approval_compatibility",
+        )
+
+    @property
     def interaction_service(self):
         """Get the shared approval, input, and suggestion broker."""
         return self._service_manager.services.get("interaction_service")
@@ -621,6 +628,9 @@ class Workspace:  # pylint: disable=too-many-public-methods
         from ...invocation_control import InvocationControlService
         from ...interactions import InteractionService
         from ...recovery import ModelResourceWaitService
+        from ..approvals.compatibility import (
+            SQLiteLegacyApprovalCompatibilityStore,
+        )
         from ..chats.compatibility import (
             SQLiteLegacyStopCompatibilityStore,
         )
@@ -679,6 +689,25 @@ class Workspace:  # pylint: disable=too-many-public-methods
                 start_method="start",
                 stop_method="close",
                 require_clean_stop=True,
+                priority=10,
+                concurrent_init=False,
+            ),
+        )
+
+        sm.register(
+            ServiceDescriptor(
+                name="legacy_approval_compatibility",
+                service_class=SQLiteLegacyApprovalCompatibilityStore,
+                init_args=lambda ws: {
+                    "database_path": (
+                        ws.workspace_dir
+                        / ".qwenpaw"
+                        / "lite"
+                        / "interaction-compatibility.db"
+                    ),
+                    "agent_id": ws.agent_id,
+                },
+                start_method="start",
                 priority=10,
                 concurrent_init=False,
             ),

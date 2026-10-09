@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Approval service for sensitive tool execution.
+"""Process-local delivery projection for sensitive tool approvals.
 
-The ``ApprovalService`` is the single central store for pending and completed
-approval records. Decisions can arrive from chat control commands, the
-authenticated Console API, or ACP permission prompts; identity policy is
-enforced here so every resolution surface shares the same boundary.
+``ApprovalService`` keeps pending Futures needed by legacy callers. Durable OS
+paths first persist the request in ``InteractionService`` and use this service
+only to wake the live execution. Decisions can arrive from chat controls, the
+authenticated Console API, or ACP permission prompts; identity policy remains
+centralized here so every resolution surface shares the same boundary.
 """
 
 from __future__ import annotations

@@ -45,10 +45,15 @@ _PORTABILITY_ADAPTATION_SYSTEM_RULES = (
 def _bind_runtime_interactions(
     request_context: dict[str, Any],
     service: Any,
+    legacy_compatibility: Any = None,
 ) -> None:
     """Replace untrusted payload entries with one trusted live binding."""
     request_context.pop("_interaction_service", None)
     request_context.pop("_interaction_broker", None)
+    request_context.pop("_legacy_approval_compatibility", None)
+    if legacy_compatibility is not None:
+        compatibility_key = "_legacy_approval_compatibility"
+        request_context[compatibility_key] = legacy_compatibility
     if service is None:
         return
     from ..interactions import runtime_interaction_broker_from_context
@@ -1371,7 +1376,14 @@ class AgentBuilder:
         interaction_service = getattr(ctx, "extras", {}).get(
             "interaction_service",
         )
-        _bind_runtime_interactions(rc, interaction_service)
+        legacy_approval_compatibility = getattr(ctx, "extras", {}).get(
+            "legacy_approval_compatibility",
+        )
+        _bind_runtime_interactions(
+            rc,
+            interaction_service,
+            legacy_approval_compatibility,
+        )
         mode_state = getattr(ctx, "mode_state", {}) or {}
         mission_state = mode_state.get("mission", {})
         if isinstance(mission_state, dict) and mission_state.get("active"):

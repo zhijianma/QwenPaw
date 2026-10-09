@@ -25,6 +25,10 @@ from ...kernel import (
 from ...interactions import InteractionConflictError
 from ...security.tool_guard.approval import ApprovalDecision, ApprovalScope
 from ...tasks.redaction import redact_payload
+from .compatibility import (
+    LegacyApprovalFallbackReason,
+    observe_legacy_approval,
+)
 from .service import ApprovalActor, ApprovalService, PendingApproval
 
 logger = logging.getLogger(__name__)
@@ -200,6 +204,19 @@ async def attach_pending_to_interaction(
     )
     interaction_id = _optional_uuid(pending.request_id)
     if service is None or not conversation_id or invocation_id is None:
+        reason: LegacyApprovalFallbackReason
+        if service is None:
+            reason = "interaction_service_missing"
+        elif not conversation_id:
+            reason = "chat_identity_missing"
+        else:
+            reason = "invocation_identity_missing"
+        await observe_legacy_approval(
+            request_context.get("_legacy_approval_compatibility"),
+            observation_id=pending.request_id,
+            source=source,
+            reason=reason,
+        )
         return True
     if interaction_id is None:
         return False

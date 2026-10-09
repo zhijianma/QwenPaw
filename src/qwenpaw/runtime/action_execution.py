@@ -364,6 +364,11 @@ class RuntimeActionRetryRunner:
         from .sandbox_environments import RuntimeSandboxEnvironmentManager
 
         service = getattr(self._workspace, "interaction_service", None)
+        compatibility = getattr(
+            self._workspace,
+            "legacy_approval_compatibility",
+            None,
+        )
         app_services = getattr(self._workspace, "app_services", None)
         context: dict[str, Any] = {
             "agent_id": self._workspace.agent_id,
@@ -377,6 +382,7 @@ class RuntimeActionRetryRunner:
             "os_registry_generation": plan.registry_generation,
             "_action_recorder": recorder,
             "_interaction_service": service,
+            "_legacy_approval_compatibility": compatibility,
             "_sandbox_environment_manager": (
                 RuntimeSandboxEnvironmentManager(
                     scope,

@@ -6,16 +6,41 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ..approvals import ApprovalActor, PendingApproval, get_approval_service
+from ..approvals.compatibility import (
+    SQLiteLegacyApprovalCompatibilityStore,
+)
 from ..approvals.display import approval_display_fields
 from ...security.tool_guard.approval import ApprovalDecision, ApprovalScope
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/approval", tags=["approval"])
+
+
+async def get_workspace(request: Request):
+    """Resolve the authenticated Agent workspace."""
+    from ..agent_context import get_agent_for_request
+
+    return await get_agent_for_request(request)
+
+
+@router.get("/compatibility/legacy-waiter")
+async def legacy_approval_compatibility(
+    workspace=Depends(get_workspace),
+) -> dict:
+    """Return content-free removal evidence for the legacy waiter."""
+    store = getattr(workspace, "legacy_approval_compatibility", None)
+    if not isinstance(store, SQLiteLegacyApprovalCompatibilityStore):
+        raise HTTPException(
+            status_code=503,
+            detail="Legacy approval compatibility service is unavailable",
+        )
+    report = await store.report()
+    return report.model_dump(mode="json")
 
 
 def _console_admin_actor(

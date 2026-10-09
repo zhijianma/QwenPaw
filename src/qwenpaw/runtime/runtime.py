@@ -113,6 +113,15 @@ class Runtime:
             )
             if interaction_service is not None:
                 ctx.extras["interaction_service"] = interaction_service
+            legacy_approval_compatibility = getattr(
+                self.workspace,
+                "legacy_approval_compatibility",
+                None,
+            )
+            if legacy_approval_compatibility is not None:
+                ctx.extras[
+                    "legacy_approval_compatibility"
+                ] = legacy_approval_compatibility
             resource_wait_service = getattr(
                 self.workspace,
                 "model_resource_wait_service",
