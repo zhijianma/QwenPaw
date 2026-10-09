@@ -597,7 +597,9 @@ Workbench 必须提供：创建/启动、计划、真实对话、工具活动、
 
 ### 总体验收门禁
 
-- [ ] Kernel 依赖纯度测试持续阻止框架和产品实现反向侵入。
+- [x] Kernel 依赖纯度测试持续阻止框架和产品实现反向侵入：AST 门禁扫描全部
+  `src/qwenpaw/kernel/**/*.py`，只允许标准库、Pydantic 与单层 Kernel 相对导入；
+  产品层绝对导入和跨目录相对导入均由合成反例验证为失败关闭。
 - [x] 内置与插件对每个公共 Slot 具有同协议、同治理、同失败语义。
   Capability Registry 已统一 system/plugin activation 门禁，发布前共同校验 Protocol、
   capability identity 与 UI entrypoint；`prompt.provider`、`command.provider`、

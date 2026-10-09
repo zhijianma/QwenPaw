@@ -22,6 +22,11 @@ async generator that yields `RunnerSignal` values. Wrap it with
 `LocalAgentRunner`; the host owns sequencing, persistence, retries, and task
 state transitions.
 
+Do not import from `qwenpaw.kernel` or application packages in plugin code.
+The Kernel is intentionally limited to standard-library, Pydantic, and
+Kernel-local dependencies; `qwenpaw.plugins.sdk` is the stable public surface
+that prevents plugins from coupling to Host implementation modules.
+
 Use the typed, immutable `RuntimeContext` for task-scoped configuration. It
 contains the Run's `invocation_id`, root `correlation_id`, pinned registry
 generation, effective approval level, Workspace paths, an optional resume

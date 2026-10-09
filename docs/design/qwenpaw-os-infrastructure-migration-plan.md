@@ -79,7 +79,8 @@ Causal Event、Side Effect、Verification、Inbox Delivery 与 Artifact Registry
 ### I1：Kernel 与 Runtime Assembly 冻结
 
 - [x] 审计 Kernel 依赖纯度并补自动门禁；递归禁止产品、框架、数据库和文件系统
-  实现反向进入 Kernel。
+  实现反向进入 Kernel。`tests/unit/kernel/test_dependency_purity.py` 通过 AST 扫描全部
+  Kernel 源文件，并用产品绝对导入、第三方框架和跨目录相对导入三类反例自证门禁。
 - [x] 支持 Task Run 固定 generation 进入嵌套 Chat Invocation，外部请求不能
   伪造 generation；旧 generation 仅在 lease 保留期间可重入。
 - [x] 冻结 InvocationScope、CapabilitySelection 与 Provider Session 基础生命周期：
