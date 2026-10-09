@@ -225,9 +225,9 @@ class TokenRecordingModelWrapper(ChatModelBase):
         model_name = (
             str(attempt.model_id) if attempt is not None else self.model
         )
-        conversation_id = (
-            str(attempt.conversation_id)
-            if attempt is not None and attempt.conversation_id
+        chat_id = (
+            str(attempt.chat_id)
+            if attempt is not None and attempt.chat_id
             else ""
         )
         turn_id = str(attempt.invocation_id) if attempt is not None else ""
@@ -252,7 +252,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
                     if attempt is not None and attempt.agent_id
                     else _usage_agent_id()
                 ),
-                conversation_id=conversation_id,
+                conversation_id=chat_id,
                 turn_id=turn_id,
             )
             get_token_usage_manager().enqueue(event)
@@ -281,8 +281,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
             # Auto-compaction threshold (fraction of the window) so the UI can
             # mark where context gets evicted. None = disabled/unknown.
             "compact_threshold": self._compact_threshold,
-            "chat_id": conversation_id or None,
-            "conversation_id": conversation_id or None,
+            "chat_id": chat_id or None,
             "turn_id": turn_id or None,
             "observed_at": observed_at.isoformat(timespec="seconds"),
             "measurement": "provider_reported",
@@ -297,7 +296,12 @@ class TokenRecordingModelWrapper(ChatModelBase):
                 "call_count": 1,
             },
         ]
-        self._store_usage(usage_data)
+        self._store_usage(
+            usage_data,
+            legacy_session_id=(
+                self._legacy_protocol_session_id() if attempt is None else None
+            ),
+        )
 
     def _record_unavailable_usage(
         self,
@@ -313,8 +317,8 @@ class TokenRecordingModelWrapper(ChatModelBase):
             str(attempt.model_id) if attempt is not None else self.model
         )
         chat_id = (
-            str(attempt.conversation_id)
-            if attempt is not None and attempt.conversation_id
+            str(attempt.chat_id)
+            if attempt is not None and attempt.chat_id
             else ""
         )
         turn_id = str(attempt.invocation_id) if attempt is not None else ""
@@ -336,7 +340,6 @@ class TokenRecordingModelWrapper(ChatModelBase):
                 ),
                 "compact_threshold": self._compact_threshold,
                 "chat_id": chat_id or None,
-                "conversation_id": chat_id or None,
                 "turn_id": turn_id or None,
                 "observed_at": observed_at.isoformat(timespec="seconds"),
                 "measurement": "unavailable",
@@ -353,6 +356,9 @@ class TokenRecordingModelWrapper(ChatModelBase):
                     },
                 ],
             },
+            legacy_session_id=(
+                self._legacy_protocol_session_id() if attempt is None else None
+            ),
         )
 
     def _record_usage(
@@ -572,11 +578,22 @@ class TokenRecordingModelWrapper(ChatModelBase):
         """Compatibility adapter for session-oriented protocols."""
         return cls.pop_usage_for_chat(session_id)
 
-    def _store_usage(self, usage: dict[str, Any] | None) -> None:
+    @staticmethod
+    def _legacy_protocol_session_id() -> str | None:
+        """Return the explicit compatibility identity for legacy protocols."""
         from ..app.agent_context import (
-            get_current_invocation_id,
             get_current_session_id,
         )
+
+        return get_current_session_id()
+
+    def _store_usage(
+        self,
+        usage: dict[str, Any] | None,
+        *,
+        legacy_session_id: str | None = None,
+    ) -> None:
+        from ..app.agent_context import get_current_invocation_id
 
         if not usage:
             return
@@ -584,7 +601,9 @@ class TokenRecordingModelWrapper(ChatModelBase):
             usage.get("chat_id") or usage.get("conversation_id") or "",
         )
         if not chat_id:
-            chat_id = get_current_session_id() or ""
+            chat_id = legacy_session_id or ""
+        if not chat_id:
+            return
         invocation_id = str(usage.get("turn_id") or "")
         if not invocation_id:
             invocation_id = get_current_invocation_id() or ""

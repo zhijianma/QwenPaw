@@ -455,16 +455,8 @@ describe("TokenUsagePage", () => {
     expect(capturedProps.tables.byTurnData).toHaveLength(1);
   });
 
-  it("reads compatibility maps from an older backend", async () => {
+  it("reads canonical chat ids from compatibility maps", async () => {
     const summary = makeSummary([makeRecord()]);
-    Object.values(summary.by_chat).forEach((row) => {
-      row.conversation_id = row.chat_id;
-      delete row.chat_id;
-    });
-    Object.values(summary.by_turn).forEach((row) => {
-      row.conversation_id = row.chat_id;
-      delete row.chat_id;
-    });
     apiMocks.getTokenUsage.mockResolvedValue({
       ...summary,
       scopes: undefined,

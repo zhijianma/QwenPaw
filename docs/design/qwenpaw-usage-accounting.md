@@ -91,10 +91,17 @@ read-only compatibility projections during migration and must reconcile exactly
 with the structured rows; clients should not parse their keys.
 
 `chat_id` is the canonical public identity field and always means
-`ChatSpec.id`. The older `conversation_id` response field and Python type name
-remain synchronized, deprecated compatibility aliases during rolling upgrades.
-The legacy SQLite column and `ModelCallAttempt.conversation_id` are translated
-at the projection boundary; they are not a second usage ownership concept.
+`ChatSpec.id`. New Summary/Details JSON and OpenAPI only expose `chat_id`.
+Historical payloads and extensions may still provide `conversation_id`, and
+Python retains a read-only compatibility property. The legacy SQLite column and
+`ModelCallAttempt.conversation_id` are translated at the projection boundary;
+they are not a second usage ownership concept.
+
+The active-turn accumulator never infers Chat ownership from a transport
+session when a Model Call Attempt exists. Attempt ownership wins even when it
+is intentionally unscoped. Only callers without the durable Model Call plane
+may enter through the explicitly named legacy protocol-session adapter; this
+keeps old transports operational without polluting `ChatSpec.id` aggregates.
 
 Every scope exposes cost evidence alongside tokens. `cost_micros` sums only
 Provider-reported monetary micro-units; `cost_unknown_calls` counts calls whose
@@ -185,6 +192,9 @@ Agent, Chat, or Turn ownership remain explicitly unattributed.
 - Historical Model Call files without Agent/cache fields remain readable.
 - Summary values remain stable across restart and projection rebuild.
 - Global, Agent, Chat and Turn totals reconcile to the same attempt set.
+- Date and actual Provider/Model totals reconcile to that same attempt set.
+- Summary/Details responses contain `chat_id` only; legacy input still restores.
+- An unscoped Model Call cannot inherit a transport session as Chat ownership.
 - Known cost and unknown-cost call counts reconcile across every scope.
 - Calls without Provider usage remain countable and report unknown coverage.
 - A multi-call Turn preserves per-route token totals after message refresh.

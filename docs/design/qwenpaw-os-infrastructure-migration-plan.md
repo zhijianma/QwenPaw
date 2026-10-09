@@ -1243,8 +1243,12 @@ Cron 不形成独立审批或产物事实源。
       聚合。Console 不再下载明细并维护第二套页面私有聚合口径；`/details` 仅保留为
       明细查询与兼容 API。Agent/Chat/Turn 通过 `scopes` 结构化行公开身份；旧复合键
       map 仅作迁移兼容且不要求客户端解析。公共模型与 Console 统一使用 `chat_id`；
-      旧 `conversation_id` 只在 Model Call/SQLite 存储适配边界及同步弃用别名中保留。
-      不同 Agent 下相同 Chat/Turn ID 仍严格隔离。
+      新 Summary/Details JSON 不再输出 `conversation_id`，旧数据和插件仍可通过输入
+      alias 与只读 Python 属性恢复。Model Attempt 存在时禁止从 transport session
+      猜测 Chat 归属；仅无 Attempt 的旧协议走显式 session compatibility adapter。
+      不同 Agent 下相同 Chat/Turn ID 仍严格隔离。2026-10-10 真实 Lite 数据的
+      3179 次调用在日期、模型、Agent、Chat、Turn 五种聚合上的 call sum 均与全局
+      完全相等；固定 Chat 的两条实际模型记录只返回 `chat_id`。
     - [x] Token Usage Summary 已从单一 JSON 数据源切换为 Model Call usage 的可重建
       Lite 投影。SQLite 只保存内容无关的派生字段，以 `attempt_id` 幂等；应用启动扫描
       全部已配置 Agent Workspace 并原子 rebuild。首次初始化冻结下一 UTC 日为 legacy

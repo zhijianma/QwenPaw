@@ -3,19 +3,20 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 
-def _resolve_chat_identity(
-    chat_id: str | None,
-    conversation_id: str | None,
-) -> str | None:
-    """Resolve the canonical ChatSpec identity from a legacy alias."""
+def _validate_chat_identity_aliases(value: object) -> None:
+    """Reject ambiguous canonical and legacy Chat identities."""
+    if not isinstance(value, Mapping):
+        return
+    chat_id = value.get("chat_id")
+    conversation_id = value.get("conversation_id")
     if chat_id and conversation_id and chat_id != conversation_id:
         raise ValueError("chat_id and conversation_id must identify one Chat")
-    return chat_id or conversation_id
 
 
 class TokenUsageStats(BaseModel):
@@ -55,29 +56,26 @@ class TokenUsageRecord(TokenUsageStats):
         ),
     )
     chat_id: Optional[str] = Field(
-        None,
+        default=None,
+        validation_alias=AliasChoices("chat_id", "conversation_id"),
         description="Owning ChatSpec.id; null for legacy or unscoped calls",
-    )
-    conversation_id: Optional[str] = Field(
-        None,
-        json_schema_extra={"deprecated": True},
-        description="Deprecated compatibility alias for chat_id",
     )
     turn_id: Optional[str] = Field(
         None,
         description="Owning OS invocation; null for legacy calls",
     )
 
-    @model_validator(mode="after")
-    def normalize_chat_identity(self) -> "TokenUsageRecord":
-        """Keep the deprecated response alias consistent during cutover."""
-        chat_id = _resolve_chat_identity(
-            self.chat_id,
-            self.conversation_id,
-        )
-        self.chat_id = chat_id
-        self.conversation_id = chat_id
-        return self
+    @property
+    def conversation_id(self) -> str | None:
+        """Return the deprecated Python alias during migration."""
+        return self.chat_id
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_chat_identity(cls, value: object) -> object:
+        """Reject conflicting canonical and legacy input fields."""
+        _validate_chat_identity_aliases(value)
+        return value
 
 
 class TokenUsageByModel(TokenUsageStats):
@@ -103,22 +101,22 @@ class TokenUsageByAgent(TokenUsageStats):
 class TokenUsageByChat(TokenUsageByAgent):
     """Aggregate owned by one ChatSpec within an Agent namespace."""
 
-    chat_id: Optional[str] = None
-    conversation_id: Optional[str] = Field(
-        None,
-        json_schema_extra={"deprecated": True},
+    chat_id: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("chat_id", "conversation_id"),
     )
 
-    @model_validator(mode="after")
-    def normalize_chat_identity(self) -> "TokenUsageByChat":
-        """Keep the deprecated response alias consistent during cutover."""
-        chat_id = _resolve_chat_identity(
-            self.chat_id,
-            self.conversation_id,
-        )
-        self.chat_id = chat_id
-        self.conversation_id = chat_id
-        return self
+    @property
+    def conversation_id(self) -> str | None:
+        """Return the deprecated Python alias during migration."""
+        return self.chat_id
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_chat_identity(cls, value: object) -> object:
+        """Reject conflicting canonical and legacy input fields."""
+        _validate_chat_identity_aliases(value)
+        return value
 
 
 # Source compatibility for extensions importing the pre-ChatSpec type name.

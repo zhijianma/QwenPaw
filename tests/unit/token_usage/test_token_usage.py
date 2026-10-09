@@ -904,7 +904,6 @@ class TestTokenUsageManagerCore:
                 "model": "model-from-key",
                 "agent_id": None,
                 "chat_id": None,
-                "conversation_id": None,
                 "turn_id": None,
             },
             {
@@ -930,7 +929,6 @@ class TestTokenUsageManagerCore:
                 "model": "namespace:model:tag",
                 "agent_id": None,
                 "chat_id": None,
-                "conversation_id": None,
                 "turn_id": None,
             },
         ]
@@ -965,7 +963,6 @@ class TestTokenUsageManagerCore:
                 "model": "model-from-key",
                 "agent_id": None,
                 "chat_id": None,
-                "conversation_id": None,
                 "turn_id": None,
             },
         ]
@@ -1207,7 +1204,7 @@ class TestTokenRecordingModelWrapper:
             cache_creation_input_tokens=0,
         )
         attempt = MagicMock(
-            conversation_id="chat-1",
+            chat_id="chat-1",
             invocation_id="turn-1",
             provider_id="actual-provider",
             model_id="actual-model",
@@ -1219,6 +1216,40 @@ class TestTokenRecordingModelWrapper:
         assert captured[0].turn_id == "turn-1"
         assert captured[0].provider_id == "actual-provider"
         assert captured[0].model_name == "actual-model"
+
+    def test_model_attempt_never_uses_transport_session_as_chat(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        """An unscoped Model Call must not pollute a transport-named Chat."""
+        monkeypatch.setattr(
+            "qwenpaw.app.agent_context.get_current_session_id",
+            lambda: "transport-session",
+        )
+        wrapper, _captured = self._stream_harness(tmp_path, monkeypatch)
+        usage = MagicMock(
+            input_tokens=100,
+            output_tokens=50,
+            cache_input_tokens=0,
+            cache_creation_input_tokens=0,
+        )
+        attempt = MagicMock(
+            agent_id="default",
+            chat_id="",
+            invocation_id="turn-1",
+            provider_id="actual-provider",
+            model_id="actual-model",
+        )
+
+        wrapper._record_usage(usage, attempt)
+
+        assert (
+            TokenRecordingModelWrapper.pop_usage_for_chat(
+                "transport-session",
+            )
+            is None
+        )
 
     def test_record_usage_carries_cache_metrics(self, tmp_path, monkeypatch):
         """Provider cache counters should reach both event and turn usage."""

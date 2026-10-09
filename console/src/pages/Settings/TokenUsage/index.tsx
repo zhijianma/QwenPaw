@@ -26,13 +26,6 @@ import { useTokenTypeConfig } from "./hooks/useTokenTypeConfig";
 import { buildByDateRows } from "./tokenUsageRows";
 import styles from "./index.module.less";
 
-function usageChatId(stats: {
-  chat_id?: string | null;
-  conversation_id?: string | null;
-}): string | null {
-  return stats.chat_id ?? stats.conversation_id ?? null;
-}
-
 function TokenUsagePage() {
   const { t } = useTranslation();
   const { message } = useAppMessage();
@@ -235,7 +228,7 @@ function TokenUsagePage() {
       aggregatedData.scopes?.chats ?? Object.values(aggregatedData.by_chat);
     return rows
       .map((stats) => {
-        const chatId = usageChatId(stats);
+        const chatId = stats.chat_id ?? null;
         const profile = stats.agent_id
           ? agentsById.get(stats.agent_id)
           : undefined;
@@ -274,7 +267,7 @@ function TokenUsagePage() {
       aggregatedData.scopes?.turns ?? Object.values(aggregatedData.by_turn);
     return rows
       .map((stats) => {
-        const chatId = usageChatId(stats);
+        const chatId = stats.chat_id ?? null;
         const profile = stats.agent_id
           ? agentsById.get(stats.agent_id)
           : undefined;
