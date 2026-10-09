@@ -1092,6 +1092,20 @@ Assembly、Tool Guard、STRICT Approval、模型工具调用及浏览器结果�
   仍被仓库既有错误阻断（旧 target lib、测试 fixture 缺字段和 Task/UI 旧类型），
   本次改动文件没有出现在错误列表中，不能据此宣称全量类型门禁通过。
 
+### 2026-10-09 Capability Conformance Matrix
+
+- 新增 Host-owned `CAPABILITY_CONFORMANCE`，与全部 Slot 精确一一对应。公开 Slot
+  必须绑定系统实现、插件 fixture 和 OS 行为测试；新增 Slot 漏证据或用 activation
+  冒充行为合同会 fail closed。
+- 证据被分为 `behavior_contract`、`system_lifecycle`、`activation_contract` 和
+  `migration_boundary`。16 个 public Slot 已完成行为级系统/插件同契约；
+  `agent.factory` 保持 Host-only；4 个旧 Slot 只用于迁移；5 个 UI Slot 只证明热
+  激活和投影，未宣称 Task UI 行为完成。
+- 新增只读 `GET /api/plugins/capability-conformance`。返回值显式声明
+  `declared_evidence_not_runtime_health`，不能代替具体候选的 promotion evidence 或
+  当前进程健康检查。矩阵相关 46 项单元测试及其引用的 27 项 OS 行为合同通过；
+  未运行全仓测试，Task 页面没有改动。
+
 ## 5. 钉钉文档归档清单
 
 ### 框架分析目录

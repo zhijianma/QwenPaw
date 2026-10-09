@@ -28,6 +28,7 @@ from qwenpaw.app.routers.plugins import (
     _safe_extract_zip,
     get_capability_promotion_evidence_artifact,
     install_plugin,
+    list_capability_conformance,
     list_capability_promotion_evidence,
     list_capability_promotions,
     list_capability_releases,
@@ -638,6 +639,33 @@ async def test_list_capability_releases_is_stable_and_content_safe():
     assert all("implementation" not in item for item in result["items"])
     assert all(
         item["release_hash"].startswith("sha256:") for item in result["items"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_capability_conformance_is_declared_evidence_only():
+    result = await list_capability_conformance()
+
+    assert result["schema_version"] == "qwenpaw.capability-conformance.v1"
+    assert result["semantics"] == "declared_evidence_not_runtime_health"
+    assert {item["slot"] for item in result["items"]} >= {
+        "agent.factory",
+        "tool.provider",
+        "ui.settings",
+    }
+    assert all("health" not in item for item in result["items"])
+
+
+def test_capability_conformance_route_is_json_serializable():
+    app = FastAPI()
+    app.include_router(plugins_router)
+    client = TestClient(app)
+
+    response = client.get("/plugins/capability-conformance")
+
+    assert response.status_code == 200
+    assert response.json()["semantics"] == (
+        "declared_evidence_not_runtime_health"
     )
 
 

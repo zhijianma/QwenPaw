@@ -33,6 +33,7 @@ from pydantic import BaseModel
 from ...capabilities.promotions import (
     capability_promotion_evidence_artifact,
 )
+from ...capabilities.conformance import capability_conformance_snapshot
 from ...plugins.contributions import ContributionValidationError
 from ...plugins.loader import (
     PluginDeactivationAuthorizationRequired,
@@ -743,6 +744,19 @@ async def list_capability_releases(request: Request) -> dict:
 
 
 @router.get(
+    "/capability-conformance",
+    summary="List declared capability conformance evidence",
+    description=(
+        "Return the Host-owned slot evidence matrix. Entries describe "
+        "repository contracts and are not live health or test-run results."
+    ),
+)
+async def list_capability_conformance() -> dict[str, object]:
+    """Return the immutable system/plugin conformance declaration."""
+    return capability_conformance_snapshot()
+
+
+@router.get(
     "/capability-promotions",
     summary="List capability promotion evidence",
     description=(
@@ -751,7 +765,8 @@ async def list_capability_releases(request: Request) -> dict:
 )
 async def list_capability_promotions(
     request: Request,
-    provider_id: str | None = Query(
+    provider_id: str
+    | None = Query(
         default=None,
         pattern=r"^[a-z0-9][a-z0-9_.-]*$",
     ),
@@ -799,8 +814,7 @@ async def list_capability_promotion_evidence(
         limit=limit,
     )
     artifacts = tuple(
-        capability_promotion_evidence_artifact(bundle)
-        for bundle in bundles
+        capability_promotion_evidence_artifact(bundle) for bundle in bundles
     )
     return {
         "registry_epoch_id": str(registry.registry_epoch_id),
@@ -843,8 +857,8 @@ async def get_capability_promotion_evidence_artifact(
         media_type=artifact.media_type,
         headers={
             "Content-Disposition": (
-                "attachment; filename=\"capability-promotion-evidence-"
-                f"{bundle_id}.json\""
+                'attachment; filename="capability-promotion-evidence-'
+                f'{bundle_id}.json"'
             ),
             "ETag": f'"{artifact.content_hash}"',
             "X-Content-Type-Options": "nosniff",
@@ -975,7 +989,8 @@ async def uninstall_plugin_source(
 async def install_plugin(
     body: InstallPluginRequest,
     request: Request,
-    confirmed_candidate_hash: str | None = Header(
+    confirmed_candidate_hash: str
+    | None = Header(
         default=None,
         alias="X-QwenPaw-Authorize-Candidate",
     ),
@@ -1048,7 +1063,8 @@ async def upload_plugin(
     request: Request,
     file: UploadFile = File(..., description="Plugin ZIP archive"),
     force: bool = False,
-    confirmed_candidate_hash: str | None = Header(
+    confirmed_candidate_hash: str
+    | None = Header(
         default=None,
         alias="X-QwenPaw-Authorize-Candidate",
     ),
@@ -1135,7 +1151,8 @@ async def upload_plugin(
 async def uninstall_plugin(
     plugin_id: str,
     request: Request,
-    confirmed_release_hash: str | None = Header(
+    confirmed_release_hash: str
+    | None = Header(
         default=None,
         alias="X-QwenPaw-Confirm-Release",
     ),

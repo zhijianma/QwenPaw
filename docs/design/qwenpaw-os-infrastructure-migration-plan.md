@@ -1382,13 +1382,23 @@ Cron 不形成独立审批或产物事实源。
   - [x] Runtime 不再在 Workspace 缺失 Host-owned Capability Registry 时创建
     隐式本地 Registry；错误产品装配直接 fail closed，防止 Chat、Task
     和 Plugin Loader 分裂为不同 generation 事实源。
-  - [ ] 仍需按模块完成行为级同契约矩阵，不能仅以 activation 结构校验替代运行语义。
+  - [x] 已建立 Host-owned、机器可校验的 Capability Conformance Matrix，精确覆盖
+    全部 Slot，并通过只读 `/api/plugins/capability-conformance` 暴露给二次开发者。
+    Matrix 明确区分行为合同、系统生命周期、Experience activation 和旧兼容边界；
+    API 明示它是 declared evidence 而非 runtime health，插件不能自行上报通过状态。
+    新增 Slot 如果没有稳定性匹配的证据会 fail closed。
     - [x] `artifact.renderer` 的系统安全实现与真实 `task-insights` 插件实现通过
       同一 `ArtifactRenderService` 行为套件，覆盖 generation pin、预览选择、来源
       hash、MIME/大小边界和附件 fallback；协议存在性检查不计为通过。
     - [x] `runner` 的系统 Console 实现与真实 `task-insights` 插件实现通过同一
       preflight、`TaskExecutionCoordinator`、Task/Run 终态和 Artifact/Evidence
       行为套件；`harness.runner` 的通过不能替代普通 `runner` Slot 的证据。
+    - [x] 16 个 public Slot 均绑定真实系统实现、插件 fixture 和
+      `tests/contract/os/` 行为测试；本轮整组重跑 27 项全部通过。
+    - [x] `agent.factory` 保持 Host-only system lifecycle；`engine`、`tool`、
+      `memory`、`scheduler` 明示为 migration-only，禁止伪报行为对齐。
+    - [x] 5 个 `ui.*` Slot 仅标记 activation/projection 已覆盖，Task Workbench
+      行为仍按 Chat-first 顺序后置，不计入运行语义完成项。
 - [ ] Python 定点测试、pre-commit 与前端 Chat 定点测试通过。
 - [ ] 真实固定 Chat 先 `/clear`，再逐模块完成可见验收。
   - [x] STRICT internal tool 不再绕过 Governance；请求级 execution level 不修改

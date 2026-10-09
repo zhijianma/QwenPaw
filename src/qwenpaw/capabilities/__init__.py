@@ -48,10 +48,17 @@ from .system_stop_gates import (
     SYSTEM_STOP_GATE_CAPABILITY_BUNDLE,
     WorkspaceStopGateProvider,
 )
+from .conformance import (
+    CAPABILITY_CONFORMANCE,
+    CapabilityConformanceEntry,
+    capability_conformance_snapshot,
+)
 
 __all__ = [
     "ActivatedContribution",
     "ActivationError",
+    "CAPABILITY_CONFORMANCE",
+    "CapabilityConformanceEntry",
     "CapabilityPromotionAuthorizationRequired",
     "GenerationLease",
     "GenerationRegistry",
@@ -75,6 +82,7 @@ __all__ = [
     "WorkspaceStopGateProvider",
     "WorkspaceToolProvider",
     "authorize_capability_promotion",
+    "capability_conformance_snapshot",
     "promotion_risk_for_slots",
     "validate_promotion_authorization",
 ]
