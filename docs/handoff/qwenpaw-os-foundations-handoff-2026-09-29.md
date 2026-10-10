@@ -1397,3 +1397,8 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
   使用 `chat_id = ChatSpec.id`；文件存储仍读取旧 `conversation_id` 关键字，但会拒绝
   两者冲突。环境定点回归 `112 passed`；Workstation/Hub attestation 仍是独立未完成
   门禁，不影响 Lite 基建完成状态。
+- Lite 网络恢复与长程 deadline 门禁已收敛：部分流在没有可信 cursor 时统一进入
+  durable context rebuild，恢复/replay 继承 wall-clock deadline，单次运行边界换算为
+  monotonic timeout。恢复、断流、Resource Wait、跨进程重启和 Runner deadline 定点
+  回归 `154 passed`。原生 cursor Provider 与 macOS/Linux/Windows suspend/time-jump
+  实机矩阵继续作为独立发布验收，不能用本地单元测试伪造完成。

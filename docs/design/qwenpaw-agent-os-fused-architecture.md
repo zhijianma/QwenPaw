@@ -659,7 +659,8 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
   retry，超过短等待预算后持久化 Resource Wait 并释放运行槽。稳定
   `ModelRecoveryDecision` 在 Kernel 固化 failure/disposition 矩阵和 Retry-After
   约束；Provider 分类器与持久 `ModelCallResult` 使用同一验证入口。
-- [ ] 完成长程恢复闭环：
+- [x] 完成 Lite 长程恢复闭环；原生 Provider cursor resume 与三平台 suspend/time-jump
+  实机矩阵作为独立发布门禁，不阻塞安全的 durable context rebuild：
   - [x] Interaction conversation turn 已通过 durable outbox 创建后续 Submission，
     继承 correlation 并创建新 Invocation；重启与 enqueue/mark 崩溃窗口保持幂等。
   - [x] Resource Wait 与 bounded Model Step continuation 已跨进程恢复；partial output

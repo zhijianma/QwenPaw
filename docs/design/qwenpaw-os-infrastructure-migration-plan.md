@@ -661,9 +661,9 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     Adapter，不要求数据迁移。当前四个本地 Workspace 的恢复表均为空，没有可用在线
     历史样本；跨重启、timer、partial stream、Action reconciliation、显式重试授权、
     Harness 与 Interaction continuation 由 85 项定点测试覆盖。
-- [ ] 把 WebSocket 增量续传、sticky route 和 HTTP fallback 保持为 Provider
+- [x] Lite 已把 WebSocket 增量续传、sticky route 和 HTTP fallback 冻结为 Provider
   Adapter capability；严格验证 response identity/prefix，失败时回退持久上下文重建，
-  Kernel 不感知具体传输。
+  Kernel 不感知具体传输。当前内置 Provider 均使用安全 fallback，不伪造原生续传。
   - [x] Kernel 已冻结 `ModelTransportContract`、Host-keyed HMAC Resume Evidence 与统一
     fail-closed validator；Provider 在建模时按实际 Model 声明能力，Attempt 在网络前
     固化。cursor resume 必须同时验证 response identity 与 prefix，sticky route 和
@@ -673,15 +673,16 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     信任异常或 metadata 猜测续传，Result 记录 `durable_context_rebuild` 及原因，继续
     使用既有 Model Step checkpoint/outbox；成功、pre-output retry 和用户 Interrupt
     不伪造 transport recovery。
-  - [ ] 至少一个真实支持 cursor resume 的 Provider Adapter 仍需接入，并完成 response
-    identity、prefix、sticky route、HTTP continuation 的故障注入及真实断流验收。
-- [ ] 完成跨平台长程时间语义：
+- [ ] 至少一个真实支持 cursor resume 的 Provider Adapter 仍需接入，并完成 response
+  identity、prefix、sticky route、HTTP continuation 的故障注入及真实断流验收；这是
+  Provider 增强门禁，不阻塞 Lite durable context rebuild。
+- [x] 完成 Lite 长程时间核心语义：
   - [x] 首次 Run 保存 wall-clock durable deadline，恢复/replay 继承同一 deadline；
     每次进入执行边界只换算一次剩余时长，再由 `asyncio.timeout` 使用事件循环的
     monotonic clock 计时。deadline 已过时不调用 Runner，历史无 deadline 的 Run 以
     首次 `started_at` 兼容补算。
-  - [ ] 分别在 macOS、Linux、Windows 验证 suspend/sleep、系统时间跳变和进程重启
-    语义；本地单元测试不替代三平台真实运行验证。
+- [ ] 分别在 macOS、Linux、Windows 验证 suspend/sleep、系统时间跳变和进程重启
+  语义；本地单元测试不替代三平台真实运行验证，该矩阵作为发布验收独立保留。
 
 验收：浏览器断连不停止执行；连接前失败可安全重试；部分流断开不误判成功或盲目
 重放；Action 成功后不会重复执行；Interaction 回答或资源恢复在崩溃窗口内恰好创建
