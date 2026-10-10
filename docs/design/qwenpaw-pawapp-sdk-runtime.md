@@ -170,8 +170,8 @@ Implemented in the frontend SDK:
 
 Still pending in P2:
 
-- move Task endpoint construction, error parsing and SSE cursor handling into
-  one transport-injected client used by both Console APIs and PawApp SDK;
+- move Chat Interaction endpoint construction into one transport-injected
+  client used by both Console APIs and PawApp SDK;
 - generate the shared frontend contracts from Kernel schemas once the schema
   publication pipeline is available;
 - add a browser disconnect test against the running Host rather than only
@@ -241,6 +241,11 @@ Verified on 2026-10-10 against the running Lite Host on port 8004:
   Event, Approval, Artifact, Evidence and Projection contracts from the same
   neutral `console/src/contracts` source; their legacy import paths remain
   compatibility re-exports.
+- Console `tasksApi` and `paw.tasks` now reuse one transport-injected
+  `createTaskClient()` for Task routes, ID encoding, Artifact paths, approval
+  commands and SSE cursor parsing. The SDK layer retains only developer-facing
+  capability checks, event listeners, reconnect policy and terminal
+  Projection semantics.
 
 ## 10. Explicit non-goals
 
