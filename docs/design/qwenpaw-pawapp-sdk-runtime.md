@@ -504,6 +504,12 @@ Verified on 2026-10-10 against the running Lite Host on port 8004:
   Host handshake, checks required features and exposes the existing
   `QwenPawClient`. Startup failure always terminates the owned process and
   `close()` is idempotent.
+- `@qwenpaw/client` now exposes ChatSpec creation, history, message-scoped fork,
+  runtime snapshots and cursor-aware runtime streaming. `@qwenpaw/sdk` adds a
+  `host.chats.open(ChatSpec.id)` convenience handle whose submission, queue,
+  steer, interrupt, stop-and-clear, Interaction response and fork methods all
+  delegate to that shared client. The handle owns no queue or completion state;
+  stream EOF returns only the last cursor and never means task success.
 - Nine real child-process tests cover ready, missing feature, incompatible or
   malformed handshake, malformed launch or API root, early exit, spawn failure
   and launch timeout.

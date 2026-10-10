@@ -5,8 +5,22 @@ import {
   missingRuntimeFeatures,
   QwenPawHttpError,
   RuntimeClientError,
+  type ChatControlRequest,
+  type ChatForkRequest,
+  type ChatHistory,
+  type ChatInteractionDecisionRequest,
+  type ChatInteractionResolution,
+  type ChatQueueReorderRequest,
+  type ChatRequestOptions,
+  type ChatSpec,
+  type ChatSteerRequest,
+  type ChatSubmissionRequest,
+  type ControlReceipt,
+  type ConversationRuntimeProjection,
   type FetchTransportOptions,
+  type FollowRuntimeOptions,
   type QwenPawClient,
+  type QueueProjection,
   type RuntimeFeature,
   type RuntimeHandshake,
 } from "@qwenpaw/client";
@@ -65,6 +79,129 @@ export interface QwenPawHostOptions {
   startupTimeoutMs?: number;
   shutdownTimeoutMs?: number;
   onOutput?: (output: ManagedHostOutput) => void;
+}
+
+export class QwenPawChat {
+  readonly id: string;
+  readonly spec?: ChatSpec;
+
+  readonly #client: QwenPawClient;
+
+  constructor(client: QwenPawClient, chatId: string, spec?: ChatSpec) {
+    if (!chatId.trim()) throw new TypeError("chatId must not be empty");
+    this.#client = client;
+    this.id = chatId;
+    this.spec = spec;
+  }
+
+  history(
+    options: ChatRequestOptions & { includeAppOwned?: boolean } = {},
+  ): Promise<ChatHistory> {
+    return this.#client.chats.history(this.id, options);
+  }
+
+  runtime(
+    options: ChatRequestOptions = {},
+  ): Promise<ConversationRuntimeProjection> {
+    return this.#client.chats.runtime(this.id, options);
+  }
+
+  followRuntime(
+    options: FollowRuntimeOptions = {},
+  ): AsyncGenerator<ConversationRuntimeProjection, string | undefined> {
+    return this.#client.chats.followRuntime(this.id, options);
+  }
+
+  submit(
+    body: ChatSubmissionRequest,
+    options: ChatRequestOptions = {},
+  ): Promise<ControlReceipt> {
+    return this.#client.chatControls.submit(this.id, body, options);
+  }
+
+  queue(options: ChatRequestOptions = {}): Promise<QueueProjection> {
+    return this.#client.chatControls.queue(this.id, options);
+  }
+
+  steer(
+    body: ChatSteerRequest,
+    options: ChatRequestOptions = {},
+  ): Promise<ControlReceipt> {
+    return this.#client.chatControls.steer(this.id, body, options);
+  }
+
+  interrupt(
+    body: ChatControlRequest,
+    options: ChatRequestOptions = {},
+  ): Promise<ControlReceipt> {
+    return this.#client.chatControls.interrupt(this.id, body, options);
+  }
+
+  stopAndClear(
+    body: ChatControlRequest,
+    options: ChatRequestOptions = {},
+  ): Promise<ControlReceipt> {
+    return this.#client.chatControls.stopAndClear(this.id, body, options);
+  }
+
+  cancelQueued(
+    submissionId: string,
+    body: ChatControlRequest,
+    options: ChatRequestOptions = {},
+  ): Promise<ControlReceipt> {
+    return this.#client.chatControls.cancelQueued(
+      this.id,
+      submissionId,
+      body,
+      options,
+    );
+  }
+
+  reorderQueue(
+    body: ChatQueueReorderRequest,
+    options: ChatRequestOptions = {},
+  ): Promise<ControlReceipt> {
+    return this.#client.chatControls.reorder(this.id, body, options);
+  }
+
+  listInteractions(signal?: AbortSignal) {
+    return this.#client.interactions.list(this.id, signal);
+  }
+
+  respondToInteraction(
+    interactionId: string,
+    body: ChatInteractionDecisionRequest,
+  ): Promise<ChatInteractionResolution> {
+    return this.#client.interactions.respond(this.id, interactionId, body);
+  }
+
+  async fork(
+    body: ChatForkRequest,
+    options: ChatRequestOptions = {},
+  ): Promise<QwenPawChat> {
+    const spec = await this.#client.chats.fork(this.id, body, options);
+    return new QwenPawChat(this.#client, spec.id, spec);
+  }
+}
+
+export class QwenPawChats {
+  readonly #client: QwenPawClient;
+
+  constructor(client: QwenPawClient) {
+    this.#client = client;
+  }
+
+  open(chatId: string): QwenPawChat {
+    return new QwenPawChat(this.#client, chatId);
+  }
+
+  async create(
+    body: Partial<ChatSpec>,
+    options: ChatRequestOptions = {},
+  ): Promise<QwenPawChat> {
+    const spec = await this.#client.chats.create(body, options);
+    return new QwenPawChat(this.#client, spec.id, spec);
+  }
 }
 
 interface ManagedHostLaunch {
@@ -316,6 +453,7 @@ async function waitForHandshake(
 
 export class QwenPawHost {
   readonly client: QwenPawClient;
+  readonly chats: QwenPawChats;
   readonly handshake: RuntimeHandshake;
   readonly apiUrl: string;
   readonly pid: number;
@@ -334,6 +472,7 @@ export class QwenPawHost {
     this.#child = child;
     this.#shutdownTimeoutMs = shutdownTimeoutMs;
     this.client = client;
+    this.chats = new QwenPawChats(client);
     this.handshake = handshake;
     this.apiUrl = launch.api_url;
     this.pid = launch.pid;

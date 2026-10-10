@@ -204,4 +204,76 @@ describe("public QwenPaw client", () => {
       true,
     );
   });
+
+  it("follows Chat runtime snapshots without treating EOF as completion", async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(": keepalive\r\n\r\n"));
+        controller.enqueue(
+          encoder.encode(
+            'id: cursor-2\r\nevent: snapshot\r\ndata: {"agent_id":' +
+              '"default","chat_id":"chat/1","queue":{},' +
+              '"interactions":[],"cursor":"cursor-2",' +
+              '"observed_at":"2026-10-10T00:00:00Z"}',
+          ),
+        );
+        controller.close();
+      },
+    });
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+      new Response(stream, {
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    );
+    const client = createQwenPawClient({
+      baseUrl: "http://localhost:8004/api",
+      agentId: "reviewer",
+      fetch,
+    });
+
+    const snapshots = [];
+    const events = client.chats.followRuntime("chat/1", {
+      afterCursor: "cursor-1",
+    });
+    let result = await events.next();
+    while (!result.done) {
+      snapshots.push(result.value);
+      result = await events.next();
+    }
+
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]).toMatchObject({
+      chat_id: "chat/1",
+      cursor: "cursor-2",
+    });
+    expect(result.value).toBe("cursor-2");
+    const headers = new Headers(fetch.mock.calls[0][1]?.headers);
+    expect(headers.get("Last-Event-ID")).toBe("cursor-1");
+    expect(headers.get("X-Agent-Id")).toBe("reviewer");
+  });
+
+  it("forks from a stable source message through the shared Chat client", async () => {
+    const request = vi.fn().mockResolvedValue({ id: "child-chat" });
+    const openStream = vi.fn();
+    const client = createQwenPawClient({ request, openStream });
+
+    await client.chats.fork("parent/chat", {
+      source_message_id: "message-7",
+      idempotency_key: "fork-once",
+      name: "Italian README",
+    });
+
+    expect(request).toHaveBeenCalledWith(
+      "/chats/parent%2Fchat/fork",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          source_message_id: "message-7",
+          idempotency_key: "fork-once",
+          name: "Italian README",
+        }),
+      }),
+    );
+  });
 });

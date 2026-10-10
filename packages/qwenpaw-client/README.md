@@ -32,6 +32,10 @@ await paw.chatControls.steer("chat-spec-id", {
   expected_revision: queue.revision,
   instruction: "Verify the translation before writing the artifact",
 });
+
+for await (const snapshot of paw.chats.followRuntime("chat-spec-id")) {
+  console.log(snapshot.cursor, snapshot.queue.revision);
+}
 ```
 
 Pass a custom `QwenPawTransport` instead of Fetch options to integrate another
@@ -44,6 +48,11 @@ interrupt, stop-and-clear, cancellation and reorder commands. The client does
 not maintain a second browser queue. Every mutation uses an idempotency key and
 the queue revision returned by the Host; steer instructions become effective
 only at a Runtime safe point.
+
+`chats` exposes ChatSpec creation, history, fork and authoritative runtime
+snapshots. `followRuntime()` reconnects from `afterCursor` and returns the last
+observed cursor when the transport ends; EOF is not a successful turn. Read the
+latest runtime projection to determine queue, interaction and execution state.
 
 ## 中文说明
 

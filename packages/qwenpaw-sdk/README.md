@@ -19,8 +19,14 @@ await using host = await QwenPawHost.create({
   requiredFeatures: ["chat.control.v1"],
 });
 
-const queue = await host.client.chatControls.getQueue("chat-id");
+const chat = host.chats.open("chat-spec-id");
+const queue = await chat.queue();
 console.log(queue);
+
+const child = await chat.fork({
+  source_message_id: "message-id",
+  idempotency_key: crypto.randomUUID(),
+});
 ```
 
 The runtime executable is mandatory. The SDK never selects an arbitrary
@@ -31,3 +37,9 @@ Host protocol handshake and checks required features before returning.
 Call `close()` or use `await using` to stop the owned process. Startup failure,
 incompatible protocol, missing features and timeout all terminate that process
 before rejecting.
+
+`host.chats.open()` returns a convenience handle bound to `ChatSpec.id`.
+History, submission, queue, steer, interrupt, stop-and-clear, approvals, fork
+and runtime streams delegate to the same `@qwenpaw/client` used remotely. The
+handle stores no queue or completion state, and runtime stream EOF is never
+reported as successful completion.

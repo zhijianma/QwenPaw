@@ -1,5 +1,6 @@
 import { request } from "../request";
 import { createChatControlClient } from "../../clients/chatControlClient";
+import { createChatClient } from "../../clients/chatClient";
 import { createInteractionClient } from "../../clients/interactionClient";
 import { getApiUrl, getApiToken } from "../config";
 import { buildAuthHeaders } from "../authHeaders";
@@ -42,6 +43,17 @@ export interface ChatStatusResponse {
 
 const FILES_PREVIEW = "/files/preview";
 const chatControlClient = createChatControlClient({ request });
+const chatClient = createChatClient({
+  request,
+  openStream: (path, init) =>
+    fetch(getApiUrl(path), {
+      ...init,
+      headers: {
+        ...buildAuthHeaders(),
+        ...Object.fromEntries(new Headers(init?.headers).entries()),
+      },
+    }),
+});
 const interactionClient = createInteractionClient({ request });
 
 export const chatApi = {
@@ -109,37 +121,20 @@ export const chatApi = {
     archived?: boolean;
     include_app_owned?: boolean;
     agentId?: string;
-  }) => {
-    const searchParams = new URLSearchParams();
-    if (params?.user_id) searchParams.append("user_id", params.user_id);
-    if (params?.channel) searchParams.append("channel", params.channel);
-    if (params?.archived !== undefined)
-      searchParams.append("archived", String(params.archived));
-    if (params?.include_app_owned !== undefined)
-      searchParams.append(
-        "include_app_owned",
-        String(params.include_app_owned),
-      );
-    const query = searchParams.toString();
-    const path = `/chats${query ? `?${query}` : ""}`;
-    return params?.agentId
-      ? request<ChatSpec[]>(path, {
-          headers: { "X-Agent-Id": params.agentId },
-        })
-      : request<ChatSpec[]>(path);
-  },
+  }) =>
+    chatClient.list({
+      userId: params?.user_id,
+      channel: params?.channel,
+      archived: params?.archived,
+      includeAppOwned: params?.include_app_owned,
+      agentId: params?.agentId,
+    }) as Promise<ChatSpec[]>,
 
   createChat: (chat: Partial<ChatSpec>) =>
-    request<ChatSpec>("/chats", {
-      method: "POST",
-      body: JSON.stringify(chat),
-    }),
+    chatClient.create(chat) as Promise<ChatSpec>,
 
   forkChat: (parentChatId: string, payload: ChatForkRequest) =>
-    request<ChatSpec>(`/chats/${encodeURIComponent(parentChatId)}/fork`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
+    chatClient.fork(parentChatId, payload) as Promise<ChatSpec>,
 
   submitTurn: (
     chatId: string,
@@ -155,15 +150,10 @@ export const chatApi = {
     chatId: string,
     options?: { signal?: AbortSignal; agentId?: string },
   ) =>
-    request<ConversationRuntimeProjection>(
-      `/chats/${encodeURIComponent(chatId)}/runtime`,
-      {
-        signal: options?.signal,
-        headers: options?.agentId
-          ? { "X-Agent-Id": options.agentId }
-          : undefined,
-      },
-    ),
+    chatClient.runtime(
+      chatId,
+      options,
+    ) as Promise<ConversationRuntimeProjection>,
 
   steer: (
     chatId: string,
@@ -215,22 +205,11 @@ export const chatApi = {
       agentId?: string;
     },
   ) => {
-    const searchParams = new URLSearchParams();
-    if (options?.include_app_owned !== undefined)
-      searchParams.append(
-        "include_app_owned",
-        String(options.include_app_owned),
-      );
-    const query = searchParams.toString();
-    return request<ChatHistory>(
-      `/chats/${encodeURIComponent(chatId)}${query ? `?${query}` : ""}`,
-      {
-        signal: options?.signal,
-        headers: options?.agentId
-          ? { "X-Agent-Id": options.agentId }
-          : undefined,
-      },
-    );
+    return chatClient.history(chatId, {
+      signal: options?.signal,
+      includeAppOwned: options?.include_app_owned,
+      agentId: options?.agentId,
+    }) as Promise<ChatHistory>;
   },
 
   getChatStatus: (

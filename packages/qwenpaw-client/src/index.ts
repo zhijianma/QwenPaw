@@ -1,4 +1,5 @@
 import { createChatControlClient } from "./clients/chatControls.js";
+import { createChatClient } from "./clients/chats.js";
 import { createInteractionClient } from "./clients/interactions.js";
 import { createRuntimeClient } from "./clients/runtime.js";
 import { createTaskClient } from "./clients/tasks.js";
@@ -15,6 +16,7 @@ export function createQwenPawClient(
     "baseUrl" in options ? createFetchTransport(options) : options;
   return {
     runtime: createRuntimeClient(transport),
+    chats: createChatClient(transport),
     chatControls: createChatControlClient(transport),
     tasks: createTaskClient(transport),
     interactions: createInteractionClient(transport),
@@ -24,10 +26,12 @@ export function createQwenPawClient(
 export type QwenPawClient = ReturnType<typeof createQwenPawClient>;
 
 export * from "./clients/chatControls.js";
+export * from "./clients/chats.js";
 export * from "./clients/interactions.js";
 export * from "./clients/runtime.js";
 export * from "./clients/tasks.js";
 export * from "./contracts/chatControls.js";
+export * from "./contracts/chats.js";
 export * from "./contracts/interactions.js";
 export * from "./contracts/runtime.js";
 export * from "./contracts/tasks.js";
