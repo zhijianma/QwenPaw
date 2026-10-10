@@ -17,6 +17,7 @@ import {
   type ChatRequestOptions,
   type ChatListEvidenceOptions,
   type ChatPageEvidenceOptions,
+  type ChatWaitConditionOptions,
   type ChatSpec,
   type ChatSteerRequest,
   type ChatSubmissionRequest,
@@ -178,6 +179,14 @@ export class QwenPawChat {
 
   artifacts(options: ChatListEvidenceOptions = {}) {
     return this.#client.chats.artifacts(this.id, options);
+  }
+
+  modelCalls(options: ChatListEvidenceOptions = {}) {
+    return this.#client.chats.modelCalls(this.id, options);
+  }
+
+  waitConditions(options: ChatWaitConditionOptions = {}) {
+    return this.#client.chats.waitConditions(this.id, options);
   }
 
   artifactContent(

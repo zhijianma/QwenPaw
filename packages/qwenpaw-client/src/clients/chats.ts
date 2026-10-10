@@ -7,7 +7,9 @@ import type {
   ChatSpec,
   ConversationRuntimeProjection,
   ConversationTrajectoryPage,
+  ModelCallRecord,
   ObservationPage,
+  WaitCondition,
 } from "../contracts/chats.js";
 import { QwenPawHttpError } from "../transport.js";
 
@@ -43,6 +45,10 @@ export interface ChatListEvidenceOptions extends ChatRequestOptions {
 
 export interface ChatPageEvidenceOptions extends ChatListEvidenceOptions {
   cursor?: string;
+}
+
+export interface ChatWaitConditionOptions extends ChatListEvidenceOptions {
+  includeTerminal?: boolean;
 }
 
 export interface ChatArtifactContentOptions extends ChatRequestOptions {
@@ -335,6 +341,29 @@ export function createChatClient(transport: ChatClientTransport) {
       const query = evidenceQuery(options);
       return transport.request<ConversationArtifactRecord[]>(
         `/chats/${encoded(chatId)}/artifacts?${query}`,
+        requestInit(options, {}, true),
+      );
+    },
+    modelCalls(
+      chatId: string,
+      options: ChatListEvidenceOptions = {},
+    ): Promise<ModelCallRecord[]> {
+      const query = evidenceQuery(options);
+      return transport.request<ModelCallRecord[]>(
+        `/chats/${encoded(chatId)}/model-calls?${query}`,
+        requestInit(options, {}, true),
+      );
+    },
+    waitConditions(
+      chatId: string,
+      options: ChatWaitConditionOptions = {},
+    ): Promise<WaitCondition[]> {
+      const query = new URLSearchParams({
+        limit: String(evidenceLimit(options.limit)),
+        include_terminal: String(options.includeTerminal ?? false),
+      });
+      return transport.request<WaitCondition[]>(
+        `/chats/${encoded(chatId)}/wait-conditions?${query.toString()}`,
         requestInit(options, {}, true),
       );
     },

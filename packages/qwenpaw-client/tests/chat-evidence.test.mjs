@@ -26,8 +26,13 @@ test("reads Chat-owned results through stable evidence routes", async () => {
 
   await chats.actions("chat/one", { limit: 5, agentId: "agent-a" });
   await chats.artifacts("chat/one", { limit: 6 });
-  await chats.observations("chat/one", { limit: 7, cursor: "next/1" });
-  await chats.trajectory("chat/one", "correlation/1", { limit: 8 });
+  await chats.modelCalls("chat/one", { limit: 7 });
+  await chats.waitConditions("chat/one", {
+    limit: 8,
+    includeTerminal: true,
+  });
+  await chats.observations("chat/one", { limit: 9, cursor: "next/1" });
+  await chats.trajectory("chat/one", "correlation/1", { limit: 10 });
   const content = await chats.artifactContent("chat/one", "artifact/1", {
     disposition: "attachment",
   });
@@ -41,14 +46,22 @@ test("reads Chat-owned results through stable evidence routes", async () => {
   assert.equal(calls[1][1], "/chats/chat%2Fone/artifacts?limit=6");
   assert.equal(
     calls[2][1],
-    "/chats/chat%2Fone/observations/page?limit=7&cursor=next%2F1",
+    "/chats/chat%2Fone/model-calls?limit=7",
   );
   assert.equal(
     calls[3][1],
-    "/chats/chat%2Fone/trajectories/correlation%2F1?limit=8",
+    "/chats/chat%2Fone/wait-conditions?limit=8&include_terminal=true",
   );
   assert.equal(
     calls[4][1],
+    "/chats/chat%2Fone/observations/page?limit=9&cursor=next%2F1",
+  );
+  assert.equal(
+    calls[5][1],
+    "/chats/chat%2Fone/trajectories/correlation%2F1?limit=10",
+  );
+  assert.equal(
+    calls[6][1],
     "/chats/chat%2Fone/artifacts/artifact%2F1/content" +
       "?disposition=attachment",
   );

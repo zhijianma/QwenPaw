@@ -1527,3 +1527,7 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
   Host 校验并写入 Context Manifest 的 `EXTERNAL` trust level，SDK 不能通过本地包装
   绕过安全边界。
 - Task Workbench 仍保持暂停；本切片只补 Chat-first 公共基础设施，不新增页面状态。
+- 公共 Chat handle 进一步暴露生成的 `WaitCondition` 与 `ModelCallRecord`：外部应用
+  可以解释 approval/user-input、timer、external-event、resource 等等待原因、恢复
+  continuation mode 与 Provider 尝试结果，但不能绕过 Interaction、resource release
+  或 checkpoint outbox 自行重放。SDK 不提供可能重复副作用的通用 `resume()`。

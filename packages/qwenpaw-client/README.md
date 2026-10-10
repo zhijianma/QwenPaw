@@ -85,7 +85,17 @@ const content = await paw.chats.artifactContent(
   "chat-spec-id",
   artifacts[0].artifact.artifact_id,
 );
+
+const blockers = await paw.chats.waitConditions("chat-spec-id");
+const attempts = await paw.chats.modelCalls("chat-spec-id");
 ```
+
+`waitConditions()` explains durable approval, user-input, timer, external-event
+and resource blockers together with their continuation mode. Recovery remains
+Host-owned: respond through the Interaction client when user authority is
+required, while timer/resource and safe-checkpoint continuations are dispatched
+by the Host. The client intentionally does not provide a generic replay button
+that could duplicate side effects.
 
 Pass a custom `QwenPawTransport` instead of Fetch options to integrate another
 authentication, IPC or test transport. Completion, approval, recovery and

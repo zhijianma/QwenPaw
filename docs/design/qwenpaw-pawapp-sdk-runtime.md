@@ -546,6 +546,13 @@ Verified on 2026-10-10 against the running Lite Host on port 8004:
   `ChatSpec.id`; Artifact bytes still pass through the shared safe renderer.
   Forked Chats list only receipts visible in their persisted message snapshot,
   so a parent Artifact created after the fork cannot leak into the child.
+- Recovery observability now exposes generated `WaitCondition` and
+  `ModelCallRecord` contracts on the same Chat handle. Consumers can distinguish
+  approval/user-input, timer, external-event and resource blockers, inspect the
+  continuation mode and correlate provider attempts without reading private
+  checkpoint storage. The SDK deliberately has no generic replay operation:
+  Interaction decisions, resource release and checkpoint/outbox dispatch remain
+  Host-owned so an integration cannot accidentally repeat a side effect.
 
 ## 10. Explicit non-goals
 

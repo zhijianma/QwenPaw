@@ -1,0 +1,204 @@
+{
+  "$defs": {
+    "ContinuationAvailability": {
+      "description": "Whether a continuation executor is currently attached.",
+      "enum": [
+        "attached",
+        "detached"
+      ],
+      "title": "ContinuationAvailability",
+      "type": "string"
+    },
+    "ContinuationMode": {
+      "description": "How execution can continue after a condition becomes satisfied.",
+      "enum": [
+        "live_invocation",
+        "checkpoint",
+        "conversation_turn"
+      ],
+      "title": "ContinuationMode",
+      "type": "string"
+    },
+    "ContinuationRef": {
+      "additionalProperties": false,
+      "description": "Content-free pointer to execution state awaiting a condition.",
+      "properties": {
+        "availability": {
+          "$ref": "#/$defs/ContinuationAvailability"
+        },
+        "checkpoint_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Checkpoint Id"
+        },
+        "invocation_id": {
+          "format": "uuid",
+          "title": "Invocation Id",
+          "type": "string"
+        },
+        "mode": {
+          "$ref": "#/$defs/ContinuationMode"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "mode",
+        "availability",
+        "invocation_id",
+        "checkpoint_id"
+      ],
+      "title": "ContinuationRef",
+      "type": "object"
+    },
+    "WaitConditionKind": {
+      "description": "External facts that may suspend runtime progress.",
+      "enum": [
+        "approval",
+        "user_input",
+        "timer",
+        "external_event",
+        "resource"
+      ],
+      "title": "WaitConditionKind",
+      "type": "string"
+    },
+    "WaitConditionStatus": {
+      "description": "Normalized lifecycle shared by every wait-condition provider.",
+      "enum": [
+        "waiting",
+        "satisfied",
+        "expired",
+        "cancelled"
+      ],
+      "title": "WaitConditionStatus",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.qwenpaw.dev/sdk/wait-condition.v1.json",
+  "additionalProperties": false,
+  "description": "One durable blocker projected from an authoritative source fact.",
+  "properties": {
+    "agent_id": {
+      "minLength": 1,
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "chat_id": {
+      "description": "Owning ChatSpec.id",
+      "minLength": 1,
+      "title": "Chat Id",
+      "type": "string"
+    },
+    "condition_id": {
+      "format": "uuid",
+      "title": "Condition Id",
+      "type": "string"
+    },
+    "continuation": {
+      "$ref": "#/$defs/ContinuationRef"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "kind": {
+      "$ref": "#/$defs/WaitConditionKind"
+    },
+    "not_before": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Not Before"
+    },
+    "policy_source_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Policy Source Id"
+    },
+    "resolved_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Resolved At"
+    },
+    "revision": {
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "schema": {
+      "const": "qwenpaw.kernel-model.v1",
+      "default": "qwenpaw.kernel-model.v1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "source_id": {
+      "format": "uuid",
+      "title": "Source Id",
+      "type": "string"
+    },
+    "source_type": {
+      "minLength": 1,
+      "title": "Source Type",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/WaitConditionStatus"
+    }
+  },
+  "required": [
+    "schema",
+    "chat_id",
+    "condition_id",
+    "kind",
+    "status",
+    "agent_id",
+    "source_type",
+    "source_id",
+    "policy_source_id",
+    "continuation",
+    "revision",
+    "created_at",
+    "not_before",
+    "resolved_at"
+  ],
+  "title": "WaitCondition",
+  "type": "object"
+}

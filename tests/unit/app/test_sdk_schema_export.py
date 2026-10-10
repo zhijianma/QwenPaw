@@ -31,6 +31,8 @@ def test_sdk_schema_export_is_deterministic_and_complete(tmp_path) -> None:
         "conversation-artifact-record.schema.json",
         "observation-page.schema.json",
         "conversation-trajectory-page.schema.json",
+        "model-call-record.schema.json",
+        "wait-condition.schema.json",
     }
     task_schema = json.loads(first_content["task-projection.schema.json"])
     assert task_schema["$id"].endswith("/task-projection.v1.json")

@@ -27,11 +27,12 @@ from qwenpaw.kernel.invocation_control import (
     ControlReceipt,
     QueueProjection,
 )
-from qwenpaw.kernel.models import ActionRecord
+from qwenpaw.kernel.models import ActionRecord, ModelCallRecord
 from qwenpaw.kernel.observations import (
     ConversationTrajectoryPage,
     ObservationPage,
 )
+from qwenpaw.kernel.waits import WaitCondition
 
 _CONTRACTS: tuple[tuple[str, type[BaseModel], bool], ...] = (
     ("host-handshake", HostHandshake, True),
@@ -48,6 +49,8 @@ _CONTRACTS: tuple[tuple[str, type[BaseModel], bool], ...] = (
     ("conversation-artifact-record", ConversationArtifactRecord, True),
     ("observation-page", ObservationPage, True),
     ("conversation-trajectory-page", ConversationTrajectoryPage, True),
+    ("model-call-record", ModelCallRecord, True),
+    ("wait-condition", WaitCondition, True),
 )
 
 

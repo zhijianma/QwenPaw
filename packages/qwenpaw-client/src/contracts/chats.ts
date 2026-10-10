@@ -4,11 +4,15 @@ import type { ActionRecord as GeneratedActionRecord } from "../generated/actionR
 import type { ConversationArtifactRecord as GeneratedConversationArtifactRecord } from "../generated/conversationArtifactRecord.js";
 import type { ObservationPage as GeneratedObservationPage } from "../generated/observationPage.js";
 import type { ConversationTrajectoryPage as GeneratedConversationTrajectoryPage } from "../generated/conversationTrajectoryPage.js";
+import type { ModelCallRecord as GeneratedModelCallRecord } from "../generated/modelCallRecord.js";
+import type { WaitCondition as GeneratedWaitCondition } from "../generated/waitCondition.js";
 
 export type ActionRecord = GeneratedActionRecord;
 export type ConversationArtifactRecord = GeneratedConversationArtifactRecord;
 export type ObservationPage = GeneratedObservationPage;
 export type ConversationTrajectoryPage = GeneratedConversationTrajectoryPage;
+export type ModelCallRecord = GeneratedModelCallRecord;
+export type WaitCondition = GeneratedWaitCondition;
 
 export type ChatStatus = "idle" | "running";
 export type ChatSource = "chat" | "cron" | "subagent";

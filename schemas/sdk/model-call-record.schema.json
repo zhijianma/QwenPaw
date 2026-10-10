@@ -1,0 +1,845 @@
+{
+  "$defs": {
+    "ModelCallAttempt": {
+      "additionalProperties": false,
+      "description": "Durable intent recorded before one concrete upstream request.",
+      "properties": {
+        "adapter_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Adapter Id"
+        },
+        "adapter_version": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Adapter Version"
+        },
+        "agent_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent Id"
+        },
+        "attempt_id": {
+          "format": "uuid",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "attempt_index": {
+          "minimum": 1,
+          "title": "Attempt Index",
+          "type": "integer"
+        },
+        "chat_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Owning ChatSpec.id; null for an unscoped action",
+          "title": "Chat Id"
+        },
+        "compaction_threshold": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 1,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Compaction Threshold"
+        },
+        "context_manifest_id": {
+          "format": "uuid",
+          "title": "Context Manifest Id",
+          "type": "string"
+        },
+        "context_window_tokens": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Context Window Tokens"
+        },
+        "correlation_id": {
+          "format": "uuid",
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "formatter_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Formatter Id"
+        },
+        "formatter_version": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Formatter Version"
+        },
+        "invocation_id": {
+          "format": "uuid",
+          "title": "Invocation Id",
+          "type": "string"
+        },
+        "model_call_index": {
+          "minimum": 1,
+          "title": "Model Call Index",
+          "type": "integer"
+        },
+        "model_id": {
+          "minLength": 1,
+          "title": "Model Id",
+          "type": "string"
+        },
+        "provider_id": {
+          "minLength": 1,
+          "title": "Provider Id",
+          "type": "string"
+        },
+        "registry_epoch_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Registry Epoch Id"
+        },
+        "registry_generation": {
+          "minimum": 1,
+          "title": "Registry Generation",
+          "type": "integer"
+        },
+        "route_decision_id": {
+          "format": "uuid",
+          "title": "Route Decision Id",
+          "type": "string"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "started_at": {
+          "format": "date-time",
+          "title": "Started At",
+          "type": "string"
+        },
+        "transport_contract": {
+          "$ref": "#/$defs/ModelTransportContract"
+        }
+      },
+      "required": [
+        "schema",
+        "chat_id",
+        "attempt_id",
+        "route_decision_id",
+        "invocation_id",
+        "correlation_id",
+        "agent_id",
+        "registry_epoch_id",
+        "registry_generation",
+        "context_manifest_id",
+        "model_call_index",
+        "attempt_index",
+        "provider_id",
+        "model_id",
+        "transport_contract",
+        "context_window_tokens",
+        "compaction_threshold",
+        "adapter_id",
+        "adapter_version",
+        "formatter_id",
+        "formatter_version",
+        "started_at"
+      ],
+      "title": "ModelCallAttempt",
+      "type": "object"
+    },
+    "ModelCallResult": {
+      "additionalProperties": false,
+      "description": "Content-free terminal evidence for one upstream model attempt.",
+      "properties": {
+        "attempt_id": {
+          "format": "uuid",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "cache_eligible_input_tokens": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Cache Eligible Input Tokens",
+          "type": "integer"
+        },
+        "cache_observed": {
+          "default": false,
+          "title": "Cache Observed",
+          "type": "boolean"
+        },
+        "cache_read_tokens": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Cache Read Tokens",
+          "type": "integer"
+        },
+        "cache_write_tokens": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Cache Write Tokens",
+          "type": "integer"
+        },
+        "chat_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Owning ChatSpec.id; null for an unscoped action",
+          "title": "Chat Id"
+        },
+        "completed_at": {
+          "format": "date-time",
+          "title": "Completed At",
+          "type": "string"
+        },
+        "cost_micros": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cost Micros"
+        },
+        "cost_unknown": {
+          "default": true,
+          "title": "Cost Unknown",
+          "type": "boolean"
+        },
+        "emitted_content": {
+          "default": false,
+          "title": "Emitted Content",
+          "type": "boolean"
+        },
+        "error_kind": {
+          "default": "",
+          "title": "Error Kind",
+          "type": "string"
+        },
+        "failure_class": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelFailureClass"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "input_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Tokens"
+        },
+        "invocation_id": {
+          "format": "uuid",
+          "title": "Invocation Id",
+          "type": "string"
+        },
+        "output_boundary": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelOutputBoundary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "output_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Tokens"
+        },
+        "recovery_disposition": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelRecoveryDisposition"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "retry_after_seconds": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retry After Seconds"
+        },
+        "retryable": {
+          "default": false,
+          "title": "Retryable",
+          "type": "boolean"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ModelCallStatus"
+        },
+        "transport_recovery_mode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelTransportRecoveryMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "transport_validation_reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelTransportValidationReason"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "usage_measurement": {
+          "anyOf": [
+            {
+              "const": "provider_reported",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Usage Measurement"
+        }
+      },
+      "required": [
+        "schema",
+        "chat_id",
+        "attempt_id",
+        "invocation_id",
+        "status",
+        "error_kind",
+        "retryable",
+        "emitted_content",
+        "output_boundary",
+        "failure_class",
+        "recovery_disposition",
+        "transport_recovery_mode",
+        "transport_validation_reason",
+        "retry_after_seconds",
+        "input_tokens",
+        "output_tokens",
+        "usage_measurement",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "cache_eligible_input_tokens",
+        "cache_observed",
+        "cost_micros",
+        "cost_unknown",
+        "completed_at"
+      ],
+      "title": "ModelCallResult",
+      "type": "object"
+    },
+    "ModelCallStatus": {
+      "description": "Terminal state of one concrete upstream model attempt.",
+      "enum": [
+        "succeeded",
+        "failed",
+        "cancelled"
+      ],
+      "title": "ModelCallStatus",
+      "type": "string"
+    },
+    "ModelFailureClass": {
+      "description": "Provider-neutral reason why one model attempt did not complete.",
+      "enum": [
+        "transport_unavailable",
+        "stream_interrupted",
+        "provider_overloaded",
+        "rate_limited",
+        "quota_exhausted",
+        "budget_exhausted",
+        "authentication_required",
+        "policy_denied",
+        "invalid_request",
+        "context_overflow",
+        "provider_unavailable",
+        "user_interrupted",
+        "unknown"
+      ],
+      "title": "ModelFailureClass",
+      "type": "string"
+    },
+    "ModelOutputBoundary": {
+      "description": "Content-safe boundary reached by one concrete model attempt.",
+      "enum": [
+        "pre_output",
+        "complete_response",
+        "partial_stream",
+        "terminal_stream",
+        "incomplete_stream_end"
+      ],
+      "title": "ModelOutputBoundary",
+      "type": "string"
+    },
+    "ModelRecoveryDisposition": {
+      "description": "Runtime action allowed after one unsuccessful model attempt.",
+      "enum": [
+        "retry_transport",
+        "continue_model_step",
+        "wait_resource",
+        "fail_terminal",
+        "reconcile_side_effect",
+        "stop_interrupted"
+      ],
+      "title": "ModelRecoveryDisposition",
+      "type": "string"
+    },
+    "ModelRouteAffinity": {
+      "description": "Whether a resumed response must reach the original upstream route.",
+      "enum": [
+        "none",
+        "sticky"
+      ],
+      "title": "ModelRouteAffinity",
+      "type": "string"
+    },
+    "ModelRouteReason": {
+      "description": "Why one concrete provider/model was selected for an attempt.",
+      "enum": [
+        "primary",
+        "same_model_retry",
+        "fallback",
+        "overflow_retry"
+      ],
+      "title": "ModelRouteReason",
+      "type": "string"
+    },
+    "ModelStreamResumeMode": {
+      "description": "Provider capability for continuing one interrupted response.",
+      "enum": [
+        "none",
+        "cursor"
+      ],
+      "title": "ModelStreamResumeMode",
+      "type": "string"
+    },
+    "ModelTransportContract": {
+      "additionalProperties": false,
+      "description": "Provider-neutral transport capability fixed before network I/O.",
+      "properties": {
+        "fallback": {
+          "$ref": "#/$defs/ModelTransportFallback",
+          "default": "durable_context_rebuild"
+        },
+        "protocol": {
+          "$ref": "#/$defs/ModelTransportProtocol",
+          "default": "http"
+        },
+        "resume_mode": {
+          "$ref": "#/$defs/ModelStreamResumeMode",
+          "default": "none"
+        },
+        "route_affinity": {
+          "$ref": "#/$defs/ModelRouteAffinity",
+          "default": "none"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "qwenpaw.model-transport.v1",
+          "default": "qwenpaw.model-transport.v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "validates_prefix": {
+          "default": false,
+          "title": "Validates Prefix",
+          "type": "boolean"
+        },
+        "validates_response_identity": {
+          "default": false,
+          "title": "Validates Response Identity",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schema",
+        "schema_version",
+        "protocol",
+        "resume_mode",
+        "route_affinity",
+        "fallback",
+        "validates_response_identity",
+        "validates_prefix"
+      ],
+      "title": "ModelTransportContract",
+      "type": "object"
+    },
+    "ModelTransportFallback": {
+      "description": "Safe fallback after an in-place stream continuation is unavailable.",
+      "enum": [
+        "durable_context_rebuild",
+        "http_continuation"
+      ],
+      "title": "ModelTransportFallback",
+      "type": "string"
+    },
+    "ModelTransportProtocol": {
+      "description": "Upstream transport used by one concrete model Adapter.",
+      "enum": [
+        "http",
+        "websocket",
+        "other"
+      ],
+      "title": "ModelTransportProtocol",
+      "type": "string"
+    },
+    "ModelTransportRecoveryMode": {
+      "description": "Validated transport-level recovery selected for an interrupted call.",
+      "enum": [
+        "inline_resume",
+        "http_fallback",
+        "durable_context_rebuild"
+      ],
+      "title": "ModelTransportRecoveryMode",
+      "type": "string"
+    },
+    "ModelTransportValidationReason": {
+      "description": "Content-safe reason for one transport recovery decision.",
+      "enum": [
+        "verified",
+        "capability_unavailable",
+        "evidence_unavailable",
+        "response_identity_mismatch",
+        "prefix_mismatch",
+        "route_mismatch"
+      ],
+      "title": "ModelTransportValidationReason",
+      "type": "string"
+    },
+    "RouteDecision": {
+      "additionalProperties": false,
+      "description": "Immutable selection of one concrete provider/model attempt.",
+      "properties": {
+        "attempt_id": {
+          "format": "uuid",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "attempt_index": {
+          "minimum": 1,
+          "title": "Attempt Index",
+          "type": "integer"
+        },
+        "chat_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Owning ChatSpec.id; null for an unscoped action",
+          "title": "Chat Id"
+        },
+        "context_manifest_id": {
+          "format": "uuid",
+          "title": "Context Manifest Id",
+          "type": "string"
+        },
+        "correlation_id": {
+          "format": "uuid",
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "decided_at": {
+          "format": "date-time",
+          "title": "Decided At",
+          "type": "string"
+        },
+        "invocation_id": {
+          "format": "uuid",
+          "title": "Invocation Id",
+          "type": "string"
+        },
+        "model_call_index": {
+          "minimum": 1,
+          "title": "Model Call Index",
+          "type": "integer"
+        },
+        "model_id": {
+          "minLength": 1,
+          "title": "Model Id",
+          "type": "string"
+        },
+        "policy_id": {
+          "default": "qwenpaw.system.model-route",
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "title": "Policy Id",
+          "type": "string"
+        },
+        "policy_version": {
+          "default": "1",
+          "minLength": 1,
+          "title": "Policy Version",
+          "type": "string"
+        },
+        "previous_attempt_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Previous Attempt Id"
+        },
+        "provider_id": {
+          "minLength": 1,
+          "title": "Provider Id",
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/ModelRouteReason"
+        },
+        "registry_epoch_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Registry Epoch Id"
+        },
+        "registry_generation": {
+          "minimum": 1,
+          "title": "Registry Generation",
+          "type": "integer"
+        },
+        "requested_model_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Requested Model Id"
+        },
+        "requested_provider_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Requested Provider Id"
+        },
+        "route_decision_id": {
+          "format": "uuid",
+          "title": "Route Decision Id",
+          "type": "string"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "chat_id",
+        "route_decision_id",
+        "attempt_id",
+        "invocation_id",
+        "correlation_id",
+        "registry_epoch_id",
+        "registry_generation",
+        "context_manifest_id",
+        "model_call_index",
+        "attempt_index",
+        "provider_id",
+        "model_id",
+        "requested_provider_id",
+        "requested_model_id",
+        "reason",
+        "previous_attempt_id",
+        "policy_id",
+        "policy_version",
+        "decided_at"
+      ],
+      "title": "RouteDecision",
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.qwenpaw.dev/sdk/model-call-record.v1.json",
+  "additionalProperties": false,
+  "description": "Queryable route, attempt intent and optional terminal result.",
+  "properties": {
+    "attempt": {
+      "$ref": "#/$defs/ModelCallAttempt"
+    },
+    "result": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ModelCallResult"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "route": {
+      "$ref": "#/$defs/RouteDecision"
+    },
+    "schema": {
+      "const": "qwenpaw.kernel-model.v1",
+      "default": "qwenpaw.kernel-model.v1",
+      "title": "Schema",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema",
+    "route",
+    "attempt",
+    "result"
+  ],
+  "title": "ModelCallRecord",
+  "type": "object"
+}
