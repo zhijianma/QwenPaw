@@ -4,6 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentStatsSummary } from "../../../api/types/agentStats";
 import AgentStatsPage from "./index";
 
+interface MockTableColumn {
+  key: string;
+  title: ReactNode;
+  dataIndex: string;
+  render?: (value: unknown, row: Record<string, unknown>) => ReactNode;
+}
+
 const mocks = vi.hoisted(() => ({
   getAgentStats: vi.fn(),
   messageError: vi.fn(),
@@ -57,6 +64,14 @@ vi.mock("react-i18next", () => ({
         "agentStats.promptTokens": "Prompt Tokens",
         "agentStats.completionTokens": "Completion Tokens",
         "agentStats.toolCalls": "Tool Calls",
+        "tokenUsage.byChat": "By Chat",
+        "tokenUsage.chat": "Chat",
+        "tokenUsage.promptTokens": "Prompt Tokens",
+        "tokenUsage.completionTokens": "Completion Tokens",
+        "tokenUsage.totalTokens": "Total Tokens",
+        "tokenUsage.cacheHitRate": "Cache Hit Rate",
+        "tokenUsage.totalCalls": "LLM Calls",
+        "tokenUsage.unattributed": "Unattributed",
       })[key] ?? key,
   }),
 }));
@@ -76,6 +91,36 @@ vi.mock("@agentscope-ai/design", () => ({
     </section>
   ),
   Empty: () => <div>No data</div>,
+  Table: ({
+    columns,
+    dataSource,
+  }: {
+    columns: MockTableColumn[];
+    dataSource: Array<Record<string, unknown> & { key: string }>;
+  }) => (
+    <table>
+      <thead>
+        <tr>
+          {columns.map((column) => (
+            <th key={column.key}>{column.title}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {dataSource.map((row) => (
+          <tr key={row.key}>
+            {columns.map((column) => (
+              <td key={column.key}>
+                {column.render
+                  ? column.render(row[column.dataIndex], row)
+                  : row[column.dataIndex]}
+              </td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  ),
 }));
 
 vi.mock("antd", () => ({
@@ -128,13 +173,29 @@ function summary(
       },
     ],
     channel_stats: [],
+    chat_usage: [
+      {
+        chat_id: "chat-architecture",
+        name: "Architecture review",
+        prompt_tokens: agentPromptTokens,
+        completion_tokens: agentCompletionTokens,
+        cache_read_tokens: 100,
+        cache_eligible_input_tokens: 200,
+        cache_hit_rate: 50,
+        usage_unobserved_calls: 0,
+        call_count: recordedTurns,
+      },
+    ],
     start_date: "2026-08-06",
     end_date: "2026-08-13",
   };
 }
 
 function expectCard(label: string, value: string): void {
-  const labelNode = screen.getByText(label);
+  const labelNode = screen
+    .getAllByText(label)
+    .find((node) => node.className.includes("cardLabel"));
+  if (!labelNode) throw new Error(`Missing summary card: ${label}`);
   const card = labelNode.closest("section");
   expect(card).not.toBeNull();
   expect(within(card as HTMLElement).getByText(value)).toBeInTheDocument();
@@ -165,6 +226,9 @@ describe("TC-AGT-06: AgentStatsPage current-agent statistics", () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByText("900K")).not.toBeInTheDocument();
     expect(screen.queryByText("All Agents")).not.toBeInTheDocument();
+    expect(screen.getByText("By Chat")).toBeInTheDocument();
+    expect(screen.getByText("Architecture review")).toBeInTheDocument();
+    expect(screen.queryByText("By Turn")).not.toBeInTheDocument();
 
     mocks.storeState.selectedAgent = "agent-b";
     view.rerender(<AgentStatsPage />);

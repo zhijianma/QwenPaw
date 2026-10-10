@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ChannelStats(BaseModel):
@@ -32,6 +32,20 @@ class DailyStats(BaseModel):
     agent_cache_read_tokens: int = 0
 
 
+class ChatUsageStats(BaseModel):
+    """Token usage aggregated for one ChatSpec owned by the agent."""
+
+    chat_id: str | None = None
+    name: str | None = None
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_eligible_input_tokens: int = 0
+    cache_hit_rate: float | None = None
+    usage_unobserved_calls: int = 0
+    call_count: int = 0
+
+
 class AgentStatsSummary(BaseModel):
     total_active_sessions: int
     total_messages: int
@@ -43,6 +57,7 @@ class AgentStatsSummary(BaseModel):
     total_tool_calls: int
     by_date: list[DailyStats]
     channel_stats: list[ChannelStats]
+    chat_usage: list[ChatUsageStats] = Field(default_factory=list)
     start_date: str
     end_date: str
     # Current-agent token totals from per-turn message metadata

@@ -24,6 +24,18 @@ export interface DailyStats {
   agent_cache_read_tokens: number;
 }
 
+export interface ChatUsageStats {
+  chat_id: string | null;
+  name: string | null;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cache_read_tokens: number;
+  cache_eligible_input_tokens: number;
+  cache_hit_rate: number | null;
+  usage_unobserved_calls: number;
+  call_count: number;
+}
+
 export interface AgentStatsSummary {
   total_active_sessions: number;
   total_messages: number;
@@ -35,6 +47,8 @@ export interface AgentStatsSummary {
   total_tool_calls: number;
   by_date: DailyStats[];
   channel_stats: ChannelStats[];
+  /** Current-agent usage grouped by ChatSpec; turn rows stay on Chat. */
+  chat_usage: ChatUsageStats[];
   start_date: string;
   end_date: string;
   /** Current-agent token totals from per-turn session metadata. */

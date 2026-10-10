@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Card, Empty, Button } from "@agentscope-ai/design";
+import { Card, Empty, Button, Table } from "@agentscope-ai/design";
 import { Spin, Tooltip } from "antd";
 import { DatePicker } from "antd";
 import type { Dayjs } from "dayjs";
@@ -178,7 +178,8 @@ function AgentStatsPage() {
     ((data.total_active_sessions ?? 0) > 0 ||
       (data.total_messages ?? 0) > 0 ||
       (data.total_tool_calls ?? 0) > 0 ||
-      (data.agent_llm_calls ?? 0) > 0);
+      (data.agent_llm_calls ?? 0) > 0 ||
+      (data.chat_usage?.length ?? 0) > 0);
 
   const messageColumnConfig = useMemo(
     () =>
@@ -328,6 +329,17 @@ function AgentStatsPage() {
     };
   }, [data?.channel_stats, pieCommon]);
 
+  const chatUsageData = useMemo(
+    () =>
+      (data?.chat_usage ?? []).map((item) => ({
+        ...item,
+        key: item.chat_id ?? "unattributed",
+        chat: item.name || item.chat_id || t("tokenUsage.unattributed"),
+        total_tokens: item.prompt_tokens + item.completion_tokens,
+      })),
+    [data?.chat_usage, t],
+  );
+
   return (
     <div className={styles.page}>
       <PageHeader parent={t("nav.settings")} current={t("agentStats.title")} />
@@ -457,7 +469,6 @@ function AgentStatsPage() {
                       <Column {...agentTokenColumnConfig} />
                     </div>
                   </Card>
-
                 </div>
 
                 {(chatPieConfig || messagePieConfig) && (
@@ -502,6 +513,79 @@ function AgentStatsPage() {
                       </Card>
                     )}
                   </div>
+                )}
+
+                {chatUsageData.length > 0 && (
+                  <Card
+                    className={`${styles.chatUsageCard} mobile-scroll-x`}
+                    title={t("tokenUsage.byChat")}
+                  >
+                    <Table
+                      columns={[
+                        {
+                          title: t("tokenUsage.chat"),
+                          dataIndex: "chat",
+                          key: "chat",
+                        },
+                        {
+                          title: t("tokenUsage.promptTokens"),
+                          dataIndex: "prompt_tokens",
+                          key: "prompt_tokens",
+                          render: (value: number) => formatCompact(value),
+                          sorter: (
+                            a: (typeof chatUsageData)[number],
+                            b: (typeof chatUsageData)[number],
+                          ) => a.prompt_tokens - b.prompt_tokens,
+                        },
+                        {
+                          title: t("tokenUsage.completionTokens"),
+                          dataIndex: "completion_tokens",
+                          key: "completion_tokens",
+                          render: (value: number) => formatCompact(value),
+                          sorter: (
+                            a: (typeof chatUsageData)[number],
+                            b: (typeof chatUsageData)[number],
+                          ) => a.completion_tokens - b.completion_tokens,
+                        },
+                        {
+                          title: t("tokenUsage.totalTokens"),
+                          dataIndex: "total_tokens",
+                          key: "total_tokens",
+                          render: (value: number) => formatCompact(value),
+                          sorter: (
+                            a: (typeof chatUsageData)[number],
+                            b: (typeof chatUsageData)[number],
+                          ) => a.total_tokens - b.total_tokens,
+                        },
+                        {
+                          title: t("tokenUsage.cacheHitRate"),
+                          dataIndex: "cache_hit_rate",
+                          key: "cache_hit_rate",
+                          render: (value: number | null) =>
+                            formatPercent(value),
+                          sorter: (
+                            a: (typeof chatUsageData)[number],
+                            b: (typeof chatUsageData)[number],
+                          ) =>
+                            (a.cache_hit_rate ?? -1) - (b.cache_hit_rate ?? -1),
+                        },
+                        {
+                          title: t("tokenUsage.totalCalls"),
+                          dataIndex: "call_count",
+                          key: "call_count",
+                          render: (value: number) => formatCompact(value),
+                          sorter: (
+                            a: (typeof chatUsageData)[number],
+                            b: (typeof chatUsageData)[number],
+                          ) => a.call_count - b.call_count,
+                        },
+                      ]}
+                      dataSource={chatUsageData}
+                      pagination={{ pageSize: 10 }}
+                      size="small"
+                      scroll={{ x: "max-content" }}
+                    />
+                  </Card>
                 )}
               </>
             ) : (

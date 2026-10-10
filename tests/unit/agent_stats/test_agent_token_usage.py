@@ -16,6 +16,10 @@ from qwenpaw.agent_stats.service import (
     _process_session_file,
 )
 from qwenpaw.token_usage.manager import TokenUsageStats, TokenUsageSummary
+from qwenpaw.token_usage.models import (
+    TokenUsageByChat,
+    TokenUsageScopeRows,
+)
 from qwenpaw.token_usage.turn_usage import TURN_USAGE_META_KEY
 
 
@@ -480,6 +484,80 @@ class TestAgentStatsServiceAgentTokens:
         # Global fields stay identical (same mocked manager)
         assert summary_a.total_prompt_tokens == 999
         assert summary_b.total_prompt_tokens == 999
+
+    async def test_chat_usage_is_scoped_to_agent_and_resolves_names(
+        self,
+        tmp_path: Path,
+    ):
+        workspace = tmp_path / "agent-a"
+        workspace.mkdir()
+        (workspace / "chats.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "chats": [
+                        {
+                            "id": "chat-a",
+                            "name": "Architecture review",
+                            "session_id": "console:chat-a",
+                            "user_id": "console",
+                            "channel": "console",
+                            "created_at": "2026-07-23T08:00:00Z",
+                            "updated_at": "2026-07-23T08:00:00Z",
+                        },
+                    ],
+                },
+            ),
+            encoding="utf-8",
+        )
+        global_summary = TokenUsageSummary()
+        agent_summary = TokenUsageSummary(
+            scopes=TokenUsageScopeRows(
+                chats=[
+                    TokenUsageByChat(
+                        agent_id="agent-a",
+                        chat_id="chat-a",
+                        prompt_tokens=120,
+                        completion_tokens=30,
+                        cache_read_tokens=40,
+                        cache_eligible_input_tokens=80,
+                        usage_unobserved_calls=1,
+                        call_count=3,
+                    ),
+                ],
+            ),
+        )
+        mock_manager = AsyncMock()
+        mock_manager.get_summary = AsyncMock(
+            side_effect=[global_summary, agent_summary],
+        )
+
+        with patch(
+            "qwenpaw.agent_stats.service.get_token_usage_manager",
+            return_value=mock_manager,
+        ):
+            summary = await AgentStatsService().get_summary(
+                workspace_dir=workspace,
+                start_date=date(2026, 7, 23),
+                end_date=date(2026, 7, 23),
+                agent_id="agent-a",
+            )
+
+        mock_manager.get_summary.assert_any_await(
+            start_date=date(2026, 7, 23),
+            end_date=date(2026, 7, 23),
+            agent_id="agent-a",
+        )
+        assert len(summary.chat_usage) == 1
+        chat = summary.chat_usage[0]
+        assert chat.chat_id == "chat-a"
+        assert chat.name == "Architecture review"
+        assert chat.prompt_tokens == 120
+        assert chat.completion_tokens == 30
+        assert chat.cache_hit_rate == 50
+        assert chat.usage_unobserved_calls == 1
+        assert chat.call_count == 3
+        assert not hasattr(chat, "turn_id")
 
 
 def _write_trend_workspace(root: Path, n_turns: int, n_tools: int) -> Path:

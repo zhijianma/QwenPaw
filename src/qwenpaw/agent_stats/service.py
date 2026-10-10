@@ -20,6 +20,7 @@ from ..token_usage.turn_usage import TURN_USAGE_META_KEY
 from .models import (
     AgentStatsSummary,
     ChannelStats,
+    ChatUsageStats,
     DailyStats,
     LlmToolDaily,
 )
@@ -279,6 +280,7 @@ class AgentStatsService:
         start_date: date,
         end_date: date,
         *,
+        agent_id: str | None = None,
         include_token_overlay: bool = True,
     ) -> AgentStatsSummary:
         """Return Agent Statistics for one workspace.
@@ -320,12 +322,14 @@ class AgentStatsService:
         agent_prompt_tokens = 0
         agent_completion_tokens = 0
         agent_llm_calls = 0
+        chat_names: dict[str, str] = {}
 
         if chats_file.exists():
             try:
                 repo = JsonChatRepository(chats_file)
                 chats = await repo.list_chats()
                 for chat in chats:
+                    chat_names[chat.id] = chat.name
                     if chat.created_at is None:
                         continue
                     chat_date = chat.created_at.date()
@@ -435,8 +439,10 @@ class AgentStatsService:
         total_prompt_tokens = 0
         total_completion_tokens = 0
         total_llm_calls = 0
+        chat_usage: list[ChatUsageStats] = []
         if include_token_overlay:
-            token_summary = await get_token_usage_manager().get_summary(
+            token_manager = get_token_usage_manager()
+            token_summary = await token_manager.get_summary(
                 start_date=start_date,
                 end_date=end_date,
             )
@@ -450,6 +456,47 @@ class AgentStatsService:
                         "completion_tokens"
                     ] = ts.completion_tokens
                     daily_stats[date_str]["llm_calls"] = ts.call_count
+            if agent_id is not None:
+                agent_token_summary = await token_manager.get_summary(
+                    start_date=start_date,
+                    end_date=end_date,
+                    agent_id=agent_id,
+                )
+                chat_usage = sorted(
+                    (
+                        ChatUsageStats(
+                            chat_id=stats.chat_id,
+                            name=(
+                                chat_names.get(stats.chat_id)
+                                if stats.chat_id is not None
+                                else None
+                            ),
+                            prompt_tokens=stats.prompt_tokens,
+                            completion_tokens=stats.completion_tokens,
+                            cache_read_tokens=stats.cache_read_tokens,
+                            cache_eligible_input_tokens=(
+                                stats.cache_eligible_input_tokens
+                            ),
+                            cache_hit_rate=(
+                                stats.cache_read_tokens
+                                / stats.cache_eligible_input_tokens
+                                * 100
+                                if stats.cache_eligible_input_tokens > 0
+                                else None
+                            ),
+                            usage_unobserved_calls=(
+                                stats.usage_unobserved_calls
+                            ),
+                            call_count=stats.call_count,
+                        )
+                        for stats in agent_token_summary.scopes.chats
+                    ),
+                    key=lambda item: (
+                        -(item.prompt_tokens + item.completion_tokens),
+                        item.name or "",
+                        item.chat_id or "",
+                    ),
+                )
 
         for date_str, session_set in active_sessions.items():
             if date_str in daily_stats:
@@ -490,6 +537,7 @@ class AgentStatsService:
                 )
                 for ch, cnts in sorted(channel_stats.items())
             ],
+            chat_usage=chat_usage,
             start_date=start_date_str,
             end_date=end_date_str,
             agent_prompt_tokens=agent_prompt_tokens,
