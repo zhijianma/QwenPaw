@@ -1,6 +1,8 @@
 # QwenPaw Model Transport Contract
 
-Status: Lite Kernel contract frozen; resumable Provider Adapter pending.
+Status: Lite Kernel contract frozen; OpenAI background cursor Adapter is
+implemented behind explicit opt-in; live disconnect validation remains
+pending.
 
 ## Ownership
 
@@ -55,8 +57,39 @@ facts. New partial-stream failures record both the recovery mode and validation
 reason. Pre-output retry/fallback, user Interrupt and successful calls do not
 invent a transport continuation decision.
 
-The first Provider that enables cursor resume must implement a Provider-local
-Adapter that validates its candidate before yielding any resumed bytes. It
-must then pass simulated identity, prefix and sticky-route failures plus a real
-disconnect/reconnect exercise. Until that exists, Lite deliberately continues
-through the already durable model-step context reconstruction path.
+## OpenAI Responses Adapter
+
+The first cursor Adapter is intentionally narrow. It activates only when all
+of these request facts are true before network I/O:
+
+- the endpoint hostname is the official `api.openai.com`;
+- the effective request has `background=true`;
+- response storage is not disabled with `store=false`;
+- the model instance is streaming.
+
+The Adapter records the response identity and latest `sequence_number` only in
+Provider-local memory. On a connection-level failure it retrieves that same
+stored response with `stream=true` and `starting_after=<last sequence>`. Before
+yielding the first resumed event it requires the next sequence to equal the
+cursor plus one. Any response identity carried by resumed events must match
+the original identity. The identity/cursor boundary is HMACed as prefix
+evidence for the Kernel validator; raw identities and cursor values never
+enter durable Model Call records.
+
+This sequence boundary proves that the official stored event stream continues
+after the emitted prefix without a duplicate or gap. It does not claim byte
+comparison of hidden reasoning or provider payloads. A cursor gap, identity
+change, missing resume API, retry exhaustion or any non-connection error fails
+closed. Non-official OpenAI-compatible endpoints and ordinary foreground
+Responses retain durable context rebuild.
+
+Call-level kwargs may not silently disable `background` or storage after the
+Attempt has frozen a resumable contract. Such a mismatch is rejected before
+the API call. The Adapter currently isolates its dependency on the OpenAI
+SDK's stream client handle; an SDK upgrade must pass the focused resume suite.
+
+Simulated connection loss, successful contiguous resume, cursor gap and
+identity mismatch are covered. A real paid-provider disconnect/reconnect
+exercise is still required before considering broader or default enablement.
+Until then, opt-in recovery augments rather than replaces Lite's durable
+model-step context reconstruction path.

@@ -5,14 +5,22 @@ from __future__ import annotations
 
 import logging
 import time
+from contextvars import ContextVar
 from typing import Any
+from urllib.parse import urlparse
 
 from agentscope.model import ChatModelBase, OpenAIResponseModel
 
+from ..kernel import (
+    ModelStreamResumeMode,
+    ModelTransportContract,
+    ModelTransportRecoveryDecision,
+)
+from ..utils.logging import sanitize_log_value
 from .capping_formatter import _CappingOpenAIResponseFormatter
+from .model_transport import ResumableOpenAIResponseStream
 from .openai_provider import OpenAIProvider
 from .provider import ModelConnectionResult
-from ..utils.logging import sanitize_log_value
 
 logger = logging.getLogger(__name__)
 
@@ -87,10 +95,37 @@ class OpenAIResponseModelCompat(OpenAIResponseModel):
         self,
         *,
         extra_generate_kwargs: dict[str, Any] | None = None,
+        resumable_background_stream: bool = False,
+        transport_contract: ModelTransportContract | None = None,
         **kwargs: Any,
     ) -> None:
         self._extra_generate_kwargs = extra_generate_kwargs or {}
+        self._resumable_background_stream = resumable_background_stream
+        self._transport_contract = (
+            transport_contract or ModelTransportContract()
+        )
+        self._transport_recovery: ContextVar[
+            ModelTransportRecoveryDecision | None
+        ] = ContextVar(
+            f"qwenpaw_openai_transport_recovery_{id(self)}",
+            default=None,
+        )
         super().__init__(**kwargs)
+
+    def consume_model_transport_recovery_decision(
+        self,
+    ) -> ModelTransportRecoveryDecision | None:
+        """Consume recovery evidence for the current async execution."""
+        decision = self._transport_recovery.get()
+        self._transport_recovery.set(None)
+        return decision
+
+    def _record_transport_recovery(
+        self,
+        decision: ModelTransportRecoveryDecision,
+    ) -> None:
+        """Keep verified recovery scoped to the current async call."""
+        self._transport_recovery.set(decision)
 
     async def _call_api(
         self,
@@ -100,6 +135,7 @@ class OpenAIResponseModelCompat(OpenAIResponseModel):
         tool_choice: Any | None = None,
         **generate_kwargs: Any,
     ) -> Any:
+        self._transport_recovery.set(None)
         max_tokens = generate_kwargs.pop("max_tokens", None)
         if (
             max_tokens is not None
@@ -107,6 +143,14 @@ class OpenAIResponseModelCompat(OpenAIResponseModel):
         ):
             generate_kwargs["max_output_tokens"] = max_tokens
         merged = {**self._extra_generate_kwargs, **generate_kwargs}
+        if self._resumable_background_stream and (
+            merged.get("background") is not True
+            or merged.get("store") is False
+        ):
+            raise ValueError(
+                "resumable background transport cannot be disabled "
+                "for one call",
+            )
         disable_thinking = merged.pop("disable_thinking", False)
         inherited_max_tokens = merged.pop("max_tokens", None)
         if (
@@ -125,6 +169,24 @@ class OpenAIResponseModelCompat(OpenAIResponseModel):
             tool_choice,
             **merged,
         )
+
+    async def _parse_stream_response(
+        self,
+        start_datetime: Any,
+        response: Any,
+    ) -> Any:
+        stream = response
+        if self._resumable_background_stream:
+            stream = ResumableOpenAIResponseStream(
+                response,
+                contract=self._transport_contract,
+                on_recovered=self._record_transport_recovery,
+            )
+        async for chunk in super()._parse_stream_response(
+            start_datetime,
+            stream,
+        ):
+            yield chunk
 
     def _format_tools(
         self,
@@ -211,6 +273,29 @@ class OpenAIResponseProvider(OpenAIProvider):
     # exhaust the budget on thinking alone.  1024 gives enough
     # headroom for a one-word color answer after reasoning.
     _PROBE_TOKEN_BUDGET = 1024
+
+    def _supports_resumable_background_stream(self, model_id: str) -> bool:
+        """Enable cursor recovery only for stored OpenAI background calls."""
+        kwargs = self.get_effective_generate_kwargs(model_id)
+        hostname = (urlparse(self.base_url).hostname or "").lower()
+        return (
+            hostname == "api.openai.com"
+            and kwargs.get("background") is True
+            and kwargs.get("store") is not False
+        )
+
+    def get_model_transport_contract(
+        self,
+        model_id: str,
+    ) -> ModelTransportContract:
+        """Declare cursor resume only when the request preserves it."""
+        if not self._supports_resumable_background_stream(model_id):
+            return ModelTransportContract()
+        return ModelTransportContract(
+            resume_mode=ModelStreamResumeMode.CURSOR,
+            validates_response_identity=True,
+            validates_prefix=True,
+        )
 
     async def _probe_image_support(
         self,
@@ -400,6 +485,7 @@ class OpenAIResponseProvider(OpenAIProvider):
         if merged_headers:
             client_kwargs["default_headers"] = merged_headers
 
+        transport_contract = self.get_model_transport_contract(model_id)
         return OpenAIResponseModelCompat(
             credential=credential,
             model=model_id,
@@ -408,6 +494,10 @@ class OpenAIResponseProvider(OpenAIProvider):
             context_size=self._get_context_size(model_id),
             client_kwargs=client_kwargs,
             extra_generate_kwargs=gen_kwargs or None,
+            resumable_background_stream=(
+                self._supports_resumable_background_stream(model_id)
+            ),
+            transport_contract=transport_contract,
             formatter=_CappingOpenAIResponseFormatter(
                 max_bytes=self.max_inline_media_bytes,
             ),

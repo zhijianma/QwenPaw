@@ -12,6 +12,16 @@ from agentscope.model import OpenAIResponseModel
 from openai import BadRequestError
 
 from qwenpaw.providers.multimodal_prober import _PROBE_VIDEO_URL
+from qwenpaw.kernel import (
+    ModelStreamResumeMode,
+    ModelTransportRecoveryMode,
+    ModelTransportValidationReason,
+)
+from qwenpaw.providers.model_transport import (
+    ModelTransportEvidenceHasher,
+    ModelTransportResumeError,
+    ResumableOpenAIResponseStream,
+)
 from qwenpaw.providers.openai_response_provider import (
     OpenAIResponseProvider,
     _extract_reasoning_text,
@@ -27,6 +37,168 @@ def _make_provider() -> OpenAIResponseProvider:
         api_key="sk-test",
         chat_model="OpenAIResponseModel",
     )
+
+
+class _FakeResponseEventStream:
+    def __init__(self, events, *, client, error=None):
+        self._events = list(events)
+        self._client = client
+        self._error = error
+        self.closed = False
+
+    async def __aiter__(self):
+        for event in self._events:
+            yield event
+        if self._error is not None:
+            raise self._error
+
+    async def close(self):
+        self.closed = True
+
+
+def _stream_event(sequence: int, response_id: str | None = None):
+    return SimpleNamespace(
+        sequence_number=sequence,
+        response=(
+            SimpleNamespace(id=response_id)
+            if response_id is not None
+            else None
+        ),
+    )
+
+
+def test_background_resume_contract_is_explicit_and_off_by_default() -> None:
+    provider = _make_provider()
+
+    assert (
+        provider.get_model_transport_contract("gpt-5").resume_mode
+        is ModelStreamResumeMode.NONE
+    )
+
+    provider.generate_kwargs = {"background": True}
+    contract = provider.get_model_transport_contract("gpt-5")
+
+    assert contract.resume_mode is ModelStreamResumeMode.CURSOR
+    assert contract.validates_response_identity is True
+    assert contract.validates_prefix is True
+
+
+def test_background_resume_requires_stored_response() -> None:
+    provider = _make_provider()
+    provider.generate_kwargs = {"background": True, "store": False}
+
+    assert (
+        provider.get_model_transport_contract("gpt-5").resume_mode
+        is ModelStreamResumeMode.NONE
+    )
+
+
+def test_compatible_endpoint_cannot_claim_openai_cursor_resume() -> None:
+    provider = _make_provider()
+    provider.base_url = "https://compatible.example/v1"
+    provider.generate_kwargs = {"background": True}
+
+    assert (
+        provider.get_model_transport_contract("gpt-5").resume_mode
+        is ModelStreamResumeMode.NONE
+    )
+
+
+async def test_background_stream_resumes_once_without_gap_or_duplicate() -> (
+    None
+):
+    recovered = []
+    responses = SimpleNamespace()
+    client = SimpleNamespace(responses=responses)
+    initial = _FakeResponseEventStream(
+        [_stream_event(1, "resp-1"), _stream_event(2)],
+        client=client,
+        error=httpx.ReadError("connection dropped"),
+    )
+    resumed = _FakeResponseEventStream(
+        [_stream_event(3), _stream_event(4, "resp-1")],
+        client=client,
+    )
+    responses.retrieve = AsyncMock(return_value=resumed)
+    contract = (
+        _make_provider()
+        .model_copy(
+            update={"generate_kwargs": {"background": True}},
+        )
+        .get_model_transport_contract("gpt-5")
+    )
+    stream = ResumableOpenAIResponseStream(
+        initial,
+        contract=contract,
+        on_recovered=recovered.append,
+        evidence_hasher=ModelTransportEvidenceHasher(b"a" * 32),
+    )
+
+    events = [event async for event in stream]
+
+    assert [event.sequence_number for event in events] == [1, 2, 3, 4]
+    responses.retrieve.assert_awaited_once_with(
+        "resp-1",
+        stream=True,
+        starting_after=2,
+    )
+    assert initial.closed is True
+    assert recovered[0].mode is ModelTransportRecoveryMode.INLINE_RESUME
+    assert recovered[0].reason is ModelTransportValidationReason.VERIFIED
+
+
+async def test_background_stream_fails_closed_on_cursor_gap() -> None:
+    responses = SimpleNamespace()
+    client = SimpleNamespace(responses=responses)
+    initial = _FakeResponseEventStream(
+        [_stream_event(7, "resp-1")],
+        client=client,
+        error=httpx.ReadError("connection dropped"),
+    )
+    responses.retrieve = AsyncMock(
+        return_value=_FakeResponseEventStream(
+            [_stream_event(9, "resp-1")],
+            client=client,
+        ),
+    )
+    provider = _make_provider().model_copy(
+        update={"generate_kwargs": {"background": True}},
+    )
+    stream = ResumableOpenAIResponseStream(
+        initial,
+        contract=provider.get_model_transport_contract("gpt-5"),
+        on_recovered=lambda _decision: None,
+    )
+
+    with pytest.raises(ModelTransportResumeError, match="not contiguous"):
+        _ = [event async for event in stream]
+
+
+async def test_background_stream_fails_closed_on_identity_change() -> None:
+    responses = SimpleNamespace()
+    client = SimpleNamespace(responses=responses)
+    initial = _FakeResponseEventStream(
+        [_stream_event(7, "resp-1")],
+        client=client,
+        error=httpx.ReadError("connection dropped"),
+    )
+    responses.retrieve = AsyncMock(
+        return_value=_FakeResponseEventStream(
+            [_stream_event(8, "resp-other")],
+            client=client,
+        ),
+    )
+    provider = _make_provider().model_copy(
+        update={"generate_kwargs": {"background": True}},
+    )
+    stream = ResumableOpenAIResponseStream(
+        initial,
+        contract=provider.get_model_transport_contract("gpt-5"),
+        on_recovered=lambda _decision: None,
+    )
+
+    with pytest.raises(ModelTransportResumeError, match="identity changed"):
+        _ = [event async for event in stream]
 
 
 def _fake_response(text: str) -> SimpleNamespace:
@@ -572,3 +744,22 @@ async def test_reasoning_is_preserved_when_thinking_is_enabled(
 
     assert result == "ok"
     assert captured["reasoning"] == {"effort": "xhigh"}
+
+
+async def test_resumable_call_rejects_per_call_disable(monkeypatch) -> None:
+    async def fake_call_api(self, *args, **kwargs):
+        del self, args, kwargs
+        return "unexpected"
+
+    monkeypatch.setattr(
+        OpenAIResponseModel,
+        "_call_api",
+        fake_call_api,
+    )
+    provider = _make_provider().model_copy(
+        update={"generate_kwargs": {"background": True}},
+    )
+    model = provider.get_chat_model_instance("gpt-5")
+
+    with pytest.raises(ValueError, match="cannot be disabled"):
+        await model._call_api("gpt-5", [], background=False)

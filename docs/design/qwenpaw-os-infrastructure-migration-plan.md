@@ -684,9 +684,15 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     信任异常或 metadata 猜测续传，Result 记录 `durable_context_rebuild` 及原因，继续
     使用既有 Model Step checkpoint/outbox；成功、pre-output retry 和用户 Interrupt
     不伪造 transport recovery。
-- [ ] 至少一个真实支持 cursor resume 的 Provider Adapter 仍需接入，并完成 response
-  identity、prefix、sticky route、HTTP continuation 的故障注入及真实断流验收；这是
-  Provider 增强门禁，不阻塞 Lite durable context rebuild。
+- [x] OpenAI Responses 已接入首个 opt-in cursor resume Provider Adapter：仅官方
+  `api.openai.com` 的 stored background stream 可声明能力；连接中断后按
+  `response_id + sequence_number` 继续，恢复首事件必须与 cursor 连续，事件携带的
+  response identity 必须一致。成功恢复只持久化 `inline_resume + verified`，原始
+  identity/cursor 不出 Provider；模拟断连、cursor gap、identity change 与调用级
+  禁用 storage/background 的 fail-closed 测试已覆盖。
+- [ ] 使用真实 OpenAI stored background response 完成进程外网络断流/重连验收，
+  并验证当前 OpenAI SDK 私有 stream client handle 的升级兼容性；验收前不默认启用，
+  也不把该能力外推到兼容端点、sticky route 或 WebSocket → HTTP continuation。
 - [x] 完成 Lite 长程时间核心语义：
   - [x] 首次 Run 保存 wall-clock durable deadline，恢复/replay 继承同一 deadline；
     每次进入执行边界只换算一次剩余时长，再由 `asyncio.timeout` 使用事件循环的

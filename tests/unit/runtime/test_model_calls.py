@@ -26,7 +26,10 @@ from qwenpaw.kernel import (
     ModelOutputBoundary,
     ModelRecoveryDisposition,
     ModelRouteReason,
+    ModelStreamResumeMode,
+    ModelTransportContract,
     ModelTransportProtocol,
+    ModelTransportRecoveryDecision,
     ModelTransportRecoveryMode,
     ModelTransportValidationReason,
 )
@@ -836,6 +839,62 @@ async def test_stream_can_be_consumed_and_closed_in_different_contexts(
         ModelOutputBoundary.PARTIAL_STREAM
     )
     assert record.result.transport_recovery_mode is None
+
+
+@pytest.mark.asyncio
+async def test_verified_provider_stream_resume_is_persisted(
+    tmp_path: Path,
+) -> None:
+    scope = _scope(tmp_path)
+    store = lite_model_call_store(tmp_path)
+    session = _session(scope, _manifest(scope), store)
+    provider = AsyncMock()
+    provider.model = "model-a"
+    provider.credential = None
+    provider.parameters = None
+    provider.stream = True
+    provider.context_size = 32_768
+    provider.formatter = object()
+    decision = ModelTransportRecoveryDecision(
+        mode=ModelTransportRecoveryMode.INLINE_RESUME,
+        reason=ModelTransportValidationReason.VERIFIED,
+    )
+    provider.consume_model_transport_recovery_decision = MagicMock(
+        side_effect=[None, decision],
+    )
+
+    async def provider_stream() -> AsyncGenerator[ChatResponse, None]:
+        yield ChatResponse(
+            content=[TextBlock(text="recovered")],
+            is_last=True,
+        )
+
+    provider.return_value = provider_stream()
+    wrapper = TokenRecordingModelWrapper(
+        "provider-a",
+        provider,
+        transport_contract=ModelTransportContract(
+            resume_mode=ModelStreamResumeMode.CURSOR,
+            validates_response_identity=True,
+            validates_prefix=True,
+        ),
+    )
+    stream = await call_with_model_session(
+        session,
+        lambda: wrapper(messages=[]),
+    )
+
+    _ = [chunk async for chunk in stream]
+    [record] = await store.list_for_conversation("chat-1")
+
+    assert record.result is not None
+    assert record.result.status is ModelCallStatus.SUCCEEDED
+    assert record.result.transport_recovery_mode is (
+        ModelTransportRecoveryMode.INLINE_RESUME
+    )
+    assert record.result.transport_validation_reason is (
+        ModelTransportValidationReason.VERIFIED
+    )
 
 
 @pytest.mark.asyncio

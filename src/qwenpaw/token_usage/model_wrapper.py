@@ -19,6 +19,7 @@ from ..kernel.models import (
     ModelOutputBoundary,
     ModelRecoveryDisposition,
     ModelTransportContract,
+    ModelTransportRecoveryDecision,
     evaluate_model_transport_recovery,
     UsageDelta,
     UsageMeter,
@@ -442,6 +443,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
         error: BaseException | None = None,
         emitted_content: bool = False,
         output_boundary: ModelOutputBoundary | None = None,
+        transport_recovery: ModelTransportRecoveryDecision | None = None,
     ) -> ModelCallResult | None:
         """Record a content-free result after one concrete attempt."""
         from ..runtime.model_calls import complete_current_model_attempt
@@ -470,8 +472,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
                 retryable = is_retryable_same_model(error)
             else:
                 error_kind = type(error).__name__.lower()
-        transport_recovery = None
-        if recovery_disposition in {
+        if transport_recovery is None and recovery_disposition in {
             ModelRecoveryDisposition.CONTINUE_MODEL_STEP,
             ModelRecoveryDisposition.RECONCILE_SIDE_EFFECT,
         }:
@@ -480,9 +481,11 @@ class TokenRecordingModelWrapper(ChatModelBase):
             # boundary there is no trusted resume evidence, so recovery must
             # fall back to the contract's safe durable path.
             transport_recovery = evaluate_model_transport_recovery(
-                attempt.transport_contract
-                if attempt is not None
-                else self._transport_contract,
+                (
+                    attempt.transport_contract
+                    if attempt is not None
+                    else self._transport_contract
+                ),
                 None,
             )
         return await complete_current_model_attempt(
@@ -534,6 +537,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
         error: BaseException | None = None,
         emitted_content: bool = False,
         output_boundary: ModelOutputBoundary | None = None,
+        transport_recovery: ModelTransportRecoveryDecision | None = None,
     ) -> None:
         """Charge usage, persist the fact, then update legacy projections."""
         facts = self._normalize_usage(usage)
@@ -545,6 +549,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
             error=error,
             emitted_content=emitted_content,
             output_boundary=output_boundary,
+            transport_recovery=transport_recovery,
         )
         record_legacy = True
         if attempt is not None and result is not None:
@@ -670,6 +675,8 @@ class TokenRecordingModelWrapper(ChatModelBase):
         if tool_choice == "auto":
             tool_choice = None
 
+        self._consume_transport_recovery_decision()
+
         attempt = await self._begin_model_attempt()
         try:
             result = await self._model(
@@ -788,6 +795,9 @@ class TokenRecordingModelWrapper(ChatModelBase):
                     usage=last_usage,
                     emitted_content=emitted_content,
                     output_boundary=ModelOutputBoundary.TERMINAL_STREAM,
+                    transport_recovery=(
+                        self._consume_transport_recovery_decision()
+                    ),
                 )
             else:
                 from ..providers.model_error_policy import (
@@ -810,3 +820,23 @@ class TokenRecordingModelWrapper(ChatModelBase):
                 raise error
         finally:
             await stream.aclose()
+
+    def _consume_transport_recovery_decision(
+        self,
+    ) -> ModelTransportRecoveryDecision | None:
+        """Read Provider-local verified recovery without raw cursor data."""
+        method_name = "consume_model_transport_recovery_decision"
+        consume = vars(self._model).get(method_name)
+        if consume is None:
+            declared = getattr(type(self._model), method_name, None)
+            if declared is not None:
+                consume = declared.__get__(self._model, type(self._model))
+        if not callable(consume):
+            return None
+        decision = consume()
+        if decision is not None and not isinstance(
+            decision,
+            ModelTransportRecoveryDecision,
+        ):
+            raise TypeError("provider returned invalid transport recovery")
+        return decision

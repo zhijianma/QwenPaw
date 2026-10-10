@@ -57,3 +57,18 @@ def test_transport_evidence_rejects_short_key_and_unpaired_route() -> None:
             actual_prefix=b"prefix",
             expected_route="route",
         )
+
+
+def test_transport_evidence_rejects_non_resume_candidate() -> None:
+    hasher = ModelTransportEvidenceHasher(b"a" * 32)
+
+    with pytest.raises(ValueError, match="not resumable"):
+        hasher.build_evidence(
+            candidate_mode=(
+                ModelTransportRecoveryMode.DURABLE_CONTEXT_REBUILD
+            ),
+            expected_response_identity="response",
+            actual_response_identity="response",
+            expected_prefix=b"prefix",
+            actual_prefix=b"prefix",
+        )
