@@ -1351,3 +1351,17 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
 - 新领域 API 使用 `ChatSpec.id`；兼容层以外避免继续扩散
   `session_id`。
 - 每完成一个模块，同时完成调用接入、定点测试和迁移说明，避免只建空目录。
+
+## 8. 2026-10-10 Token Usage 事实与估算隔离
+
+- 保留现有 `ModelCallAttempt/Result -> LiteUsageProjection -> Summary` 主架构，未做
+  无收益的推倒重写；真实 API 已验证 global、Agent、`ChatSpec.id`、Invocation、日期
+  和实际 Provider/Model 均来自同一事实集合。
+- Chat Turn 不再用字符估算覆盖 Provider 返回的 completion tokens。本地
+  `latest_assistant_tokens` 进入独立 `context_usage` 字段，Provider 数字仍可与全局
+  Model Call 投影逐项核对。
+- `TurnUsageEvidence` 现在校验聚合 Token、Model Route Token 与未观测调用覆盖；
+  `TurnUsageAccumulator` 校验 payload 的 Chat/Turn 身份与所有权 Key，并能从 payload
+  补全兼容调用遗漏的 Invocation Key。
+- 定点验证：Token Usage、Turn、Model Call、Router 后端 `182 passed`；Chat Turn
+  前端 `58 passed`。下一切片是投影失败后的进程内自愈和健康度投影，不涉及 Task UI。

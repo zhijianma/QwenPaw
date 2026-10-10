@@ -119,8 +119,16 @@ class TurnUsageAccumulator:
         """Accumulate one model-call usage delta for a live turn."""
         if not chat_id or not usage:
             return
-        key = TurnUsageKey(chat_id, invocation_id or None)
         current = TurnUsageEvidence.model_validate(usage)
+        if current.chat_id is not None and current.chat_id != chat_id:
+            raise ValueError("turn usage chat_id does not match its owner")
+        effective_invocation_id = invocation_id or current.turn_id
+        if (
+            current.turn_id is not None
+            and effective_invocation_id != current.turn_id
+        ):
+            raise ValueError("turn usage turn_id does not match its owner")
+        key = TurnUsageKey(chat_id, effective_invocation_id or None)
         with self._lock:
             previous = self._snapshots.get(key)
             self._snapshots[key] = (

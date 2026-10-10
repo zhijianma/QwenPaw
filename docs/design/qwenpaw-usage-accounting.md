@@ -45,7 +45,10 @@ Agent
 
 Provider usage uses `provider_reported`. A local context estimate uses
 `local_estimate`; it may help explain context pressure but must not be added to
-provider billing totals.
+provider billing totals. In particular, an estimated assistant-message size
+must never replace a Provider-reported completion count. The Chat snapshot
+keeps `latest_assistant_tokens` under `context_usage` as separate local
+evidence when it is available.
 
 The live accumulator is not a fact store. Its domain API accepts `chat_id`
 (`ChatSpec.id`) and `invocation_id`, so simultaneous turns cannot merge. Model
@@ -58,6 +61,9 @@ The accumulator stores frozen `TurnUsageEvidence` and
 `TurnModelUsageRoute` objects internally. Provider-reported, local-estimate,
 partial and unavailable measurements have explicit invariants; token totals,
 route totals and missing-usage call counts fail closed when contradictory.
+The accumulator also rejects a payload whose `chat_id` or `turn_id` conflicts
+with its ownership key, and uses a payload `turn_id` when a compatibility
+caller omits the explicit Invocation argument.
 Public callers continue to receive sparse dictionaries so persisted Chat
 metadata and rolling-upgrade plugins do not acquire newly defaulted fields.
 
@@ -215,6 +221,9 @@ Agent, Chat, or Turn ownership remain explicitly unattributed.
 - Known cost and unknown-cost call counts reconcile across every scope.
 - Calls without Provider usage remain countable and report unknown coverage.
 - A multi-call Turn preserves per-route token totals after message refresh.
+- A Provider-reported Turn is never rewritten with a local output estimate.
+- Turn route totals, coverage, Chat identity and Invocation identity reconcile
+  before the snapshot can enter SSE or message metadata.
 - Malformed live Turn totals or measurement states are rejected before they
   can reach SSE or persisted message metadata.
 - Task pages and Task-specific frontend work remain out of scope.

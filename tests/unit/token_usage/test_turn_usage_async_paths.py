@@ -270,6 +270,7 @@ class TestResolveTurnUsage:
             "estimated_tokens": 500,
             "max_input_length": 1000,
             "context_usage_ratio": 0.5,
+            "latest_assistant_tokens": 100,
         }
         assert got_turn is not None
         assert got_turn["estimated"] is True
@@ -277,7 +278,7 @@ class TestResolveTurnUsage:
         assert got_turn["completion_tokens"] == 100
         assert state is agent_state
 
-    async def test_existing_turn_is_reconciled(
+    async def test_existing_provider_turn_is_not_replaced_by_estimate(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ):
@@ -316,9 +317,8 @@ class TestResolveTurnUsage:
             channel="console",
         )
 
-        # Under-reported completion patched from the estimate.
-        assert got_turn["completion_tokens"] == 90
-        assert got_turn["total_tokens"] == 170
+        assert got_turn["completion_tokens"] == 0
+        assert got_turn["prompt_tokens"] == 80
 
 
 # ---------------------------------------------------------------------------

@@ -1287,6 +1287,11 @@ Cron 不形成独立审批或产物事实源。
       metadata 注入默认字段。矛盾 payload 在进入 SSE/持久消息前失败关闭。固定 Chat
       在 `/clear` 后真实返回 `TURN_USAGE_TYPED_OK`，卡片显示 input 7 / output 110；页面
       刷新后仍恢复同一 117 Token，证明 typed 内核未破坏持久化链路。
+      2026-10-10 进一步移除用字符估算覆盖 Provider completion 的旧修正规则：Provider
+      数字保持原始事实，本地 `latest_assistant_tokens` 只存在于 `context_usage`；领域模型
+      强制 Turn 总量与全部 Model Route、未观测调用数对账，累加器同时校验 payload 与
+      `ChatSpec.id + invocation_id` 所有权 Key。后端 Token Usage/Model Call 定点回归
+      182 项、Chat Turn 前端定点回归 58 项通过。
     - [x] Token Usage Summary 已成为服务端权威统计契约：同一查询同时返回全局、
       日期、实际 Provider/Model、日期×模型、Agent、`ChatSpec.id` 和 Invocation turn
       聚合。Console 不再下载明细并维护第二套页面私有聚合口径；`/details` 仅保留为

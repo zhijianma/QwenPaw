@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Tests for per-turn token usage helpers.
 
-Covers fmt_tokens, reconcile_turn_completion_from_stats,
-_turn_from_stats, find_turn_closing_assistant_in_context,
+Covers fmt_tokens, _turn_from_stats, find_turn_closing_assistant_in_context,
 _write_turn_usage_meta, and _load_agent_state, which previously had no
 dedicated coverage.
 """
@@ -30,62 +29,6 @@ class TestFmtTokens:
         assert tu.fmt_tokens(1000) == "1.0K"
         assert tu.fmt_tokens(1500) == "1.5K"
         assert tu.fmt_tokens(123456) == "123.5K"
-
-
-# ---------------------------------------------------------------------------
-# reconcile_turn_completion_from_stats
-# ---------------------------------------------------------------------------
-
-
-class TestReconcileTurnCompletion:
-    def test_under_reported_completion_patched(self):
-        turn = {
-            "prompt_tokens": 100,
-            "completion_tokens": 1,
-            "total_tokens": 101,
-        }
-        stats = {"latest_assistant_tokens": 50}
-        result = tu.reconcile_turn_completion_from_stats(turn, stats)
-        assert result["completion_tokens"] == 50
-        assert result["total_tokens"] == 150
-        assert result["estimated"] is True
-        assert result["prompt_tokens"] == 100
-
-    def test_zero_completion_patched(self):
-        turn = {
-            "prompt_tokens": 10,
-            "completion_tokens": 0,
-            "total_tokens": 10,
-        }
-        stats = {"latest_assistant_tokens": 20}
-        result = tu.reconcile_turn_completion_from_stats(turn, stats)
-        assert result["completion_tokens"] == 20
-
-    def test_actual_higher_than_estimate_untouched(self):
-        turn = {
-            "prompt_tokens": 10,
-            "completion_tokens": 100,
-            "total_tokens": 110,
-        }
-        stats = {"latest_assistant_tokens": 50}
-        result = tu.reconcile_turn_completion_from_stats(turn, stats)
-        assert result == turn  # unchanged
-
-    def test_zero_estimate_untouched(self):
-        turn = {
-            "prompt_tokens": 10,
-            "completion_tokens": 5,
-            "total_tokens": 15,
-        }
-        stats = {"latest_assistant_tokens": 0}
-        result = tu.reconcile_turn_completion_from_stats(turn, stats)
-        assert result == turn
-
-    def test_missing_completion_treated_as_zero(self):
-        turn = {"prompt_tokens": 10}
-        stats = {"latest_assistant_tokens": 30}
-        result = tu.reconcile_turn_completion_from_stats(turn, stats)
-        assert result["completion_tokens"] == 30
 
 
 # ---------------------------------------------------------------------------

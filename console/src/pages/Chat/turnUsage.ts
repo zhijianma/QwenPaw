@@ -52,6 +52,8 @@ export interface ContextUsage {
   estimated_tokens: number;
   max_input_length: number;
   context_usage_ratio: number;
+  /** Local estimate kept separate from provider-reported completion tokens. */
+  latest_assistant_tokens?: number;
 }
 
 export interface TurnUsageSnapshot {

@@ -18,24 +18,6 @@ def fmt_tokens(n: int) -> str:
     return f"{n / 1000:.1f}K" if n >= 1000 else str(n)
 
 
-def reconcile_turn_completion_from_stats(
-    turn: dict[str, Any],
-    stats: dict[str, Any],
-) -> dict[str, Any]:
-    """Patch under-reported ``completion_tokens`` from state estimate."""
-    latest_out = int(stats.get("latest_assistant_tokens", 0) or 0)
-    actual_out = int(turn.get("completion_tokens", 0) or 0)
-    if latest_out > 0 and actual_out <= 1 and latest_out > actual_out:
-        prompt_tokens = int(turn.get("prompt_tokens", 0) or 0)
-        return {
-            **turn,
-            "completion_tokens": latest_out,
-            "total_tokens": prompt_tokens + latest_out,
-            "estimated": True,
-        }
-    return turn
-
-
 def _turn_from_stats(stats: dict[str, Any]) -> dict[str, Any] | None:
     """Build estimated turn usage from a context-stats snapshot."""
     est = int(stats.get("estimated_tokens", 0) or 0)
@@ -223,11 +205,13 @@ async def resolve_turn_usage(
         "estimated_tokens": stats["estimated_tokens"],
         "max_input_length": stats["max_input_length"],
         "context_usage_ratio": stats["context_usage_ratio"],
+        "latest_assistant_tokens": stats.get(
+            "latest_assistant_tokens",
+            0,
+        ),
     }
     if turn is None:
         turn = _turn_from_stats(stats)
-    else:
-        turn = reconcile_turn_completion_from_stats(turn, stats)
     turn = add_session_cache_usage(
         turn,
         getattr(agent_state, "context", None),

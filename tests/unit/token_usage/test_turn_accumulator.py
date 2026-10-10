@@ -135,6 +135,41 @@ def test_accumulator_supports_unambiguous_protocol_session() -> None:
     assert accumulator.pop("acp-session") is None
 
 
+def test_accumulator_uses_payload_turn_identity_when_key_omits_it() -> None:
+    accumulator = TurnUsageAccumulator()
+    usage = {**_usage("provider-a", "model-a", 10, 2), "turn_id": "turn-1"}
+
+    accumulator.record("chat-1", usage)
+
+    assert accumulator.peek("chat-1", invocation_id="turn-1") is not None
+
+
+@pytest.mark.parametrize(
+    ("usage_identity", "invocation_id", "message"),
+    (
+        ({"chat_id": "chat-2"}, "turn-1", "chat_id"),
+        ({"turn_id": "turn-2"}, "turn-1", "turn_id"),
+    ),
+)
+def test_accumulator_rejects_mismatched_owner_identity(
+    usage_identity: dict,
+    invocation_id: str,
+    message: str,
+) -> None:
+    accumulator = TurnUsageAccumulator()
+    usage = {
+        **_usage("provider-a", "model-a", 10, 2),
+        **usage_identity,
+    }
+
+    with pytest.raises(ValueError, match=message):
+        accumulator.record(
+            "chat-1",
+            usage,
+            invocation_id=invocation_id,
+        )
+
+
 def test_discard_chat_removes_every_turn_without_touching_other_chat() -> None:
     accumulator = TurnUsageAccumulator()
     usage = _usage("provider-a", "model-a", 10, 2)

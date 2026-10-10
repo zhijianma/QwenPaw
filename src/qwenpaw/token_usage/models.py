@@ -106,9 +106,11 @@ class TurnUsageEvidence(BaseModel):
         ):
             raise ValueError("turn token total does not reconcile")
         if self.measurement == "provider_reported" and (
-            self.usage_unobserved_calls > 0
+            self.usage_unobserved_calls > 0 or self.estimated
         ):
-            raise ValueError("provider-reported turn cannot be unobserved")
+            raise ValueError(
+                "provider-reported turn cannot be unobserved or estimated",
+            )
         if self.measurement == "local_estimate" and not self.estimated:
             raise ValueError("local estimate must be marked estimated")
         if self.measurement == "partial" and (
@@ -121,6 +123,25 @@ class TurnUsageEvidence(BaseModel):
             self.usage_unobserved_calls == 0 or expected_total > 0
         ):
             raise ValueError("unavailable turn cannot contain measured tokens")
+        if self.model_routes:
+            route_prompt = sum(
+                route.prompt_tokens for route in self.model_routes
+            )
+            route_completion = sum(
+                route.completion_tokens for route in self.model_routes
+            )
+            route_unobserved = sum(
+                route.usage_unobserved_calls for route in self.model_routes
+            )
+            if (
+                route_prompt != self.prompt_tokens
+                or route_completion != self.completion_tokens
+            ):
+                raise ValueError("turn routes do not reconcile with totals")
+            if route_unobserved != self.usage_unobserved_calls:
+                raise ValueError(
+                    "turn routes do not reconcile with usage coverage",
+                )
         return self
 
     def to_payload(self) -> dict:

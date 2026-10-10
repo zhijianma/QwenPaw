@@ -92,3 +92,33 @@ def test_turn_usage_evidence_preserves_sparse_compatibility_payload() -> None:
 
     assert evidence.to_payload() == {"prompt_tokens": 3}
     assert "model_routes" in evidence.model_json_schema()["properties"]
+
+
+def test_turn_usage_evidence_reconciles_model_routes() -> None:
+    with pytest.raises(ValidationError, match="routes do not reconcile"):
+        models.TurnUsageEvidence(
+            prompt_tokens=10,
+            completion_tokens=2,
+            total_tokens=12,
+            model_routes=(
+                models.TurnModelUsageRoute(
+                    provider_id="provider-a",
+                    model_name="model-a",
+                    prompt_tokens=9,
+                    completion_tokens=2,
+                    total_tokens=11,
+                    call_count=1,
+                ),
+            ),
+        )
+
+
+def test_provider_reported_turn_cannot_mix_local_estimate() -> None:
+    with pytest.raises(ValidationError, match="estimated"):
+        models.TurnUsageEvidence(
+            prompt_tokens=10,
+            completion_tokens=2,
+            total_tokens=12,
+            measurement="provider_reported",
+            estimated=True,
+        )
