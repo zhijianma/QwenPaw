@@ -10,18 +10,34 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from qwenpaw.app.chats.models import (
+    ChatControlRequest,
+    ChatQueueReorderRequest,
+    ChatSteerRequest,
+    ChatSubmissionRequest,
+)
 from qwenpaw.app.task_http_contracts import TaskProjectionResponse
 from qwenpaw.kernel.host import HostHandshake
 from qwenpaw.kernel.interactions import (
     InteractionRequest,
     InteractionResolution,
 )
+from qwenpaw.kernel.invocation_control import (
+    ControlReceipt,
+    QueueProjection,
+)
 
-_CONTRACTS: tuple[tuple[str, type[BaseModel]], ...] = (
-    ("host-handshake", HostHandshake),
-    ("interaction-request", InteractionRequest),
-    ("interaction-resolution", InteractionResolution),
-    ("task-projection", TaskProjectionResponse),
+_CONTRACTS: tuple[tuple[str, type[BaseModel], bool], ...] = (
+    ("host-handshake", HostHandshake, True),
+    ("interaction-request", InteractionRequest, True),
+    ("interaction-resolution", InteractionResolution, True),
+    ("chat-control-request", ChatControlRequest, False),
+    ("chat-steer-request", ChatSteerRequest, False),
+    ("chat-queue-reorder-request", ChatQueueReorderRequest, False),
+    ("chat-submission-request", ChatSubmissionRequest, False),
+    ("control-receipt", ControlReceipt, True),
+    ("queue-projection", QueueProjection, True),
+    ("task-projection", TaskProjectionResponse, True),
 )
 
 
@@ -42,12 +58,13 @@ def export_sdk_schemas(output_dir: Path) -> tuple[Path, ...]:
     """Write deterministic schemas and return their paths."""
     output_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
-    for stem, model in _CONTRACTS:
+    for stem, model, response_contract in _CONTRACTS:
         schema = model.model_json_schema(
             by_alias=True,
-            mode="serialization",
+            mode="serialization" if response_contract else "validation",
         )
-        _require_serialized_properties(schema)
+        if response_contract:
+            _require_serialized_properties(schema)
         schema["$id"] = f"https://schemas.qwenpaw.dev/sdk/{stem}.v1.json"
         path = output_dir / f"{stem}.schema.json"
         path.write_text(

@@ -19,6 +19,12 @@ const contracts = [
   ["host-handshake", "hostHandshake.ts"],
   ["interaction-request", "interactionRequest.ts"],
   ["interaction-resolution", "interactionResolution.ts"],
+  ["chat-control-request", "chatControlRequest.ts"],
+  ["chat-steer-request", "chatSteerRequest.ts"],
+  ["chat-queue-reorder-request", "chatQueueReorderRequest.ts"],
+  ["chat-submission-request", "chatSubmissionRequest.ts"],
+  ["control-receipt", "controlReceipt.ts"],
+  ["queue-projection", "queueProjection.ts"],
   ["task-projection", "taskProjection.ts"],
 ];
 const checkOnly = process.argv.includes("--check");

@@ -1,0 +1,319 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "description": "Reference to data stored outside the execution ledger.",
+      "properties": {
+        "artifact_id": {
+          "format": "uuid",
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "content_hash": {
+          "pattern": "^(?:sha256:)?[0-9a-f]{64}$",
+          "title": "Content Hash",
+          "type": "string"
+        },
+        "kind": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "title": "Kind",
+          "type": "string"
+        },
+        "media_type": {
+          "minLength": 1,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Metadata",
+          "type": "object"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "size_bytes": {
+          "minimum": 0,
+          "title": "Size Bytes",
+          "type": "integer"
+        },
+        "uri": {
+          "minLength": 1,
+          "title": "Uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "artifact_id",
+        "kind",
+        "uri",
+        "media_type",
+        "content_hash",
+        "size_bytes",
+        "metadata"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "SubmissionInputEnvelope": {
+      "additionalProperties": false,
+      "description": "Versioned and durable execution input attached to one submission.",
+      "properties": {
+        "kind": {
+          "minLength": 1,
+          "title": "Kind",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Payload",
+          "type": "object"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "kind",
+        "payload"
+      ],
+      "title": "SubmissionInputEnvelope",
+      "type": "object"
+    },
+    "SubmissionStatus": {
+      "description": "Durable lifecycle for one submitted conversation turn.",
+      "enum": [
+        "queued",
+        "admitted",
+        "running",
+        "interrupting",
+        "succeeded",
+        "failed",
+        "interrupted",
+        "cancelled"
+      ],
+      "title": "SubmissionStatus",
+      "type": "string"
+    },
+    "TurnSubmission": {
+      "additionalProperties": false,
+      "description": "One durable user turn owned and sequenced by the server.",
+      "properties": {
+        "agent_id": {
+          "minLength": 1,
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "artifact_refs": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ArtifactRef"
+          },
+          "title": "Artifact Refs",
+          "type": "array"
+        },
+        "chat_id": {
+          "description": "Owning ChatSpec.id",
+          "minLength": 1,
+          "title": "Chat Id",
+          "type": "string"
+        },
+        "content": {
+          "minLength": 1,
+          "title": "Content",
+          "type": "string"
+        },
+        "correlation_id": {
+          "format": "uuid",
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "title": "Idempotency Key",
+          "type": "string"
+        },
+        "input_envelope": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SubmissionInputEnvelope"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "invocation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Invocation Id"
+        },
+        "priority": {
+          "default": 20,
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Priority",
+          "type": "integer"
+        },
+        "queue_position": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Queue Position",
+          "type": "integer"
+        },
+        "request_context": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Request Context",
+          "type": "object"
+        },
+        "revision": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "sequence": {
+          "minimum": 1,
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/SubmissionStatus",
+          "default": "queued"
+        },
+        "submission_id": {
+          "format": "uuid",
+          "title": "Submission Id",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "chat_id",
+        "agent_id",
+        "priority",
+        "content",
+        "artifact_refs",
+        "request_context",
+        "input_envelope",
+        "idempotency_key",
+        "correlation_id",
+        "submission_id",
+        "sequence",
+        "queue_position",
+        "invocation_id",
+        "status",
+        "revision",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "TurnSubmission",
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.qwenpaw.dev/sdk/queue-projection.v1.json",
+  "additionalProperties": false,
+  "description": "Consistent server-side view of one conversation queue.",
+  "properties": {
+    "active_submission_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Active Submission Id"
+    },
+    "agent_id": {
+      "minLength": 1,
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "chat_id": {
+      "description": "Owning ChatSpec.id",
+      "minLength": 1,
+      "title": "Chat Id",
+      "type": "string"
+    },
+    "revision": {
+      "minimum": 0,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "schema": {
+      "const": "qwenpaw.kernel-model.v1",
+      "default": "qwenpaw.kernel-model.v1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "submissions": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/TurnSubmission"
+      },
+      "title": "Submissions",
+      "type": "array"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema",
+    "chat_id",
+    "agent_id",
+    "revision",
+    "active_submission_id",
+    "submissions",
+    "updated_at"
+  ],
+  "title": "QueueProjection",
+  "type": "object"
+}

@@ -1,3 +1,4 @@
+import type { ChatControlClientTransport } from "./clients/chatControls.js";
 import type { InteractionClientTransport } from "./clients/interactions.js";
 import type { RuntimeClientTransport } from "./clients/runtime.js";
 import type { TaskClientTransport } from "./clients/tasks.js";
@@ -23,7 +24,8 @@ export class QwenPawHttpError extends Error {
   }
 }
 
-export type QwenPawTransport = RuntimeClientTransport &
+export type QwenPawTransport = ChatControlClientTransport &
+  RuntimeClientTransport &
   InteractionClientTransport &
   TaskClientTransport;
 

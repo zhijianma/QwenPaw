@@ -1,0 +1,31 @@
+{
+  "$id": "https://schemas.qwenpaw.dev/sdk/chat-steer-request.v1.json",
+  "additionalProperties": false,
+  "description": "Instruction to inject at the next safe point of the active run.",
+  "properties": {
+    "expected_revision": {
+      "minimum": 0,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "idempotency_key": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Idempotency Key",
+      "type": "string"
+    },
+    "instruction": {
+      "maxLength": 20000,
+      "minLength": 1,
+      "title": "Instruction",
+      "type": "string"
+    }
+  },
+  "required": [
+    "idempotency_key",
+    "expected_revision",
+    "instruction"
+  ],
+  "title": "ChatSteerRequest",
+  "type": "object"
+}

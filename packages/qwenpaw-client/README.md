@@ -25,12 +25,25 @@ await paw.tasks.start(task.task_id);
 for await (const event of paw.tasks.follow(task.task_id)) {
   console.log(event.sequence, event.event_type);
 }
+
+const queue = await paw.chatControls.queue("chat-spec-id");
+await paw.chatControls.steer("chat-spec-id", {
+  idempotency_key: crypto.randomUUID(),
+  expected_revision: queue.revision,
+  instruction: "Verify the translation before writing the artifact",
+});
 ```
 
 Pass a custom `QwenPawTransport` instead of Fetch options to integrate another
 authentication, IPC or test transport. Completion, approval, recovery and
 artifact semantics remain owned by the Host; consumers should reconcile an
 ended stream with `paw.tasks.projection(taskId)`.
+
+`chatControls` exposes server-authoritative submission, queue, steer,
+interrupt, stop-and-clear, cancellation and reorder commands. The client does
+not maintain a second browser queue. Every mutation uses an idempotency key and
+the queue revision returned by the Host; steer instructions become effective
+only at a Runtime safe point.
 
 ## 中文说明
 

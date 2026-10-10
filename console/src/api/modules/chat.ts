@@ -1,4 +1,5 @@
 import { request } from "../request";
+import { createChatControlClient } from "../../clients/chatControlClient";
 import { createInteractionClient } from "../../clients/interactionClient";
 import { getApiUrl, getApiToken } from "../config";
 import { buildAuthHeaders } from "../authHeaders";
@@ -40,6 +41,7 @@ export interface ChatStatusResponse {
 }
 
 const FILES_PREVIEW = "/files/preview";
+const chatControlClient = createChatControlClient({ request });
 const interactionClient = createInteractionClient({ request });
 
 export const chatApi = {
@@ -143,20 +145,11 @@ export const chatApi = {
     chatId: string,
     payload: ChatSubmissionRequest,
     agentId?: string,
-  ) =>
-    request<ControlReceipt>(
-      `/chats/${encodeURIComponent(chatId)}/submissions`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload),
-        headers: agentId ? { "X-Agent-Id": agentId } : undefined,
-      },
-    ),
+  ): Promise<ControlReceipt> =>
+    chatControlClient.submit(chatId, payload, { agentId }),
 
-  getQueue: (chatId: string, agentId?: string) =>
-    request<QueueProjection>(`/chats/${encodeURIComponent(chatId)}/queue`, {
-      headers: agentId ? { "X-Agent-Id": agentId } : undefined,
-    }),
+  getQueue: (chatId: string, agentId?: string): Promise<QueueProjection> =>
+    chatControlClient.queue(chatId, { agentId }),
 
   getRuntime: (
     chatId: string,
@@ -172,70 +165,43 @@ export const chatApi = {
       },
     ),
 
-  steer: (chatId: string, payload: ChatSteerRequest, agentId?: string) =>
-    request<ControlReceipt>(
-      `/chats/${encodeURIComponent(chatId)}/control/steer`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload),
-        headers: agentId ? { "X-Agent-Id": agentId } : undefined,
-      },
-    ),
+  steer: (
+    chatId: string,
+    payload: ChatSteerRequest,
+    agentId?: string,
+  ): Promise<ControlReceipt> =>
+    chatControlClient.steer(chatId, payload, { agentId }),
 
-  interrupt: (chatId: string, payload: ChatControlRequest, agentId?: string) =>
-    request<ControlReceipt>(
-      `/chats/${encodeURIComponent(chatId)}/control/interrupt`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload),
-        headers: agentId ? { "X-Agent-Id": agentId } : undefined,
-      },
-    ),
+  interrupt: (
+    chatId: string,
+    payload: ChatControlRequest,
+    agentId?: string,
+  ): Promise<ControlReceipt> =>
+    chatControlClient.interrupt(chatId, payload, { agentId }),
 
   stopAndClear: (
     chatId: string,
     payload: ChatControlRequest,
     agentId?: string,
-  ) =>
-    request<ControlReceipt>(
-      `/chats/${encodeURIComponent(chatId)}/control/stop-and-clear`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload),
-        headers: agentId ? { "X-Agent-Id": agentId } : undefined,
-      },
-    ),
+  ): Promise<ControlReceipt> =>
+    chatControlClient.stopAndClear(chatId, payload, { agentId }),
 
   cancelQueued: (
     chatId: string,
     submissionId: string,
     payload: ChatControlRequest,
     agentId?: string,
-  ) =>
-    request<ControlReceipt>(
-      `/chats/${encodeURIComponent(chatId)}/queue/${encodeURIComponent(
-        submissionId,
-      )}/cancel`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload),
-        headers: agentId ? { "X-Agent-Id": agentId } : undefined,
-      },
-    ),
+  ): Promise<ControlReceipt> =>
+    chatControlClient.cancelQueued(chatId, submissionId, payload, {
+      agentId,
+    }),
 
   reorderQueue: (
     chatId: string,
     payload: ChatQueueReorderRequest,
     agentId?: string,
-  ) =>
-    request<ControlReceipt>(
-      `/chats/${encodeURIComponent(chatId)}/queue/reorder`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload),
-        headers: agentId ? { "X-Agent-Id": agentId } : undefined,
-      },
-    ),
+  ): Promise<ControlReceipt> =>
+    chatControlClient.reorder(chatId, payload, { agentId }),
 
   listInteractions: interactionClient.list,
 

@@ -96,18 +96,40 @@ ChatSpec defaults, capability policy, retry ergonomics and UI integration.
 
 This boundary follows the useful parts of current coding-agent SDKs:
 
-- Codex app-server exposes thread, turn, item, event and approval semantics
-  from the existing harness rather than recreating its agent loop in an SDK;
+- Codex TypeScript SDK starts the packaged Codex CLI and exchanges JSONL over
+  stdin/stdout; its `Thread` owns repeated turns and exposes buffered or async
+  event-stream execution without recreating the Rust harness;
 - GitHub Copilot SDK describes itself as a transport to the CLI over JSON-RPC,
   while the CLI retains orchestration and durable session behavior;
-- Claude Agent SDK offers one-shot and persistent clients over Claude Code
-  capabilities, including typed events, tool controls and result usage;
-- Gemini CLI separates its agent SDK direction from manifest-based extensions
-  that contribute MCP servers, context, commands, hooks, skills and policy.
+- Claude distinguishes low-level API clients from the Agent SDK/Claude Code
+  runtime, where the latter owns the agent loop and tool execution;
+- Gemini CLI SDK embeds the same configurable Agent core and offers Session,
+  resume, custom tool and skill primitives instead of shelling out to a second
+  implementation;
+- OpenCode separates a generated remote client from an embedded SDK Host; both
+  share the same promises, declared errors and async event streams.
 
-QwenPaw therefore reuses the running Host for Lite/Workstation/Hub. A future
-embedded local distribution may pin a compatible runtime like Codex does, but
-that is a packaging mode, not a second domain implementation.
+QwenPaw therefore keeps two explicit products instead of calling every layer
+an SDK:
+
+- `@qwenpaw/client` connects to a running Lite, Workstation or Hub Host and is
+  safe for Console, PawApp and third-party integrations;
+- a future `@qwenpaw/sdk` may own the lifecycle of a compatible local Host and
+  expose thread-like ergonomic handles, but it must compose the same Host and
+  client package rather than implement another Agent loop.
+
+This combines Codex's packaged-runtime reuse with OpenCode's remote/embedded
+split. It also avoids a known weakness of CLI wrappers: a missing or mismatched
+CLI binary must be detected through Host handshake and package compatibility,
+not discovered only after the first developer call.
+
+Primary references used for this decision:
+
+- [OpenAI Codex SDK](https://github.com/openai/codex/tree/main/sdk/typescript)
+- [Gemini CLI SDK design](https://github.com/google-gemini/gemini-cli/blob/main/packages/sdk/SDK_DESIGN.md)
+- [OpenCode remote client](https://docs.opencode.ai/docs/sdk/)
+- [OpenCode embedded SDK](https://opencode.ai/v2/docs/build/sdk)
+- [Claude SDK and agent-runtime distinction](https://platform.claude.com/docs/en/cli-sdks-libraries/overview)
 
 ### 5.2 Contract publication
 
@@ -118,10 +140,11 @@ frontend names are compatibility aliases over those generated declarations;
 they are not parallel handwritten models.
 
 The publication boundary currently includes Host negotiation, Interaction
-requests and resolutions, and the complete Task projection. CI-compatible
+requests and resolutions, Chat submission/control requests, authoritative
+Queue and Control receipts, and the complete Task projection. CI-compatible
 checks fail when either the committed JSON Schema or generated TypeScript is
-stale. Capability identifiers in the Host handshake remain open strings so
-an older SDK accepts optional features introduced by a newer Host; protocol
+stale. Capability identifiers in the Host handshake remain open strings so an
+older SDK accepts optional features introduced by a newer Host; protocol
 version and required feature checks still provide the compatibility gate.
 
 The publishable `@qwenpaw/client` package owns the generated declarations,
@@ -130,6 +153,14 @@ Fetch transport. Console and PawApp retain their existing import paths as
 compatibility re-exports of that package source. An external consumer can use
 `createQwenPawClient()` against a Lite, Workstation or Hub `/api` endpoint;
 the package never starts a second runtime or stores authoritative Task state.
+
+`paw.chatControls` publishes submission, queue, steer, interrupt,
+stop-and-clear, queued cancellation and reorder over `ChatSpec.id`. Console
+uses this same client implementation. Queue order and command receipts remain
+Host facts; the SDK carries optimistic revisions and idempotency keys but owns
+no queue state. Steer acceptance is distinct from application, and the applied
+receipt records the Runtime safe point (`before/after reasoning` or
+`before/after tool batch`).
 
 ### 5.3 Developer-facing execution
 

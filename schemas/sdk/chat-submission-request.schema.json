@@ -1,0 +1,79 @@
+{
+  "$id": "https://schemas.qwenpaw.dev/sdk/chat-submission-request.v1.json",
+  "additionalProperties": false,
+  "description": "Complete durable input accepted by the Console Chat dispatcher.",
+  "properties": {
+    "content_parts": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "minItems": 1,
+      "title": "Content Parts",
+      "type": "array"
+    },
+    "expected_revision": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Expected Revision"
+    },
+    "idempotency_key": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Idempotency Key",
+      "type": "string"
+    },
+    "message_metadata": {
+      "additionalProperties": true,
+      "title": "Message Metadata",
+      "type": "object"
+    },
+    "model_slot_override": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model Slot Override"
+    },
+    "priority": {
+      "default": 20,
+      "maximum": 100,
+      "minimum": 0,
+      "title": "Priority",
+      "type": "integer"
+    },
+    "request_context": {
+      "additionalProperties": true,
+      "title": "Request Context",
+      "type": "object"
+    },
+    "request_extensions": {
+      "additionalProperties": true,
+      "title": "Request Extensions",
+      "type": "object"
+    }
+  },
+  "required": [
+    "idempotency_key",
+    "content_parts"
+  ],
+  "title": "ChatSubmissionRequest",
+  "type": "object"
+}

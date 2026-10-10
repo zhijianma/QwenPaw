@@ -20,6 +20,12 @@ def test_sdk_schema_export_is_deterministic_and_complete(tmp_path) -> None:
         "host-handshake.schema.json",
         "interaction-request.schema.json",
         "interaction-resolution.schema.json",
+        "chat-control-request.schema.json",
+        "chat-steer-request.schema.json",
+        "chat-queue-reorder-request.schema.json",
+        "chat-submission-request.schema.json",
+        "control-receipt.schema.json",
+        "queue-projection.schema.json",
         "task-projection.schema.json",
     }
     task_schema = json.loads(first_content["task-projection.schema.json"])
@@ -29,6 +35,10 @@ def test_sdk_schema_export_is_deterministic_and_complete(tmp_path) -> None:
         "registry_generation"
         in task_schema["$defs"]["ExecutionEvent"]["required"]
     )
+    queue_schema = json.loads(first_content["queue-projection.schema.json"])
+    assert queue_schema["$id"].endswith("/queue-projection.v1.json")
+    assert "chat_id" in queue_schema["required"]
+    assert "session_id" not in queue_schema["properties"]
 
 
 def test_committed_sdk_schemas_match_kernel_models(tmp_path) -> None:

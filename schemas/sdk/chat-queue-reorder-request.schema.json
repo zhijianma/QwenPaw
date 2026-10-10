@@ -1,0 +1,34 @@
+{
+  "$id": "https://schemas.qwenpaw.dev/sdk/chat-queue-reorder-request.v1.json",
+  "additionalProperties": false,
+  "description": "Complete desired order of the currently queued submissions.",
+  "properties": {
+    "expected_revision": {
+      "minimum": 0,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "idempotency_key": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Idempotency Key",
+      "type": "string"
+    },
+    "ordered_submission_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Ordered Submission Ids",
+      "type": "array"
+    }
+  },
+  "required": [
+    "idempotency_key",
+    "expected_revision",
+    "ordered_submission_ids"
+  ],
+  "title": "ChatQueueReorderRequest",
+  "type": "object"
+}

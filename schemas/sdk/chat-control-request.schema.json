@@ -1,0 +1,24 @@
+{
+  "$id": "https://schemas.qwenpaw.dev/sdk/chat-control-request.v1.json",
+  "additionalProperties": false,
+  "description": "Optimistic and idempotent mutation of one Chat control plane.",
+  "properties": {
+    "expected_revision": {
+      "minimum": 0,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "idempotency_key": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Idempotency Key",
+      "type": "string"
+    }
+  },
+  "required": [
+    "idempotency_key",
+    "expected_revision"
+  ],
+  "title": "ChatControlRequest",
+  "type": "object"
+}
