@@ -72,6 +72,10 @@ for (const context of await chat.contextManifests()) {
   console.log(context.manifest_hash, context.fragments);
 }
 
+for (const interaction of await chat.interactionHistory()) {
+  console.log(interaction.request.kind, interaction.resolution?.status);
+}
+
 const trajectory = await chat.trajectory(settled.correlation_id);
 console.log(trajectory.items);
 

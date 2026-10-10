@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from qwenpaw.app.chats.api import (
+    list_chat_interaction_history,
     list_chat_interactions,
     list_chat_wait_conditions,
     respond_chat_interaction,
@@ -134,6 +135,18 @@ async def test_list_and_resolve_chat_owned_interaction(tmp_path) -> None:
     condition_payload = conditions[0].model_dump(mode="json")
     assert condition_payload["chat_id"] == "chat-spec-1"
     assert "conversation_id" not in condition_payload
+    history = await list_chat_interaction_history(
+        "chat-spec-1",
+        1,
+        manager,
+        workspace,
+    )
+    assert len(history) == 1
+    assert history[0].request.interaction_id == interaction.interaction_id
+    assert history[0].resolution == resolution
+    history_payload = history[0].model_dump(mode="json")
+    assert history_payload["request"]["chat_id"] == "chat-spec-1"
+    assert "conversation_id" not in history_payload["request"]
 
 
 @pytest.mark.asyncio
@@ -163,6 +176,14 @@ async def test_response_rejects_cross_chat_interaction(tmp_path) -> None:
         )
 
     assert rejected.value.status_code == 404
+
+    history = await list_chat_interaction_history(
+        "another-chat",
+        100,
+        manager,
+        workspace,
+    )
+    assert history == []
 
 
 @pytest.mark.asyncio

@@ -96,6 +96,7 @@ const blockers = await paw.chats.waitConditions("chat-spec-id");
 const attempts = await paw.chats.modelCalls("chat-spec-id");
 const locks = await paw.chats.capabilityLocks("chat-spec-id");
 const contexts = await paw.chats.contextManifests("chat-spec-id");
+const interactionHistory = await paw.interactions.history("chat-spec-id");
 ```
 
 `capabilityLocks()` shows the exact generation and immutable provider releases
@@ -103,6 +104,12 @@ used by each Invocation. `contextManifests()` exposes content-free provenance,
 trust, transformation and token-estimate evidence for the model-visible input.
 Together they let integrations audit execution without reading private Host
 state or receiving prompt content.
+
+`interactions.list()` remains the low-latency view of open Approval, Ask User
+and Suggestion requests. `interactions.history()` returns the bounded,
+authoritative request plus optional terminal resolution, so integrations can
+render approved, rejected, cancelled and expired outcomes without inferring
+them from event text.
 
 `waitConditions()` explains durable approval, user-input, timer, external-event
 and resource blockers together with their continuation mode. Recovery remains

@@ -20,6 +20,7 @@ def test_sdk_schema_export_is_deterministic_and_complete(tmp_path) -> None:
         "host-handshake.schema.json",
         "interaction-request.schema.json",
         "interaction-resolution.schema.json",
+        "interaction-record.schema.json",
         "chat-control-request.schema.json",
         "chat-steer-request.schema.json",
         "chat-queue-reorder-request.schema.json",

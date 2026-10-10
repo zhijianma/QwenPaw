@@ -8,6 +8,7 @@ import type {
   UserInputReason,
 } from "../generated/interactionRequest.js";
 import type { InteractionResolution } from "../generated/interactionResolution.js";
+import type { InteractionRecord as GeneratedInteractionRecord } from "../generated/interactionRecord.js";
 
 export type {
   InteractionKind,
@@ -32,3 +33,4 @@ export interface ChatInteractionDecisionRequest {
 }
 
 export type ChatInteractionResolution = InteractionResolution;
+export type ChatInteractionRecord = GeneratedInteractionRecord;

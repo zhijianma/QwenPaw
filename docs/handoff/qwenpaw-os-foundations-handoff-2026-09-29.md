@@ -1569,3 +1569,10 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
   与 execution manifests 六组 Chat 功能位。运行中的 8004 Host 和由 SDK 新启动的
   当前 Python Host 均通过 required-feature 门禁，缺失集合为空；未来未知功能名保持
   向前兼容。
+- 统一 Interaction 的公共读取已补齐终态历史：`GET /interactions` 继续返回 open
+  请求，新 `GET /interactions/history` 直接读取同一 `InteractionHistoryPort` 的
+  `InteractionRecord(request + optional resolution)`。远程 Client 与 managed handle
+  不保存副本，list/history/respond 统一支持 Agent scope 和 AbortSignal。
+- 固定 Chat 通过公开 Client 返回 20 条真实历史：User Input resolved 7/cancelled 1、
+  Approval resolved 9/cancelled 1、Suggestion resolved 2；嵌套请求全部只序列化
+  `chat_id = ChatSpec.id`，没有重新暴露 `conversation_id`。

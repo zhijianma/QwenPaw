@@ -19,6 +19,7 @@ const contracts = [
   ["host-handshake", "hostHandshake.ts"],
   ["interaction-request", "interactionRequest.ts"],
   ["interaction-resolution", "interactionResolution.ts"],
+  ["interaction-record", "interactionRecord.ts"],
   ["chat-control-request", "chatControlRequest.ts"],
   ["chat-steer-request", "chatSteerRequest.ts"],
   ["chat-queue-reorder-request", "chatQueueReorderRequest.ts"],

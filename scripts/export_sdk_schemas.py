@@ -21,6 +21,7 @@ from qwenpaw.kernel.artifacts import ConversationArtifactRecord
 from qwenpaw.kernel.capability_locks import CapabilityLockManifest
 from qwenpaw.kernel.host import HostHandshake
 from qwenpaw.kernel.interactions import (
+    InteractionRecord,
     InteractionRequest,
     InteractionResolution,
 )
@@ -43,6 +44,7 @@ _CONTRACTS: tuple[tuple[str, type[BaseModel], bool], ...] = (
     ("host-handshake", HostHandshake, True),
     ("interaction-request", InteractionRequest, True),
     ("interaction-resolution", InteractionResolution, True),
+    ("interaction-record", InteractionRecord, True),
     ("chat-control-request", ChatControlRequest, False),
     ("chat-steer-request", ChatSteerRequest, False),
     ("chat-queue-reorder-request", ChatQueueReorderRequest, False),

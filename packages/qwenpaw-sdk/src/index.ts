@@ -13,6 +13,8 @@ import {
   type ChatInput,
   type ChatInteractionDecisionRequest,
   type ChatInteractionResolution,
+  type InteractionHistoryOptions,
+  type InteractionRequestOptions,
   type ChatQueueReorderRequest,
   type ChatRequestOptions,
   type ChatListEvidenceOptions,
@@ -298,15 +300,25 @@ export class QwenPawChat {
     return this.#client.chatControls.reorder(this.id, body, options);
   }
 
-  listInteractions(signal?: AbortSignal) {
-    return this.#client.interactions.list(this.id, signal);
+  listInteractions(options?: InteractionRequestOptions | AbortSignal) {
+    return this.#client.interactions.list(this.id, options);
+  }
+
+  interactionHistory(options: InteractionHistoryOptions = {}) {
+    return this.#client.interactions.history(this.id, options);
   }
 
   respondToInteraction(
     interactionId: string,
     body: ChatInteractionDecisionRequest,
+    options: InteractionRequestOptions = {},
   ): Promise<ChatInteractionResolution> {
-    return this.#client.interactions.respond(this.id, interactionId, body);
+    return this.#client.interactions.respond(
+      this.id,
+      interactionId,
+      body,
+      options,
+    );
   }
 
   async fork(

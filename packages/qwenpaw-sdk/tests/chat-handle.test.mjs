@@ -55,6 +55,7 @@ function fakeClient() {
     },
     interactions: {
       list: async (...args) => calls.push(["interactions", ...args]),
+      history: async (...args) => calls.push(["interactionHistory", ...args]),
       respond: async (...args) => calls.push(["respond", ...args]),
     },
   };
@@ -159,6 +160,7 @@ test("delegates result and evidence reads to the shared Chat client", async () =
   await chat.artifactContent("artifact-1", { disposition: "attachment" });
   await chat.observations({ limit: 11 });
   await chat.trajectory("correlation-1", { limit: 12 });
+  await chat.interactionHistory({ limit: 13 });
 
   assert.deepEqual(
     calls.map((call) => call.slice(0, 2)),
@@ -172,6 +174,7 @@ test("delegates result and evidence reads to the shared Chat client", async () =
       ["artifactContent", "chat/one"],
       ["observations", "chat/one"],
       ["trajectory", "chat/one"],
+      ["interactionHistory", "chat/one"],
     ],
   );
 });

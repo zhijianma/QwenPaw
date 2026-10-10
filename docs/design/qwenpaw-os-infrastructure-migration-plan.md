@@ -1121,6 +1121,12 @@ PawApp / SDK 的运行所有权迁移见
     fork、evidence 与 execution manifests。公开 Client 对运行中的 8004 Host 校验三项
     required feature 无缺失；managed SDK 又以当前 Python 发行版启动独立真实 Host，
     在接收工作前完成同一门禁并正常关闭。未知未来功能仍可被旧 Client 接受。
+  - [x] Approval、Ask User 与 Suggestion 的公共 SDK 不再只返回 open 请求；新增
+    bounded `InteractionRecord` history，直接复用 `InteractionHistoryPort` 的 request +
+    optional resolution 权威事实。旧 open API 保持兼容，list/history/respond 均支持
+    Agent scope 与 AbortSignal。固定 Chat 通过公开 Client 读取 20 条真实历史：
+    user input resolved 7/cancelled 1、approval resolved 9/cancelled 1、suggestion
+    resolved 2；全部只输出 `chat_id = ChatSpec.id`。
 - [ ] 按 coding-agent SDK 对比结论交付最小 managed-local SDK，不再造执行内核：
   - [x] Host 已提供版本化 managed launch contract：CLI 预绑定 loopback socket，
     支持安全的 `--port 0`，输出真实 `api_url + pid`；禁止 non-loopback/reload，且不

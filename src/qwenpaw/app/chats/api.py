@@ -72,6 +72,7 @@ from ...kernel import (
     ApprovalDecisionValue,
     ArtifactRef,
     InteractionKind,
+    InteractionRecord,
     InteractionRequest,
     InteractionResolution,
     InteractionResponse,
@@ -817,6 +818,26 @@ async def list_chat_interactions(
         conversation_id=chat_id,
     )
     return list(interactions)
+
+
+@router.get(
+    "/{chat_id}/interactions/history",
+    response_model=list[InteractionRecord],
+)
+async def list_chat_interaction_history(
+    chat_id: str,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+) -> list[InteractionRecord]:
+    """List authoritative Interaction requests and terminal resolutions."""
+    _, service = await _chat_interaction_context(chat_id, mgr, workspace)
+    records = await service.list_for_conversation(
+        agent_id=workspace.agent_id,
+        conversation_id=chat_id,
+        limit=limit,
+    )
+    return list(records)
 
 
 @router.get(

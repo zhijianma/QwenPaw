@@ -286,6 +286,14 @@ older clients accept unknown optional features, while managed callers may fail
 closed on explicitly required identifiers. This prevents a documented SDK
 method from degrading into a first-call 404 on an incompatible Host.
 
+Interaction access has two deliberate views over one Store. The open view is
+optimized for rendering current Approval, Ask User and Suggestion cards. The
+bounded history view returns `InteractionRecord` with the original request and
+optional authoritative resolution. SDK consumers therefore render terminal
+decisions directly instead of reconstructing them from event wording. Both
+views remain scoped by Agent and `ChatSpec.id`; the remote Client carries the
+same Agent header and cancellation signal for list, history and response.
+
 `paw.chatControls` publishes submission, queue, steer, interrupt,
 stop-and-clear, queued cancellation and reorder over `ChatSpec.id`. Console
 uses this same client implementation. Queue order and command receipts remain
