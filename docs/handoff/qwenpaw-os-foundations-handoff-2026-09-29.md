@@ -1548,3 +1548,8 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
   超时再对同一组 SIGKILL。macOS 子进程 fixture 会派生并让 worker 忽略 SIGTERM，
   验收父子 PID 都被回收，避免 Harness/Tool worker 成为孤儿。Windows tree cleanup 与
   Linux 实机仍是未覆盖平台门禁，不从 macOS 结果外推。
+- 官方 `openai-codex==0.144.4` 已按精确 wheel 审计，而非引用 main：9 项所需功能均
+  存在，但默认审批 accept、Async 无 handler 注入、handler 不可 await、取消阻塞
+  waiter 不被唤醒四项安全门禁失败。新增可复用 wheel 审计脚本、合成安全/不安全
+  wheel 测试及 `qwenpaw-codex-sdk-adoption-gate.md`；生产 Codex transport 继续冻结在
+  私有兼容层，不通过访问官方 SDK 私有字段规避门禁。
