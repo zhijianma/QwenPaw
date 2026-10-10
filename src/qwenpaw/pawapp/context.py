@@ -147,8 +147,7 @@ class UIBridge:
     ) -> Dict[str, Any]:
         """Persist and await a ChatSpec-owned confirmation request."""
         if (
-            self._channel is None
-            or self._interaction_service is None
+            self._interaction_service is None
             or not self._agent_id
             or not self._chat_id
             or self._invocation_id is None
@@ -187,23 +186,31 @@ class UIBridge:
             expires_at=utc_now() + timedelta(seconds=timeout),
         )
         await self._interaction_service.open(request)
-        await self._channel.send_event(
-            {
-                "type": "pawapp:confirm_request",
-                "request_id": str(request.interaction_id),
-                "interaction_id": str(request.interaction_id),
-                "agent_id": self._agent_id,
-                "chat_id": self._chat_id,
-                "invocation_id": str(self._invocation_id),
-                "revision": request.revision,
-                "message": message,
-                "data": data,
-                "options": [
-                    option.model_dump(mode="json")
-                    for option in request.options
-                ],
-            },
-        )
+        if self._channel is not None:
+            try:
+                await self._channel.send_event(
+                    {
+                        "type": "pawapp:confirm_request",
+                        "request_id": str(request.interaction_id),
+                        "interaction_id": str(request.interaction_id),
+                        "agent_id": self._agent_id,
+                        "chat_id": self._chat_id,
+                        "invocation_id": str(self._invocation_id),
+                        "revision": request.revision,
+                        "message": message,
+                        "data": data,
+                        "options": [
+                            option.model_dump(mode="json")
+                            for option in request.options
+                        ],
+                    },
+                )
+            except Exception:
+                logger.warning(
+                    "PawApp confirmation SSE delivery failed; "
+                    "the durable Interaction remains available",
+                    exc_info=True,
+                )
         resolution = await self._interaction_service.wait(
             request.interaction_id,
             timeout_seconds=timeout,

@@ -1497,3 +1497,12 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
 - retry Invocation 的 Model Call 记录为 0；原 Invocation 有 2 次真实 Model Call。
   这证明第二次执行来自 model-independent Action dispatcher，不是模型手动重试。
   临时插件已按精确 release hash 热卸载，`/api/plugins` 恢复为空，仓库探针已删除。
+
+## 12. 2026-10-10 PawApp Interaction 与 SSE 解耦
+
+- `UIBridge.confirm()` 不再要求 SSE Channel 存在才创建确认；权威事实仍由
+  `InteractionService + ChatSpec.id + Invocation` 持有，SSE 只负责最佳努力的即时
+  投递。浏览器流断开时，开放 Interaction 仍可由统一 Chat Interaction API 查询、
+  响应，并恢复原 handler。
+- 本切片没有把 PawTask 前端任务句柄自动重连或插件热替换冒充成已完成；两者仍需
+  独立真实浏览器验收。Task Workbench 继续暂停。

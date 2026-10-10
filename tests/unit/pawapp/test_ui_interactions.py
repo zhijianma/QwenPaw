@@ -30,6 +30,14 @@ class _EventChannel:
         self.changed.set()
 
 
+class _BrokenEventChannel:
+    """Simulate a browser transport failing after durable admission."""
+
+    async def send_event(self, event: dict) -> None:
+        del event
+        raise ConnectionError("browser stream disconnected")
+
+
 async def test_confirm_uses_chat_owned_durable_interaction(
     tmp_path: Path,
 ) -> None:
@@ -107,6 +115,84 @@ async def test_confirm_reports_cancelled_invocation(tmp_path: Path) -> None:
     )
 
     assert await pending == {"action": "cancel", "data": None}
+
+
+async def test_confirm_survives_missing_sse_delivery(tmp_path: Path) -> None:
+    service = InteractionService(tmp_path / "interactions.sqlite3")
+    invocation_id = uuid4()
+    bridge = UIBridge(
+        interaction_service=service,
+        agent_id="default",
+        chat_id="chat-child",
+        invocation_id=invocation_id,
+    )
+
+    pending = asyncio.create_task(
+        bridge.confirm(
+            "Continue without a live browser stream?",
+            timeout=5,
+        ),
+    )
+    requests = ()
+    for _attempt in range(20):
+        requests = await service.list_open(
+            agent_id="default",
+            conversation_id="chat-child",
+        )
+        if requests:
+            break
+        await asyncio.sleep(0)
+
+    assert len(requests) == 1
+    request = requests[0]
+    assert request.invocation_id == invocation_id
+    await service.resolve(
+        InteractionResponse(
+            interaction_id=request.interaction_id,
+            idempotency_key="approve-after-disconnect",
+            expected_revision=request.revision,
+            actor=ActorRef(type=ActorType.USER, id="tester"),
+            selected_option_ids=("approve",),
+        ),
+    )
+
+    assert await pending == {"action": "approve", "data": None}
+
+
+async def test_confirm_survives_failed_sse_delivery(tmp_path: Path) -> None:
+    service = InteractionService(tmp_path / "interactions.sqlite3")
+    bridge = UIBridge(
+        sse_channel=_BrokenEventChannel(),
+        interaction_service=service,
+        agent_id="default",
+        chat_id="chat-child",
+        invocation_id=uuid4(),
+    )
+
+    pending = asyncio.create_task(bridge.confirm("Continue?", timeout=5))
+    requests = ()
+    for _attempt in range(20):
+        requests = await service.list_open(
+            agent_id="default",
+            conversation_id="chat-child",
+        )
+        if requests:
+            break
+        await asyncio.sleep(0)
+
+    assert len(requests) == 1
+    request = requests[0]
+    await service.resolve(
+        InteractionResponse(
+            interaction_id=request.interaction_id,
+            idempotency_key="approve-after-send-failure",
+            expected_revision=request.revision,
+            actor=ActorRef(type=ActorType.USER, id="tester"),
+            selected_option_ids=("approve",),
+        ),
+    )
+
+    assert await pending == {"action": "approve", "data": None}
 
 
 async def test_unbound_confirm_fails_closed() -> None:

@@ -230,15 +230,15 @@ def test_ui_bridge_push_with_channel() -> None:
 @pytest.mark.integration
 @pytest.mark.p1
 def test_ui_bridge_confirm_requires_connection() -> None:
-    """UIBridge.confirm without channel/approval raises RuntimeError."""
+    """UIBridge.confirm without an Interaction runtime fails closed."""
     import asyncio
 
     from qwenpaw.pawapp.context import UIBridge
 
-    bridge = UIBridge(sse_channel=None, approval_coordinator=None)
+    bridge = UIBridge(sse_channel=None, interaction_service=None)
 
     async def run() -> None:
-        with pytest.raises(RuntimeError, match="not connected"):
+        with pytest.raises(RuntimeError, match="task interaction runtime"):
             await bridge.confirm("proceed?")
 
     asyncio.run(run())

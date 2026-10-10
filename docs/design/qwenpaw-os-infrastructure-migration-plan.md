@@ -1070,6 +1070,11 @@ Cron 不形成独立审批或产物事实源。
 
 ### I7：插件 SDK 与二次开发体验
 
+PawApp / SDK 的运行所有权迁移见
+`docs/design/qwenpaw-pawapp-sdk-runtime.md`。PawApp 保留为开发者 facade，新的
+服务端能力必须进入公开 Contribution；旧 `@app.task` 仅作为逐步迁移的兼容适配器，
+不得继续扩展成第二套 Task Runtime。
+
 - [x] Manifest 覆盖全部公开 Slot；公开后端 Slot 与 Protocol 门禁具有完整性测试，
   `config_schema` 在安装前按 JSON Schema 校验并返回精确字段、错误码和恢复建议。
 - [x] 激活前按 Slot 校验实现 Port 与 capability identity；UI Slot 校验入口
@@ -1724,8 +1729,10 @@ Codex/Qoder Harness 收敛到 Task + Interaction 双桥，所有上述路径共�
 持久化 `expires_at`。任一桥接失败都 fail closed。PawApp
 `UIBridge.confirm()` 现已持久化由 `ChatSpec.id + invocation_id` 归属的通用
 `USER_INPUT` Interaction；SSE 只作为投递 Adapter，Task 取消会关闭该 invocation
-的未决交互。它仍是应用确认，不冒充策略 Approval 事实。浏览器断线重连与热替换
-验收仍待完成。Task Workbench 不参与当前开发验收。
+的未决交互。`UIBridge.confirm()` 现已允许在 SSE 缺失时继续创建并等待持久化
+Interaction，浏览器投递不再成为业务准入条件；Interaction API 仍可查询和响应。
+它仍是应用确认，不冒充策略 Approval 事实。浏览器任务句柄自动重连与热替换验收
+仍待完成。Task Workbench 不参与当前开发验收。
 I7 已建立插件激活门禁：公共执行 Slot 在 shadow generation 阶段校验公开 Port
 和 namespaced identity，UI Slot 校验非空 entrypoint；兼容 Slot 保持最小校验。
 任何契约、身份或健康检查失败均在原子发布前终止，当前 generation 及其 lease
