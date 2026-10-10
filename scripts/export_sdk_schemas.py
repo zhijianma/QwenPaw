@@ -17,8 +17,9 @@ from qwenpaw.app.chats.models import (
     ChatSubmissionRequest,
 )
 from qwenpaw.app.task_http_contracts import TaskProjectionResponse
-from qwenpaw.kernel.host import HostHandshake
 from qwenpaw.kernel.artifacts import ConversationArtifactRecord
+from qwenpaw.kernel.capability_locks import CapabilityLockManifest
+from qwenpaw.kernel.host import HostHandshake
 from qwenpaw.kernel.interactions import (
     InteractionRequest,
     InteractionResolution,
@@ -27,7 +28,11 @@ from qwenpaw.kernel.invocation_control import (
     ControlReceipt,
     QueueProjection,
 )
-from qwenpaw.kernel.models import ActionRecord, ModelCallRecord
+from qwenpaw.kernel.models import (
+    ActionRecord,
+    ContextManifest,
+    ModelCallRecord,
+)
 from qwenpaw.kernel.observations import (
     ConversationTrajectoryPage,
     ObservationPage,
@@ -51,6 +56,8 @@ _CONTRACTS: tuple[tuple[str, type[BaseModel], bool], ...] = (
     ("conversation-trajectory-page", ConversationTrajectoryPage, True),
     ("model-call-record", ModelCallRecord, True),
     ("wait-condition", WaitCondition, True),
+    ("capability-lock-manifest", CapabilityLockManifest, True),
+    ("context-manifest", ContextManifest, True),
 )
 
 

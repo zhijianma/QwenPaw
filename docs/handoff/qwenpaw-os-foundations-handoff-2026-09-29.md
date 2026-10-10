@@ -1548,3 +1548,19 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
   超时再对同一组 SIGKILL。macOS 子进程 fixture 会派生并让 worker 忽略 SIGTERM，
   验收父子 PID 都被回收，避免 Harness/Tool worker 成为孤儿。Windows tree cleanup 与
   Linux 实机仍是未覆盖平台门禁，不从 macOS 结果外推。
+
+## 14. 2026-10-10 Codex 参考边界与 SDK 执行证据
+
+- Codex 已明确为产品和架构参考，不是 QwenPaw SDK 的运行时或传输依赖。此前新增的
+  Codex SDK adoption gate 已完整撤销；`openai-codex` 只属于 Codex Harness adapter，
+  不得向 Kernel、`@qwenpaw/client`、managed SDK 或 Plugin SDK 泄漏 Codex 类型。
+- QwenPaw SDK 继续复用自身 Host 和生成契约。Chat 的 `CapabilityLockManifest` 与
+  `ContextManifest` 已从 Kernel Pydantic 模型确定性导出 JSON Schema，再生成
+  TypeScript；远程 Client 与 managed `QwenPawChat` 使用同一只读方法。
+- 固定 Chat `1ee31988-b37a-48b9-b6ce-423c52f6a3a9` 已通过公开 Client 读取真实
+  8004 Host：最新 generation 12 的两条 Capability Lock 分别包含 3/10 个固定
+  release，两条 Context Manifest 分别包含 76/73 个内容最小化 fragment 和 71 个
+  Tool Schema。调用只使用 `ChatSpec.id`，没有读取 Host 私有 Store。
+- Schema/Host 路由定点测试 20 项、公共 Client 7 项、managed SDK 20 项通过；生成
+  契约新鲜度、两个包 TypeScript 检查和全部变更文件 pre-commit 通过。Task Workbench
+  仍保持暂停。

@@ -61,6 +61,14 @@ for (const call of await chat.modelCalls()) {
   console.log(call.attempt, call.result);
 }
 
+for (const lock of await chat.capabilityLocks()) {
+  console.log(lock.registry_generation, lock.releases);
+}
+
+for (const context of await chat.contextManifests()) {
+  console.log(context.manifest_hash, context.fragments);
+}
+
 const trajectory = await chat.trajectory(settled.correlation_id);
 console.log(trajectory.items);
 

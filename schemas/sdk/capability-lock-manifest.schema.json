@@ -1,0 +1,177 @@
+{
+  "$defs": {
+    "CapabilityProviderKind": {
+      "description": "Trust origin of one capability provider.\n\nDispatch must not branch on this value. It exists for lifecycle policy,\ndiagnostics, and audit output only.",
+      "enum": [
+        "system",
+        "plugin"
+      ],
+      "title": "CapabilityProviderKind",
+      "type": "string"
+    },
+    "CapabilityRelease": {
+      "additionalProperties": false,
+      "description": "Content-safe identity of one selected immutable descriptor.",
+      "properties": {
+        "capability_id": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "title": "Capability Id",
+          "type": "string"
+        },
+        "descriptor_hash": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Descriptor Hash",
+          "type": "string"
+        },
+        "provider_id": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "title": "Provider Id",
+          "type": "string"
+        },
+        "provider_kind": {
+          "$ref": "#/$defs/CapabilityProviderKind"
+        },
+        "restart_policy": {
+          "$ref": "#/$defs/RestartPolicy"
+        },
+        "schema": {
+          "const": "qwenpaw.capability-release.v1",
+          "default": "qwenpaw.capability-release.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "slot": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "title": "Slot",
+          "type": "string"
+        },
+        "version": {
+          "minLength": 1,
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "capability_id",
+        "slot",
+        "provider_id",
+        "provider_kind",
+        "version",
+        "restart_policy",
+        "descriptor_hash"
+      ],
+      "title": "CapabilityRelease",
+      "type": "object"
+    },
+    "RestartPolicy": {
+      "description": "Activation boundary required by a plugin contribution.",
+      "enum": [
+        "hot",
+        "scoped",
+        "full"
+      ],
+      "title": "RestartPolicy",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.qwenpaw.dev/sdk/capability-lock-manifest.v1.json",
+  "additionalProperties": false,
+  "description": "Exact selected releases admitted for one Invocation.",
+  "properties": {
+    "agent_id": {
+      "minLength": 1,
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "chat_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Owning ChatSpec.id",
+      "title": "Chat Id"
+    },
+    "correlation_id": {
+      "format": "uuid",
+      "title": "Correlation Id",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "invocation_id": {
+      "format": "uuid",
+      "title": "Invocation Id",
+      "type": "string"
+    },
+    "lock_id": {
+      "format": "uuid",
+      "title": "Lock Id",
+      "type": "string"
+    },
+    "manifest_hash": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Manifest Hash",
+      "type": "string"
+    },
+    "registry_epoch_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Registry Epoch Id"
+    },
+    "registry_generation": {
+      "minimum": 1,
+      "title": "Registry Generation",
+      "type": "integer"
+    },
+    "releases": {
+      "items": {
+        "$ref": "#/$defs/CapabilityRelease"
+      },
+      "minItems": 1,
+      "title": "Releases",
+      "type": "array"
+    },
+    "schema": {
+      "const": "qwenpaw.capability-lock-manifest.v1",
+      "default": "qwenpaw.capability-lock-manifest.v1",
+      "title": "Schema",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema",
+    "lock_id",
+    "invocation_id",
+    "correlation_id",
+    "agent_id",
+    "chat_id",
+    "registry_epoch_id",
+    "registry_generation",
+    "releases",
+    "manifest_hash",
+    "created_at"
+  ],
+  "title": "CapabilityLockManifest",
+  "type": "object"
+}

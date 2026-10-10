@@ -23,16 +23,25 @@ function fakeTransport(contentResponse = new Response("artifact")) {
 test("reads Chat-owned results through stable evidence routes", async () => {
   const { calls, transport } = fakeTransport();
   const chats = createChatClient(transport);
+  const abort = new AbortController();
 
   await chats.actions("chat/one", { limit: 5, agentId: "agent-a" });
   await chats.artifacts("chat/one", { limit: 6 });
   await chats.modelCalls("chat/one", { limit: 7 });
-  await chats.waitConditions("chat/one", {
+  await chats.capabilityLocks("chat/one", {
     limit: 8,
+    agentId: "agent-b",
+  });
+  await chats.contextManifests("chat/one", {
+    limit: 9,
+    signal: abort.signal,
+  });
+  await chats.waitConditions("chat/one", {
+    limit: 10,
     includeTerminal: true,
   });
-  await chats.observations("chat/one", { limit: 9, cursor: "next/1" });
-  await chats.trajectory("chat/one", "correlation/1", { limit: 10 });
+  await chats.observations("chat/one", { limit: 11, cursor: "next/1" });
+  await chats.trajectory("chat/one", "correlation/1", { limit: 12 });
   const content = await chats.artifactContent("chat/one", "artifact/1", {
     disposition: "attachment",
   });
@@ -50,18 +59,28 @@ test("reads Chat-owned results through stable evidence routes", async () => {
   );
   assert.equal(
     calls[3][1],
-    "/chats/chat%2Fone/wait-conditions?limit=8&include_terminal=true",
+    "/chats/chat%2Fone/capability-locks?limit=8",
   );
+  assert.equal(calls[3][2].headers["X-Agent-Id"], "agent-b");
   assert.equal(
     calls[4][1],
-    "/chats/chat%2Fone/observations/page?limit=9&cursor=next%2F1",
+    "/chats/chat%2Fone/context-manifests?limit=9",
   );
+  assert.equal(calls[4][2].signal, abort.signal);
   assert.equal(
     calls[5][1],
-    "/chats/chat%2Fone/trajectories/correlation%2F1?limit=10",
+    "/chats/chat%2Fone/wait-conditions?limit=10&include_terminal=true",
   );
   assert.equal(
     calls[6][1],
+    "/chats/chat%2Fone/observations/page?limit=11&cursor=next%2F1",
+  );
+  assert.equal(
+    calls[7][1],
+    "/chats/chat%2Fone/trajectories/correlation%2F1?limit=12",
+  );
+  assert.equal(
+    calls[8][1],
     "/chats/chat%2Fone/artifacts/artifact%2F1/content" +
       "?disposition=attachment",
   );

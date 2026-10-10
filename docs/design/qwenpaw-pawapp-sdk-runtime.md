@@ -272,6 +272,13 @@ compatibility re-exports of that package source. An external consumer can use
 `createQwenPawClient()` against a Lite, Workstation or Hub `/api` endpoint;
 the package never starts a second runtime or stores authoritative Task state.
 
+Chat execution evidence is part of that same public boundary. Capability Lock
+and Context Manifest models are generated directly from Kernel schemas and are
+read through Chat-owned Host routes. The remote Client and managed Chat handle
+therefore expose the exact generation/provider releases and content-free model
+input provenance without exporting Registry, Store, prompt content or any
+Codex-specific type.
+
 `paw.chatControls` publishes submission, queue, steer, interrupt,
 stop-and-clear, queued cancellation and reorder over `ChatSpec.id`. Console
 uses this same client implementation. Queue order and command receipts remain

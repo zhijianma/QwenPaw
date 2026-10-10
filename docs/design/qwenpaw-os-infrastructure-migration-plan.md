@@ -1110,6 +1110,13 @@ PawApp / SDK 的运行所有权迁移见
 - [x] `@qwenpaw/client` 已从 Console/PawApp 抽取为零运行时、可发布的远程 Host
   客户端；Chat 控制、Task、Interaction、Host negotiation 复用生成契约和同一实现，
   不拥有 Agent Loop、Queue 或生命周期事实。
+  - [x] Chat 的 Capability Lock 与 Context Manifest 已进入同一生成契约、远程
+    Client 和 managed Chat handle。二次开发者可按 `ChatSpec.id` 审计 generation、
+    provider release 与内容最小化的上下文来源，不读取 Host 私有 Store，也不引入
+    Codex SDK 类型。2026-10-10 使用公开 Client 读取固定 Chat
+    `1ee31988-b37a-48b9-b6ce-423c52f6a3a9`：最新 generation 12 的两条 Lock 分别
+    固定 3/10 个 release，两条 Manifest 分别返回 76/73 个内容最小化 fragment 和
+    71 个工具披露；全程仅使用 `ChatSpec.id`，未读取私有文件。
 - [ ] 按 coding-agent SDK 对比结论交付最小 managed-local SDK，不再造执行内核：
   - [x] Host 已提供版本化 managed launch contract：CLI 预绑定 loopback socket，
     支持安全的 `--port 0`，输出真实 `api_url + pid`；禁止 non-loopback/reload，且不

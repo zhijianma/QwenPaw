@@ -1,0 +1,320 @@
+{
+  "$defs": {
+    "ContextFragment": {
+      "additionalProperties": false,
+      "description": "Content-free provenance for one unit sent to a model provider.",
+      "properties": {
+        "content_hash": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Content Hash"
+        },
+        "estimated_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Estimated Tokens"
+        },
+        "fragment_id": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "title": "Fragment Id",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ContextFragmentKind"
+        },
+        "metadata": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Metadata",
+          "type": "object"
+        },
+        "redaction_reason": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Redaction Reason"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "selection_reason": {
+          "minLength": 1,
+          "title": "Selection Reason",
+          "type": "string"
+        },
+        "size_bytes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Size Bytes"
+        },
+        "source": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "title": "Source",
+          "type": "string"
+        },
+        "source_version": {
+          "minLength": 1,
+          "title": "Source Version",
+          "type": "string"
+        },
+        "transformations": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+            "type": "string"
+          },
+          "title": "Transformations",
+          "type": "array"
+        },
+        "trust_level": {
+          "$ref": "#/$defs/ContextTrustLevel"
+        }
+      },
+      "required": [
+        "schema",
+        "fragment_id",
+        "kind",
+        "source",
+        "source_version",
+        "trust_level",
+        "selection_reason",
+        "transformations",
+        "content_hash",
+        "size_bytes",
+        "estimated_tokens",
+        "redaction_reason",
+        "metadata"
+      ],
+      "title": "ContextFragment",
+      "type": "object"
+    },
+    "ContextFragmentKind": {
+      "description": "Model-input unit represented in a privacy-safe manifest.",
+      "enum": [
+        "message",
+        "tool_schema",
+        "redacted"
+      ],
+      "title": "ContextFragmentKind",
+      "type": "string"
+    },
+    "ContextTrustLevel": {
+      "description": "Host-assigned trust boundary for one model-visible input unit.",
+      "enum": [
+        "system",
+        "provider",
+        "user",
+        "model",
+        "tool",
+        "external"
+      ],
+      "title": "ContextTrustLevel",
+      "type": "string"
+    },
+    "JsonValue": {}
+  },
+  "$id": "https://schemas.qwenpaw.dev/sdk/context-manifest.v1.json",
+  "additionalProperties": false,
+  "description": "Content-free input evidence shared by one logical model call.",
+  "properties": {
+    "attempt_kind": {
+      "default": "primary",
+      "enum": [
+        "primary",
+        "overflow_retry"
+      ],
+      "title": "Attempt Kind",
+      "type": "string"
+    },
+    "capability_lock_hash": {
+      "anyOf": [
+        {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Capability Lock Hash"
+    },
+    "capability_lock_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Capability Lock Id"
+    },
+    "chat_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Owning ChatSpec.id; null for an unscoped action",
+      "title": "Chat Id"
+    },
+    "correlation_id": {
+      "format": "uuid",
+      "title": "Correlation Id",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "disclosed_tool_count": {
+      "minimum": 0,
+      "title": "Disclosed Tool Count",
+      "type": "integer"
+    },
+    "fragments": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ContextFragment"
+      },
+      "title": "Fragments",
+      "type": "array"
+    },
+    "invocation_id": {
+      "format": "uuid",
+      "title": "Invocation Id",
+      "type": "string"
+    },
+    "manifest_hash": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Manifest Hash",
+      "type": "string"
+    },
+    "manifest_id": {
+      "format": "uuid",
+      "title": "Manifest Id",
+      "type": "string"
+    },
+    "model_call_index": {
+      "minimum": 1,
+      "title": "Model Call Index",
+      "type": "integer"
+    },
+    "policy_id": {
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+      "title": "Policy Id",
+      "type": "string"
+    },
+    "policy_version": {
+      "minLength": 1,
+      "title": "Policy Version",
+      "type": "string"
+    },
+    "registry_epoch_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Registry Epoch Id"
+    },
+    "registry_generation": {
+      "minimum": 1,
+      "title": "Registry Generation",
+      "type": "integer"
+    },
+    "schema": {
+      "const": "qwenpaw.kernel-model.v1",
+      "default": "qwenpaw.kernel-model.v1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "total_estimated_tokens": {
+      "minimum": 0,
+      "title": "Total Estimated Tokens",
+      "type": "integer"
+    },
+    "total_size_bytes": {
+      "minimum": 0,
+      "title": "Total Size Bytes",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema",
+    "chat_id",
+    "manifest_id",
+    "invocation_id",
+    "correlation_id",
+    "registry_epoch_id",
+    "registry_generation",
+    "capability_lock_id",
+    "capability_lock_hash",
+    "model_call_index",
+    "attempt_kind",
+    "policy_id",
+    "policy_version",
+    "fragments",
+    "total_size_bytes",
+    "total_estimated_tokens",
+    "disclosed_tool_count",
+    "manifest_hash",
+    "created_at"
+  ],
+  "title": "ContextManifest",
+  "type": "object"
+}

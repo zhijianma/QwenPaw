@@ -32,6 +32,8 @@ const contracts = [
   ["conversation-trajectory-page", "conversationTrajectoryPage.ts"],
   ["model-call-record", "modelCallRecord.ts"],
   ["wait-condition", "waitCondition.ts"],
+  ["capability-lock-manifest", "capabilityLockManifest.ts"],
+  ["context-manifest", "contextManifest.ts"],
 ];
 const checkOnly = process.argv.includes("--check");
 const stale = [];

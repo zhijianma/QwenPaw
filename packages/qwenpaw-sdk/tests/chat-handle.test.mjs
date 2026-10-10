@@ -18,6 +18,10 @@ function fakeClient() {
       actions: async (...args) => calls.push(["actions", ...args]),
       artifacts: async (...args) => calls.push(["artifacts", ...args]),
       modelCalls: async (...args) => calls.push(["modelCalls", ...args]),
+      capabilityLocks: async (...args) =>
+        calls.push(["capabilityLocks", ...args]),
+      contextManifests: async (...args) =>
+        calls.push(["contextManifests", ...args]),
       waitConditions: async (...args) =>
         calls.push(["waitConditions", ...args]),
       artifactContent: async (...args) =>
@@ -149,10 +153,12 @@ test("delegates result and evidence reads to the shared Chat client", async () =
   await chat.actions({ limit: 5 });
   await chat.artifacts({ limit: 6 });
   await chat.modelCalls({ limit: 7 });
-  await chat.waitConditions({ limit: 8, includeTerminal: true });
+  await chat.capabilityLocks({ limit: 8 });
+  await chat.contextManifests({ limit: 9 });
+  await chat.waitConditions({ limit: 10, includeTerminal: true });
   await chat.artifactContent("artifact-1", { disposition: "attachment" });
-  await chat.observations({ limit: 9 });
-  await chat.trajectory("correlation-1", { limit: 10 });
+  await chat.observations({ limit: 11 });
+  await chat.trajectory("correlation-1", { limit: 12 });
 
   assert.deepEqual(
     calls.map((call) => call.slice(0, 2)),
@@ -160,6 +166,8 @@ test("delegates result and evidence reads to the shared Chat client", async () =
       ["actions", "chat/one"],
       ["artifacts", "chat/one"],
       ["modelCalls", "chat/one"],
+      ["capabilityLocks", "chat/one"],
+      ["contextManifests", "chat/one"],
       ["waitConditions", "chat/one"],
       ["artifactContent", "chat/one"],
       ["observations", "chat/one"],

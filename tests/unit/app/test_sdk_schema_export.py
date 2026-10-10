@@ -33,6 +33,8 @@ def test_sdk_schema_export_is_deterministic_and_complete(tmp_path) -> None:
         "conversation-trajectory-page.schema.json",
         "model-call-record.schema.json",
         "wait-condition.schema.json",
+        "capability-lock-manifest.schema.json",
+        "context-manifest.schema.json",
     }
     task_schema = json.loads(first_content["task-projection.schema.json"])
     assert task_schema["$id"].endswith("/task-projection.v1.json")
@@ -45,6 +47,14 @@ def test_sdk_schema_export_is_deterministic_and_complete(tmp_path) -> None:
     assert queue_schema["$id"].endswith("/queue-projection.v1.json")
     assert "chat_id" in queue_schema["required"]
     assert "session_id" not in queue_schema["properties"]
+    lock_schema = json.loads(
+        first_content["capability-lock-manifest.schema.json"],
+    )
+    assert "chat_id" in lock_schema["required"]
+    assert "conversation_id" not in lock_schema["properties"]
+    context_schema = json.loads(first_content["context-manifest.schema.json"])
+    assert "chat_id" in context_schema["required"]
+    assert "conversation_id" not in context_schema["properties"]
 
 
 def test_committed_sdk_schemas_match_kernel_models(tmp_path) -> None:

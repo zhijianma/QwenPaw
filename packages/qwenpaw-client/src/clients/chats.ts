@@ -1,10 +1,12 @@
 import type {
   ActionRecord,
+  CapabilityLockManifest,
   ConversationArtifactRecord,
   ConversationExecutionChain,
   ChatForkRequest,
   ChatHistory,
   ChatSpec,
+  ContextManifest,
   ConversationRuntimeProjection,
   ConversationTrajectoryPage,
   ModelCallRecord,
@@ -356,6 +358,26 @@ export function createChatClient(transport: ChatClientTransport) {
       const query = evidenceQuery(options);
       return transport.request<ModelCallRecord[]>(
         `/chats/${encoded(chatId)}/model-calls?${query}`,
+        requestInit(options, {}, true),
+      );
+    },
+    capabilityLocks(
+      chatId: string,
+      options: ChatListEvidenceOptions = {},
+    ): Promise<CapabilityLockManifest[]> {
+      const query = evidenceQuery(options);
+      return transport.request<CapabilityLockManifest[]>(
+        `/chats/${encoded(chatId)}/capability-locks?${query}`,
+        requestInit(options, {}, true),
+      );
+    },
+    contextManifests(
+      chatId: string,
+      options: ChatListEvidenceOptions = {},
+    ): Promise<ContextManifest[]> {
+      const query = evidenceQuery(options);
+      return transport.request<ContextManifest[]>(
+        `/chats/${encoded(chatId)}/context-manifests?${query}`,
         requestInit(options, {}, true),
       );
     },

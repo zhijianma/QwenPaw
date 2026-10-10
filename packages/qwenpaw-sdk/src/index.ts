@@ -185,6 +185,14 @@ export class QwenPawChat {
     return this.#client.chats.modelCalls(this.id, options);
   }
 
+  capabilityLocks(options: ChatListEvidenceOptions = {}) {
+    return this.#client.chats.capabilityLocks(this.id, options);
+  }
+
+  contextManifests(options: ChatListEvidenceOptions = {}) {
+    return this.#client.chats.contextManifests(this.id, options);
+  }
+
   waitConditions(options: ChatWaitConditionOptions = {}) {
     return this.#client.chats.waitConditions(this.id, options);
   }

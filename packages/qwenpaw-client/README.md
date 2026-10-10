@@ -88,7 +88,15 @@ const content = await paw.chats.artifactContent(
 
 const blockers = await paw.chats.waitConditions("chat-spec-id");
 const attempts = await paw.chats.modelCalls("chat-spec-id");
+const locks = await paw.chats.capabilityLocks("chat-spec-id");
+const contexts = await paw.chats.contextManifests("chat-spec-id");
 ```
+
+`capabilityLocks()` shows the exact generation and immutable provider releases
+used by each Invocation. `contextManifests()` exposes content-free provenance,
+trust, transformation and token-estimate evidence for the model-visible input.
+Together they let integrations audit execution without reading private Host
+state or receiving prompt content.
 
 `waitConditions()` explains durable approval, user-input, timer, external-event
 and resource blockers together with their continuation mode. Recovery remains
