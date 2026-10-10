@@ -608,7 +608,9 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
     Harness cwd 复用 Native Tool 的 Chat-first 项目目录解析：优先按
     `os_conversation_id = ChatSpec.id` 读取受控 Session override，Chat 身份丢失时
     fail closed，不静默回退 Agent workspace。真实 Codex `/clear -> pwd` 已验证
-    Provider 输出与 Action cwd 均为同一 Chat 绑定的项目目录。
+    Provider 输出与 Action cwd 均为同一 Chat 绑定的项目目录。真实 elevated command
+    一次性批准后 Provider 返回 HTTP 200，Action 成功，`ask` Decision、Approval Link
+    与 Result 的 Action/Invocation/Chat 身份一致且开放 Interaction 为 0。
   - [ ] 将 Harness Remote 和 Hub runner 适配到同一契约并提供
     `provider_attested` 证据；在这些 Adapter 完成前，不把 Provider 声明或枚举存在
     误报为平台已具备远端隔离能力。

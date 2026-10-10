@@ -1235,7 +1235,9 @@ Cron 不形成独立审批或产物事实源。
       `ChatSpec.id` 读取 Session project dirs，并调用同一
       `resolve_effective_project_dirs()`。规范 Chat 身份无法读取时 fail closed。
       真实 Codex 固定 Chat 在 `/clear` 后执行 `pwd`，Provider 输出与最新 Action cwd
-      均指向 QwenPawCodex 项目目录，历史 Action 保持原证据不被改写。
+      均指向 QwenPawCodex 项目目录，历史 Action 保持原证据不被改写。同一 Chat 的
+      elevated network command 经 `approve_exact` 恢复后返回 HTTP 200，Action 成功，
+      审批、Decision 与 Result 身份一致且无遗留开放 Interaction。
   - [ ] Harness Remote、Workstation 与 Hub runner 仍需实现等价 Adapter、真实
     约束兑现和可验证 attestation；不以 Provider 声明替代宿主证明。
   - [x] 语义观测统一 `MODEL`、`ACTION`、`CONTROL`、`GUARDRAIL`、

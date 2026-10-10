@@ -1442,9 +1442,13 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
   Approval Link、Invocation 与 Chat 身份一致，开放 Interaction 为 0，Provider 明确
   返回命令未执行。
 - 总体验收门禁仍未关闭：Qoder 尚未认证，真实 Qoder 审批与异常事件端到端未执行；
-  Codex 审批通过路径仍需闭环，不能把本次拒绝路径外推为整个 Action Plane 已验收。
+  不能把 Codex 闭环外推为整个 Action Plane 已验收。
 - 真实审批测试同时发现 Harness cwd 曾固定为 Agent workspace、忽略 Chat project dirs。
   Workspace 路由现按 `os_conversation_id = ChatSpec.id` 读取受控 Session override，复用
   Native Tool 的 `resolve_effective_project_dirs()`；规范 Chat 丢失时 fail closed。
   同一固定 Codex Chat 在 `/clear` 后执行 `pwd`，Provider 输出和最新 Action cwd 均为
   QwenPawCodex 项目目录，Action 成功且历史旧证据未重写。
+- 同一 Chat 的 elevated `curl -I https://example.com` 已验证一次性批准路径：Interaction
+  解析后 Provider 返回 HTTP 200，Action 为 succeeded，cwd、`ask` Decision、Approval
+  Link、Result 的 Action/Invocation/Chat 身份一致，开放 Interaction 为 0。Codex 的
+  无审批执行、审批拒绝、审批通过及 Chat cwd 继承四条真实路径均已闭环。
