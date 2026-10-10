@@ -1,0 +1,47 @@
+{
+  "name": "@qwenpaw/sdk",
+  "version": "0.1.0",
+  "description": "Managed local Host SDK for QwenPaw",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test tests/*.test.mjs",
+    "prepack": "npm run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "@qwenpaw/client": "^0.1.0"
+  },
+  "devDependencies": {
+    "@qwenpaw/client": "file:../qwenpaw-client",
+    "@types/node": "^22.0.0",
+    "typescript": "~5.8.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agentscope-ai/QwenPaw.git",
+    "directory": "packages/qwenpaw-sdk"
+  },
+  "license": "Apache-2.0"
+}

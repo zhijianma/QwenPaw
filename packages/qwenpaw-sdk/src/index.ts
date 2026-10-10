@@ -1,0 +1,415 @@
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+
+import {
+  createQwenPawClient,
+  missingRuntimeFeatures,
+  QwenPawHttpError,
+  RuntimeClientError,
+  type FetchTransportOptions,
+  type QwenPawClient,
+  type RuntimeFeature,
+  type RuntimeHandshake,
+} from "@qwenpaw/client";
+
+const LAUNCH_PREFIX = "QWENPAW_MANAGED_HOST ";
+const LAUNCH_SCHEMA = "qwenpaw.managed-host-launch.v1";
+const DEFAULT_STARTUP_TIMEOUT_MS = 15_000;
+const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
+const MAX_DIAGNOSTIC_CHARS = 8_192;
+
+export type ManagedHostErrorCode =
+  | "HOST_PROCESS_ERROR"
+  | "HOST_PROCESS_EXITED"
+  | "HOST_LAUNCH_INVALID"
+  | "HOST_STARTUP_TIMEOUT"
+  | "HOST_HANDSHAKE_FAILED"
+  | "HOST_FEATURE_MISSING";
+
+export class ManagedHostError extends Error {
+  readonly code: ManagedHostErrorCode;
+  readonly diagnostics?: string;
+
+  constructor(
+    code: ManagedHostErrorCode,
+    message: string,
+    options: { cause?: unknown; diagnostics?: string } = {},
+  ) {
+    super(message, { cause: options.cause });
+    this.name = "ManagedHostError";
+    this.code = code;
+    this.diagnostics = options.diagnostics;
+  }
+}
+
+export interface QwenPawRuntimeCommand {
+  /** Explicit QwenPaw executable. No PATH discovery is performed. */
+  executable: string;
+  /** Prefix arguments, for example ["-m", "qwenpaw"] for Python. */
+  args?: readonly string[];
+}
+
+export interface ManagedHostOutput {
+  stream: "stdout" | "stderr";
+  line: string;
+}
+
+export interface QwenPawHostOptions {
+  runtime: QwenPawRuntimeCommand;
+  stateDir?: string;
+  cwd?: string;
+  env?: Readonly<Record<string, string>>;
+  token?: string;
+  agentId?: string;
+  headers?: HeadersInit;
+  requiredFeatures?: readonly RuntimeFeature[];
+  startupTimeoutMs?: number;
+  shutdownTimeoutMs?: number;
+  onOutput?: (output: ManagedHostOutput) => void;
+}
+
+interface ManagedHostLaunch {
+  schema: typeof LAUNCH_SCHEMA;
+  api_url: string;
+  pid: number;
+}
+
+function appendDiagnostic(current: string, chunk: string): string {
+  const next = `${current}${chunk}`;
+  return next.slice(-MAX_DIAGNOSTIC_CHARS);
+}
+
+function validateTimeout(name: string, value: number): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new TypeError(`${name} must be a positive finite number`);
+  }
+  return value;
+}
+
+function parseLaunch(value: string, processId: number | undefined) {
+  let candidate: unknown;
+  try {
+    candidate = JSON.parse(value);
+  } catch (error) {
+    throw new ManagedHostError(
+      "HOST_LAUNCH_INVALID",
+      "QwenPaw Host emitted invalid launch JSON",
+      { cause: error },
+    );
+  }
+  if (typeof candidate !== "object" || candidate === null) {
+    throw new ManagedHostError(
+      "HOST_LAUNCH_INVALID",
+      "QwenPaw Host emitted an invalid launch record",
+    );
+  }
+  const launch = candidate as Partial<ManagedHostLaunch>;
+  if (
+    launch.schema !== LAUNCH_SCHEMA ||
+    typeof launch.api_url !== "string" ||
+    !Number.isSafeInteger(launch.pid) ||
+    launch.pid !== processId
+  ) {
+    throw new ManagedHostError(
+      "HOST_LAUNCH_INVALID",
+      "QwenPaw Host launch record failed identity validation",
+    );
+  }
+  let url: URL;
+  try {
+    url = new URL(launch.api_url);
+  } catch (error) {
+    throw new ManagedHostError(
+      "HOST_LAUNCH_INVALID",
+      "QwenPaw Host launch record contains an invalid API URL",
+      { cause: error },
+    );
+  }
+  if (
+    url.protocol !== "http:" ||
+    url.hostname !== "127.0.0.1" ||
+    !url.port ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    url.pathname.replace(/\/+$/, "") !== "/api"
+  ) {
+    throw new ManagedHostError(
+      "HOST_LAUNCH_INVALID",
+      "QwenPaw managed Host must advertise a loopback HTTP API root",
+    );
+  }
+  return launch as ManagedHostLaunch;
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function waitForExit(
+  child: ChildProcessWithoutNullStreams,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return true;
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      child.off("exit", onExit);
+      resolve(false);
+    }, timeoutMs);
+    const onExit = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    child.once("exit", onExit);
+  });
+}
+
+async function terminate(
+  child: ChildProcessWithoutNullStreams,
+  timeoutMs: number,
+): Promise<void> {
+  if (child.pid === undefined) return;
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.kill("SIGTERM");
+  if (await waitForExit(child, timeoutMs)) return;
+  child.kill("SIGKILL");
+  await waitForExit(child, timeoutMs);
+}
+
+async function waitForLaunch(
+  child: ChildProcessWithoutNullStreams,
+  timeoutMs: number,
+  onOutput?: (output: ManagedHostOutput) => void,
+): Promise<ManagedHostLaunch> {
+  return new Promise((resolve, reject) => {
+    let stdoutBuffer = "";
+    let diagnostics = "";
+    let settled = false;
+
+    const finish = (error?: unknown, launch?: ManagedHostLaunch) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.off("error", onError);
+      child.off("exit", onExit);
+      if (error) reject(error);
+      else resolve(launch as ManagedHostLaunch);
+    };
+    const observeLine = (stream: "stdout" | "stderr", line: string) => {
+      onOutput?.({ stream, line });
+      diagnostics = appendDiagnostic(diagnostics, `${stream}: ${line}\n`);
+      if (stream !== "stdout" || !line.startsWith(LAUNCH_PREFIX)) return;
+      try {
+        finish(
+          undefined,
+          parseLaunch(line.slice(LAUNCH_PREFIX.length), child.pid),
+        );
+      } catch (error) {
+        finish(error);
+      }
+    };
+    const onStdout = (chunk: Buffer) => {
+      stdoutBuffer += chunk.toString("utf8");
+      const lines = stdoutBuffer.split(/\r?\n/);
+      stdoutBuffer = lines.pop() ?? "";
+      for (const line of lines) observeLine("stdout", line);
+      if (stdoutBuffer.length > MAX_DIAGNOSTIC_CHARS) {
+        finish(
+          new ManagedHostError(
+            "HOST_LAUNCH_INVALID",
+            "QwenPaw Host launch line exceeded the size limit",
+          ),
+        );
+      }
+    };
+    const onStderr = (chunk: Buffer) => {
+      for (const line of chunk.toString("utf8").split(/\r?\n/)) {
+        if (line) observeLine("stderr", line);
+      }
+    };
+    const onError = (error: Error) =>
+      finish(
+        new ManagedHostError(
+          "HOST_PROCESS_ERROR",
+          "Failed to start the QwenPaw Host process",
+          { cause: error, diagnostics },
+        ),
+      );
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) =>
+      finish(
+        new ManagedHostError(
+          "HOST_PROCESS_EXITED",
+          `QwenPaw Host exited before launch (${code ?? signal ?? "unknown"})`,
+          { diagnostics },
+        ),
+      );
+    const timer = setTimeout(
+      () =>
+        finish(
+          new ManagedHostError(
+            "HOST_STARTUP_TIMEOUT",
+            "Timed out waiting for the QwenPaw Host launch record",
+            { diagnostics },
+          ),
+        ),
+      timeoutMs,
+    );
+
+    child.stdout.on("data", onStdout);
+    child.stderr.on("data", onStderr);
+    child.once("error", onError);
+    child.once("exit", onExit);
+  });
+}
+
+async function waitForHandshake(
+  child: ChildProcessWithoutNullStreams,
+  client: QwenPawClient,
+  requiredFeatures: readonly RuntimeFeature[],
+  timeoutMs: number,
+): Promise<RuntimeHandshake> {
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new ManagedHostError(
+        "HOST_PROCESS_EXITED",
+        "QwenPaw Host exited before becoming ready",
+      );
+    }
+    const controller = new AbortController();
+    const remaining = Math.max(1, deadline - Date.now());
+    const timer = setTimeout(
+      () => controller.abort(),
+      Math.min(1_000, remaining),
+    );
+    try {
+      const handshake = await client.runtime.handshake(controller.signal);
+      const missing = missingRuntimeFeatures(handshake, requiredFeatures);
+      if (missing.length > 0) {
+        throw new ManagedHostError(
+          "HOST_FEATURE_MISSING",
+          `QwenPaw Host is missing required features: ${missing.join(", ")}`,
+        );
+      }
+      return handshake;
+    } catch (error) {
+      if (
+        error instanceof ManagedHostError ||
+        error instanceof RuntimeClientError ||
+        error instanceof QwenPawHttpError
+      ) {
+        throw error;
+      }
+      lastError = error;
+    } finally {
+      clearTimeout(timer);
+    }
+    await delay(Math.min(100, Math.max(1, deadline - Date.now())));
+  }
+  throw new ManagedHostError(
+    "HOST_HANDSHAKE_FAILED",
+    "Timed out waiting for a compatible QwenPaw Host handshake",
+    { cause: lastError },
+  );
+}
+
+export class QwenPawHost {
+  readonly client: QwenPawClient;
+  readonly handshake: RuntimeHandshake;
+  readonly apiUrl: string;
+  readonly pid: number;
+
+  readonly #child: ChildProcessWithoutNullStreams;
+  readonly #shutdownTimeoutMs: number;
+  #closePromise: Promise<void> | undefined;
+
+  private constructor(
+    child: ChildProcessWithoutNullStreams,
+    launch: ManagedHostLaunch,
+    client: QwenPawClient,
+    handshake: RuntimeHandshake,
+    shutdownTimeoutMs: number,
+  ) {
+    this.#child = child;
+    this.#shutdownTimeoutMs = shutdownTimeoutMs;
+    this.client = client;
+    this.handshake = handshake;
+    this.apiUrl = launch.api_url;
+    this.pid = launch.pid;
+  }
+
+  static async create(options: QwenPawHostOptions): Promise<QwenPawHost> {
+    if (!options.runtime.executable.trim()) {
+      throw new TypeError("runtime.executable must not be empty");
+    }
+    const startupTimeoutMs = validateTimeout(
+      "startupTimeoutMs",
+      options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS,
+    );
+    const shutdownTimeoutMs = validateTimeout(
+      "shutdownTimeoutMs",
+      options.shutdownTimeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS,
+    );
+    const startupDeadline = Date.now() + startupTimeoutMs;
+    const args = [
+      ...(options.runtime.args ?? []),
+      "app",
+      "--managed",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "0",
+      "--log-level",
+      "warning",
+    ];
+    const env: NodeJS.ProcessEnv = { ...process.env, ...options.env };
+    if (options.stateDir) env.QWENPAW_WORKING_DIR = options.stateDir;
+    const child = spawn(options.runtime.executable, args, {
+      cwd: options.cwd,
+      env,
+      shell: false,
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    try {
+      const launch = await waitForLaunch(
+        child,
+        startupTimeoutMs,
+        options.onOutput,
+      );
+      const clientOptions: FetchTransportOptions = {
+        baseUrl: launch.api_url,
+        token: options.token,
+        agentId: options.agentId,
+        headers: options.headers,
+      };
+      const client = createQwenPawClient(clientOptions);
+      const handshake = await waitForHandshake(
+        child,
+        client,
+        options.requiredFeatures ?? [],
+        Math.max(1, startupDeadline - Date.now()),
+      );
+      return new QwenPawHost(
+        child,
+        launch,
+        client,
+        handshake,
+        shutdownTimeoutMs,
+      );
+    } catch (error) {
+      await terminate(child, shutdownTimeoutMs);
+      throw error;
+    }
+  }
+
+  close(): Promise<void> {
+    this.#closePromise ??= terminate(this.#child, this.#shutdownTimeoutMs);
+    return this.#closePromise;
+  }
+
+  async [Symbol.asyncDispose](): Promise<void> {
+    await this.close();
+  }
+}

@@ -1114,9 +1114,10 @@ PawApp / SDK 的运行所有权迁移见
   - [x] Host 已提供版本化 managed launch contract：CLI 预绑定 loopback socket，
     支持安全的 `--port 0`，输出真实 `api_url + pid`；禁止 non-loopback/reload，且不
     覆盖用户的 last API。launch record 只证明绑定，SDK 仍须等待 readiness。
-  - [ ] SDK 首版只负责发现或启动隔离的本地 QwenPaw Host、等待 readiness、完成版本
-    与 feature handshake，并在不兼容时于接收工作前失败；不得静默使用任意
-    `PATH` 可执行文件。
+  - [x] `@qwenpaw/sdk` 首版只负责启动隔离的本地 QwenPaw Host、等待 readiness、
+    完成版本与 feature handshake，并在不兼容时于接收工作前失败；调用者必须提供
+    显式 executable，不从 `PATH` 猜测。SDK 暴露同一个 `QwenPawClient`，启动失败
+    终止自有进程，`close()` 幂等。
   - [ ] managed-local SDK 直接组合 `@qwenpaw/client`，remote 与 managed 模式必须
     返回相同值、错误和事件；`send()` 仅聚合同一事件流，EOF 不得替代 terminal
     receipt。
@@ -1125,8 +1126,9 @@ PawApp / SDK 的运行所有权迁移见
     `ChatSpec.id`。
   - [ ] 引入低信任 external-message 输入类型，外部 Agent、Tool 或应用消息不得自动
     获得 user instruction 或 approval 权限。
-  - [ ] conformance 同时覆盖 remote Host 与 managed Host；进程退出、启动超时、
-    版本不匹配、取消传播和重复 close 均有定点测试。
+  - [ ] conformance 同时覆盖 remote Host 与 managed Host；当前 managed Host 已覆盖
+    真实 Host readiness、进程提前退出、spawn 失败、启动超时、协议/feature 不兼容
+    和重复 close；跨平台退出、运行中崩溃通知与取消传播仍待验证。
 - [ ] Codex Harness 从私有 app-server 传输迁移到已声明的官方
   `openai-codex` SDK，但以审批安全为硬门禁：
   - [ ] 对仓库实际固定版本验证 thread start/resume/fork、stream、steer、

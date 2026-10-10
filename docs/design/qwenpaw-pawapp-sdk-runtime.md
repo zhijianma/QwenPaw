@@ -498,6 +498,22 @@ Verified on 2026-10-10 against the running Lite Host on port 8004:
   to negotiate successfully with the running Lite Host on port 8004. The
   package contained only declarations, ESM output, metadata and the developer
   README.
+- The initial `@qwenpaw/sdk` package now owns only managed local Host
+  lifecycle. Callers provide an explicit executable; the SDK starts
+  `app --managed`, validates launch identity and loopback URL, polls the same
+  Host handshake, checks required features and exposes the existing
+  `QwenPawClient`. Startup failure always terminates the owned process and
+  `close()` is idempotent.
+- Nine real child-process tests cover ready, missing feature, incompatible or
+  malformed handshake, malformed launch or API root, early exit, spawn failure
+  and launch timeout.
+  A real `qwenpaw-codex` executable was also started against an isolated state
+  directory: it advertised a random loopback API, protocol 1 and five Host
+  features, completed the handshake, and exited through SDK ownership.
+- Packed `@qwenpaw/client` and `@qwenpaw/sdk` tarballs were installed together
+  in an empty npm consumer. Both package entry points imported by public name;
+  the SDK tarball contained only declarations, ESM output, metadata and its
+  README.
 
 ## 10. Explicit non-goals
 
