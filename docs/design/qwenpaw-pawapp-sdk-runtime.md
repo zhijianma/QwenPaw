@@ -11,6 +11,11 @@ stable Contribution and execute through the same Host-owned Task, Run,
 Invocation, Interaction, Action, Artifact, Evidence and Event contracts used
 by built-in capabilities and plugins.
 
+The public SDK is a thin, transport-neutral facade over those existing Host
+capabilities. It must be reusable by the Console, PawApps and later npm or
+Python consumers instead of reimplementing routing, lifecycle or domain
+semantics in each surface.
+
 The existing `@app.task` API becomes a compatibility adapter. It remains
 available while applications migrate, but its in-memory `TaskManager`,
 `TaskRecord` and queue-backed `SSEChannel` are not promoted into Kernel
@@ -72,6 +77,40 @@ parallel task identifier or persists an authoritative lifecycle in its UI.
 
 ## 5. SDK behavior
 
+### 5.1 SDK layers
+
+```text
+@qwenpaw/contracts (generated when schema publication is available)
+  <- @qwenpaw/client (transport-injected REST + event stream client)
+    <- Console API facade
+    <- @qwenpaw/pawapp-sdk (Host-scoped application/UI conveniences)
+    <- future external TypeScript SDK
+
+QwenPaw Kernel / Runtime remains the only execution authority.
+```
+
+The browser-only PawApp facade is not published as the whole QwenPaw SDK.
+Reusable clients own path construction, request/response mapping and event
+decoding. Surface-specific layers own only authentication transport,
+ChatSpec defaults, capability policy, retry ergonomics and UI integration.
+
+This boundary follows the useful parts of current coding-agent SDKs:
+
+- Codex app-server exposes thread, turn, item, event and approval semantics
+  from the existing harness rather than recreating its agent loop in an SDK;
+- GitHub Copilot SDK describes itself as a transport to the CLI over JSON-RPC,
+  while the CLI retains orchestration and durable session behavior;
+- Claude Agent SDK offers one-shot and persistent clients over Claude Code
+  capabilities, including typed events, tool controls and result usage;
+- Gemini CLI separates its agent SDK direction from manifest-based extensions
+  that contribute MCP servers, context, commands, hooks, skills and policy.
+
+QwenPaw therefore reuses the running Host for Lite/Workstation/Hub. A future
+embedded local distribution may pin a compatible runtime like Codex does, but
+that is a packaging mode, not a second domain implementation.
+
+### 5.2 Developer-facing execution
+
 New applications use `paw.tasks.run()` and receive a projection-backed
 handle. `paw.api` remains the PawApp-private HTTP namespace, so developers do
 not have to guess whether `task()` means a private endpoint or a Kernel Task.
@@ -89,6 +128,11 @@ The projection-backed handle guarantees:
 - progress is derived from Execution Events;
 - output files and previews are Artifact/Evidence references, not arbitrary
   trusted URLs or inline bytes.
+
+The eventual external client should provide both ergonomic buffered calls and
+an async event stream. Completion must come from an explicit terminal runtime
+fact, never from stream closure alone. Mechanical idleness and semantic task
+completion remain separate concepts.
 
 The existing `paw.api.task()` spelling remains a deprecated compatibility
 adapter with its original PawApp endpoint semantics. It will not silently
@@ -170,8 +214,6 @@ Implemented in the frontend SDK:
 
 Still pending in P2:
 
-- move Chat Interaction endpoint construction into one transport-injected
-  client used by both Console APIs and PawApp SDK;
 - generate the shared frontend contracts from Kernel schemas once the schema
   publication pipeline is available;
 - add a browser disconnect test against the running Host rather than only
@@ -246,6 +288,10 @@ Verified on 2026-10-10 against the running Lite Host on port 8004:
   commands and SSE cursor parsing. The SDK layer retains only developer-facing
   capability checks, event listeners, reconnect policy and terminal
   Projection semantics.
+- Console Chat APIs and `paw.interactions` now reuse one transport-injected
+  `createInteractionClient()` for ChatSpec-scoped routes, ID encoding and
+  decision payloads. The PawApp facade retains ChatSpec defaulting, typed
+  errors and idempotent retry/conflict behavior.
 
 ## 10. Explicit non-goals
 
@@ -256,3 +302,14 @@ Verified on 2026-10-10 against the running Lite Host on port 8004:
 - Do not serialize Python coroutine stacks as checkpoints.
 - Do not claim browser reconnect, restart recovery or hot replacement from
   unit tests alone.
+
+## 11. Primary references
+
+- [OpenAI Codex app-server](https://developers.openai.com/siwc/token-sharing-open-source/codex-app-server)
+- [OpenAI Codex as a platform](https://developers.openai.com/blog/codex-as-a-platform)
+- [GitHub Copilot SDK agent loop](https://github.com/github/copilot-sdk/blob/main/docs/features/agent-loop.md)
+- [GitHub Copilot SDK streaming events](https://docs.github.com/en/copilot/how-tos/copilot-sdk/use-copilot-sdk/streaming-events)
+- [Claude Agent SDK TypeScript](https://github.com/anthropics/claude-agent-sdk-typescript)
+- [Claude Agent SDK migration example](https://platform.claude.com/cookbook/claude-agent-sdk-04-migrating-from-openai-agents-sdk)
+- [Gemini CLI SDK design](https://github.com/google-gemini/gemini-cli/blob/main/packages/sdk/SDK_DESIGN.md)
+- [Gemini CLI extension reference](https://github.com/google-gemini/gemini-cli/blob/main/docs/extensions/reference.md)

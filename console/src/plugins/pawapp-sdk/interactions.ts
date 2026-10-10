@@ -1,6 +1,6 @@
 import { hostFetch } from "../hostSdk/fetch";
+import { createInteractionClient } from "../../clients/interactionClient";
 import type {
-  PawInteraction,
   PawInteractionResolution,
   PawInteractionResponseRequest,
   PawInteractionsNamespace,
@@ -58,15 +58,28 @@ export function createInteractionsNamespace(
   currentChatId: () => string | null,
 ): PawInteractionsNamespace {
   const pending = new Map<string, PendingResponse>();
+  const interactionClient = createInteractionClient({
+    async request<T>(path: string, init?: RequestInit) {
+      if (!init) {
+        return readJson<T>(await hostFetch(path, { signal: undefined }));
+      }
+      const headers = new Headers(init.headers);
+      if (init.body && !headers.has("Content-Type")) {
+        headers.set("Content-Type", "application/json");
+      }
+      return readJson<T>(
+        await hostFetch(path, {
+          ...init,
+          headers,
+        }),
+      );
+    },
+  });
 
   return {
     async list(options = {}) {
       const chatId = requiredChatId(options.chatId, currentChatId);
-      return readJson<PawInteraction[]>(
-        await hostFetch(`/chats/${encodeURIComponent(chatId)}/interactions`, {
-          signal: options.signal,
-        }),
-      );
+      return interactionClient.list(chatId, options.signal);
     },
     respond(request) {
       const chatId = requiredChatId(request.chatId, currentChatId);
@@ -100,16 +113,8 @@ export function createInteractionsNamespace(
           text: request.text ?? "",
           values: request.values ?? {},
         };
-        command.promise = hostFetch(
-          `/chats/${encodeURIComponent(chatId)}/interactions/` +
-            `${encodeURIComponent(request.interactionId)}/response`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-          },
-        )
-          .then((response) => readJson<PawInteractionResolution>(response))
+        command.promise = interactionClient
+          .respond(chatId, request.interactionId, body)
           .catch((error: unknown) => {
             command!.promise = undefined;
             throw error;

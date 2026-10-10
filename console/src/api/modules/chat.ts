@@ -1,4 +1,5 @@
 import { request } from "../request";
+import { createInteractionClient } from "../../clients/interactionClient";
 import { getApiUrl, getApiToken } from "../config";
 import { buildAuthHeaders } from "../authHeaders";
 import type {
@@ -9,9 +10,6 @@ import type {
   ChatUpdateRequest,
   ChatGroup,
   ChatForkRequest,
-  ChatInteraction,
-  ChatInteractionDecisionRequest,
-  ChatInteractionResolution,
   ChatControlRequest,
   ChatQueueReorderRequest,
   ChatSteerRequest,
@@ -42,6 +40,7 @@ export interface ChatStatusResponse {
 }
 
 const FILES_PREVIEW = "/files/preview";
+const interactionClient = createInteractionClient({ request });
 
 export const chatApi = {
   recordExternalQueueFallback: (
@@ -238,25 +237,9 @@ export const chatApi = {
       },
     ),
 
-  listInteractions: (chatId: string) =>
-    request<ChatInteraction[]>(
-      `/chats/${encodeURIComponent(chatId)}/interactions`,
-    ),
+  listInteractions: interactionClient.list,
 
-  respondToInteraction: (
-    chatId: string,
-    interactionId: string,
-    payload: ChatInteractionDecisionRequest,
-  ) =>
-    request<ChatInteractionResolution>(
-      `/chats/${encodeURIComponent(chatId)}/interactions/${encodeURIComponent(
-        interactionId,
-      )}/response`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload),
-      },
-    ),
+  respondToInteraction: interactionClient.respond,
 
   getChat: (
     chatId: string,
