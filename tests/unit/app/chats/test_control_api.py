@@ -648,12 +648,29 @@ async def test_chat_steer_applies_at_runtime_safe_point(
         inject,
     )
     await service.wait_dispatch(UUID(accepted.json()["command_id"]))
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        history = await client.get(
+            "/api/chats/chat-spec-1/control/history",
+            params={"limit": 1},
+        )
 
     assert accepted.status_code == 200
     assert accepted.json()["status"] == "accepted"
     assert conflicting_replay.status_code == 409
     assert count == 1
     assert injected == ["Use the shorter implementation."]
+    assert history.status_code == 200
+    assert len(history.json()) == 1
+    assert history.json()[0]["command"]["chat_id"] == "chat-spec-1"
+    assert "conversation_id" not in history.json()[0]["command"]
+    assert history.json()[0]["receipt"]["status"] == "applied"
+    assert (
+        history.json()[0]["receipt"]["applied_at_safe_point"]
+        == "before_reasoning"
+    )
     await service.finish_turn(lease, SubmissionStatus.SUCCEEDED)
     await service.close()
 

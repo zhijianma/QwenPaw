@@ -97,6 +97,7 @@ const attempts = await paw.chats.modelCalls("chat-spec-id");
 const locks = await paw.chats.capabilityLocks("chat-spec-id");
 const contexts = await paw.chats.contextManifests("chat-spec-id");
 const interactionHistory = await paw.interactions.history("chat-spec-id");
+const controlHistory = await paw.chatControls.history("chat-spec-id");
 ```
 
 `capabilityLocks()` shows the exact generation and immutable provider releases
@@ -124,10 +125,12 @@ artifact semantics remain owned by the Host; consumers should reconcile an
 ended stream with `paw.tasks.projection(taskId)`.
 
 `chatControls` exposes server-authoritative submission, queue, steer,
-interrupt, stop-and-clear, cancellation and reorder commands. The client does
-not maintain a second browser queue. Every mutation uses an idempotency key and
-the queue revision returned by the Host; steer instructions become effective
-only at a Runtime safe point.
+interrupt, stop-and-clear, cancellation and reorder commands, plus bounded
+control history. Each history item pairs the command with its latest Host
+receipt, allowing reconnecting clients to observe application or rejection
+without maintaining a second browser queue. Every mutation uses an idempotency
+key and the queue revision returned by the Host; steer instructions become
+effective only at a Runtime safe point.
 
 `chats` exposes ChatSpec creation, history, fork and authoritative runtime
 snapshots. `followRuntime()` reconnects from `afterCursor` and returns the last

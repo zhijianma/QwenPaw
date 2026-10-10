@@ -82,6 +82,7 @@ from ...kernel import (
     ConversationRuntimeProjection,
     ConversationTrajectoryPage,
     ConversationArtifactRecord,
+    ControlRecord,
     ControlReceipt,
     QueueProjection,
     SubmissionInputEnvelope,
@@ -1072,6 +1073,26 @@ async def get_chat_queue(
         agent_id=workspace.agent_id,
         conversation_id=chat_id,
     )
+
+
+@router.get(
+    "/{chat_id}/control/history",
+    response_model=list[ControlRecord],
+)
+async def list_chat_control_history(
+    chat_id: str,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+) -> list[ControlRecord]:
+    """List authoritative control commands and their latest receipts."""
+    service = await _chat_control_context(chat_id, mgr, workspace)
+    records = await service.list_for_conversation(
+        agent_id=workspace.agent_id,
+        conversation_id=chat_id,
+        limit=limit,
+    )
+    return list(records)
 
 
 @router.post(

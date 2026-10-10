@@ -47,6 +47,7 @@ function fakeClient() {
         calls.push(["queue", ...args]);
         return { chat_id: args[0], revision: 1 };
       },
+      history: async (...args) => calls.push(["controlHistory", ...args]),
       steer: async (...args) => calls.push(["steer", ...args]),
       interrupt: async (...args) => calls.push(["interrupt", ...args]),
       stopAndClear: async (...args) => calls.push(["clear", ...args]),
@@ -161,6 +162,7 @@ test("delegates result and evidence reads to the shared Chat client", async () =
   await chat.observations({ limit: 11 });
   await chat.trajectory("correlation-1", { limit: 12 });
   await chat.interactionHistory({ limit: 13 });
+  await chat.controlHistory({ limit: 14 });
 
   assert.deepEqual(
     calls.map((call) => call.slice(0, 2)),
@@ -175,6 +177,7 @@ test("delegates result and evidence reads to the shared Chat client", async () =
       ["observations", "chat/one"],
       ["trajectory", "chat/one"],
       ["interactionHistory", "chat/one"],
+      ["controlHistory", "chat/one"],
     ],
   );
 });

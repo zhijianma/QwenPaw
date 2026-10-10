@@ -25,6 +25,7 @@ def test_sdk_schema_export_is_deterministic_and_complete(tmp_path) -> None:
         "chat-steer-request.schema.json",
         "chat-queue-reorder-request.schema.json",
         "chat-submission-request.schema.json",
+        "control-record.schema.json",
         "control-receipt.schema.json",
         "queue-projection.schema.json",
         "task-projection.schema.json",
@@ -48,6 +49,13 @@ def test_sdk_schema_export_is_deterministic_and_complete(tmp_path) -> None:
     assert queue_schema["$id"].endswith("/queue-projection.v1.json")
     assert "chat_id" in queue_schema["required"]
     assert "session_id" not in queue_schema["properties"]
+    control_schema = json.loads(first_content["control-record.schema.json"])
+    assert control_schema["$id"].endswith("/control-record.v1.json")
+    assert "chat_id" in control_schema["$defs"]["ControlCommand"]["required"]
+    assert (
+        "conversation_id"
+        not in control_schema["$defs"]["ControlCommand"]["properties"]
+    )
     lock_schema = json.loads(
         first_content["capability-lock-manifest.schema.json"],
     )

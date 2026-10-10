@@ -1576,3 +1576,15 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
 - 固定 Chat 通过公开 Client 返回 20 条真实历史：User Input resolved 7/cancelled 1、
   Approval resolved 9/cancelled 1、Suggestion resolved 2；嵌套请求全部只序列化
   `chat_id = ChatSpec.id`，没有重新暴露 `conversation_id`。
+- 公共控制面现补齐 `GET /chats/{ChatSpec.id}/control/history`，直接读取既有
+  `ControlHistoryPort`，不创建第二套日志。生成的 `ControlRecord` 同时携带不可变
+  command 与 latest authoritative receipt；远程 Client 暴露
+  `paw.chatControls.history()`，managed handle 暴露 `chat.controlHistory()`。
+- 新路由覆盖 steer `accepted -> applied` 及实际 safe point；Agent scope、
+  AbortSignal 与 1..1000 有界读取也进入公共 Client。Queue / Steer / Interrupt 的
+  写入、调度和事实源仍全部留在 Host，Task Workbench 继续暂停。
+- 固定真实 Chat 通过运行中的 8004 Host 返回 8 条控制记录：steer 6、interrupt 2，
+  全部为 applied，并覆盖 `before/after reasoning` 与 `before/after tool batch` 四个
+  safe point；所有 command 使用 `chat_id` 且不序列化 `conversation_id`。后端控制与
+  Schema 16 项、公共 Client 12 项、managed SDK 20 项定点测试通过，生成契约检查
+  通过。

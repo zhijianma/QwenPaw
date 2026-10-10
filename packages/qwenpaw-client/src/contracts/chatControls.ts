@@ -8,6 +8,7 @@ import type {
   ControlReceipt as GeneratedControlReceipt,
   SteerSafePoint,
 } from "../generated/controlReceipt.js";
+import type { ControlRecord as GeneratedControlRecord } from "../generated/controlRecord.js";
 import type {
   QueueProjection as GeneratedQueueProjection,
   SubmissionStatus,
@@ -25,6 +26,7 @@ export interface ChatSubmissionRequest
   content_parts: Array<Record<string, unknown>>;
 }
 export type ControlReceipt = GeneratedControlReceipt;
+export type ControlRecord = GeneratedControlRecord;
 export type QueueProjection = GeneratedQueueProjection;
 export type {
   ControlCommandKind,

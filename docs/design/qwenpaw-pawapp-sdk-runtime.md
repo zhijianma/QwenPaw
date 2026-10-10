@@ -302,6 +302,12 @@ no queue state. Steer acceptance is distinct from application, and the applied
 receipt records the Runtime safe point (`before/after reasoning` or
 `before/after tool batch`).
 
+The same client exposes bounded control history from the Host's existing
+`ControlHistoryPort`. Each `ControlRecord` pairs the immutable command with its
+latest authoritative receipt. Applications can therefore reconcile accepted
+steer, interrupt, cancellation, reorder and clear commands after reconnecting
+without keeping an SDK-side command ledger or deriving results from event text.
+
 ### 5.3 Developer-facing execution
 
 New applications use `paw.tasks.run()` and receive a projection-backed

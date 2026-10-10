@@ -1,0 +1,283 @@
+{
+  "$defs": {
+    "ControlCommand": {
+      "additionalProperties": false,
+      "description": "One idempotent request to change server-side runtime state.",
+      "properties": {
+        "agent_id": {
+          "minLength": 1,
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "chat_id": {
+          "description": "Owning ChatSpec.id",
+          "minLength": 1,
+          "title": "Chat Id",
+          "type": "string"
+        },
+        "command_id": {
+          "format": "uuid",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "minimum": 0,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "title": "Idempotency Key",
+          "type": "string"
+        },
+        "instruction": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Instruction"
+        },
+        "kind": {
+          "$ref": "#/$defs/ControlCommandKind"
+        },
+        "ordered_submission_ids": {
+          "default": [],
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": "Ordered Submission Ids",
+          "type": "array"
+        },
+        "requested_at": {
+          "format": "date-time",
+          "title": "Requested At",
+          "type": "string"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "target_invocation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Invocation Id"
+        },
+        "target_submission_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Submission Id"
+        }
+      },
+      "required": [
+        "schema",
+        "chat_id",
+        "command_id",
+        "kind",
+        "agent_id",
+        "idempotency_key",
+        "expected_revision",
+        "target_submission_id",
+        "target_invocation_id",
+        "instruction",
+        "ordered_submission_ids",
+        "requested_at"
+      ],
+      "title": "ControlCommand",
+      "type": "object"
+    },
+    "ControlCommandKind": {
+      "description": "Explicit user intents supported by the invocation control plane.",
+      "enum": [
+        "steer",
+        "interrupt_current",
+        "cancel_queued",
+        "stop_and_clear",
+        "reorder"
+      ],
+      "title": "ControlCommandKind",
+      "type": "string"
+    },
+    "ControlCommandStatus": {
+      "description": "Durable acknowledgement state for one control command.",
+      "enum": [
+        "accepted",
+        "applied",
+        "rejected",
+        "conflict"
+      ],
+      "title": "ControlCommandStatus",
+      "type": "string"
+    },
+    "ControlReceipt": {
+      "additionalProperties": false,
+      "description": "Authoritative acknowledgement for submission or control mutation.",
+      "properties": {
+        "agent_id": {
+          "minLength": 1,
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "applied_at_safe_point": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SteerSafePoint"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "chat_id": {
+          "description": "Owning ChatSpec.id",
+          "minLength": 1,
+          "title": "Chat Id",
+          "type": "string"
+        },
+        "command_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Command Id"
+        },
+        "detail": {
+          "default": "",
+          "title": "Detail",
+          "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ControlCommandKind"
+            },
+            {
+              "const": "enqueue",
+              "type": "string"
+            }
+          ],
+          "title": "Kind"
+        },
+        "receipt_id": {
+          "format": "uuid",
+          "title": "Receipt Id",
+          "type": "string"
+        },
+        "recorded_at": {
+          "format": "date-time",
+          "title": "Recorded At",
+          "type": "string"
+        },
+        "revision": {
+          "minimum": 1,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ControlCommandStatus"
+        },
+        "submission_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Submission Id"
+        }
+      },
+      "required": [
+        "schema",
+        "chat_id",
+        "receipt_id",
+        "command_id",
+        "submission_id",
+        "kind",
+        "status",
+        "agent_id",
+        "revision",
+        "detail",
+        "applied_at_safe_point",
+        "recorded_at"
+      ],
+      "title": "ControlReceipt",
+      "type": "object"
+    },
+    "SteerSafePoint": {
+      "description": "Runtime boundaries where a steer may change future execution.",
+      "enum": [
+        "before_reasoning",
+        "after_reasoning",
+        "before_tool_batch",
+        "after_tool_batch"
+      ],
+      "title": "SteerSafePoint",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.qwenpaw.dev/sdk/control-record.v1.json",
+  "additionalProperties": false,
+  "description": "Queryable control request and its latest authoritative receipt.",
+  "properties": {
+    "command": {
+      "$ref": "#/$defs/ControlCommand"
+    },
+    "receipt": {
+      "$ref": "#/$defs/ControlReceipt"
+    },
+    "schema": {
+      "const": "qwenpaw.kernel-model.v1",
+      "default": "qwenpaw.kernel-model.v1",
+      "title": "Schema",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema",
+    "command",
+    "receipt"
+  ],
+  "title": "ControlRecord",
+  "type": "object"
+}

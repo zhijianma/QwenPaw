@@ -76,6 +76,10 @@ for (const interaction of await chat.interactionHistory()) {
   console.log(interaction.request.kind, interaction.resolution?.status);
 }
 
+for (const control of await chat.controlHistory()) {
+  console.log(control.command.kind, control.receipt.status);
+}
+
 const trajectory = await chat.trajectory(settled.correlation_id);
 console.log(trajectory.items);
 
@@ -108,8 +112,9 @@ without polling or waiting for an unrelated API call to fail.
 
 `host.chats.open()` returns a convenience handle bound to `ChatSpec.id`.
 History, submission, queue, steer, interrupt, stop-and-clear, approvals, fork
-and runtime streams delegate to the same `@qwenpaw/client` used remotely. The
-handle stores no queue or completion state, and runtime stream EOF is never
+and runtime streams delegate to the same `@qwenpaw/client` used remotely.
+`controlHistory()` reads the Host's bounded command/receipt records; the handle
+stores no queue, control or completion state, and runtime stream EOF is never
 reported as successful completion.
 
 `chat.send()` returns a `QwenPawTurn` immediately after durable admission.

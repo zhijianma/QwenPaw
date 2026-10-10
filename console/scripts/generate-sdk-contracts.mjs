@@ -24,6 +24,7 @@ const contracts = [
   ["chat-steer-request", "chatSteerRequest.ts"],
   ["chat-queue-reorder-request", "chatQueueReorderRequest.ts"],
   ["chat-submission-request", "chatSubmissionRequest.ts"],
+  ["control-record", "controlRecord.ts"],
   ["control-receipt", "controlReceipt.ts"],
   ["queue-projection", "queueProjection.ts"],
   ["task-projection", "taskProjection.ts"],

@@ -353,6 +353,10 @@ Workbench。前端只能提交命令、订阅事件和展示服务端投影；�
   projection、open Interaction 与 receipt/revision；过期 revision、跨 Chat target
   和幂等冲突由服务端关闭失败。SSE 使用完整快照 cursor 做 current-state recovery，
   不冒充不可丢审计日志。
+  - [x] Chat Adapter 新增有界 control history，只读返回既有
+    `ControlHistoryPort` 的 `ControlRecord(command + latest receipt)`；SDK 可直接观察
+    steer 从 accepted 到 applied 的安全点以及 interrupt/cancel/reorder/clear 结果，
+    不在浏览器或 SDK 复制 Queue、Control Store 或状态机。
 - [x] 前端迁移为薄投影：移除 QwenPaw 路径的本地发送者、跨标签锁和本地权威
   runState；允许保留
   未提交输入草稿，但提交后的 Queue、Steer、Interrupt 状态只读服务端。

@@ -7,6 +7,7 @@ import {
   QwenPawHttpError,
   RuntimeClientError,
   type ChatControlRequest,
+  type ChatControlHistoryOptions,
   type ChatForkRequest,
   type ChatHistory,
   type ChatArtifactContentOptions,
@@ -257,6 +258,10 @@ export class QwenPawChat {
 
   queue(options: ChatRequestOptions = {}): Promise<QueueProjection> {
     return this.#client.chatControls.queue(this.id, options);
+  }
+
+  controlHistory(options: ChatControlHistoryOptions = {}) {
+    return this.#client.chatControls.history(this.id, options);
   }
 
   steer(

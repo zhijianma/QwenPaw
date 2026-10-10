@@ -26,6 +26,7 @@ from qwenpaw.kernel.interactions import (
     InteractionResolution,
 )
 from qwenpaw.kernel.invocation_control import (
+    ControlRecord,
     ControlReceipt,
     QueueProjection,
 )
@@ -49,6 +50,7 @@ _CONTRACTS: tuple[tuple[str, type[BaseModel], bool], ...] = (
     ("chat-steer-request", ChatSteerRequest, False),
     ("chat-queue-reorder-request", ChatQueueReorderRequest, False),
     ("chat-submission-request", ChatSubmissionRequest, False),
+    ("control-record", ControlRecord, True),
     ("control-receipt", ControlReceipt, True),
     ("queue-projection", QueueProjection, True),
     ("task-projection", TaskProjectionResponse, True),

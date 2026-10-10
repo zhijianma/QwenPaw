@@ -3,6 +3,7 @@ import type {
   ChatQueueReorderRequest,
   ChatSteerRequest,
   ChatSubmissionRequest,
+  ControlRecord,
   ControlReceipt,
   QueueProjection,
 } from "../contracts/chatControls.js";
@@ -16,6 +17,10 @@ export interface ChatControlRequestOptions {
   signal?: AbortSignal;
 }
 
+export interface ChatControlHistoryOptions extends ChatControlRequestOptions {
+  limit?: number;
+}
+
 function requestInit(
   method: "GET" | "POST",
   body: unknown,
@@ -27,6 +32,14 @@ function requestInit(
     ...(options.agentId ? { headers: { "X-Agent-Id": options.agentId } } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
   };
+}
+
+function historyLimit(value: number | undefined): number {
+  const limit = value ?? 100;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) {
+    throw new TypeError("limit must be a safe integer between 1 and 1000");
+  }
+  return limit;
 }
 
 export function createChatControlClient(transport: ChatControlClientTransport) {
@@ -46,6 +59,13 @@ export function createChatControlClient(transport: ChatControlClientTransport) {
         `/chats/${encoded(chatId)}/queue`,
         requestInit("GET", undefined, options),
       ),
+    history: (chatId: string, options: ChatControlHistoryOptions = {}) => {
+      const limit = historyLimit(options.limit);
+      return transport.request<ControlRecord[]>(
+        `/chats/${encoded(chatId)}/control/history?limit=${limit}`,
+        requestInit("GET", undefined, options),
+      );
+    },
     steer: (
       chatId: string,
       body: ChatSteerRequest,
