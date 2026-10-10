@@ -11,7 +11,7 @@ from uuid import uuid5
 
 from agentscope.message import Msg
 
-from ..constant import TRUNCATION_NOTICE_MARKER
+from ..constant import QWENPAW_INPUT_TRUST_KEY, TRUNCATION_NOTICE_MARKER
 from ..kernel import (
     ContextFragment,
     ContextFragmentKind,
@@ -81,11 +81,14 @@ def _contains_text(value: Any, marker: str) -> bool:
 def _message_source(
     role: str,
     block_type: str,
+    metadata: dict[str, Any],
 ) -> tuple[str, ContextTrustLevel]:
     if role == "system":
         return "qwenpaw.context.system-prompt", ContextTrustLevel.SYSTEM
     if block_type == "tool_result":
         return "qwenpaw.context.tool-result", ContextTrustLevel.TOOL
+    if role == "user" and metadata.get(QWENPAW_INPUT_TRUST_KEY) == "external":
+        return "qwenpaw.context.external-message", ContextTrustLevel.EXTERNAL
     if role == "user":
         return "qwenpaw.context.user-message", ContextTrustLevel.USER
     if role == "assistant":
@@ -120,6 +123,8 @@ class ContextManifestCompiler:
             role = str(getattr(message, "role", "") or "unknown")
             name = str(getattr(message, "name", "") or role)
             content = getattr(message, "content", None)
+            raw_metadata = getattr(message, "metadata", None)
+            metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
             blocks = content if isinstance(content, list) else [content]
             for raw_block in blocks:
                 block = (
@@ -170,7 +175,7 @@ class ContextManifestCompiler:
                     payload,
                     self._policy.token_estimate_divisor,
                 )
-                source, trust = _message_source(role, block_type)
+                source, trust = _message_source(role, block_type, metadata)
                 transformations = ["qwenpaw.context.runtime-normalized"]
                 if _contains_text(payload, TRUNCATION_NOTICE_MARKER):
                     transformations.append(

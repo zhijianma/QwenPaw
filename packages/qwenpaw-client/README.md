@@ -5,7 +5,10 @@ same generated Kernel contracts and transport-neutral clients as the QwenPaw
 Console and PawApp SDK; it does not embed or reimplement the Agent runtime.
 
 ```ts
-import { createQwenPawClient } from "@qwenpaw/client";
+import {
+  buildChatSubmission,
+  createQwenPawClient,
+} from "@qwenpaw/client";
 
 const paw = createQwenPawClient({
   baseUrl: "http://localhost:8004/api",
@@ -49,6 +52,24 @@ if (receipt.submission_id) {
     console.log(execution.state);
   }
 }
+```
+
+Use `buildChatSubmission()` when an integration wants the SDK-style text
+input without adopting the managed-process package. Plain strings represent
+direct user instructions. Content copied from an issue, webhook, email or
+another agent must use the explicit external shape so the Host can preserve
+its lower trust level:
+
+```ts
+const body = buildChatSubmission(
+  {
+    kind: "external",
+    text: issue.body,
+    source: { type: "github.issue", id: String(issue.number) },
+  },
+  { idempotencyKey: crypto.randomUUID() },
+);
+await paw.chatControls.submit("chat-spec-id", body);
 ```
 
 Pass a custom `QwenPawTransport` instead of Fetch options to integrate another

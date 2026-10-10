@@ -12,7 +12,10 @@ export type ContentParts = [
   }[],
 ];
 export type ExpectedRevision = number | null;
+export type SourceId = string | null;
+export type SourceType = string;
 export type IdempotencyKey = string;
+export type InputTrust = "user" | "external";
 export type ModelSlotOverride =
   | string
   | {
@@ -27,12 +30,21 @@ export type Priority = number;
 export interface ChatSubmissionRequest {
   content_parts: ContentParts;
   expected_revision?: ExpectedRevision;
+  external_source?: ChatExternalSource | null;
   idempotency_key: IdempotencyKey;
+  input_trust?: InputTrust;
   message_metadata?: MessageMetadata;
   model_slot_override?: ModelSlotOverride;
   priority?: Priority;
   request_context?: RequestContext;
   request_extensions?: RequestExtensions;
+}
+/**
+ * Auditable origin for lower-trust content submitted by an app.
+ */
+export interface ChatExternalSource {
+  source_id?: SourceId;
+  source_type: SourceType;
 }
 export interface MessageMetadata {
   [k: string]: unknown;

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Chat models with UUID management."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -144,6 +145,19 @@ class ChatQueueReorderRequest(ChatControlRequest):
         return self
 
 
+class ChatExternalSource(BaseModel):
+    """Auditable origin for lower-trust content submitted by an app."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_type: str = Field(
+        min_length=1,
+        max_length=100,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
+    source_id: str | None = Field(default=None, min_length=1, max_length=256)
+
+
 class ChatSubmissionRequest(ChatControlRequest):
     """Complete durable input accepted by the Console Chat dispatcher."""
 
@@ -154,6 +168,8 @@ class ChatSubmissionRequest(ChatControlRequest):
     model_slot_override: str | dict[str, Any] | None = None
     request_extensions: dict[str, Any] = Field(default_factory=dict)
     priority: int = Field(default=20, ge=0, le=100)
+    input_trust: Literal["user", "external"] = "user"
+    external_source: ChatExternalSource | None = None
 
     @model_validator(mode="after")
     def validate_request_extensions(self) -> Self:
@@ -172,6 +188,10 @@ class ChatSubmissionRequest(ChatControlRequest):
                 f"request_extensions contain reserved fields: "
                 f"{', '.join(conflicts)}",
             )
+        if self.input_trust == "external" and self.external_source is None:
+            raise ValueError("external input requires external_source")
+        if self.input_trust == "user" and self.external_source is not None:
+            raise ValueError("user input cannot declare external_source")
         return self
 
 

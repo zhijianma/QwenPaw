@@ -2,12 +2,14 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 
 import {
   createQwenPawClient,
+  buildChatSubmission,
   missingRuntimeFeatures,
   QwenPawHttpError,
   RuntimeClientError,
   type ChatControlRequest,
   type ChatForkRequest,
   type ChatHistory,
+  type ChatInput,
   type ChatInteractionDecisionRequest,
   type ChatInteractionResolution,
   type ChatQueueReorderRequest,
@@ -15,6 +17,7 @@ import {
   type ChatSpec,
   type ChatSteerRequest,
   type ChatSubmissionRequest,
+  type ChatSubmissionOptions,
   type ControlReceipt,
   type ConversationExecutionChain,
   type ConversationRuntimeProjection,
@@ -185,10 +188,24 @@ export class QwenPawChat {
     return this.#client.chatControls.submit(this.id, body, options);
   }
 
-  async send(
+  send(
     body: ChatSubmissionRequest,
-    options: ChatRequestOptions = {},
+    options?: ChatRequestOptions,
+  ): Promise<QwenPawTurn>;
+  send(
+    input: ChatInput,
+    options: ChatRequestOptions & ChatSubmissionOptions,
+  ): Promise<QwenPawTurn>;
+  async send(
+    input: ChatSubmissionRequest | ChatInput,
+    options:
+      | ChatRequestOptions
+      | (ChatRequestOptions & ChatSubmissionOptions) = {},
   ): Promise<QwenPawTurn> {
+    const body =
+      typeof input === "string" || "kind" in input
+        ? buildChatSubmission(input, options as ChatSubmissionOptions)
+        : input;
     const receipt = await this.submit(body, options);
     return new QwenPawTurn(this.#client, this.id, receipt);
   }

@@ -26,6 +26,7 @@ export function createQwenPawClient(
 export type QwenPawClient = ReturnType<typeof createQwenPawClient>;
 
 export * from "./clients/chatControls.js";
+export * from "./clients/chatInputs.js";
 export * from "./clients/chats.js";
 export * from "./clients/interactions.js";
 export * from "./clients/runtime.js";

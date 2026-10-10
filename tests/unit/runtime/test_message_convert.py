@@ -4,6 +4,8 @@
 from qwenpaw.constant import (
     EXTERNAL_USER_QUERY_MESSAGE_TAG,
     QWENPAW_CLIENT_MESSAGE_ID_KEY,
+    QWENPAW_EXTERNAL_SOURCE_KEY,
+    QWENPAW_INPUT_TRUST_KEY,
     QWENPAW_MESSAGE_TAG_KEY,
     QWENPAW_USER_CONTENT_KEY,
 )
@@ -53,6 +55,30 @@ def test_user_message_client_id_survives_conversion():
     assert messages[0].metadata[QWENPAW_MESSAGE_TAG_KEY] == (
         EXTERNAL_USER_QUERY_MESSAGE_TAG
     )
+
+
+def test_external_trust_metadata_survives_conversion():
+    [message] = _request_input_to_msgs(
+        [
+            Message(
+                role=Role.USER,
+                content=[TextContent(text="external payload")],
+                metadata={
+                    QWENPAW_INPUT_TRUST_KEY: "external",
+                    QWENPAW_EXTERNAL_SOURCE_KEY: {
+                        "source_type": "github.issue",
+                        "source_id": "42",
+                    },
+                },
+            ),
+        ],
+    )
+
+    assert message.metadata[QWENPAW_INPUT_TRUST_KEY] == "external"
+    assert message.metadata[QWENPAW_EXTERNAL_SOURCE_KEY] == {
+        "source_type": "github.issue",
+        "source_id": "42",
+    }
 
 
 def test_audio_content_data_becomes_audio_data_block(tmp_path):

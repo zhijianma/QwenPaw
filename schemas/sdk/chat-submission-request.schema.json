@@ -1,4 +1,38 @@
 {
+  "$defs": {
+    "ChatExternalSource": {
+      "additionalProperties": false,
+      "description": "Auditable origin for lower-trust content submitted by an app.",
+      "properties": {
+        "source_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Id"
+        },
+        "source_type": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Source Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_type"
+      ],
+      "title": "ChatExternalSource",
+      "type": "object"
+    }
+  },
   "$id": "https://schemas.qwenpaw.dev/sdk/chat-submission-request.v1.json",
   "additionalProperties": false,
   "description": "Complete durable input accepted by the Console Chat dispatcher.",
@@ -25,10 +59,30 @@
       "default": null,
       "title": "Expected Revision"
     },
+    "external_source": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ChatExternalSource"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "idempotency_key": {
       "maxLength": 200,
       "minLength": 1,
       "title": "Idempotency Key",
+      "type": "string"
+    },
+    "input_trust": {
+      "default": "user",
+      "enum": [
+        "user",
+        "external"
+      ],
+      "title": "Input Trust",
       "type": "string"
     },
     "message_metadata": {

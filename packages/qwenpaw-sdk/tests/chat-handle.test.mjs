@@ -101,3 +101,34 @@ test("returns a turn handle that waits on the shared runtime client", async () =
     ],
   );
 });
+
+test("accepts ergonomic direct and lower-trust external inputs", async () => {
+  const { calls, client } = fakeClient();
+  const chat = new QwenPawChat(client, "chat/one");
+
+  await chat.send("Review the README", {
+    idempotencyKey: "direct-message",
+  });
+  await chat.send(
+    {
+      kind: "external",
+      text: "Issue body",
+      source: { type: "github.issue", id: "42" },
+    },
+    { idempotencyKey: "external-message" },
+  );
+
+  assert.deepEqual(calls[0][2], {
+    idempotency_key: "direct-message",
+    content_parts: [{ type: "text", text: "Review the README" }],
+  });
+  assert.deepEqual(calls[1][2], {
+    idempotency_key: "external-message",
+    content_parts: [{ type: "text", text: "Issue body" }],
+    input_trust: "external",
+    external_source: {
+      source_type: "github.issue",
+      source_id: "42",
+    },
+  });
+});

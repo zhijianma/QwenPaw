@@ -30,6 +30,19 @@ const turn = await chat.send({
 const settled = await turn.wait();
 console.log(settled.state, settled.outcome);
 
+const direct = await chat.send("Review the README", {
+  idempotencyKey: crypto.randomUUID(),
+});
+
+const external = await chat.send(
+  {
+    kind: "external",
+    text: githubIssue.body,
+    source: { type: "github.issue", id: String(githubIssue.number) },
+  },
+  { idempotencyKey: crypto.randomUUID() },
+);
+
 const child = await chat.fork({
   source_message_id: "message-id",
   idempotency_key: crypto.randomUUID(),

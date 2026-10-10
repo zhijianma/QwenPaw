@@ -14,7 +14,11 @@ from agentscope.agent import Agent
 from agentscope.message import Msg, TextBlock, ThinkingBlock, ToolResultBlock
 
 from qwenpaw.agents.react_agent import QwenPawAgent
-from qwenpaw.kernel import ContextFragmentKind, ContextPolicy
+from qwenpaw.kernel import (
+    ContextFragmentKind,
+    ContextPolicy,
+    ContextTrustLevel,
+)
 from qwenpaw.kernel.invocation import InvocationScope
 from qwenpaw.runtime.context_manifests import (
     ContextManifestCompiler,
@@ -117,16 +121,37 @@ def test_manifest_covers_actual_messages_and_capability_disclosure() -> None:
     tool = manifest.fragments[-1]
     assert tool.kind is ContextFragmentKind.TOOL_SCHEMA
     assert tool.source == "qwenpaw.system.workspace-tools"
-    assert tool.source_version == (
+    expected_source_version = (
         "registry-epoch-00000000-0000-0000-0000-000000000002-"
-        "generation-12"
     )
+    expected_source_version += "generation-12"
+    assert tool.source_version == expected_source_version
 
     persisted = manifest.model_dump_json()
     assert "secret-value" not in persisted
     assert "private chain of thought" not in persisted
     assert "system contract" not in persisted
     assert "Write text" not in persisted
+
+
+def test_manifest_records_external_user_role_as_lower_trust() -> None:
+    message = Msg(
+        name="user",
+        role="user",
+        content=[TextBlock(text="external payload")],
+        metadata={"qwenpaw_input_trust": "external"},
+    )
+
+    manifest = ContextManifestCompiler(_scope()).compile(
+        messages=[message],
+        tools=[],
+        model_call_index=1,
+        attempt_kind="primary",
+    )
+
+    [fragment] = manifest.fragments
+    assert fragment.source == "qwenpaw.context.external-message"
+    assert fragment.trust_level is ContextTrustLevel.EXTERNAL
 
 
 def test_manifest_fails_closed_instead_of_omitting_fragments() -> None:
