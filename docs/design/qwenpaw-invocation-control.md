@@ -242,6 +242,7 @@ generation handoff 后才能判定 orphan，不能由任意新实例直接终止
 | POST | `/chats/{chat_id}/control/steer` | 向当前 Invocation 提交安全点指令 |
 | POST | `/chats/{chat_id}/control/interrupt` | 只打断当前 Invocation |
 | POST | `/chats/{chat_id}/control/stop-and-clear` | 原子清除排队项并打断捕获的 Invocation |
+| GET | `/chats/{chat_id}/control/history` | 查询命令与最新权威 Receipt，不复制控制状态机 |
 | POST | `/chats/{chat_id}/queue/{submission_id}/cancel` | 只取消指定 queued Submission |
 | POST | `/chats/{chat_id}/queue/reorder` | 原子替换完整 queued 顺序 |
 
