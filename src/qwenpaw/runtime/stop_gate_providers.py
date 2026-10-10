@@ -92,6 +92,17 @@ def decision_to_legacy_result(decision: StopGateDecision) -> Any:
 
 
 def _legacy_decision(result: Any) -> StopGateDecision:
+    if (
+        result.action.value == StopGateAction.TERMINATE.value
+        and not result.reason
+        and not result.continuation_message
+        and result.final_message is None
+        and not result.inject_on_tool_call
+    ):
+        # A legacy StopHandler returns an empty TERMINATE when none of its
+        # gates fired. Inside the provider router that means "no opinion",
+        # otherwise the built-in provider hides every later plugin gate.
+        return StopGateDecision(action=StopGateAction.BYPASS)
     return StopGateDecision(
         action=StopGateAction(result.action.value),
         continuation_message=result.continuation_message,
@@ -210,10 +221,8 @@ class StopGateRouterSession:
 
     def list_gates(self) -> tuple[StopGateDefinition, ...]:
         """Return the fixed merged catalog in evaluation order."""
-        return tuple(
-            definition
-            for _, definition in self._ordered_candidates(include_all=True)
-        )
+        ordered = self._ordered_candidates(include_all=True)
+        return tuple(definition for _, definition in ordered)
 
     def _ordered_candidates(
         self,

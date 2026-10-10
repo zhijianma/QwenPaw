@@ -118,6 +118,80 @@ async def test_workspace_provider_uses_fixed_registration_snapshot() -> None:
     assert decision.continuation_message == "keep going"
 
 
+@pytest.mark.asyncio
+async def test_empty_legacy_termination_does_not_hide_plugin_gate() -> None:
+    system_id = DEFAULT_STOP_GATE_PROVIDER_ID
+    registrations = [
+        _registration(
+            "default",
+            StopHandlerResult(action=StopAction.TERMINATE),
+        ),
+    ]
+    host = WorkspaceStopGateHost.capture(
+        _context(registrations),
+        system_id,
+    )
+    system_session = await WorkspaceStopGateProvider().open(
+        _scope(),
+        host,
+    )
+    plugin_id = "example.gates.provider"
+    plugin_gate_id = f"{plugin_id}.review"
+    plugin_session = _Session(
+        plugin_id,
+        (
+            _definition(
+                plugin_id,
+                "review",
+                priority=120,
+                scope="",
+            ),
+        ),
+        {
+            plugin_gate_id: StopGateDecision(
+                action=StopGateAction.INTERRUPT_AND_CONTINUE,
+                continuation_message="review once",
+                reason="plugin gate reached",
+            ),
+        },
+    )
+
+    decision = await StopGateRouterSession(
+        (system_session, plugin_session),
+    ).evaluate(
+        StopGateInput(iteration=1, has_tool_calls=True),
+    )
+
+    assert decision.action == StopGateAction.INTERRUPT_AND_CONTINUE
+    assert decision.reason == "plugin gate reached"
+    assert registrations[0].handler.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_legacy_termination_with_reason_remains_actionable() -> None:
+    registrations = [
+        _registration(
+            "safety",
+            StopHandlerResult(
+                action=StopAction.TERMINATE,
+                reason="safety gate stopped the loop",
+            ),
+        ),
+    ]
+    host = WorkspaceStopGateHost.capture(
+        _context(registrations),
+        DEFAULT_STOP_GATE_PROVIDER_ID,
+    )
+    session = await WorkspaceStopGateProvider().open(_scope(), host)
+
+    decision = await StopGateRouterSession((session,)).evaluate(
+        StopGateInput(iteration=1, has_tool_calls=False),
+    )
+
+    assert decision.action == StopGateAction.TERMINATE
+    assert decision.reason == "safety gate stopped the loop"
+
+
 class _Session:
     def __init__(
         self,

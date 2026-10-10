@@ -442,9 +442,31 @@ revision 提交 Steer：
 4. Queue 最终无 active/queued Submission，Interaction 为空；页面刷新后消息仍从
    Session 历史恢复。
 
-该结果证明服务端可以在首次模型请求前应用已接受 Steer。`BEFORE_TOOL_BATCH` 仍需
-用可观测的 reasoning→tool admission 栅栏完成真实时序验收，不能靠随机竞争窗口
-或仅以单元测试替代。
+该结果证明服务端可以在首次模型请求前应用已接受 Steer。
+
+### 6.12 真实 BEFORE_TOOL_BATCH Steer 验收记录
+
+2026-10-10 在同一固定 Native Chat 先执行 `/clear`，再通过公开
+`loop.gate.provider` 临时安装一个可观测的 tool admission Gate。该 Gate 在模型已经
+产生工具调用、工具批次尚未 admission 时写入 `ENTER` 标记并等待 12 秒；监控器观察
+到标记后提交 Steer，而不是依赖随机竞争窗口：
+
+1. Submission `9aea0160-e353-4e65-8b82-fb5b5bc6cd20` 的 Invocation 为
+   `6033e99a-1298-44ad-bff3-9b808925f7c0`；Steer command
+   `47acab50-7aed-4d00-9bf1-741bb3fcf54e` 首先返回 durable `accepted`。
+2. Gate 正常写入 `EXIT` 后，权威 Control receipt 转为 `applied`，并精确记录
+   `applied_at_safe_point=before_tool_batch`。
+3. 模型继续两次 reasoning，最终回复包含 `STEER_BEFORE_TOOL_BATCH_OK`；Action
+   Observation 为 0，证明原工具批次没有越过 admission，也没有产生部分副作用。
+4. 验收使用真实公开插件 SDK 和热安装路径，没有 mock Runtime；完成后已卸载临时
+   插件，`/api/plugins` 恢复为空，安装目录与仓库探针文件均已清理。
+
+该验收同时发现并修复一处 Provider 组合缺陷：旧 `StopHandler` 在没有 Gate 命中时
+返回无任何载荷的 `TERMINATE`，其旧语义实际是“允许循环停止”。进入多 Provider
+Router 后，这种返回现在会在兼容边界归一为 `BYPASS`，避免系统 Provider 隐藏后续
+插件 Gate；任何带 reason、continuation、final message 或 tool-call 注入的真实终止
+决策仍保持 `TERMINATE`。回归测试同时覆盖系统 Gate 未命中、插件 Gate 随后命中的
+组合路径。
 
 ## 7. 验收
 

@@ -1678,8 +1678,11 @@ Cron 不形成独立审批或产物事实源。
     active Invocation 时明确拒绝 Steer，不混淆两种取消语义。
   - [x] 固定 Native Chat 在 Queue 首次出现 active Submission 后提交 Steer；权威
     receipt 精确记录 `before_reasoning`，Chat 持久消息携带同一 command identity，
-    最终只回复 `STEER_SAFE_POINT_OK`。`before_tool_batch` 的真实可观测时序验收仍保留
-    为独立门禁，不以随机竞争窗口冒充完成。
+    最终只回复 `STEER_SAFE_POINT_OK`。
+  - [x] 公开 `loop.gate.provider` 在模型已产生工具调用、工具尚未 admission 时提供
+    可观测等待窗；Steer receipt 最终精确记录 `before_tool_batch`，Action Observation
+    为 0，最终回复 `STEER_BEFORE_TOOL_BATCH_OK`。验收同时修复旧 StopHandler 空
+    `TERMINATE` 隐藏后续插件 Gate 的兼容缺陷，并补充 Router 回归测试。
 - [ ] 架构文档、API 规范、迁移表和未覆盖边界同步更新。
 - [ ] 完成主要功能 Code Review，Blocking finding 为零。
 - [ ] 达到门禁后再恢复 Task Workbench 开发。

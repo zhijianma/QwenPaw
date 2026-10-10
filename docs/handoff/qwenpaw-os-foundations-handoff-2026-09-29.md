@@ -1393,8 +1393,16 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
   不再错误降级为空路由的本地估算；相关后端定点测试 142 项通过。
 - 同一固定 Native Chat 已新增真实 `BEFORE_REASONING` Steer 证据：Control intent 与
   receipt 同一身份，最终 receipt 为 `applied / before_reasoning`，持久消息带 command
-  ID，最终只回复 `STEER_SAFE_POINT_OK`。`BEFORE_TOOL_BATCH` 仍是未完成的真实时序
-  门禁，不能用随机竞争窗口或组件存在替代。
+  ID，最终只回复 `STEER_SAFE_POINT_OK`。
+- 同一 Chat 又通过公开 `loop.gate.provider` 的可观测 tool admission 等待窗完成真实
+  `BEFORE_TOOL_BATCH` 验收：Submission `9aea0160-e353-4e65-8b82-fb5b5bc6cd20`、
+  Invocation `6033e99a-1298-44ad-bff3-9b808925f7c0` 与 command
+  `47acab50-7aed-4d00-9bf1-741bb3fcf54e` 最终形成 `applied /
+  before_tool_batch` 回执；Action Observation 为 0，最终回复
+  `STEER_BEFORE_TOOL_BATCH_OK`。临时插件已热卸载并清理。
+- 验收暴露的组合缺陷已修复：旧 StopHandler 的空 `TERMINATE` 在 Provider 兼容边界
+  归一为 `BYPASS`，不再隐藏后续插件 Gate；带终止载荷的真实 `TERMINATE` 不变，并有
+  Router 回归测试守护。
 
 ## 9. 2026-10-10 Lite Action Plane 门禁收敛
 
