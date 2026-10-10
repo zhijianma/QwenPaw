@@ -163,11 +163,13 @@ Implemented in the frontend SDK:
 - a Chat-delivered Task approval is submitted only through the Interaction
   response route; the Host bridge reconciles its linked Approval fact, so SDK
   clients never dual-write both records.
+- Task-only clients use `handle.decideApproval()` against the authoritative
+  Task approval route; repeated identical decisions share one Promise and
+  idempotency key, while conflicting local decisions are rejected before a
+  second request is sent.
 
 Still pending in P2:
 
-- expose the Task-centric direct approval command for clients that do not use
-  a Chat delivery adapter;
 - replace the current structural Projection fields with generated or shared
   schema types so frontend API modules and PawApp SDK cannot drift;
 - add a browser disconnect test against the running Host rather than only
@@ -229,7 +231,10 @@ Verified on 2026-10-10 against the running Lite Host on port 8004:
   PawApp-local queue;
 - PawApp SDK targeted tests cover terminal reconciliation, cursor reconnect,
   missing runner rejection, listener timing, idempotent cancellation,
-  revision conflicts and idempotent Interaction transport retries.
+  revision conflicts, direct Task approval conflicts and idempotent
+  Interaction transport retries. No existing Task was awaiting approval at
+  verification time, so a real direct-approval mutation was intentionally not
+  performed or claimed.
 
 ## 10. Explicit non-goals
 

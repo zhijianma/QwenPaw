@@ -120,6 +120,8 @@ export type {
   PawRequestOptions,
   PawRequestInit,
   PawRuntimeTask,
+  PawRuntimeTaskApprovalCommand,
+  PawRuntimeTaskApprovalDecision,
   PawRuntimeTaskCancelReceipt,
   PawRuntimeTaskEvent,
   PawRuntimeTaskHandle,

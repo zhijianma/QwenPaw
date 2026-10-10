@@ -632,6 +632,25 @@ export interface PawRuntimeTaskCancelReceipt {
   task: PawRuntimeTask;
 }
 
+export interface PawRuntimeTaskApprovalCommand {
+  decision: "approved" | "denied";
+  reason: string;
+  scope?: "exact" | "similar";
+  idempotencyKey?: string;
+}
+
+export interface PawRuntimeTaskApprovalDecision {
+  approval_id: string;
+  decision: "approved" | "denied" | "expired" | "cancelled";
+  actor: {
+    type: string;
+    id: string;
+  };
+  scope: "exact" | "similar";
+  reason: string;
+  decided_at: string;
+}
+
 export interface PawRuntimeTaskHandle {
   readonly taskId: string;
   readonly lastSequence: number;
@@ -647,6 +666,11 @@ export interface PawRuntimeTaskHandle {
   ): PawRuntimeTaskHandle;
   projection(): Promise<PawRuntimeTaskProjection>;
   cancel(): Promise<PawRuntimeTaskCancelReceipt>;
+  /** For Task-only clients. Chat-delivered approvals use paw.interactions. */
+  decideApproval(
+    approvalId: string,
+    command: PawRuntimeTaskApprovalCommand,
+  ): Promise<PawRuntimeTaskApprovalDecision>;
 }
 
 export interface PawRuntimeTasksNamespace {

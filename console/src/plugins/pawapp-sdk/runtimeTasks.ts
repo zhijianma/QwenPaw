@@ -1,6 +1,7 @@
 import { hostFetch } from "../hostSdk/fetch";
 import type {
   PawRuntimeTask,
+  PawRuntimeTaskApprovalDecision,
   PawRuntimeTaskCancelReceipt,
   PawRuntimeTaskEvent,
   PawRuntimeTaskHandle,
@@ -19,6 +20,12 @@ interface CapabilityDescriptor {
 
 interface CapabilityCatalog {
   items: CapabilityDescriptor[];
+}
+
+interface PendingApprovalDecision {
+  readonly signature: string;
+  readonly idempotencyKey: string;
+  promise?: Promise<PawRuntimeTaskApprovalDecision>;
 }
 
 export class PawRuntimeTaskError extends Error {
@@ -225,6 +232,7 @@ async function runTask(
   let lastSequence = 0;
   let resultPromise: Promise<PawRuntimeTaskProjection> | undefined;
   let cancelPromise: Promise<PawRuntimeTaskCancelReceipt> | undefined;
+  const approvalCommands = new Map<string, PendingApprovalDecision>();
 
   function emit(event: PawRuntimeTaskEvent) {
     for (const key of [event.event_type, "event"]) {
@@ -318,6 +326,56 @@ async function runTask(
         })();
       }
       return cancelPromise;
+    },
+    decideApproval(approvalId, command) {
+      const signature = JSON.stringify({
+        decision: command.decision,
+        reason: command.reason,
+        scope: command.scope ?? "exact",
+      });
+      let pending = approvalCommands.get(approvalId);
+      if (pending && pending.signature !== signature) {
+        return Promise.reject(
+          new PawRuntimeTaskError(
+            "APPROVAL_COMMAND_CONFLICT",
+            `Approval ${approvalId} already has another local decision`,
+            { taskId },
+          ),
+        );
+      }
+      if (!pending) {
+        pending = {
+          signature,
+          idempotencyKey: command.idempotencyKey ?? crypto.randomUUID(),
+        };
+        approvalCommands.set(approvalId, pending);
+      }
+      if (!pending.promise) {
+        pending.promise = hostFetch(
+          `/tasks/${encodeURIComponent(taskId)}/approvals/` +
+            `${encodeURIComponent(approvalId)}/decision`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Idempotency-Key": pending.idempotencyKey,
+            },
+            body: JSON.stringify({
+              decision: command.decision,
+              reason: command.reason,
+              scope: command.scope ?? "exact",
+            }),
+          },
+        )
+          .then((response) =>
+            readJson<PawRuntimeTaskApprovalDecision>(response),
+          )
+          .catch((error: unknown) => {
+            pending!.promise = undefined;
+            throw error;
+          });
+      }
+      return pending.promise;
     },
   };
   return handle;

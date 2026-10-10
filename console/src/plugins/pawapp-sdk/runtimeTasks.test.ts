@@ -217,4 +217,59 @@ describe("PawApp runtime tasks", () => {
       }),
     );
   });
+
+  it("submits one idempotent direct approval decision", async () => {
+    mockedHostFetch.mockImplementation(async (path, init) => {
+      if (path === "/tasks" && init?.method === "POST") {
+        return jsonResponse(task("created"));
+      }
+      if (path === "/tasks/task-1/start") {
+        return jsonResponse({ task: task(), run: {} });
+      }
+      if (path === "/tasks/task-1/approvals/approval%2F1/decision") {
+        return jsonResponse({
+          approval_id: "approval/1",
+          decision: "approved",
+          actor: { type: "user", id: "local-user" },
+          scope: "exact",
+          reason: "Reviewed",
+          decided_at: "2026-10-10T00:00:02Z",
+        });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    const handle = await createRuntimeTasksNamespace().run({
+      objective: "Review the project",
+    });
+    const command = {
+      decision: "approved" as const,
+      reason: "Reviewed",
+      idempotencyKey: "approve-once",
+    };
+
+    const first = handle.decideApproval("approval/1", command);
+    expect(handle.decideApproval("approval/1", command)).toBe(first);
+    await expect(first).resolves.toMatchObject({ decision: "approved" });
+    expect(mockedHostFetch).toHaveBeenCalledWith(
+      "/tasks/task-1/approvals/approval%2F1/decision",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "approve-once",
+        },
+        body: JSON.stringify({
+          decision: "approved",
+          reason: "Reviewed",
+          scope: "exact",
+        }),
+      }),
+    );
+    await expect(
+      handle.decideApproval("approval/1", {
+        decision: "denied",
+        reason: "Changed my mind",
+      }),
+    ).rejects.toMatchObject({ code: "APPROVAL_COMMAND_CONFLICT" });
+  });
 });
