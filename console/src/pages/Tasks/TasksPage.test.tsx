@@ -35,11 +35,15 @@ describe("TasksPage", () => {
     vi.mocked(tasksApi.list).mockResolvedValue({
       items: [
         {
+          schema: "qwenpaw.kernel-model.v1",
           task_id: "task-1",
           objective: "Prepare release evidence",
           status: "completed",
           source: "user",
           agent_id: "default",
+          constraints: [],
+          acceptance_criteria: [],
+          execution_contract: null,
           version: 4,
           active_run_id: "run-1",
           created_at: "2026-09-21T00:00:00Z",
@@ -54,25 +58,39 @@ describe("TasksPage", () => {
       active_run: null,
       runs: [
         {
+          schema: "qwenpaw.kernel-model.v1",
           run_id: "run-1",
+          task_id: "task-1",
+          plan_id: "plan-1",
           attempt: 1,
           status: "succeeded",
           runner_id: "runner.local",
+          strategy_id: "qwenpaw.system.tasks.default-strategy",
           registry_generation: 2,
+          invocation_id: null,
+          correlation_id: null,
           checkpoint_id: null,
           started_at: "2026-09-21T00:00:05Z",
+          execution_deadline_at: null,
           finished_at: "2026-09-21T00:01:00Z",
+          metadata: {},
         },
       ],
       latest_plan: {
+        schema: "qwenpaw.kernel-model.v1",
         plan_id: "plan-1",
+        task_id: "task-1",
         revision: 1,
+        created_at: "2026-09-21T00:00:01Z",
         steps: [
           {
+            schema: "qwenpaw.kernel-model.v1",
             step_id: "step-1",
             title: "执行任务",
             objective: "Prepare release evidence",
             depends_on: [],
+            capability_id: null,
+            metadata: {},
           },
         ],
         acceptance_criteria: [],
@@ -97,7 +115,20 @@ describe("TasksPage", () => {
       pending_approvals: [],
       recent_decisions: [],
       artifacts: [],
+      artifact_registry: [],
       evidence: [],
+      evidence_registry: [],
+      verifications: [],
+      verification_registry: [],
+      result_package: null,
+      usage: {
+        schema: "qwenpaw.kernel-model.v1",
+        input_tokens: 0,
+        output_tokens: 0,
+        tool_calls: 0,
+        cost_micros: 0,
+        cost_unknown: false,
+      },
       checkpoint: null,
       capabilities: [
         {
@@ -112,37 +143,73 @@ describe("TasksPage", () => {
     vi.mocked(tasksApi.events).mockResolvedValue({
       items: [
         {
+          schema: "qwenpaw.execution-event.v1",
           event_id: "event-1",
           task_id: "task-1",
           run_id: null,
+          invocation_id: null,
+          step_id: null,
+          source: null,
+          cause_event_id: null,
+          correlation_id: null,
           sequence: 1,
           event_type: "task.created",
           occurred_at: "2026-09-21T00:00:00Z",
           payload: {},
           artifact_refs: [],
           evidence_refs: [],
+          registry_generation: 2,
+          actor: {
+            schema: "qwenpaw.kernel-model.v1",
+            type: "user",
+            id: "local-user",
+          },
         },
         {
+          schema: "qwenpaw.execution-event.v1",
           event_id: "event-2",
           task_id: "task-1",
           run_id: "run-1",
+          invocation_id: null,
+          step_id: null,
+          source: "chat",
+          cause_event_id: null,
+          correlation_id: null,
           sequence: 2,
           event_type: "conversation.user",
           occurred_at: "2026-09-21T00:00:05Z",
           payload: { role: "user", text: "Prepare release evidence" },
           artifact_refs: [],
           evidence_refs: [],
+          registry_generation: 2,
+          actor: {
+            schema: "qwenpaw.kernel-model.v1",
+            type: "user",
+            id: "local-user",
+          },
         },
         {
+          schema: "qwenpaw.execution-event.v1",
           event_id: "event-3",
           task_id: "task-1",
           run_id: "run-1",
+          invocation_id: null,
+          step_id: null,
+          source: "chat",
+          cause_event_id: null,
+          correlation_id: null,
           sequence: 3,
           event_type: "conversation.assistant.delta",
           occurred_at: "2026-09-21T00:00:10Z",
           payload: { role: "assistant", text: "Release is ready" },
           artifact_refs: [],
           evidence_refs: [],
+          registry_generation: 2,
+          actor: {
+            schema: "qwenpaw.kernel-model.v1",
+            type: "agent",
+            id: "default",
+          },
         },
       ],
     });
@@ -230,9 +297,13 @@ describe("TasksPage", () => {
       ...projection,
       pending_approvals: [
         {
+          schema: "qwenpaw.kernel-model.v1",
           approval_id: "approval-1",
           task_id: "task-1",
           run_id: "run-1",
+          invocation_id: null,
+          correlation_id: null,
+          checkpoint_id: null,
           source: "tool",
           action: "tool.execute",
           risk: "high",
@@ -244,6 +315,7 @@ describe("TasksPage", () => {
             input: { command: "python <redacted>" },
           },
           display: {
+            schema: "qwenpaw.kernel-model.v1",
             title: "Approve execute_shell_command",
             summary: "The task is waiting to execute a protected tool.",
             target: "execute_shell_command",
@@ -252,11 +324,20 @@ describe("TasksPage", () => {
           expires_at: null,
           created_at: "2026-09-21T00:00:05Z",
           decision: null,
+          requester: {
+            schema: "qwenpaw.kernel-model.v1",
+            type: "runner",
+            id: "runner.local",
+          },
         },
         {
+          schema: "qwenpaw.kernel-model.v1",
           approval_id: "approval-2",
           task_id: "task-1",
           run_id: "run-1",
+          invocation_id: null,
+          correlation_id: null,
+          checkpoint_id: null,
           source: "driver",
           action: "driver.execute",
           risk: "medium",
@@ -268,10 +349,27 @@ describe("TasksPage", () => {
           expires_at: null,
           created_at: "2026-09-21T00:00:06Z",
           decision: null,
+          requester: {
+            schema: "qwenpaw.kernel-model.v1",
+            type: "runner",
+            id: "runner.local",
+          },
         },
       ],
     });
-    vi.mocked(tasksApi.decide).mockResolvedValue({});
+    vi.mocked(tasksApi.decide).mockResolvedValue({
+      schema: "qwenpaw.kernel-model.v1",
+      approval_id: "approval-1",
+      decision: "approved",
+      actor: {
+        schema: "qwenpaw.kernel-model.v1",
+        type: "user",
+        id: "local-user",
+      },
+      scope: "exact",
+      reason: "",
+      decided_at: "2026-09-21T00:00:07Z",
+    });
 
     render(<TasksPage />);
 
@@ -305,14 +403,22 @@ describe("TasksPage", () => {
     vi.mocked(tasksApi.start).mockResolvedValue({
       task: { ...createdTask, status: "running", active_run_id: "run-2" },
       run: {
+        schema: "qwenpaw.kernel-model.v1",
         run_id: "run-2",
+        task_id: "task-2",
+        plan_id: null,
         attempt: 1,
         status: "running",
         runner_id: "runner.local",
+        strategy_id: "qwenpaw.system.tasks.default-strategy",
         registry_generation: 2,
+        invocation_id: null,
+        correlation_id: null,
         checkpoint_id: null,
         started_at: "2026-09-21T00:02:00Z",
+        execution_deadline_at: null,
         finished_at: null,
+        metadata: {},
       },
     });
 
@@ -347,6 +453,7 @@ describe("TasksPage", () => {
       ...projection,
       artifacts: [
         {
+          schema: "qwenpaw.kernel-model.v1",
           artifact_id: "artifact-1",
           kind: "document",
           uri: "qwenpaw-artifact://sha256/example",
@@ -356,6 +463,7 @@ describe("TasksPage", () => {
           size_bytes: 13,
           metadata: { name: "task-result.md" },
           preview: {
+            schema: "qwenpaw.kernel-model.v1",
             available: true,
             registry_generation: 3,
             renderer_id: "qwenpaw.system.tasks.safe-artifact-renderer",
@@ -391,6 +499,7 @@ describe("TasksPage", () => {
       ...projection,
       artifacts: [
         {
+          schema: "qwenpaw.kernel-model.v1",
           artifact_id: "artifact-1",
           kind: "document",
           uri: "qwenpaw-artifact://sha256/example",
@@ -400,6 +509,7 @@ describe("TasksPage", () => {
           size_bytes: 13,
           metadata: { name: "blocked.txt" },
           preview: {
+            schema: "qwenpaw.kernel-model.v1",
             available: false,
             registry_generation: 3,
             renderer_id: null,

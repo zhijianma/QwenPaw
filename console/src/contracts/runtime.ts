@@ -1,14 +1,4 @@
-export type RuntimeFeature =
-  | "artifact.references"
-  | "capability.catalog"
-  | "chat.interactions"
-  | "task.event-cursor"
-  | "task.runtime";
+import type { HostHandshake } from "./generated/hostHandshake";
 
-export interface RuntimeHandshake {
-  schema: "qwenpaw.host-handshake.v1";
-  product: "qwenpaw";
-  version: string;
-  protocol_version: 1;
-  features: string[];
-}
+export type RuntimeHandshake = HostHandshake;
+export type RuntimeFeature = HostHandshake["features"][number];

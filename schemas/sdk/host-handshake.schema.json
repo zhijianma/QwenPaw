@@ -1,0 +1,53 @@
+{
+  "$id": "https://schemas.qwenpaw.dev/sdk/host-handshake.v1.json",
+  "additionalProperties": false,
+  "description": "Versioned, transport-neutral capabilities exposed by one Host.",
+  "properties": {
+    "features": {
+      "default": [
+        "artifact.references",
+        "capability.catalog",
+        "chat.interactions",
+        "task.event-cursor",
+        "task.runtime"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "title": "Features",
+      "type": "array"
+    },
+    "product": {
+      "const": "qwenpaw",
+      "default": "qwenpaw",
+      "title": "Product",
+      "type": "string"
+    },
+    "protocol_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Protocol Version",
+      "type": "integer"
+    },
+    "schema": {
+      "const": "qwenpaw.host-handshake.v1",
+      "default": "qwenpaw.host-handshake.v1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "version": {
+      "minLength": 1,
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema",
+    "product",
+    "version",
+    "protocol_version",
+    "features"
+  ],
+  "title": "HostHandshake",
+  "type": "object"
+}

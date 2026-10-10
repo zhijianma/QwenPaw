@@ -1,0 +1,282 @@
+{
+  "$defs": {
+    "ContinuationMode": {
+      "description": "How execution can continue after a condition becomes satisfied.",
+      "enum": [
+        "live_invocation",
+        "checkpoint",
+        "conversation_turn"
+      ],
+      "title": "ContinuationMode",
+      "type": "string"
+    },
+    "InteractionKind": {
+      "description": "Semantic interaction types emitted by a live runtime.",
+      "enum": [
+        "approval",
+        "user_input",
+        "suggestion"
+      ],
+      "title": "InteractionKind",
+      "type": "string"
+    },
+    "InteractionMode": {
+      "description": "Whether execution waits for a response to the interaction.",
+      "enum": [
+        "blocking",
+        "non_blocking"
+      ],
+      "title": "InteractionMode",
+      "type": "string"
+    },
+    "InteractionOption": {
+      "additionalProperties": false,
+      "description": "One stable response option rendered by any delivery adapter.",
+      "properties": {
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "label": {
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "option_id": {
+          "minLength": 1,
+          "title": "Option Id",
+          "type": "string"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "value": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Value",
+          "type": "object"
+        }
+      },
+      "required": [
+        "schema",
+        "option_id",
+        "label",
+        "description",
+        "value"
+      ],
+      "title": "InteractionOption",
+      "type": "object"
+    },
+    "InteractionStatus": {
+      "description": "Durable lifecycle of a runtime interaction.",
+      "enum": [
+        "open",
+        "resolved",
+        "expired",
+        "cancelled"
+      ],
+      "title": "InteractionStatus",
+      "type": "string"
+    },
+    "JsonValue": {},
+    "UserInputReason": {
+      "description": "Allowed reasons for suspending execution to request user input.",
+      "enum": [
+        "missing_required_fact",
+        "material_preference",
+        "scope_authorization",
+        "high_impact_decision"
+      ],
+      "title": "UserInputReason",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.qwenpaw.dev/sdk/interaction-request.v1.json",
+  "additionalProperties": false,
+  "description": "Durable, channel-neutral request presented to a user.\n\nPolicy-specific records such as ``ApprovalRequest`` remain the source of\ntruth. ``source_id`` links this delivery record to that policy fact.",
+  "properties": {
+    "agent_id": {
+      "minLength": 1,
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "chat_id": {
+      "description": "Owning ChatSpec.id",
+      "minLength": 1,
+      "title": "Chat Id",
+      "type": "string"
+    },
+    "continuation_checkpoint_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Continuation Checkpoint Id"
+    },
+    "continuation_mode": {
+      "$ref": "#/$defs/ContinuationMode",
+      "default": "live_invocation"
+    },
+    "correlation_id": {
+      "format": "uuid",
+      "title": "Correlation Id",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "expires_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Expires At"
+    },
+    "interaction_id": {
+      "format": "uuid",
+      "title": "Interaction Id",
+      "type": "string"
+    },
+    "invocation_id": {
+      "format": "uuid",
+      "title": "Invocation Id",
+      "type": "string"
+    },
+    "kind": {
+      "$ref": "#/$defs/InteractionKind"
+    },
+    "metadata": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "title": "Metadata",
+      "type": "object"
+    },
+    "mode": {
+      "$ref": "#/$defs/InteractionMode"
+    },
+    "options": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/InteractionOption"
+      },
+      "title": "Options",
+      "type": "array"
+    },
+    "prompt": {
+      "minLength": 1,
+      "title": "Prompt",
+      "type": "string"
+    },
+    "response_schema": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "title": "Response Schema",
+      "type": "object"
+    },
+    "revision": {
+      "default": 1,
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "schema": {
+      "const": "qwenpaw.kernel-model.v1",
+      "default": "qwenpaw.kernel-model.v1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "source_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Id"
+    },
+    "status": {
+      "$ref": "#/$defs/InteractionStatus",
+      "default": "open"
+    },
+    "task_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Task Id"
+    },
+    "title": {
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    },
+    "user_input_reason": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/UserInputReason"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "schema",
+    "interaction_id",
+    "kind",
+    "mode",
+    "agent_id",
+    "chat_id",
+    "invocation_id",
+    "correlation_id",
+    "task_id",
+    "source_id",
+    "user_input_reason",
+    "continuation_mode",
+    "continuation_checkpoint_id",
+    "title",
+    "prompt",
+    "options",
+    "response_schema",
+    "metadata",
+    "status",
+    "revision",
+    "created_at",
+    "expires_at"
+  ],
+  "title": "InteractionRequest",
+  "type": "object"
+}

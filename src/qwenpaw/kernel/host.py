@@ -3,22 +3,18 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 from pydantic import Field
 
 from .models import KernelModel
 
-HostFeature = Literal[
-    "artifact.references",
-    "capability.catalog",
-    "chat.interactions",
-    "task.event-cursor",
-    "task.runtime",
-]
+# Capability identifiers are intentionally open-ended. Older SDKs must be able
+# to negotiate with newer Hosts that publish additional optional features.
+HostFeature: TypeAlias = str
 
 HOST_PROTOCOL_VERSION = 1
-HOST_FEATURES: tuple[HostFeature, ...] = (
+HOST_FEATURES: tuple[str, ...] = (
     "artifact.references",
     "capability.catalog",
     "chat.interactions",

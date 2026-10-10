@@ -18,6 +18,7 @@ const mockedHostFetch = vi.mocked(hostFetch);
 
 function task(status: PawRuntimeTaskStatus = "running"): PawRuntimeTask {
   return {
+    schema: "qwenpaw.kernel-model.v1",
     task_id: "task-1",
     objective: "Review the project",
     status,
@@ -40,7 +41,7 @@ function projection(
 ): PawRuntimeTaskProjection {
   return {
     task: task(status),
-    active_run: {},
+    active_run: null,
     runs: [],
     latest_plan: null,
     conversation_messages: [],
@@ -48,7 +49,20 @@ function projection(
     pending_approvals: [],
     recent_decisions: [],
     artifacts: [],
+    artifact_registry: [],
     evidence: [],
+    evidence_registry: [],
+    verifications: [],
+    verification_registry: [],
+    result_package: null,
+    usage: {
+      schema: "qwenpaw.kernel-model.v1",
+      input_tokens: 0,
+      output_tokens: 0,
+      tool_calls: 0,
+      cost_micros: 0,
+      cost_unknown: false,
+    },
     checkpoint: null,
     capabilities: [],
     last_sequence: lastSequence,
@@ -90,15 +104,27 @@ function sseResponse(events: PawRuntimeTaskEvent[]): Response {
 
 function event(sequence: number): PawRuntimeTaskEvent {
   return {
+    schema: "qwenpaw.execution-event.v1",
     event_id: `event-${sequence}`,
     task_id: "task-1",
     run_id: "run-1",
+    invocation_id: null,
+    step_id: null,
+    source: null,
+    cause_event_id: null,
+    correlation_id: null,
     sequence,
     event_type: "task.progressed",
     occurred_at: "2026-10-10T00:00:01Z",
     payload: { sequence },
     artifact_refs: [],
     evidence_refs: [],
+    registry_generation: 4,
+    actor: {
+      schema: "qwenpaw.kernel-model.v1",
+      type: "runner",
+      id: "review.runner",
+    },
   };
 }
 

@@ -1,0 +1,181 @@
+{
+  "$defs": {
+    "ActorRef": {
+      "additionalProperties": false,
+      "description": "Stable identity attached to events and decisions.",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/ActorType"
+        }
+      },
+      "required": [
+        "schema",
+        "type",
+        "id"
+      ],
+      "title": "ActorRef",
+      "type": "object"
+    },
+    "ActorType": {
+      "description": "Type of actor responsible for a domain action.",
+      "enum": [
+        "user",
+        "system",
+        "agent",
+        "plugin",
+        "runner",
+        "sensor"
+      ],
+      "title": "ActorType",
+      "type": "string"
+    },
+    "InteractionResponse": {
+      "additionalProperties": false,
+      "description": "One idempotent user response submitted through any channel.",
+      "properties": {
+        "actor": {
+          "$ref": "#/$defs/ActorRef"
+        },
+        "expected_revision": {
+          "minimum": 1,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "title": "Idempotency Key",
+          "type": "string"
+        },
+        "interaction_id": {
+          "format": "uuid",
+          "title": "Interaction Id",
+          "type": "string"
+        },
+        "responded_at": {
+          "format": "date-time",
+          "title": "Responded At",
+          "type": "string"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "selected_option_ids": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Selected Option Ids",
+          "type": "array"
+        },
+        "text": {
+          "default": "",
+          "title": "Text",
+          "type": "string"
+        },
+        "values": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Values",
+          "type": "object"
+        }
+      },
+      "required": [
+        "schema",
+        "interaction_id",
+        "idempotency_key",
+        "expected_revision",
+        "actor",
+        "selected_option_ids",
+        "text",
+        "values",
+        "responded_at"
+      ],
+      "title": "InteractionResponse",
+      "type": "object"
+    },
+    "InteractionStatus": {
+      "description": "Durable lifecycle of a runtime interaction.",
+      "enum": [
+        "open",
+        "resolved",
+        "expired",
+        "cancelled"
+      ],
+      "title": "InteractionStatus",
+      "type": "string"
+    },
+    "JsonValue": {}
+  },
+  "$id": "https://schemas.qwenpaw.dev/sdk/interaction-resolution.v1.json",
+  "additionalProperties": false,
+  "description": "Authoritative terminal receipt after response validation.",
+  "properties": {
+    "detail": {
+      "default": "",
+      "title": "Detail",
+      "type": "string"
+    },
+    "interaction_id": {
+      "format": "uuid",
+      "title": "Interaction Id",
+      "type": "string"
+    },
+    "resolved_at": {
+      "format": "date-time",
+      "title": "Resolved At",
+      "type": "string"
+    },
+    "response": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/InteractionResponse"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "revision": {
+      "minimum": 2,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "schema": {
+      "const": "qwenpaw.kernel-model.v1",
+      "default": "qwenpaw.kernel-model.v1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/InteractionStatus"
+    }
+  },
+  "required": [
+    "schema",
+    "interaction_id",
+    "status",
+    "revision",
+    "response",
+    "detail",
+    "resolved_at"
+  ],
+  "title": "InteractionResolution",
+  "type": "object"
+}

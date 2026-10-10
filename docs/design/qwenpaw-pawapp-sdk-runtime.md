@@ -109,7 +109,22 @@ QwenPaw therefore reuses the running Host for Lite/Workstation/Hub. A future
 embedded local distribution may pin a compatible runtime like Codex does, but
 that is a packaging mode, not a second domain implementation.
 
-### 5.2 Developer-facing execution
+### 5.2 Contract publication
+
+Kernel Pydantic models are the contract source of truth. The repository
+exports deterministic JSON Schema under `schemas/sdk` and generates frontend
+TypeScript declarations under `console/src/contracts/generated`. Stable
+frontend names are compatibility aliases over those generated declarations;
+they are not parallel handwritten models.
+
+The publication boundary currently includes Host negotiation, Interaction
+requests and resolutions, and the complete Task projection. CI-compatible
+checks fail when either the committed JSON Schema or generated TypeScript is
+stale. Capability identifiers in the Host handshake remain open strings so
+an older SDK accepts optional features introduced by a newer Host; protocol
+version and required feature checks still provide the compatibility gate.
+
+### 5.3 Developer-facing execution
 
 New applications use `paw.tasks.run()` and receive a projection-backed
 handle. `paw.api` remains the PawApp-private HTTP namespace, so developers do
@@ -219,8 +234,6 @@ Implemented in the frontend SDK:
 
 Still pending in P2:
 
-- generate the shared frontend contracts from Kernel schemas once the schema
-  publication pipeline is available;
 - add a browser disconnect test against the running Host rather than only
   server replay plus SDK unit tests.
 
@@ -305,6 +318,10 @@ Verified on 2026-10-10 against the running Lite Host on port 8004:
   response model and an OpenAPI component. This freezes the server-side source
   needed for generated SDK contracts and validates every projection before it
   leaves the Host.
+- Host, Interaction and Task projection contracts are exported from Kernel
+  models as deterministic JSON Schema and compiled into TypeScript. Console
+  and PawApp SDK compatibility modules now alias those generated types, while
+  drift checks cover both publication stages.
 
 ## 10. Explicit non-goals
 

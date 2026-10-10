@@ -1,0 +1,51 @@
+# -*- coding: utf-8 -*-
+"""Tests for deterministic SDK contract schema publication."""
+
+import json
+from pathlib import Path
+
+from scripts.export_sdk_schemas import export_sdk_schemas
+from qwenpaw.kernel.host import HostHandshake
+
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_sdk_schema_export_is_deterministic_and_complete(tmp_path) -> None:
+    first = export_sdk_schemas(tmp_path)
+    first_content = {path.name: path.read_bytes() for path in first}
+    second = export_sdk_schemas(tmp_path)
+
+    assert first_content == {path.name: path.read_bytes() for path in second}
+    assert set(first_content) == {
+        "host-handshake.schema.json",
+        "interaction-request.schema.json",
+        "interaction-resolution.schema.json",
+        "task-projection.schema.json",
+    }
+    task_schema = json.loads(first_content["task-projection.schema.json"])
+    assert task_schema["$id"].endswith("/task-projection.v1.json")
+    assert "last_sequence" in task_schema["required"]
+    assert (
+        "registry_generation"
+        in task_schema["$defs"]["ExecutionEvent"]["required"]
+    )
+
+
+def test_committed_sdk_schemas_match_kernel_models(tmp_path) -> None:
+    exported = export_sdk_schemas(tmp_path)
+    committed_root = _REPOSITORY_ROOT / "schemas" / "sdk"
+
+    for generated_path in exported:
+        committed_path = committed_root / generated_path.name
+        assert (
+            committed_path.read_bytes() == generated_path.read_bytes()
+        ), f"{committed_path} is stale; run scripts/export_sdk_schemas.py"
+
+
+def test_host_handshake_accepts_future_optional_features() -> None:
+    handshake = HostHandshake(
+        version="2.2.2b1",
+        features=("task.runtime", "future.feature"),
+    )
+
+    assert handshake.features == ("task.runtime", "future.feature")

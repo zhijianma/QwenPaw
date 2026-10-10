@@ -19,6 +19,7 @@ vi.mock("../../../api/runtimeProjectionStream", () => ({
 }));
 
 const interaction: ChatInteraction = {
+  schema: "qwenpaw.kernel-model.v1",
   interaction_id: "interaction-1",
   kind: "user_input",
   mode: "blocking",
@@ -26,10 +27,16 @@ const interaction: ChatInteraction = {
   chat_id: "chat-1",
   invocation_id: "00000000-0000-0000-0000-000000000401",
   correlation_id: "00000000-0000-0000-0000-000000000402",
+  task_id: null,
+  source_id: null,
+  user_input_reason: "material_preference",
+  continuation_mode: "live_invocation",
+  continuation_checkpoint_id: null,
   title: "Choose output",
   prompt: "Which format should be generated?",
   options: [
     {
+      schema: "qwenpaw.kernel-model.v1",
       option_id: "md",
       label: "Markdown",
       description: "",
@@ -41,6 +48,7 @@ const interaction: ChatInteraction = {
   status: "open",
   revision: 1,
   created_at: "2026-09-28T00:00:00Z",
+  expires_at: null,
 };
 
 const runtimeProjection = (interactions: ChatInteraction[]) => ({
@@ -73,13 +81,24 @@ describe("RuntimeInteractionCards", () => {
     });
     vi.mocked(chatApi.getRuntime).mockResolvedValue(runtimeProjection([]));
     vi.mocked(chatApi.respondToInteraction).mockResolvedValue({
+      schema: "qwenpaw.kernel-model.v1",
       interaction_id: interaction.interaction_id,
       status: "resolved",
       revision: 2,
       response: {
+        schema: "qwenpaw.kernel-model.v1",
+        interaction_id: interaction.interaction_id,
+        idempotency_key: "response-1",
+        expected_revision: 1,
+        actor: {
+          schema: "qwenpaw.kernel-model.v1",
+          type: "user",
+          id: "local-user",
+        },
         selected_option_ids: ["md"],
         text: "",
         values: {},
+        responded_at: "2026-09-28T00:00:01Z",
       },
       detail: "",
       resolved_at: "2026-09-28T00:00:01Z",

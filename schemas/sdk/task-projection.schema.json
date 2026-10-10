@@ -1,0 +1,2657 @@
+{
+  "$defs": {
+    "AcceptanceVerification": {
+      "additionalProperties": false,
+      "description": "One verifier decision for one public acceptance criterion.",
+      "properties": {
+        "criterion": {
+          "minLength": 1,
+          "title": "Criterion",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "default": [],
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "passed": {
+          "title": "Passed",
+          "type": "boolean"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "criterion",
+        "passed",
+        "evidence_ids",
+        "reason"
+      ],
+      "title": "AcceptanceVerification",
+      "type": "object"
+    },
+    "ActorRef": {
+      "additionalProperties": false,
+      "description": "Stable identity attached to events and decisions.",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/ActorType"
+        }
+      },
+      "required": [
+        "schema",
+        "type",
+        "id"
+      ],
+      "title": "ActorRef",
+      "type": "object"
+    },
+    "ActorType": {
+      "description": "Type of actor responsible for a domain action.",
+      "enum": [
+        "user",
+        "system",
+        "agent",
+        "plugin",
+        "runner",
+        "sensor"
+      ],
+      "title": "ActorType",
+      "type": "string"
+    },
+    "ApprovalContinuation": {
+      "description": "Task behavior after a human resolves an approval request.",
+      "enum": [
+        "fail_on_rejection",
+        "resume_on_decision"
+      ],
+      "title": "ApprovalContinuation",
+      "type": "string"
+    },
+    "ApprovalDecision": {
+      "additionalProperties": false,
+      "description": "Final immutable decision for an approval request.",
+      "properties": {
+        "actor": {
+          "$ref": "#/$defs/ActorRef"
+        },
+        "approval_id": {
+          "format": "uuid",
+          "title": "Approval Id",
+          "type": "string"
+        },
+        "decided_at": {
+          "format": "date-time",
+          "title": "Decided At",
+          "type": "string"
+        },
+        "decision": {
+          "$ref": "#/$defs/ApprovalDecisionValue"
+        },
+        "reason": {
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "scope": {
+          "default": "exact",
+          "pattern": "^(exact|similar)$",
+          "title": "Scope",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "approval_id",
+        "decision",
+        "actor",
+        "scope",
+        "reason",
+        "decided_at"
+      ],
+      "title": "ApprovalDecision",
+      "type": "object"
+    },
+    "ApprovalDecisionValue": {
+      "description": "Final choices accepted by an approval decision.",
+      "enum": [
+        "approved",
+        "denied",
+        "expired",
+        "cancelled"
+      ],
+      "title": "ApprovalDecisionValue",
+      "type": "string"
+    },
+    "ApprovalDisplay": {
+      "additionalProperties": false,
+      "description": "Bounded user-facing description of an approval request.",
+      "properties": {
+        "provider": {
+          "default": "",
+          "title": "Provider",
+          "type": "string"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "summary": {
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "target": {
+          "default": "",
+          "title": "Target",
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "title",
+        "summary",
+        "target",
+        "provider"
+      ],
+      "title": "ApprovalDisplay",
+      "type": "object"
+    },
+    "ApprovalSource": {
+      "description": "Runtime boundary that originated an approval request.",
+      "enum": [
+        "tool",
+        "driver",
+        "harness",
+        "proposal",
+        "system"
+      ],
+      "title": "ApprovalSource",
+      "type": "string"
+    },
+    "ApprovalStatus": {
+      "description": "Lifecycle state of an approval request.",
+      "enum": [
+        "pending",
+        "approved",
+        "denied",
+        "expired",
+        "cancelled"
+      ],
+      "title": "ApprovalStatus",
+      "type": "string"
+    },
+    "ArtifactPreviewDescriptor": {
+      "additionalProperties": false,
+      "description": "Current-generation preview availability exposed to clients.",
+      "properties": {
+        "available": {
+          "title": "Available",
+          "type": "boolean"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "registry_generation": {
+          "minimum": 1,
+          "title": "Registry Generation",
+          "type": "integer"
+        },
+        "renderer_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Renderer Id"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "available",
+        "registry_generation",
+        "renderer_id",
+        "reason"
+      ],
+      "title": "ArtifactPreviewDescriptor",
+      "type": "object"
+    },
+    "ArtifactRecord": {
+      "additionalProperties": false,
+      "description": "Task-owned registry metadata around immutable artifact bytes.",
+      "properties": {
+        "artifact": {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        "cause_event_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cause Event Id"
+        },
+        "correlation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correlation Id"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "event_id": {
+          "format": "uuid",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "producer": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "title": "Producer",
+          "type": "string"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ArtifactStatus",
+          "default": "ready"
+        },
+        "step_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Step Id"
+        },
+        "supersedes_artifact_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Supersedes Artifact Id"
+        },
+        "task_id": {
+          "format": "uuid",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "version": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema",
+        "artifact",
+        "task_id",
+        "run_id",
+        "event_id",
+        "step_id",
+        "cause_event_id",
+        "correlation_id",
+        "version",
+        "status",
+        "supersedes_artifact_id",
+        "producer",
+        "created_at"
+      ],
+      "title": "ArtifactRecord",
+      "type": "object"
+    },
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "description": "Reference to data stored outside the execution ledger.",
+      "properties": {
+        "artifact_id": {
+          "format": "uuid",
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "content_hash": {
+          "pattern": "^(?:sha256:)?[0-9a-f]{64}$",
+          "title": "Content Hash",
+          "type": "string"
+        },
+        "kind": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "title": "Kind",
+          "type": "string"
+        },
+        "media_type": {
+          "minLength": 1,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Metadata",
+          "type": "object"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "size_bytes": {
+          "minimum": 0,
+          "title": "Size Bytes",
+          "type": "integer"
+        },
+        "uri": {
+          "minLength": 1,
+          "title": "Uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "artifact_id",
+        "kind",
+        "uri",
+        "media_type",
+        "content_hash",
+        "size_bytes",
+        "metadata"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    },
+    "ArtifactRequirement": {
+      "additionalProperties": false,
+      "description": "Artifact shape required before a Task may claim completion.",
+      "properties": {
+        "kind": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "title": "Kind",
+          "type": "string"
+        },
+        "media_types": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Media Types",
+          "type": "array"
+        },
+        "min_count": {
+          "default": 1,
+          "exclusiveMinimum": 0,
+          "title": "Min Count",
+          "type": "integer"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "kind",
+        "media_types",
+        "min_count"
+      ],
+      "title": "ArtifactRequirement",
+      "type": "object"
+    },
+    "ArtifactStatus": {
+      "description": "Lifecycle of one immutable artifact registry entry.",
+      "enum": [
+        "draft",
+        "ready",
+        "superseded",
+        "rejected"
+      ],
+      "title": "ArtifactStatus",
+      "type": "string"
+    },
+    "AutonomyLevel": {
+      "description": "How independently a Task may run.",
+      "enum": [
+        "l1",
+        "l2",
+        "l3"
+      ],
+      "title": "AutonomyLevel",
+      "type": "string"
+    },
+    "EscalationPolicy": {
+      "additionalProperties": false,
+      "description": "Action selected when an autonomous run cannot continue safely.",
+      "properties": {
+        "on_budget_exhausted": {
+          "default": "pause",
+          "enum": [
+            "fail",
+            "pause",
+            "inbox"
+          ],
+          "title": "On Budget Exhausted",
+          "type": "string"
+        },
+        "on_permission_denied": {
+          "default": "pause",
+          "enum": [
+            "fail",
+            "pause",
+            "inbox"
+          ],
+          "title": "On Permission Denied",
+          "type": "string"
+        },
+        "on_recovery_required": {
+          "default": "inbox",
+          "enum": [
+            "fail",
+            "pause",
+            "inbox"
+          ],
+          "title": "On Recovery Required",
+          "type": "string"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "on_budget_exhausted",
+        "on_permission_denied",
+        "on_recovery_required"
+      ],
+      "title": "EscalationPolicy",
+      "type": "object"
+    },
+    "EvidenceRecord": {
+      "additionalProperties": false,
+      "description": "Host-owned causal provenance for one immutable evidence claim.",
+      "properties": {
+        "cause_event_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cause Event Id"
+        },
+        "correlation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correlation Id"
+        },
+        "event_id": {
+          "format": "uuid",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "evidence": {
+          "$ref": "#/$defs/EvidenceRef"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "source": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "title": "Source",
+          "type": "string"
+        },
+        "step_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Step Id"
+        },
+        "task_id": {
+          "format": "uuid",
+          "title": "Task Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "evidence",
+        "task_id",
+        "run_id",
+        "event_id",
+        "step_id",
+        "cause_event_id",
+        "correlation_id",
+        "source"
+      ],
+      "title": "EvidenceRecord",
+      "type": "object"
+    },
+    "EvidenceRef": {
+      "additionalProperties": false,
+      "description": "Evidence claim backed by a durable artifact.",
+      "properties": {
+        "artifact_id": {
+          "format": "uuid",
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "captured_at": {
+          "format": "date-time",
+          "title": "Captured At",
+          "type": "string"
+        },
+        "claim": {
+          "minLength": 1,
+          "title": "Claim",
+          "type": "string"
+        },
+        "evidence_id": {
+          "format": "uuid",
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Metadata",
+          "type": "object"
+        },
+        "producer": {
+          "minLength": 1,
+          "title": "Producer",
+          "type": "string"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "evidence_id",
+        "artifact_id",
+        "claim",
+        "producer",
+        "captured_at",
+        "metadata"
+      ],
+      "title": "EvidenceRef",
+      "type": "object"
+    },
+    "ExecutionBudget": {
+      "additionalProperties": false,
+      "description": "Hard resource ceilings shared by every execution entrypoint.",
+      "properties": {
+        "max_concurrency": {
+          "default": 1,
+          "exclusiveMinimum": 0,
+          "title": "Max Concurrency",
+          "type": "integer"
+        },
+        "max_cost_micros": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Cost Micros"
+        },
+        "max_duration_seconds": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Duration Seconds"
+        },
+        "max_retries": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Max Retries",
+          "type": "integer"
+        },
+        "max_tokens": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Tokens"
+        },
+        "max_tool_calls": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Tool Calls"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "max_duration_seconds",
+        "max_tokens",
+        "max_cost_micros",
+        "max_tool_calls",
+        "max_retries",
+        "max_concurrency"
+      ],
+      "title": "ExecutionBudget",
+      "type": "object"
+    },
+    "ExecutionCheckpoint": {
+      "additionalProperties": false,
+      "description": "Safe task boundary from which a new run may resume.",
+      "properties": {
+        "checkpoint_id": {
+          "format": "uuid",
+          "title": "Checkpoint Id",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "runner_cursor": {
+          "$ref": "#/$defs/JsonValue",
+          "default": null
+        },
+        "safe_to_resume": {
+          "title": "Safe To Resume",
+          "type": "boolean"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "sequence": {
+          "minimum": 1,
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "task_id": {
+          "format": "uuid",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "workspace_checkpoint_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workspace Checkpoint Ref"
+        }
+      },
+      "required": [
+        "schema",
+        "checkpoint_id",
+        "task_id",
+        "run_id",
+        "sequence",
+        "safe_to_resume",
+        "runner_cursor",
+        "workspace_checkpoint_ref",
+        "created_at"
+      ],
+      "title": "ExecutionCheckpoint",
+      "type": "object"
+    },
+    "ExecutionContract": {
+      "additionalProperties": false,
+      "description": "Immutable reliability contract shared by all Task producers.",
+      "properties": {
+        "acceptance": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Acceptance",
+          "type": "array"
+        },
+        "autonomy_level": {
+          "$ref": "#/$defs/AutonomyLevel",
+          "default": "l1"
+        },
+        "budget": {
+          "$ref": "#/$defs/ExecutionBudget"
+        },
+        "escalation_policy": {
+          "$ref": "#/$defs/EscalationPolicy"
+        },
+        "exit_conditions": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ExitCondition"
+          },
+          "title": "Exit Conditions",
+          "type": "array"
+        },
+        "goal": {
+          "minLength": 1,
+          "title": "Goal",
+          "type": "string"
+        },
+        "permission_scope": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Permission Scope"
+        },
+        "required_artifacts": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ArtifactRequirement"
+          },
+          "title": "Required Artifacts",
+          "type": "array"
+        },
+        "retry_policy": {
+          "$ref": "#/$defs/RetryPolicy"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "side_effect_policy": {
+          "$ref": "#/$defs/SideEffectPolicy"
+        },
+        "timeout_policy": {
+          "$ref": "#/$defs/TimeoutPolicy"
+        },
+        "verification_policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VerificationPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "schema",
+        "goal",
+        "acceptance",
+        "autonomy_level",
+        "permission_scope",
+        "side_effect_policy",
+        "budget",
+        "retry_policy",
+        "timeout_policy",
+        "escalation_policy",
+        "exit_conditions",
+        "required_artifacts",
+        "verification_policy"
+      ],
+      "title": "ExecutionContract",
+      "type": "object"
+    },
+    "ExecutionEvent": {
+      "additionalProperties": false,
+      "description": "Canonical append-only event persisted by the execution ledger.",
+      "properties": {
+        "actor": {
+          "$ref": "#/$defs/ActorRef"
+        },
+        "artifact_refs": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ArtifactRef"
+          },
+          "title": "Artifact Refs",
+          "type": "array"
+        },
+        "cause_event_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cause Event Id"
+        },
+        "correlation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correlation Id"
+        },
+        "event_id": {
+          "format": "uuid",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "event_type": {
+          "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z][a-z0-9_-]*)+$",
+          "title": "Event Type",
+          "type": "string"
+        },
+        "evidence_refs": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          },
+          "title": "Evidence Refs",
+          "type": "array"
+        },
+        "invocation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Invocation Id"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Payload",
+          "type": "object"
+        },
+        "registry_generation": {
+          "minimum": 1,
+          "title": "Registry Generation",
+          "type": "integer"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Id"
+        },
+        "schema": {
+          "const": "qwenpaw.execution-event.v1",
+          "default": "qwenpaw.execution-event.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "sequence": {
+          "minimum": 1,
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
+        "step_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Step Id"
+        },
+        "task_id": {
+          "format": "uuid",
+          "title": "Task Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "invocation_id",
+        "step_id",
+        "source",
+        "cause_event_id",
+        "correlation_id",
+        "event_id",
+        "task_id",
+        "run_id",
+        "sequence",
+        "event_type",
+        "occurred_at",
+        "registry_generation",
+        "actor",
+        "payload",
+        "artifact_refs",
+        "evidence_refs"
+      ],
+      "title": "ExecutionEvent",
+      "type": "object"
+    },
+    "ExitCondition": {
+      "additionalProperties": false,
+      "description": "One explicit condition that can terminate an execution.",
+      "properties": {
+        "condition_id": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "title": "Condition Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "acceptance_met",
+            "artifact_emitted",
+            "max_iterations",
+            "explicit_signal"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "parameters": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Parameters",
+          "type": "object"
+        },
+        "required": {
+          "default": true,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "condition_id",
+        "kind",
+        "parameters",
+        "required"
+      ],
+      "title": "ExitCondition",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "Plan": {
+      "additionalProperties": false,
+      "description": "Versioned plan associated with a task.",
+      "properties": {
+        "acceptance_criteria": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Acceptance Criteria",
+          "type": "array"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "plan_id": {
+          "format": "uuid",
+          "title": "Plan Id",
+          "type": "string"
+        },
+        "revision": {
+          "minimum": 1,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/PlanStep"
+          },
+          "title": "Steps",
+          "type": "array"
+        },
+        "task_id": {
+          "format": "uuid",
+          "title": "Task Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "plan_id",
+        "task_id",
+        "revision",
+        "steps",
+        "acceptance_criteria",
+        "created_at"
+      ],
+      "title": "Plan",
+      "type": "object"
+    },
+    "PlanStep": {
+      "additionalProperties": false,
+      "description": "One deterministic unit in a task plan.",
+      "properties": {
+        "capability_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Capability Id"
+        },
+        "depends_on": {
+          "default": [],
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "metadata": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Metadata",
+          "type": "object"
+        },
+        "objective": {
+          "minLength": 1,
+          "title": "Objective",
+          "type": "string"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "step_id": {
+          "format": "uuid",
+          "title": "Step Id",
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "step_id",
+        "title",
+        "objective",
+        "depends_on",
+        "capability_id",
+        "metadata"
+      ],
+      "title": "PlanStep",
+      "type": "object"
+    },
+    "ResultPackage": {
+      "additionalProperties": false,
+      "description": "Terminal Task result assembled only from authoritative references.",
+      "properties": {
+        "artifacts": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ArtifactRef"
+          },
+          "title": "Artifacts",
+          "type": "array"
+        },
+        "evidence": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "task_id": {
+          "format": "uuid",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "verifications": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/VerificationResult"
+          },
+          "title": "Verifications",
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema",
+        "task_id",
+        "run_id",
+        "artifacts",
+        "evidence",
+        "verifications"
+      ],
+      "title": "ResultPackage",
+      "type": "object"
+    },
+    "RetryPolicy": {
+      "additionalProperties": false,
+      "description": "Bounded retry behavior independent from API request retries.",
+      "properties": {
+        "backoff_seconds": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Backoff Seconds",
+          "type": "number"
+        },
+        "retry_side_effects": {
+          "default": false,
+          "title": "Retry Side Effects",
+          "type": "boolean"
+        },
+        "retryable_error_codes": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Retryable Error Codes",
+          "type": "array"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "backoff_seconds",
+        "retryable_error_codes",
+        "retry_side_effects"
+      ],
+      "title": "RetryPolicy",
+      "type": "object"
+    },
+    "RiskLevel": {
+      "description": "Risk classification used by policy and approval contracts.",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "RiskLevel",
+      "type": "string"
+    },
+    "Run": {
+      "additionalProperties": false,
+      "description": "One immutable snapshot of an execution attempt.",
+      "properties": {
+        "attempt": {
+          "minimum": 1,
+          "title": "Attempt",
+          "type": "integer"
+        },
+        "checkpoint_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Checkpoint Id"
+        },
+        "correlation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correlation Id"
+        },
+        "execution_deadline_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Execution Deadline At"
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Finished At"
+        },
+        "invocation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Invocation Id"
+        },
+        "metadata": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Metadata",
+          "type": "object"
+        },
+        "plan_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Plan Id"
+        },
+        "registry_generation": {
+          "minimum": 1,
+          "title": "Registry Generation",
+          "type": "integer"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "runner_id": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "title": "Runner Id",
+          "type": "string"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Started At"
+        },
+        "status": {
+          "$ref": "#/$defs/RunStatus",
+          "default": "pending"
+        },
+        "strategy_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Strategy Id"
+        },
+        "task_id": {
+          "format": "uuid",
+          "title": "Task Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "run_id",
+        "task_id",
+        "plan_id",
+        "attempt",
+        "status",
+        "registry_generation",
+        "runner_id",
+        "strategy_id",
+        "invocation_id",
+        "correlation_id",
+        "checkpoint_id",
+        "started_at",
+        "execution_deadline_at",
+        "finished_at",
+        "metadata"
+      ],
+      "title": "Run",
+      "type": "object"
+    },
+    "RunStatus": {
+      "description": "Lifecycle states for one execution attempt.",
+      "enum": [
+        "pending",
+        "running",
+        "waiting_approval",
+        "suspended",
+        "succeeded",
+        "failed",
+        "cancelled"
+      ],
+      "title": "RunStatus",
+      "type": "string"
+    },
+    "SideEffectPolicy": {
+      "additionalProperties": false,
+      "description": "Fail-closed rules for externally observable operations.",
+      "properties": {
+        "automatic_retry": {
+          "default": false,
+          "title": "Automatic Retry",
+          "type": "boolean"
+        },
+        "require_idempotency": {
+          "default": true,
+          "title": "Require Idempotency",
+          "type": "boolean"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "uncertain_outcome": {
+          "default": "block",
+          "enum": [
+            "block",
+            "escalate"
+          ],
+          "title": "Uncertain Outcome",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "require_idempotency",
+        "automatic_retry",
+        "uncertain_outcome"
+      ],
+      "title": "SideEffectPolicy",
+      "type": "object"
+    },
+    "Task": {
+      "additionalProperties": false,
+      "description": "Durable representation of a user goal.",
+      "properties": {
+        "acceptance_criteria": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Acceptance Criteria",
+          "type": "array"
+        },
+        "active_run_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Active Run Id"
+        },
+        "agent_id": {
+          "minLength": 1,
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "constraints": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Constraints",
+          "type": "array"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "execution_contract": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutionContract"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "metadata": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Metadata",
+          "type": "object"
+        },
+        "objective": {
+          "minLength": 1,
+          "title": "Objective",
+          "type": "string"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/TaskSource"
+        },
+        "status": {
+          "$ref": "#/$defs/TaskStatus",
+          "default": "created"
+        },
+        "task_id": {
+          "format": "uuid",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "version": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema",
+        "task_id",
+        "objective",
+        "status",
+        "source",
+        "agent_id",
+        "constraints",
+        "acceptance_criteria",
+        "execution_contract",
+        "active_run_id",
+        "version",
+        "created_at",
+        "updated_at",
+        "metadata"
+      ],
+      "title": "Task",
+      "type": "object"
+    },
+    "TaskApprovalResponse": {
+      "additionalProperties": false,
+      "description": "One approval request with its optional immutable decision.",
+      "properties": {
+        "action": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "title": "Action",
+          "type": "string"
+        },
+        "approval_id": {
+          "format": "uuid",
+          "title": "Approval Id",
+          "type": "string"
+        },
+        "checkpoint_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Checkpoint Id"
+        },
+        "continuation": {
+          "$ref": "#/$defs/ApprovalContinuation",
+          "default": "fail_on_rejection"
+        },
+        "correlation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correlation Id"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ApprovalDecision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "display": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ApprovalDisplay"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expires At"
+        },
+        "invocation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Invocation Id"
+        },
+        "policy": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "title": "Policy",
+          "type": "string"
+        },
+        "redacted_arguments": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Redacted Arguments",
+          "type": "object"
+        },
+        "requester": {
+          "$ref": "#/$defs/ActorRef"
+        },
+        "risk": {
+          "$ref": "#/$defs/RiskLevel"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Id"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/ApprovalSource",
+          "default": "system"
+        },
+        "status": {
+          "$ref": "#/$defs/ApprovalStatus",
+          "default": "pending"
+        },
+        "task_id": {
+          "format": "uuid",
+          "title": "Task Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "approval_id",
+        "task_id",
+        "run_id",
+        "invocation_id",
+        "correlation_id",
+        "source",
+        "action",
+        "risk",
+        "requester",
+        "policy",
+        "continuation",
+        "checkpoint_id",
+        "status",
+        "expires_at",
+        "redacted_arguments",
+        "display",
+        "created_at",
+        "decision"
+      ],
+      "title": "TaskApprovalResponse",
+      "type": "object"
+    },
+    "TaskArtifactResponse": {
+      "additionalProperties": false,
+      "description": "One immutable Artifact with current preview availability.",
+      "properties": {
+        "artifact_id": {
+          "format": "uuid",
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "content_hash": {
+          "pattern": "^(?:sha256:)?[0-9a-f]{64}$",
+          "title": "Content Hash",
+          "type": "string"
+        },
+        "kind": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "title": "Kind",
+          "type": "string"
+        },
+        "media_type": {
+          "minLength": 1,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Metadata",
+          "type": "object"
+        },
+        "preview": {
+          "$ref": "#/$defs/ArtifactPreviewDescriptor"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "size_bytes": {
+          "minimum": 0,
+          "title": "Size Bytes",
+          "type": "integer"
+        },
+        "uri": {
+          "minLength": 1,
+          "title": "Uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "artifact_id",
+        "kind",
+        "uri",
+        "media_type",
+        "content_hash",
+        "size_bytes",
+        "metadata",
+        "preview"
+      ],
+      "title": "TaskArtifactResponse",
+      "type": "object"
+    },
+    "TaskCapabilitySelectionResponse": {
+      "additionalProperties": false,
+      "description": "One generation-pinned capability visible in the projection.",
+      "properties": {
+        "capability_id": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "title": "Capability Id",
+          "type": "string"
+        },
+        "registry_generation": {
+          "minimum": 1,
+          "title": "Registry Generation",
+          "type": "integer"
+        },
+        "slot": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "title": "Slot",
+          "type": "string"
+        }
+      },
+      "required": [
+        "capability_id",
+        "slot",
+        "registry_generation"
+      ],
+      "title": "TaskCapabilitySelectionResponse",
+      "type": "object"
+    },
+    "TaskConversationMessageResponse": {
+      "additionalProperties": false,
+      "description": "One committed Chat message projected into the Task Workbench.",
+      "properties": {
+        "completed_at": {
+          "format": "date-time",
+          "title": "Completed At",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "user",
+            "assistant"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Run Id"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "text",
+        "run_id",
+        "created_at",
+        "completed_at"
+      ],
+      "title": "TaskConversationMessageResponse",
+      "type": "object"
+    },
+    "TaskSource": {
+      "description": "Origin of a task request.",
+      "enum": [
+        "user",
+        "sensor",
+        "schedule",
+        "meta",
+        "api"
+      ],
+      "title": "TaskSource",
+      "type": "string"
+    },
+    "TaskStatus": {
+      "description": "Durable lifecycle states for a user goal.",
+      "enum": [
+        "created",
+        "planned",
+        "running",
+        "waiting_approval",
+        "suspended",
+        "completed",
+        "failed",
+        "cancelled"
+      ],
+      "title": "TaskStatus",
+      "type": "string"
+    },
+    "TimeoutPolicy": {
+      "additionalProperties": false,
+      "description": "Timeouts applied at execution and human-wait boundaries.",
+      "properties": {
+        "approval_seconds": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approval Seconds"
+        },
+        "attempt_seconds": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attempt Seconds"
+        },
+        "idle_seconds": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Idle Seconds"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "attempt_seconds",
+        "idle_seconds",
+        "approval_seconds"
+      ],
+      "title": "TimeoutPolicy",
+      "type": "object"
+    },
+    "UsageSnapshot": {
+      "additionalProperties": false,
+      "description": "Cumulative resource usage reconstructed from durable events.",
+      "properties": {
+        "cost_micros": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Cost Micros",
+          "type": "integer"
+        },
+        "cost_unknown": {
+          "default": false,
+          "title": "Cost Unknown",
+          "type": "boolean"
+        },
+        "input_tokens": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Input Tokens",
+          "type": "integer"
+        },
+        "output_tokens": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Output Tokens",
+          "type": "integer"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "tool_calls": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Tool Calls",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema",
+        "input_tokens",
+        "output_tokens",
+        "cost_micros",
+        "cost_unknown",
+        "tool_calls"
+      ],
+      "title": "UsageSnapshot",
+      "type": "object"
+    },
+    "VerificationPolicy": {
+      "additionalProperties": false,
+      "description": "Evidence and verifier requirements applied after execution.",
+      "properties": {
+        "fail_on_unverified": {
+          "default": true,
+          "title": "Fail On Unverified",
+          "type": "boolean"
+        },
+        "require_all_acceptance": {
+          "default": true,
+          "title": "Require All Acceptance",
+          "type": "boolean"
+        },
+        "require_evidence": {
+          "default": false,
+          "title": "Require Evidence",
+          "type": "boolean"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "verifier_ids": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+            "type": "string"
+          },
+          "title": "Verifier Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema",
+        "verifier_ids",
+        "require_all_acceptance",
+        "require_evidence",
+        "fail_on_unverified"
+      ],
+      "title": "VerificationPolicy",
+      "type": "object"
+    },
+    "VerificationRecord": {
+      "additionalProperties": false,
+      "description": "Host-owned causal provenance for one verifier result.",
+      "properties": {
+        "cause_event_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cause Event Id"
+        },
+        "correlation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correlation Id"
+        },
+        "event_id": {
+          "format": "uuid",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "invocation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Invocation Id"
+        },
+        "occurred_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Occurred At"
+        },
+        "registry_generation": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Registry Generation"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "source": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "title": "Source",
+          "type": "string"
+        },
+        "step_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Step Id"
+        },
+        "task_id": {
+          "format": "uuid",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "verification": {
+          "$ref": "#/$defs/VerificationResult"
+        }
+      },
+      "required": [
+        "schema",
+        "verification",
+        "task_id",
+        "run_id",
+        "event_id",
+        "step_id",
+        "cause_event_id",
+        "correlation_id",
+        "invocation_id",
+        "registry_generation",
+        "source",
+        "occurred_at"
+      ],
+      "title": "VerificationRecord",
+      "type": "object"
+    },
+    "VerificationResult": {
+      "additionalProperties": false,
+      "description": "Immutable verifier output persisted through an execution event.",
+      "properties": {
+        "acceptance": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AcceptanceVerification"
+          },
+          "title": "Acceptance",
+          "type": "array"
+        },
+        "artifact_ids": {
+          "default": [],
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": "Artifact Ids",
+          "type": "array"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "default": [],
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "metadata": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Metadata",
+          "type": "object"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/VerificationStatus"
+        },
+        "task_id": {
+          "format": "uuid",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "verification_id": {
+          "format": "uuid",
+          "title": "Verification Id",
+          "type": "string"
+        },
+        "verifier_id": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "title": "Verifier Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "verification_id",
+        "task_id",
+        "run_id",
+        "verifier_id",
+        "status",
+        "acceptance",
+        "artifact_ids",
+        "evidence_ids",
+        "created_at",
+        "metadata"
+      ],
+      "title": "VerificationResult",
+      "type": "object"
+    },
+    "VerificationStatus": {
+      "description": "Terminal verifier decision over task acceptance.",
+      "enum": [
+        "passed",
+        "failed"
+      ],
+      "title": "VerificationStatus",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.qwenpaw.dev/sdk/task-projection.v1.json",
+  "additionalProperties": false,
+  "description": "Authoritative, bounded Task Workbench read contract.",
+  "properties": {
+    "active_run": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Run"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "artifact_registry": {
+      "items": {
+        "$ref": "#/$defs/ArtifactRecord"
+      },
+      "title": "Artifact Registry",
+      "type": "array"
+    },
+    "artifacts": {
+      "items": {
+        "$ref": "#/$defs/TaskArtifactResponse"
+      },
+      "title": "Artifacts",
+      "type": "array"
+    },
+    "capabilities": {
+      "items": {
+        "$ref": "#/$defs/TaskCapabilitySelectionResponse"
+      },
+      "title": "Capabilities",
+      "type": "array"
+    },
+    "checkpoint": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ExecutionCheckpoint"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "conversation_messages": {
+      "items": {
+        "$ref": "#/$defs/TaskConversationMessageResponse"
+      },
+      "title": "Conversation Messages",
+      "type": "array"
+    },
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/EvidenceRef"
+      },
+      "title": "Evidence",
+      "type": "array"
+    },
+    "evidence_registry": {
+      "items": {
+        "$ref": "#/$defs/EvidenceRecord"
+      },
+      "title": "Evidence Registry",
+      "type": "array"
+    },
+    "last_sequence": {
+      "minimum": 0,
+      "title": "Last Sequence",
+      "type": "integer"
+    },
+    "latest_plan": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Plan"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "pending_approvals": {
+      "items": {
+        "$ref": "#/$defs/TaskApprovalResponse"
+      },
+      "title": "Pending Approvals",
+      "type": "array"
+    },
+    "recent_decisions": {
+      "items": {
+        "$ref": "#/$defs/TaskApprovalResponse"
+      },
+      "title": "Recent Decisions",
+      "type": "array"
+    },
+    "result_package": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ResultPackage"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "runs": {
+      "items": {
+        "$ref": "#/$defs/Run"
+      },
+      "title": "Runs",
+      "type": "array"
+    },
+    "task": {
+      "$ref": "#/$defs/Task"
+    },
+    "tool_activities": {
+      "items": {
+        "$ref": "#/$defs/ExecutionEvent"
+      },
+      "title": "Tool Activities",
+      "type": "array"
+    },
+    "usage": {
+      "$ref": "#/$defs/UsageSnapshot"
+    },
+    "verification_registry": {
+      "items": {
+        "$ref": "#/$defs/VerificationRecord"
+      },
+      "title": "Verification Registry",
+      "type": "array"
+    },
+    "verifications": {
+      "items": {
+        "$ref": "#/$defs/VerificationResult"
+      },
+      "title": "Verifications",
+      "type": "array"
+    }
+  },
+  "required": [
+    "task",
+    "active_run",
+    "runs",
+    "latest_plan",
+    "conversation_messages",
+    "tool_activities",
+    "pending_approvals",
+    "recent_decisions",
+    "artifacts",
+    "artifact_registry",
+    "evidence",
+    "evidence_registry",
+    "verifications",
+    "verification_registry",
+    "result_package",
+    "usage",
+    "checkpoint",
+    "capabilities",
+    "last_sequence"
+  ],
+  "title": "TaskProjectionResponse",
+  "type": "object"
+}
