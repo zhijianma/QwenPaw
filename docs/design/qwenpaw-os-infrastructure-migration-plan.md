@@ -1320,10 +1320,10 @@ Cron 不形成独立审批或产物事实源。
       不同 Agent 下相同 Chat/Turn ID 仍严格隔离。2026-10-10 真实 Lite 数据的
       3179 次调用在日期、模型、Agent、Chat、Turn 五种聚合上的 call sum 均与全局
       完全相等；固定 Chat 的两条实际模型记录只返回 `chat_id`。
-      Console 现可组合筛选日期、Agent、Chat、Turn、Provider 和 Model，全部直接查询
-      同一 Summary API，不恢复页面私有聚合；仅日期变化刷新明确标为全局的 LLM/工具
-      趋势。真实浏览器从全局约 3.2K 次调用筛至 DashScope 约 1.4K、默认 Agent 341，
-      再筛固定 Chat 后得到 6 次调用、208.1K 输入和约 1K 输出，与直接 API 完全一致。
+      Console 的 Token Usage Settings 现只组合筛选日期、Provider 和 Model，并只展示
+      全局、模型与日期资源视图；Agent Token 归入“智能体统计”，Chat/Turn 仅由 Chat
+      回合用量消费，不在设置页形成记录浏览器。服务端 Summary 仍保留 Agent、Chat、
+      Turn 查询能力和同一事实口径，避免展示调整破坏领域数据或后续投影。
     - [x] Provider/Model 聚合不再直接以 `provider:model` 作为内部归并身份；领域层使用
       精确二元组，普通 key 保持兼容，只有两条实际路由发生分隔符碰撞时才切换为 JSON
       tuple key。Console 从 `provider_id/model` 字段渲染标签，不解析兼容 key。碰撞路由
