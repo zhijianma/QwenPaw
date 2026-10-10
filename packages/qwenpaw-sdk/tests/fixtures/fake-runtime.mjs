@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { spawn } from "node:child_process";
 
 const mode = process.env.FAKE_QWENPAW_MODE ?? "ready";
 const holdsRuntime =
@@ -145,19 +146,39 @@ if (mode === "no-launch") {
   server.listen(0, "127.0.0.1", () => {
     const address = server.address();
     if (typeof address === "string" || address === null) process.exit(24);
-    console.log(
-      `QWENPAW_MANAGED_HOST ${JSON.stringify({
-        schema: "qwenpaw.managed-host-launch.v1",
-        api_url:
-          mode === "invalid-api-root"
-            ? `http://127.0.0.1:${address.port}/other/api`
-            : `http://127.0.0.1:${address.port}/api`,
-        pid: process.pid,
-      })}`,
-    );
+    const publishLaunch = () =>
+      console.log(
+        `QWENPAW_MANAGED_HOST ${JSON.stringify({
+          schema: "qwenpaw.managed-host-launch.v1",
+          api_url:
+            mode === "invalid-api-root"
+              ? `http://127.0.0.1:${address.port}/other/api`
+              : `http://127.0.0.1:${address.port}/api`,
+          pid: process.pid,
+        })}`,
+      );
+    if (mode === "child-ignores-term") {
+      const child = spawn(
+        process.execPath,
+        [
+          "-e",
+          "process.on('SIGTERM',()=>{});" +
+            "process.stdout.write('ready\\n');setInterval(()=>{},1000)",
+        ],
+        { stdio: ["ignore", "pipe", "ignore"] },
+      );
+      child.stdout.once("data", () => {
+        console.log(`QWENPAW_TEST_CHILD ${child.pid}`);
+        publishLaunch();
+      });
+      return;
+    }
+    publishLaunch();
   });
 
   process.on("SIGTERM", () => {
-    if (mode !== "ignore-term") server.close(() => process.exit(0));
+    if (mode !== "ignore-term") {
+      server.close(() => process.exit(0));
+    }
   });
 }

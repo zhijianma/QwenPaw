@@ -409,21 +409,52 @@ function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+function managedProcessAlive(child: ChildProcessWithoutNullStreams): boolean {
+  if (child.pid === undefined) return false;
+  if (process.platform === "win32") {
+    return child.exitCode === null && child.signalCode === null;
+  }
+  try {
+    process.kill(-child.pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+function signalManagedProcess(
+  child: ChildProcessWithoutNullStreams,
+  signal: NodeJS.Signals,
+): boolean {
+  if (child.pid === undefined) return false;
+  if (process.platform === "win32") return child.kill(signal);
+  try {
+    process.kill(-child.pid, signal);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+    throw error;
+  }
+}
+
 async function waitForExit(
   child: ChildProcessWithoutNullStreams,
   timeoutMs: number,
 ): Promise<boolean> {
-  if (child.exitCode !== null || child.signalCode !== null) return true;
+  if (!managedProcessAlive(child)) return true;
   return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      child.off("exit", onExit);
-      resolve(false);
-    }, timeoutMs);
-    const onExit = () => {
+    let settled = false;
+    const finish = (exited: boolean) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      resolve(true);
+      clearInterval(poll);
+      resolve(exited);
     };
-    child.once("exit", onExit);
+    const poll = setInterval(() => {
+      if (!managedProcessAlive(child)) finish(true);
+    }, 10);
+    const timer = setTimeout(() => finish(false), timeoutMs);
   });
 }
 
@@ -433,22 +464,18 @@ async function terminate(
   lifecycle?: ManagedHostLifecycle,
 ): Promise<void> {
   if (child.pid === undefined) return;
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  child.kill("SIGTERM");
+  if (!signalManagedProcess(child, "SIGTERM")) return;
   if (await waitForExit(child, timeoutMs)) return;
   if (lifecycle) lifecycle.forced = true;
-  child.kill("SIGKILL");
+  signalManagedProcess(child, "SIGKILL");
   await waitForExit(child, Math.min(timeoutMs, 1_000));
 }
 
-function observeManagedHostExit(
+function observeManagedHostProcessExit(
   child: ChildProcessWithoutNullStreams,
-  lifecycle: ManagedHostLifecycle,
-): Promise<ManagedHostExit> {
-  const exit = (): ManagedHostExit => ({
+): Promise<Pick<ManagedHostExit, "pid" | "code" | "signal">> {
+  const exit = () => ({
     pid: child.pid as number,
-    expected: lifecycle.closing,
-    forced: lifecycle.forced,
     code: child.exitCode,
     signal: child.signalCode,
   });
@@ -626,7 +653,16 @@ export class QwenPawHost {
     this.handshake = handshake;
     this.apiUrl = launch.api_url;
     this.pid = launch.pid;
-    this.exited = observeManagedHostExit(child, this.#lifecycle);
+    this.exited = observeManagedHostProcessExit(child).then(async (exit) => {
+      if (this.#lifecycle.closing && this.#closePromise) {
+        await this.#closePromise;
+      }
+      return {
+        ...exit,
+        expected: this.#lifecycle.closing,
+        forced: this.#lifecycle.forced,
+      };
+    });
   }
 
   static async create(options: QwenPawHostOptions): Promise<QwenPawHost> {
@@ -657,6 +693,7 @@ export class QwenPawHost {
     if (options.stateDir) env.QWENPAW_WORKING_DIR = options.stateDir;
     const child = spawn(options.runtime.executable, args, {
       cwd: options.cwd,
+      detached: process.platform !== "win32",
       env,
       shell: false,
       windowsHide: true,

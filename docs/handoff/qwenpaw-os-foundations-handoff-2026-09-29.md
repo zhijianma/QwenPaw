@@ -1544,3 +1544,7 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
 - 运行中崩溃也已进入 managed SDK 门禁：建立 Turn SSE 后让子 Host 以 code 32 退出，
   `host.exited` 独立报告 unexpected，活跃 stream 以错误结束，不能把 transport EOF
   伪装为 inactive、completed 或其他终态。
+- managed Host 在 POSIX 上改为 SDK-owned process group；关闭先向组发送 SIGTERM，
+  超时再对同一组 SIGKILL。macOS 子进程 fixture 会派生并让 worker 忽略 SIGTERM，
+  验收父子 PID 都被回收，避免 Harness/Tool worker 成为孤儿。Windows tree cleanup 与
+  Linux 实机仍是未覆盖平台门禁，不从 macOS 结果外推。

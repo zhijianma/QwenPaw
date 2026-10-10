@@ -571,6 +571,14 @@ Verified on 2026-10-10 against the running Lite Host on port 8004:
   immutable `host.exited` promise reports an unexpected exit independently,
   while the stream fails rather than manufacturing an inactive or successful
   terminal state.
+- On POSIX, the managed Host is now started in an SDK-owned process group.
+  Graceful shutdown targets the group and timeout escalation sends `SIGKILL`
+  to that same ownership boundary. A real descendant that ignores `SIGTERM`
+  proves close does not leave an orphan even when the parent exits cleanly
+  first. During SDK-owned close, `host.exited` waits for group cleanup before
+  reporting the final `forced` flag; unexpected parent exits still notify
+  immediately. Windows tree cleanup remains an explicit platform-validation
+  gap rather than an inferred guarantee.
 
 ## 10. Explicit non-goals
 

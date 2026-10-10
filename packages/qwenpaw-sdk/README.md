@@ -79,6 +79,12 @@ Call `close()` or use `await using` to stop the owned process. Startup failure,
 incompatible protocol, missing features and timeout all terminate that process
 before rejecting.
 
+On POSIX, the Host runs in an SDK-owned process group. Shutdown first sends
+`SIGTERM` to that group and escalates to `SIGKILL` after the configured grace
+period, so ordinary Harness and Tool children cannot outlive the managed Host.
+Windows currently guarantees bounded parent-process shutdown; full process-tree
+cleanup remains a documented platform gap.
+
 `host.exited` resolves for every post-readiness process exit. Its record
 contains the owned PID, exit code or signal, and whether `close()` initiated
 the shutdown or escalated to a forced kill. Applications can therefore
@@ -95,3 +101,5 @@ reported as successful completion.
 `turn.follow()` streams the Host-owned execution chain and `turn.wait()`
 reconciles disconnects until execution settles. A settled `inactive` state is
 not promoted to `achieved`; verified goal outcomes remain explicit Host facts.
+Aborting observation closes the HTTP/SSE stream but does not interrupt the
+Host-owned Invocation; use `chat.interrupt()` when execution itself must stop.

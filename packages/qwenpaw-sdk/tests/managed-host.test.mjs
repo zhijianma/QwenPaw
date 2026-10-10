@@ -30,6 +30,24 @@ async function readRuntimeStream(stream) {
   return { projection: first.value, cursor: done.value };
 }
 
+function processExists(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    throw error;
+  }
+}
+
+async function waitForProcessExit(pid, timeoutMs = 1_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (processExists(pid) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return !processExists(pid);
+}
+
 test("starts, negotiates and closes one owned Host", async () => {
   const host = await QwenPawHost.create(
     options("ready", { requiredFeatures: ["chat.control.v1"] }),
@@ -169,6 +187,36 @@ test(
     assert.equal(exit.expected, true);
     assert.equal(exit.forced, true);
     assert.equal(exit.signal, "SIGKILL");
+  },
+);
+
+test(
+  "force-closes the owned POSIX Host process group",
+  { skip: process.platform === "win32" },
+  async () => {
+    let workerPid;
+    const host = await QwenPawHost.create(
+      options("child-ignores-term", {
+        shutdownTimeoutMs: 100,
+        onOutput({ line }) {
+          if (line.startsWith("QWENPAW_TEST_CHILD ")) {
+            workerPid = Number(line.slice("QWENPAW_TEST_CHILD ".length));
+          }
+        },
+      }),
+    );
+
+    assert.ok(Number.isSafeInteger(workerPid));
+    assert.equal(processExists(workerPid), true);
+    await host.close();
+    assert.deepEqual(await host.exited, {
+      pid: host.pid,
+      expected: true,
+      forced: true,
+      code: 0,
+      signal: null,
+    });
+    assert.equal(await waitForProcessExit(workerPid), true);
   },
 );
 
