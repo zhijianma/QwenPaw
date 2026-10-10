@@ -30,7 +30,7 @@ import {
 const LAUNCH_PREFIX = "QWENPAW_MANAGED_HOST ";
 const LAUNCH_SCHEMA = "qwenpaw.managed-host-launch.v1";
 const DEFAULT_STARTUP_TIMEOUT_MS = 15_000;
-const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
+const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
 const MAX_DIAGNOSTIC_CHARS = 8_192;
 
 export type ManagedHostErrorCode =
@@ -81,6 +81,19 @@ export interface QwenPawHostOptions {
   startupTimeoutMs?: number;
   shutdownTimeoutMs?: number;
   onOutput?: (output: ManagedHostOutput) => void;
+}
+
+export interface ManagedHostExit {
+  pid: number;
+  expected: boolean;
+  forced: boolean;
+  code: number | null;
+  signal: string | null;
+}
+
+interface ManagedHostLifecycle {
+  closing: boolean;
+  forced: boolean;
 }
 
 export class QwenPawTurnError extends Error {
@@ -365,13 +378,34 @@ async function waitForExit(
 async function terminate(
   child: ChildProcessWithoutNullStreams,
   timeoutMs: number,
+  lifecycle?: ManagedHostLifecycle,
 ): Promise<void> {
   if (child.pid === undefined) return;
   if (child.exitCode !== null || child.signalCode !== null) return;
   child.kill("SIGTERM");
   if (await waitForExit(child, timeoutMs)) return;
+  if (lifecycle) lifecycle.forced = true;
   child.kill("SIGKILL");
-  await waitForExit(child, timeoutMs);
+  await waitForExit(child, Math.min(timeoutMs, 1_000));
+}
+
+function observeManagedHostExit(
+  child: ChildProcessWithoutNullStreams,
+  lifecycle: ManagedHostLifecycle,
+): Promise<ManagedHostExit> {
+  const exit = (): ManagedHostExit => ({
+    pid: child.pid as number,
+    expected: lifecycle.closing,
+    forced: lifecycle.forced,
+    code: child.exitCode,
+    signal: child.signalCode,
+  });
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve(exit());
+  }
+  return new Promise((resolve) => {
+    child.once("exit", () => resolve(exit()));
+  });
 }
 
 async function waitForLaunch(
@@ -518,8 +552,10 @@ export class QwenPawHost {
   readonly handshake: RuntimeHandshake;
   readonly apiUrl: string;
   readonly pid: number;
+  readonly exited: Promise<ManagedHostExit>;
 
   readonly #child: ChildProcessWithoutNullStreams;
+  readonly #lifecycle: ManagedHostLifecycle;
   readonly #shutdownTimeoutMs: number;
   #closePromise: Promise<void> | undefined;
 
@@ -531,12 +567,14 @@ export class QwenPawHost {
     shutdownTimeoutMs: number,
   ) {
     this.#child = child;
+    this.#lifecycle = { closing: false, forced: false };
     this.#shutdownTimeoutMs = shutdownTimeoutMs;
     this.client = client;
     this.chats = new QwenPawChats(client);
     this.handshake = handshake;
     this.apiUrl = launch.api_url;
     this.pid = launch.pid;
+    this.exited = observeManagedHostExit(child, this.#lifecycle);
   }
 
   static async create(options: QwenPawHostOptions): Promise<QwenPawHost> {
@@ -605,7 +643,12 @@ export class QwenPawHost {
   }
 
   close(): Promise<void> {
-    this.#closePromise ??= terminate(this.#child, this.#shutdownTimeoutMs);
+    this.#lifecycle.closing = true;
+    this.#closePromise ??= terminate(
+      this.#child,
+      this.#shutdownTimeoutMs,
+      this.#lifecycle,
+    );
     return this.#closePromise;
   }
 

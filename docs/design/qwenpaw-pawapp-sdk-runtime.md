@@ -517,6 +517,13 @@ Verified on 2026-10-10 against the running Lite Host on port 8004:
   thin `QwenPawTurn` wrapper. Mechanical `inactive` remains distinct from the
   verified Outcome states `achieved`, `partial`, `not_achieved` and
   `abandoned`; a truncated projection window fails closed instead of guessing.
+- Managed Host lifecycle is now observable after readiness through one
+  immutable `host.exited` Promise. It distinguishes SDK-initiated shutdown from
+  an unexpected runtime exit using the owned PID, exit code/signal and explicit
+  forced-kill flag; it does not introduce SDK-side restart state. AbortSignal
+  cancellation also reaches an active submission stream and reconnect delay
+  without being swallowed. The default graceful window is ten seconds, while
+  post-SIGKILL observation is capped at one second.
 - Nine real child-process tests cover ready, missing feature, incompatible or
   malformed handshake, malformed launch or API root, early exit, spawn failure
   and launch timeout.

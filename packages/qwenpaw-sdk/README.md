@@ -45,6 +45,12 @@ Call `close()` or use `await using` to stop the owned process. Startup failure,
 incompatible protocol, missing features and timeout all terminate that process
 before rejecting.
 
+`host.exited` resolves for every post-readiness process exit. Its record
+contains the owned PID, exit code or signal, and whether `close()` initiated
+the shutdown or escalated to a forced kill. Applications can therefore
+distinguish graceful disposal from a runtime crash or bounded forced shutdown
+without polling or waiting for an unrelated API call to fail.
+
 `host.chats.open()` returns a convenience handle bound to `ChatSpec.id`.
 History, submission, queue, steer, interrupt, stop-and-clear, approvals, fork
 and runtime streams delegate to the same `@qwenpaw/client` used remotely. The

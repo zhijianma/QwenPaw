@@ -393,4 +393,39 @@ describe("public QwenPaw client", () => {
       submissionId: "submission-old",
     });
   });
+
+  it("propagates cancellation while following a submission", async () => {
+    const controller = new AbortController();
+    const request = vi.fn().mockResolvedValue({
+      chat_id: "chat-1",
+      execution_chains: [
+        {
+          chat_id: "chat-1",
+          correlation_id: "correlation-1",
+          state: "running",
+          submission_ids: ["submission-1"],
+        },
+      ],
+      cursor: "cursor-1",
+    });
+    const openStream = vi.fn(
+      (_path: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true },
+          );
+        }),
+    );
+    const client = createQwenPawClient({ request, openStream });
+    const execution = client.chats.followSubmission("chat-1", "submission-1", {
+      signal: controller.signal,
+    });
+
+    expect((await execution.next()).value.state).toBe("running");
+    const pending = execution.next();
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  });
 });

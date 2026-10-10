@@ -28,7 +28,41 @@ test("starts, negotiates and closes one owned Host", async () => {
   assert.ok(host.pid > 0);
   await host.close();
   await host.close();
+  const exit = await host.exited;
+  assert.equal(exit.pid, host.pid);
+  assert.equal(exit.expected, true);
+  assert.equal(exit.forced, false);
+  assert.ok(exit.code !== null || exit.signal !== null);
 });
+
+test("reports an unexpected runtime exit after readiness", async () => {
+  const host = await QwenPawHost.create(options("crash-after-handshake"));
+
+  assert.deepEqual(await host.exited, {
+    pid: host.pid,
+    expected: false,
+    forced: false,
+    code: 31,
+    signal: null,
+  });
+  await host.close();
+});
+
+test(
+  "reports forced shutdown escalation",
+  { skip: process.platform === "win32" },
+  async () => {
+    const host = await QwenPawHost.create(
+      options("ignore-term", { shutdownTimeoutMs: 25 }),
+    );
+
+    await host.close();
+    const exit = await host.exited;
+    assert.equal(exit.expected, true);
+    assert.equal(exit.forced, true);
+    assert.equal(exit.signal, "SIGKILL");
+  },
+);
 
 test("fails closed when the Host is missing a required feature", async () => {
   await assert.rejects(
@@ -61,8 +95,7 @@ test("rejects an invalid launch record", async () => {
   await assert.rejects(
     QwenPawHost.create(options("invalid-launch")),
     (error) =>
-      error instanceof ManagedHostError &&
-      error.code === "HOST_LAUNCH_INVALID",
+      error instanceof ManagedHostError && error.code === "HOST_LAUNCH_INVALID",
   );
 });
 
@@ -70,8 +103,7 @@ test("rejects a launch record outside the exact API root", async () => {
   await assert.rejects(
     QwenPawHost.create(options("invalid-api-root")),
     (error) =>
-      error instanceof ManagedHostError &&
-      error.code === "HOST_LAUNCH_INVALID",
+      error instanceof ManagedHostError && error.code === "HOST_LAUNCH_INVALID",
   );
 });
 
@@ -79,8 +111,7 @@ test("reports a runtime that exits before launch", async () => {
   await assert.rejects(
     QwenPawHost.create(options("exit")),
     (error) =>
-      error instanceof ManagedHostError &&
-      error.code === "HOST_PROCESS_EXITED",
+      error instanceof ManagedHostError && error.code === "HOST_PROCESS_EXITED",
   );
 });
 
@@ -91,8 +122,7 @@ test("reports an executable that cannot be spawned", async () => {
       runtime: { executable: `${fixture}.missing` },
     }),
     (error) =>
-      error instanceof ManagedHostError &&
-      error.code === "HOST_PROCESS_ERROR",
+      error instanceof ManagedHostError && error.code === "HOST_PROCESS_ERROR",
   );
 });
 

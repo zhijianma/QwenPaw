@@ -22,14 +22,18 @@ if (mode === "no-launch") {
             mode === "invalid-handshake"
               ? { schema: "wrong" }
               : {
-              schema: "qwenpaw.host-handshake.v1",
-              product: "qwenpaw",
-              version: "test",
-              protocol_version: 1,
-              features: mode === "missing-feature" ? [] : ["chat.control.v1"],
-            },
+                  schema: "qwenpaw.host-handshake.v1",
+                  product: "qwenpaw",
+                  version: "test",
+                  protocol_version: 1,
+                  features:
+                    mode === "missing-feature" ? [] : ["chat.control.v1"],
+                },
           ),
     );
+    if (mode === "crash-after-handshake") {
+      setTimeout(() => process.exit(31), 25);
+    }
   });
 
   server.listen(0, "127.0.0.1", () => {
@@ -47,5 +51,7 @@ if (mode === "no-launch") {
     );
   });
 
-  process.on("SIGTERM", () => server.close(() => process.exit(0)));
+  process.on("SIGTERM", () => {
+    if (mode !== "ignore-term") server.close(() => process.exit(0));
+  });
 }
