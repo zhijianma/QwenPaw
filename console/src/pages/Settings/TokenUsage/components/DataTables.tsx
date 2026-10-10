@@ -28,30 +28,9 @@ interface ByDateData extends TokenRow {
   date: string;
 }
 
-interface ByAgentData extends TokenRow {
-  key: string;
-  agent: string;
-}
-
-interface ByChatData extends TokenRow {
-  key: string;
-  agent: string;
-  chat: string;
-}
-
-interface ByTurnData extends TokenRow {
-  key: string;
-  agent: string;
-  chat: string;
-  turn: string;
-}
-
 interface DataTablesProps {
   byModelData: ByModelData[];
   byDateData: ByDateData[];
-  byAgentData: ByAgentData[];
-  byChatData: ByChatData[];
-  byTurnData: ByTurnData[];
 }
 
 function tokenStatColumns<T extends TokenRow>(titles: {
@@ -174,9 +153,6 @@ function tokenStatColumns<T extends TokenRow>(titles: {
 export function DataTables({
   byModelData,
   byDateData,
-  byAgentData,
-  byChatData,
-  byTurnData,
 }: DataTablesProps) {
   const { t } = useTranslation();
   const tokenTitles = {
@@ -236,86 +212,6 @@ export function DataTables({
         </Card>
       )}
 
-      {byAgentData.length > 0 && (
-        <Card
-          className={`${styles.tableCard} mobile-scroll-x`}
-          title={t("tokenUsage.byAgent")}
-        >
-          <Table
-            columns={[
-              {
-                title: t("tokenUsage.agent"),
-                dataIndex: "agent",
-                key: "agent",
-              },
-              ...tokenStatColumns<ByAgentData>(tokenTitles),
-            ]}
-            dataSource={byAgentData}
-            pagination={{ pageSize: 10 }}
-            size="small"
-            scroll={{ x: "max-content" }}
-          />
-        </Card>
-      )}
-
-      {byChatData.length > 0 && (
-        <Card
-          className={`${styles.tableCard} mobile-scroll-x`}
-          title={t("tokenUsage.byChat")}
-        >
-          <Table
-            columns={[
-              {
-                title: t("tokenUsage.chat"),
-                dataIndex: "chat",
-                key: "chat",
-              },
-              {
-                title: t("tokenUsage.agent"),
-                dataIndex: "agent",
-                key: "agent",
-              },
-              ...tokenStatColumns<ByChatData>(tokenTitles),
-            ]}
-            dataSource={byChatData}
-            pagination={{ pageSize: 10 }}
-            size="small"
-            scroll={{ x: "max-content" }}
-          />
-        </Card>
-      )}
-
-      {byTurnData.length > 0 && (
-        <Card
-          className={`${styles.tableCard} mobile-scroll-x`}
-          title={t("tokenUsage.byTurn")}
-        >
-          <Table
-            columns={[
-              {
-                title: t("tokenUsage.turn"),
-                dataIndex: "turn",
-                key: "turn",
-              },
-              {
-                title: t("tokenUsage.chat"),
-                dataIndex: "chat",
-                key: "chat",
-              },
-              {
-                title: t("tokenUsage.agent"),
-                dataIndex: "agent",
-                key: "agent",
-              },
-              ...tokenStatColumns<ByTurnData>(tokenTitles),
-            ]}
-            dataSource={byTurnData}
-            pagination={{ pageSize: 10 }}
-            size="small"
-            scroll={{ x: "max-content" }}
-          />
-        </Card>
-      )}
     </>
   );
 }

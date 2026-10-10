@@ -28,7 +28,6 @@ type ChartDataItem = {
   agentPromptTokens: number;
   agentCompletionTokens: number;
   agentCacheReadTokens: number;
-  agentLlmCalls: number;
 };
 
 interface ColumnSeries {
@@ -171,7 +170,6 @@ function AgentStatsPage() {
       agentPromptTokens: d.agent_prompt_tokens ?? 0,
       agentCompletionTokens: d.agent_completion_tokens ?? 0,
       agentCacheReadTokens: d.agent_cache_read_tokens,
-      agentLlmCalls: d.agent_llm_calls ?? 0,
     }));
   }, [data?.by_date]);
 
@@ -287,24 +285,6 @@ function AgentStatsPage() {
     };
   }, [chartData, t, isDarkMode, crossesYear]);
 
-  const llmToolColumnConfig = useMemo(
-    () =>
-      getColumnConfig(
-        chartData,
-        [
-          {
-            key: "agentLlmCalls",
-            label: t("agentStats.currentAgentLlmCalls"),
-          },
-          { key: "toolCalls", label: t("agentStats.toolCalls") },
-        ],
-        ["#ec4899", "#14b8a6"],
-        isDarkMode,
-        crossesYear,
-      ),
-    [chartData, t, isDarkMode, crossesYear],
-  );
-
   const pieCommon = useMemo(
     () => ({
       height: 280,
@@ -417,11 +397,6 @@ function AgentStatsPage() {
                     )}
                   />
                   <SummaryCard
-                    value={data.agent_llm_calls ?? 0}
-                    label={t("agentStats.currentAgentLlmCalls")}
-                    tooltip={t("agentStats.currentAgentLlmCallsTooltip")}
-                  />
-                  <SummaryCard
                     value={data.total_tool_calls}
                     label={t("agentStats.toolCalls")}
                     tooltip={t("agentStats.toolCallsTooltip")}
@@ -483,23 +458,6 @@ function AgentStatsPage() {
                     </div>
                   </Card>
 
-                  <Card
-                    className={styles.chartCard}
-                    title={
-                      <Tooltip
-                        title={t("agentStats.llmAndToolTrendTooltip")}
-                        placement="bottom"
-                      >
-                        <span className={styles.chartTitle}>
-                          {t("agentStats.llmAndToolTrend")}
-                        </span>
-                      </Tooltip>
-                    }
-                  >
-                    <div className={styles.chartContainerShort}>
-                      <Column {...llmToolColumnConfig} />
-                    </div>
-                  </Card>
                 </div>
 
                 {(chatPieConfig || messagePieConfig) && (

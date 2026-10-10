@@ -56,7 +56,6 @@ vi.mock("react-i18next", () => ({
         "agentStats.totalMessages": "Total Messages",
         "agentStats.promptTokens": "Prompt Tokens",
         "agentStats.completionTokens": "Completion Tokens",
-        "agentStats.currentAgentLlmCalls": "Recorded Turns",
         "agentStats.toolCalls": "Tool Calls",
       })[key] ?? key,
   }),
@@ -161,7 +160,9 @@ describe("TC-AGT-06: AgentStatsPage current-agent statistics", () => {
     expect(await screen.findByText("Agent A")).toBeInTheDocument();
     expectCard("Prompt Tokens", "52.5K");
     expectCard("Completion Tokens", "343");
-    expectCard("Recorded Turns", "5");
+    expect(
+      screen.queryByText("agentStats.currentAgentLlmCalls"),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText("900K")).not.toBeInTheDocument();
     expect(screen.queryByText("All Agents")).not.toBeInTheDocument();
 
@@ -172,7 +173,9 @@ describe("TC-AGT-06: AgentStatsPage current-agent statistics", () => {
     expect(await screen.findByText("Agent B")).toBeInTheDocument();
     expectCard("Prompt Tokens", "12.9K");
     expectCard("Completion Tokens", "72");
-    expectCard("Recorded Turns", "2");
+    expect(
+      screen.queryByText("agentStats.currentAgentLlmCalls"),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText("52.5K")).not.toBeInTheDocument();
   });
 });

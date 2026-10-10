@@ -61,15 +61,9 @@ describe("Token Usage cost evidence", () => {
     expect(screen.getByText("tokenUsage.costUnknown")).toBeInTheDocument();
   });
 
-  it("adds cost evidence columns to every usage scope table", () => {
+  it("adds cost evidence columns to resource usage tables", () => {
     render(
-      <DataTables
-        byModelData={[tokenRow]}
-        byDateData={[]}
-        byAgentData={[]}
-        byChatData={[]}
-        byTurnData={[]}
-      />,
+      <DataTables byModelData={[tokenRow]} byDateData={[]} />,
     );
 
     const columns = captured.tables[0].columns;

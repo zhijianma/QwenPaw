@@ -1,10 +1,9 @@
 /**
  * TokenUsagePage — settings page composing the token usage dashboard.
  * Covers the loading/error/empty states, details fetch failures with
- * retry, summary card totals, the model/date/agent table row building
- * (including unattributed and named agents), the llm/tool trend card
- * (loading, error with retry, all-zero empty, data) and date range
- * changes re-fetching both endpoints.
+ * retry, summary card totals, model/date table row building and resource
+ * filters. Agent ownership belongs to Agent Statistics; turn ownership belongs
+ * to the Chat page.
  *
  * The presentational children are stubbed with prop capture; the charts
  * and date picker are minimal drivers.
@@ -18,7 +17,6 @@ import React from "react";
 
 const apiMocks = vi.hoisted(() => ({
   getTokenUsage: vi.fn(),
-  getGlobalLlmToolTrend: vi.fn(),
 }));
 
 vi.mock("../../../api", () => ({ default: apiMocks }));
@@ -52,15 +50,6 @@ vi.mock("../../../contexts/ThemeContext", () => ({
   useTheme: () => ({ isDark: false }),
 }));
 
-const agentStore = vi.hoisted(() => ({
-  agents: [{ id: "agent-a", name: "Agent A" }],
-}));
-
-vi.mock("../../../stores/agentStore", () => ({
-  useAgentStore: (selector: (s: typeof agentStore) => unknown) =>
-    selector(agentStore),
-}));
-
 vi.mock("@/components/PageHeader", () => ({
   PageHeader: ({ parent, current }: { parent: string; current: string }) =>
     React.createElement(
@@ -75,7 +64,6 @@ const capturedProps = vi.hoisted(() => ({
   tables: null as any,
   modelTrend: null as any,
   tokenType: null as any,
-  line: null as any,
 }));
 
 vi.mock("./components", () => ({
@@ -116,13 +104,6 @@ vi.mock("./components", () => ({
   DataTables: (props: any) => {
     capturedProps.tables = props;
     return React.createElement("div", { "data-testid": "data-tables" });
-  },
-}));
-
-vi.mock("@ant-design/plots", () => ({
-  Line: (props: any) => {
-    capturedProps.line = props;
-    return React.createElement("div", { "data-testid": "llm-tool-line" });
   },
 }));
 
@@ -345,9 +326,6 @@ function makeSummary(
 
 function setupDefaultMocks() {
   apiMocks.getTokenUsage.mockResolvedValue(makeSummary([makeRecord()]));
-  apiMocks.getGlobalLlmToolTrend.mockResolvedValue([
-    { date: "2026-09-01", agent_llm_calls: 4, tool_calls: 2 },
-  ]);
 }
 
 describe("TokenUsagePage", () => {
@@ -357,7 +335,6 @@ describe("TokenUsagePage", () => {
     capturedProps.tables = null;
     capturedProps.modelTrend = null;
     capturedProps.tokenType = null;
-    capturedProps.line = null;
     setupDefaultMocks();
   });
 
@@ -406,7 +383,7 @@ describe("TokenUsagePage", () => {
     );
   });
 
-  it("builds model and agent table rows from the records", async () => {
+  it("builds resource table rows without ownership records", async () => {
     apiMocks.getTokenUsage.mockResolvedValue(
       makeSummary([
         makeRecord(),
@@ -423,35 +400,9 @@ describe("TokenUsagePage", () => {
     expect(
       capturedProps.tables.byModelData.map((r: any) => r.model).sort(),
     ).toEqual(["anthropic / claude", "openai / gpt-4o"]);
-    // The named agent resolves through the store; the null agent id is
-    // labelled unattributed; rows sort by total tokens descending.
-    expect(capturedProps.tables.byAgentData).toEqual([
-      expect.objectContaining({
-        agent: "Agent A",
-        cost_micros: 125,
-        cost_unknown_calls: 1,
-      }),
-      expect.objectContaining({ agent: "tokenUsage.unattributed" }),
-    ]);
-    expect(capturedProps.tables.byChatData).toEqual([
-      expect.objectContaining({ agent: "Agent A", chat: "chat-a" }),
-      expect.objectContaining({
-        agent: "tokenUsage.unattributed",
-        chat: "chat-a",
-      }),
-    ]);
-    expect(capturedProps.tables.byTurnData).toEqual([
-      expect.objectContaining({
-        agent: "Agent A",
-        chat: "chat-a",
-        turn: "turn-a",
-      }),
-      expect.objectContaining({
-        agent: "tokenUsage.unattributed",
-        chat: "chat-a",
-        turn: "turn-a",
-      }),
-    ]);
+    expect(capturedProps.tables).not.toHaveProperty("byAgentData");
+    expect(capturedProps.tables).not.toHaveProperty("byChatData");
+    expect(capturedProps.tables).not.toHaveProperty("byTurnData");
   });
 
   it("renders colliding model keys from explicit route fields", async () => {
@@ -484,46 +435,6 @@ describe("TokenUsagePage", () => {
     expect(activeSeries).toEqual(["a / b:c", "a:b / c"]);
   });
 
-  it("falls back to the agent id when the store has no profile", async () => {
-    apiMocks.getTokenUsage.mockResolvedValue(
-      makeSummary([makeRecord({ agent_id: "unknown-agent" })]),
-    );
-    render(<TokenUsagePage />);
-    await waitFor(() => expect(capturedProps.tables).toBeTruthy());
-    expect(capturedProps.tables.byAgentData[0].agent).toBe("unknown-agent");
-  });
-
-  it("prefers structured scope rows over compatibility maps", async () => {
-    const summary = makeSummary([makeRecord()]);
-    summary.by_agent = {};
-    summary.by_chat = {};
-    summary.by_turn = {};
-    apiMocks.getTokenUsage.mockResolvedValue(summary);
-
-    render(<TokenUsagePage />);
-    await waitFor(() => expect(capturedProps.tables).toBeTruthy());
-
-    expect(capturedProps.tables.byAgentData).toHaveLength(1);
-    expect(capturedProps.tables.byChatData).toHaveLength(1);
-    expect(capturedProps.tables.byTurnData).toHaveLength(1);
-  });
-
-  it("reads canonical chat ids from compatibility maps", async () => {
-    const summary = makeSummary([makeRecord()]);
-    apiMocks.getTokenUsage.mockResolvedValue({
-      ...summary,
-      scopes: undefined,
-    });
-
-    render(<TokenUsagePage />);
-    await waitFor(() => expect(capturedProps.tables).toBeTruthy());
-
-    expect(capturedProps.tables.byAgentData).toHaveLength(1);
-    expect(capturedProps.tables.byChatData).toHaveLength(1);
-    expect(capturedProps.tables.byTurnData).toHaveLength(1);
-    expect(capturedProps.tables.byChatData[0].chat).toBe("chat-a");
-  });
-
   it("shows the error state with a retry that refetches", async () => {
     apiMocks.getTokenUsage.mockRejectedValueOnce(new Error("down"));
     const user = userEvent.setup();
@@ -552,67 +463,10 @@ describe("TokenUsagePage", () => {
     expect(capturedProps.summary).toBeNull();
   });
 
-  it("shows the trend loading state until the trend arrives", async () => {
-    apiMocks.getGlobalLlmToolTrend.mockReturnValue(new Promise(() => {}));
+  it("refetches token usage when the date range changes", async () => {
     render(<TokenUsagePage />);
     await waitFor(() =>
       expect(screen.getByTestId("summary-cards")).toBeInTheDocument(),
-    );
-    // The trend card keeps showing a loading state.
-    expect(screen.getAllByTestId("loading-state").length).toBeGreaterThan(0);
-    expect(capturedProps.line).toBeNull();
-  });
-
-  it("shows the trend error state with a working retry", async () => {
-    apiMocks.getGlobalLlmToolTrend.mockRejectedValueOnce(new Error("down"));
-    const user = userEvent.setup();
-    render(<TokenUsagePage />);
-    await waitFor(() =>
-      expect(
-        screen.getByText("tokenUsage.llmAndToolTrendLoadFailed"),
-      ).toBeInTheDocument(),
-    );
-
-    apiMocks.getGlobalLlmToolTrend.mockResolvedValueOnce([
-      { date: "2026-09-01", agent_llm_calls: 1, tool_calls: 1 },
-    ]);
-    await user.click(screen.getByTestId("retry"));
-    await waitFor(() =>
-      expect(screen.getByTestId("llm-tool-line")).toBeInTheDocument(),
-    );
-  });
-
-  it("shows the trend empty state when every day is zero", async () => {
-    apiMocks.getGlobalLlmToolTrend.mockResolvedValue([
-      { date: "2026-09-01", agent_llm_calls: 0, tool_calls: 0 },
-      { date: "2026-09-02", agent_llm_calls: 0, tool_calls: 0 },
-    ]);
-    render(<TokenUsagePage />);
-    await waitFor(() =>
-      expect(screen.getByText("tokenUsage.noData")).toBeInTheDocument(),
-    );
-    expect(capturedProps.line).toBeNull();
-  });
-
-  it("feeds the llm/tool line chart with labelled series", async () => {
-    render(<TokenUsagePage />);
-    await waitFor(() =>
-      expect(screen.getByTestId("llm-tool-line")).toBeInTheDocument(),
-    );
-    expect(capturedProps.line.data).toEqual([
-      {
-        date: "2026-09-01",
-        type: "tokenUsage.recordedTurnsAllAgents",
-        value: 4,
-      },
-      { date: "2026-09-01", type: "tokenUsage.toolCalls", value: 2 },
-    ]);
-  });
-
-  it("refetches both endpoints when the date range changes", async () => {
-    render(<TokenUsagePage />);
-    await waitFor(() =>
-      expect(screen.getByTestId("llm-tool-line")).toBeInTheDocument(),
     );
     const callsBefore = apiMocks.getTokenUsage.mock.calls.length;
 
@@ -631,38 +485,32 @@ describe("TokenUsagePage", () => {
     );
   });
 
-  it("queries one ownership and model scope on the server", async () => {
+  it("queries provider and model scopes without ownership filters", async () => {
     const user = userEvent.setup();
     render(<TokenUsagePage />);
     await waitFor(() => expect(capturedProps.tables).toBeTruthy());
-    const trendCalls = apiMocks.getGlobalLlmToolTrend.mock.calls.length;
-
-    await user.selectOptions(
-      screen.getByLabelText("tokenUsage.agent"),
-      "agent-a",
-    );
-    await waitFor(() =>
-      expect(apiMocks.getTokenUsage).toHaveBeenLastCalledWith(
-        expect.objectContaining({ agent_id: "agent-a" }),
-      ),
-    );
-    expect(apiMocks.getGlobalLlmToolTrend).toHaveBeenCalledTimes(trendCalls);
+    expect(screen.queryByLabelText("tokenUsage.agent")).toBeNull();
+    expect(screen.queryByLabelText("tokenUsage.chat")).toBeNull();
+    expect(screen.queryByLabelText("tokenUsage.turn")).toBeNull();
 
     await user.selectOptions(screen.getByLabelText("Provider"), "openai");
     await waitFor(() =>
       expect(apiMocks.getTokenUsage).toHaveBeenLastCalledWith(
         expect.objectContaining({
-          agent_id: "agent-a",
           provider: "openai",
         }),
       ),
     );
+    const [query] = apiMocks.getTokenUsage.mock.calls.at(-1) ?? [];
+    expect(query).not.toHaveProperty("agent_id");
+    expect(query).not.toHaveProperty("chat_id");
+    expect(query).not.toHaveProperty("turn_id");
   });
 
   it("ignores null date selections", async () => {
     render(<TokenUsagePage />);
     await waitFor(() =>
-      expect(screen.getByTestId("llm-tool-line")).toBeInTheDocument(),
+      expect(screen.getByTestId("summary-cards")).toBeInTheDocument(),
     );
     const callsBefore = apiMocks.getTokenUsage.mock.calls.length;
     datePickerMock.onChange(null);
