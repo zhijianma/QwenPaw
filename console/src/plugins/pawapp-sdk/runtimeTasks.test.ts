@@ -44,9 +44,12 @@ function projection(
     runs: [],
     latest_plan: null,
     conversation_messages: [],
+    tool_activities: [],
     pending_approvals: [],
+    recent_decisions: [],
     artifacts: [],
     evidence: [],
+    checkpoint: null,
     capabilities: [],
     last_sequence: lastSequence,
   };

@@ -3,6 +3,13 @@
  */
 
 import type React from "react";
+import type {
+  KernelTask,
+  TaskApprovalDecision,
+  TaskEvent,
+  TaskProjection,
+  TaskStatus,
+} from "../../contracts/tasks";
 
 export interface PawDisposable {
   dispose(): void;
@@ -553,58 +560,10 @@ export interface PawTaskHandle {
   readonly taskId: string;
 }
 
-export type PawRuntimeTaskStatus =
-  | "created"
-  | "planned"
-  | "running"
-  | "waiting_approval"
-  | "suspended"
-  | "completed"
-  | "failed"
-  | "cancelled";
-
-export interface PawRuntimeTask {
-  task_id: string;
-  objective: string;
-  status: PawRuntimeTaskStatus;
-  source: string;
-  agent_id: string;
-  constraints: string[];
-  acceptance_criteria: string[];
-  execution_contract: Record<string, unknown> | null;
-  version: number;
-  active_run_id: string | null;
-  created_at: string;
-  updated_at: string;
-  metadata: Record<string, unknown>;
-}
-
-export interface PawRuntimeTaskEvent {
-  event_id: string;
-  task_id: string;
-  run_id: string | null;
-  sequence: number;
-  event_type: string;
-  occurred_at: string;
-  payload: Record<string, unknown>;
-  artifact_refs: unknown[];
-  evidence_refs: unknown[];
-}
-
-/** Authoritative Task read model. New fields remain available to apps. */
-export interface PawRuntimeTaskProjection {
-  task: PawRuntimeTask;
-  last_sequence: number;
-  active_run: Record<string, unknown> | null;
-  runs: Array<Record<string, unknown>>;
-  latest_plan: Record<string, unknown> | null;
-  conversation_messages: Array<Record<string, unknown>>;
-  pending_approvals: Array<Record<string, unknown>>;
-  artifacts: Array<Record<string, unknown>>;
-  evidence: Array<Record<string, unknown>>;
-  capabilities: Array<Record<string, unknown>>;
-  [key: string]: unknown;
-}
+export type PawRuntimeTaskStatus = TaskStatus;
+export type PawRuntimeTask = KernelTask;
+export type PawRuntimeTaskEvent = TaskEvent;
+export type PawRuntimeTaskProjection = TaskProjection;
 
 export interface PawRuntimeTaskRequest {
   objective: string;
@@ -639,17 +598,7 @@ export interface PawRuntimeTaskApprovalCommand {
   idempotencyKey?: string;
 }
 
-export interface PawRuntimeTaskApprovalDecision {
-  approval_id: string;
-  decision: "approved" | "denied" | "expired" | "cancelled";
-  actor: {
-    type: string;
-    id: string;
-  };
-  scope: "exact" | "similar";
-  reason: string;
-  decided_at: string;
-}
+export type PawRuntimeTaskApprovalDecision = TaskApprovalDecision;
 
 export interface PawRuntimeTaskHandle {
   readonly taskId: string;

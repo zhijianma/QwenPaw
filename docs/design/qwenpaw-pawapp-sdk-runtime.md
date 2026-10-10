@@ -170,8 +170,10 @@ Implemented in the frontend SDK:
 
 Still pending in P2:
 
-- replace the current structural Projection fields with generated or shared
-  schema types so frontend API modules and PawApp SDK cannot drift;
+- move Task endpoint construction, error parsing and SSE cursor handling into
+  one transport-injected client used by both Console APIs and PawApp SDK;
+- generate the shared frontend contracts from Kernel schemas once the schema
+  publication pipeline is available;
 - add a browser disconnect test against the running Host rather than only
   server replay plus SDK unit tests.
 
@@ -235,6 +237,10 @@ Verified on 2026-10-10 against the running Lite Host on port 8004:
   Interaction transport retries. No existing Task was awaiting approval at
   verification time, so a real direct-approval mutation was intentionally not
   performed or claimed.
+- Console `tasksApi`, Tasks UI and PawApp SDK now import Task, Run, Plan,
+  Event, Approval, Artifact, Evidence and Projection contracts from the same
+  neutral `console/src/contracts` source; their legacy import paths remain
+  compatibility re-exports.
 
 ## 10. Explicit non-goals
 
