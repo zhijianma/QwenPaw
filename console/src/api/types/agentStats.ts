@@ -17,11 +17,15 @@ export interface DailyStats {
   completion_tokens: number;
   llm_calls: number;
   tool_calls: number;
-  /** Current-agent daily token totals from per-turn session metadata. */
+  /** Authoritative current-agent totals projected from Model Call facts. */
   agent_prompt_tokens?: number;
   agent_completion_tokens?: number;
   agent_llm_calls?: number;
   agent_cache_read_tokens: number;
+  /** Explicit local estimates; never included in authoritative totals. */
+  estimated_prompt_tokens?: number;
+  estimated_completion_tokens?: number;
+  estimated_turns?: number;
 }
 
 export interface ChatUsageStats {
@@ -34,6 +38,9 @@ export interface ChatUsageStats {
   cache_hit_rate: number | null;
   usage_unobserved_calls: number;
   call_count: number;
+  estimated_prompt_tokens?: number;
+  estimated_completion_tokens?: number;
+  estimated_turns?: number;
 }
 
 export interface AgentStatsSummary {
@@ -51,11 +58,15 @@ export interface AgentStatsSummary {
   chat_usage: ChatUsageStats[];
   start_date: string;
   end_date: string;
-  /** Current-agent token totals from per-turn session metadata. */
+  /** Authoritative current-agent totals projected from Model Call facts. */
   agent_prompt_tokens?: number;
   agent_completion_tokens?: number;
   agent_llm_calls?: number;
   agent_cache_read_tokens: number;
   agent_cache_eligible_input_tokens: number;
   agent_cache_hit_rate: number | null;
+  /** Explicit local estimates; never included in authoritative totals. */
+  agent_estimated_prompt_tokens?: number;
+  agent_estimated_completion_tokens?: number;
+  agent_estimated_turns?: number;
 }

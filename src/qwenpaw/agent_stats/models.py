@@ -30,6 +30,10 @@ class DailyStats(BaseModel):
     agent_completion_tokens: int = 0
     agent_llm_calls: int = 0
     agent_cache_read_tokens: int = 0
+    # Explicit local estimates are compatibility evidence, not usage facts.
+    estimated_prompt_tokens: int = 0
+    estimated_completion_tokens: int = 0
+    estimated_turns: int = 0
 
 
 class ChatUsageStats(BaseModel):
@@ -44,6 +48,9 @@ class ChatUsageStats(BaseModel):
     cache_hit_rate: float | None = None
     usage_unobserved_calls: int = 0
     call_count: int = 0
+    estimated_prompt_tokens: int = 0
+    estimated_completion_tokens: int = 0
+    estimated_turns: int = 0
 
 
 class AgentStatsSummary(BaseModel):
@@ -60,14 +67,16 @@ class AgentStatsSummary(BaseModel):
     chat_usage: list[ChatUsageStats] = Field(default_factory=list)
     start_date: str
     end_date: str
-    # Current-agent token totals from per-turn message metadata
-    # (independent of the global total_*_tokens / by_date overlay).
+    # Current-agent values projected from authoritative Model Call facts.
     agent_prompt_tokens: int = 0
     agent_completion_tokens: int = 0
     agent_llm_calls: int = 0
     agent_cache_read_tokens: int = 0
     agent_cache_eligible_input_tokens: int = 0
     agent_cache_hit_rate: float | None = None
+    agent_estimated_prompt_tokens: int = 0
+    agent_estimated_completion_tokens: int = 0
+    agent_estimated_turns: int = 0
 
 
 class LlmToolDaily(BaseModel):

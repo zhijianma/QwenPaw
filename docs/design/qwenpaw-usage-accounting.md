@@ -112,6 +112,16 @@ same Summary endpoint. It does not download details and create a second
 browser-owned aggregation. Date changes refresh both Usage and the explicitly
 global LLM/tool trend; ownership or route filters refresh Usage only.
 
+Agent Statistics is another consumer of this projection, not another usage
+ledger. Its Provider-reported Agent, date and Chat values are filtered Model
+Call aggregates. Persisted assistant messages are scanned only for message and
+Tool activity and for usage explicitly marked
+`measurement=local_estimate, estimated=true`. Those estimates are returned in
+separate `estimated_*` fields and never added to Provider totals or call counts.
+This keeps estimate-only Harness conversations visible without double-counting
+Native turns that already have Model Call facts. Agent Statistics exposes Chat
+rows but not Turn rows; Turn detail remains attached to Chat messages.
+
 `chat_id` is the canonical public identity field and always means
 `ChatSpec.id`. New Summary/Details JSON and OpenAPI only expose `chat_id`.
 Historical payloads and extensions may still provide `conversation_id`, and
@@ -243,6 +253,10 @@ Agent, Chat, or Turn ownership remain explicitly unattributed.
   before the snapshot can enter SSE or message metadata.
 - Console scope and route drill-down uses server-side Summary filters and
   retains the same date/model accounting contract.
+- Agent Statistics reconciles its Provider totals with an Agent-filtered Token
+  Usage projection and keeps explicit local estimates in separate fields.
+- Provider-reported message snapshots cannot become a second accounting source;
+  estimate-only Harness Chats remain visible without contaminating facts.
 - Malformed live Turn totals or measurement states are rejected before they
   can reach SSE or persisted message metadata.
 - Task pages and Task-specific frontend work remain out of scope.

@@ -28,6 +28,7 @@ type ChartDataItem = {
   agentPromptTokens: number;
   agentCompletionTokens: number;
   agentCacheReadTokens: number;
+  estimatedTokens: number;
 };
 
 interface ColumnSeries {
@@ -170,6 +171,9 @@ function AgentStatsPage() {
       agentPromptTokens: d.agent_prompt_tokens ?? 0,
       agentCompletionTokens: d.agent_completion_tokens ?? 0,
       agentCacheReadTokens: d.agent_cache_read_tokens,
+      estimatedTokens:
+        (d.estimated_prompt_tokens ?? 0) +
+        (d.estimated_completion_tokens ?? 0),
     }));
   }, [data?.by_date]);
 
@@ -179,6 +183,7 @@ function AgentStatsPage() {
       (data.total_messages ?? 0) > 0 ||
       (data.total_tool_calls ?? 0) > 0 ||
       (data.agent_llm_calls ?? 0) > 0 ||
+      (data.agent_estimated_turns ?? 0) > 0 ||
       (data.chat_usage?.length ?? 0) > 0);
 
   const messageColumnConfig = useMemo(
@@ -218,6 +223,7 @@ function AgentStatsPage() {
     const inputLabel = t("agentStats.totalInputTokens");
     const outputLabel = t("agentStats.completionTokens");
     const cacheHitLabel = t("tokenUsage.cacheRead");
+    const estimateLabel = t("agentStats.estimatedTokens");
     const tokenData = chartData.flatMap((day) => {
       const cacheHit = Math.min(
         Math.max(day.agentCacheReadTokens, 0),
@@ -245,6 +251,13 @@ function AgentStatsPage() {
           barType: outputLabel,
           segment: outputLabel,
         },
+        {
+          date: day.date,
+          value: day.estimatedTokens,
+          displayValue: day.estimatedTokens,
+          barType: estimateLabel,
+          segment: estimateLabel,
+        },
       ];
     });
 
@@ -264,8 +277,8 @@ function AgentStatsPage() {
       legend: { position: "bottom" as const },
       scale: {
         color: {
-          domain: [inputLabel, cacheHitLabel, outputLabel],
-          range: ["#b8b2c2", "#0f9f8f", "#64748b"],
+          domain: [inputLabel, cacheHitLabel, outputLabel, estimateLabel],
+          range: ["#b8b2c2", "#0f9f8f", "#64748b", "#c58a2b"],
         },
       },
       axis: {
@@ -336,6 +349,9 @@ function AgentStatsPage() {
         key: item.chat_id ?? "unattributed",
         chat: item.name || item.chat_id || t("tokenUsage.unattributed"),
         total_tokens: item.prompt_tokens + item.completion_tokens,
+        estimated_tokens:
+          (item.estimated_prompt_tokens ?? 0) +
+          (item.estimated_completion_tokens ?? 0),
       })),
     [data?.chat_usage, t],
   );
@@ -408,6 +424,16 @@ function AgentStatsPage() {
                       "agentStats.currentAgentCompletionTokensTooltip",
                     )}
                   />
+                  {(data.agent_estimated_turns ?? 0) > 0 && (
+                    <SummaryCard
+                      value={
+                        (data.agent_estimated_prompt_tokens ?? 0) +
+                        (data.agent_estimated_completion_tokens ?? 0)
+                      }
+                      label={t("agentStats.estimatedTokens")}
+                      tooltip={t("agentStats.estimatedTokensTooltip")}
+                    />
+                  )}
                   <SummaryCard
                     value={data.total_tool_calls}
                     label={t("agentStats.toolCalls")}
@@ -556,6 +582,16 @@ function AgentStatsPage() {
                             a: (typeof chatUsageData)[number],
                             b: (typeof chatUsageData)[number],
                           ) => a.total_tokens - b.total_tokens,
+                        },
+                        {
+                          title: t("agentStats.estimatedTokens"),
+                          dataIndex: "estimated_tokens",
+                          key: "estimated_tokens",
+                          render: (value: number) => formatCompact(value),
+                          sorter: (
+                            a: (typeof chatUsageData)[number],
+                            b: (typeof chatUsageData)[number],
+                          ) => a.estimated_tokens - b.estimated_tokens,
                         },
                         {
                           title: t("tokenUsage.cacheHitRate"),

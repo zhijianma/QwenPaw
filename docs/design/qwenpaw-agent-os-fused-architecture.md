@@ -659,10 +659,11 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
     上下文指示器，不混入跨范围 Provider 统计。
   - [x] 展示职责分层：Token Usage Settings 只展示 global / Provider / Model / 日期；
     当前 Agent 的 Chat 汇总放在“智能体统计”，Turn 明细只随 Chat 消息展示。Agent
-    Chat 汇总直接聚合已持久化的每轮 usage metadata，并通过既有
-    `session_relative_paths()` 映射回 `ChatSpec.id`，因此本地 Codex/Qoder Harness
-    即使没有 Model Call 投影也不会漏掉对话；该兼容展示不回写或污染全局 Provider
-    事实投影。
+    的 Provider Token、调用、缓存与按日期/Chat 汇总直接消费 `agent_id` 过滤的 Model
+    Call 投影。Session 只补充消息/Tool 活动和显式 `local_estimate`；后者经
+    `session_relative_paths()` 映射回 `ChatSpec.id` 并使用独立 `estimated_*` 字段，
+    不与 Provider 事实相加。因此 Native 不会双算，本地 Codex/Qoder Harness 即使没有
+    Model Call usage 也不会从兼容估算视图消失。
   - [x] Chat Turn usage 的所有权与存储寻址已分离：进程内 Provider usage 只用
     `ChatSpec.id + invocation_id` 读取和清理，Session Adapter 继续使用 transport
     `session_id + user_id + channel` 加载/持久化消息。固定 Native Chat 曾因二者混用而

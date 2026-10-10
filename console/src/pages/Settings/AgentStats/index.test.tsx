@@ -63,6 +63,7 @@ vi.mock("react-i18next", () => ({
         "agentStats.totalMessages": "Total Messages",
         "agentStats.promptTokens": "Prompt Tokens",
         "agentStats.completionTokens": "Completion Tokens",
+        "agentStats.estimatedTokens": "Estimated Tokens",
         "agentStats.toolCalls": "Tool Calls",
         "tokenUsage.byChat": "By Chat",
         "tokenUsage.chat": "Chat",
@@ -154,6 +155,9 @@ function summary(
     agent_cache_read_tokens: 0,
     agent_cache_eligible_input_tokens: 0,
     agent_cache_hit_rate: null,
+    agent_estimated_prompt_tokens: 578,
+    agent_estimated_completion_tokens: 24,
+    agent_estimated_turns: 1,
     by_date: [
       {
         date: "2026-08-13",
@@ -170,6 +174,9 @@ function summary(
         agent_completion_tokens: agentCompletionTokens,
         agent_llm_calls: recordedTurns,
         agent_cache_read_tokens: 0,
+        estimated_prompt_tokens: 578,
+        estimated_completion_tokens: 24,
+        estimated_turns: 1,
       },
     ],
     channel_stats: [],
@@ -184,6 +191,9 @@ function summary(
         cache_hit_rate: 50,
         usage_unobserved_calls: 0,
         call_count: recordedTurns,
+        estimated_prompt_tokens: 578,
+        estimated_completion_tokens: 24,
+        estimated_turns: 1,
       },
     ],
     start_date: "2026-08-06",
@@ -221,6 +231,7 @@ describe("TC-AGT-06: AgentStatsPage current-agent statistics", () => {
     expect(await screen.findByText("Agent A")).toBeInTheDocument();
     expectCard("Prompt Tokens", "52.5K");
     expectCard("Completion Tokens", "343");
+    expectCard("Estimated Tokens", "602");
     expect(
       screen.queryByText("agentStats.currentAgentLlmCalls"),
     ).not.toBeInTheDocument();
@@ -228,6 +239,7 @@ describe("TC-AGT-06: AgentStatsPage current-agent statistics", () => {
     expect(screen.queryByText("All Agents")).not.toBeInTheDocument();
     expect(screen.getByText("By Chat")).toBeInTheDocument();
     expect(screen.getByText("Architecture review")).toBeInTheDocument();
+    expect(screen.getAllByText("602")).toHaveLength(2);
     expect(screen.queryByText("By Turn")).not.toBeInTheDocument();
 
     mocks.storeState.selectedAgent = "agent-b";

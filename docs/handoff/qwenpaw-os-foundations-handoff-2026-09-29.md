@@ -1588,3 +1588,18 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
   safe point；所有 command 使用 `chat_id` 且不序列化 `conversation_id`。后端控制与
   Schema 16 项、公共 Client 12 项、managed SDK 20 项定点测试通过，生成契约检查
   通过。
+
+## 15. 2026-10-10 Agent Statistics 事实与估算分层
+
+- 本节取代第 9 节中“智能体统计直接累计全部 assistant turn usage”的旧结论。
+  Provider Token、调用数、缓存、日期和 Chat 汇总现在直接消费按 `agent_id` 过滤的
+  Model Call / Token Usage 权威投影，消息快照不能再成为竞争事实源。
+- Session 扫描只保留消息、Tool 活动，以及同时满足
+  `measurement=local_estimate` 与 `estimated=true` 的兼容估算。估算以独立
+  `estimated_*` 字段按 Agent、日期和 `ChatSpec.id` 返回，绝不与 Provider Token 或
+  call count 相加；普通或 Provider-reported 消息 metadata 会被统计层忽略。
+- Agent Statistics 设置页继续只展示 Agent 与 Chat 聚合，不展示 Turn 表格；估算使用
+  独立卡片、趋势和 Chat 列，避免用户把本地上下文估算误认为供应商计费事实。Turn
+  usage 仍由 Chat 消息承载。
+- Codex 在本方案中仍只是产品与 Harness 机制参考；QwenPaw SDK 复用自身 Kernel、
+  Host 和生成契约。外部 Codex 类型只允许停留在 Harness Adapter，不能进入公共 SDK。

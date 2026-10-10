@@ -36,11 +36,9 @@ class _SessionStats:
 
     tool_calls: int = 0
     has_messages: bool = False
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    llm_calls: int = 0
-    cache_read_tokens: int = 0
-    cache_eligible_input_tokens: int = 0
+    estimated_prompt_tokens: int = 0
+    estimated_completion_tokens: int = 0
+    estimated_turns: int = 0
     chat_id: str | None = None
     chat_name: str | None = None
 
@@ -129,48 +127,33 @@ def _should_skip_by_content_range(
     return False
 
 
-def _extract_turn_usage_tokens(msg_data: dict) -> tuple[int, int] | None:
-    """Return (prompt, completion) from turn-usage metadata, or None."""
-    meta = msg_data.get("metadata")
-    if not isinstance(meta, dict):
-        return None
-    turn_meta = meta.get(TURN_USAGE_META_KEY)
-    if not isinstance(turn_meta, dict):
-        return None
-    usage = turn_meta.get("usage")
-    if not isinstance(usage, dict):
-        return None
-    try:
-        pt = int(usage.get("prompt_tokens", 0) or 0)
-        ct = int(usage.get("completion_tokens", 0) or 0)
-    except (TypeError, ValueError):
-        return None
-    if pt <= 0 and ct <= 0:
-        return None
-    return pt, ct
-
-
-def _extract_turn_cache_tokens(msg_data: dict) -> tuple[int, int] | None:
-    """Return observed (cache read, eligible input) tokens for one turn."""
-    meta = msg_data.get("metadata")
-    if not isinstance(meta, dict):
-        return None
-    turn_meta = meta.get(TURN_USAGE_META_KEY)
-    if not isinstance(turn_meta, dict):
-        return None
-    usage = turn_meta.get("usage")
-    if not isinstance(usage, dict) or not usage.get("cache_observed", False):
+def _extract_local_estimate(msg_data: dict) -> tuple[int, int] | None:
+    """Return an explicit local estimate without accepting usage facts."""
+    metadata = msg_data.get("metadata")
+    turn_metadata = (
+        metadata.get(TURN_USAGE_META_KEY)
+        if isinstance(metadata, dict)
+        else None
+    )
+    usage = (
+        turn_metadata.get("usage") if isinstance(turn_metadata, dict) else None
+    )
+    if not (
+        isinstance(usage, dict)
+        and usage.get("measurement") == "local_estimate"
+        and usage.get("estimated") is True
+    ):
         return None
     try:
-        cache_read = int(usage.get("cache_read_tokens", 0) or 0)
-        cache_eligible = int(
-            usage.get("cache_eligible_input_tokens", 0) or 0,
-        )
+        prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+        completion_tokens = int(usage.get("completion_tokens", 0) or 0)
     except (TypeError, ValueError):
         return None
-    if cache_read < 0 or cache_eligible <= 0:
+    if prompt_tokens < 0 or completion_tokens < 0:
         return None
-    return cache_read, cache_eligible
+    if prompt_tokens == 0 and completion_tokens == 0:
+        return None
+    return prompt_tokens, completion_tokens
 
 
 # pylint:disable=too-many-statements,too-many-branches
@@ -186,14 +169,13 @@ def _process_session_file(
     *,
     chat_id: str | None = None,
     chat_name: str | None = None,
+    collect_local_estimates: bool = True,
 ) -> _SessionStats:
     tool_call_count = 0
     has_messages_in_range = False
-    agent_prompt_tokens = 0
-    agent_completion_tokens = 0
-    agent_llm_calls = 0
-    cache_read_tokens = 0
-    cache_eligible_input_tokens = 0
+    estimated_prompt_tokens = 0
+    estimated_completion_tokens = 0
+    estimated_turns = 0
     try:
         memories = _extract_session_messages(session_data)
 
@@ -245,28 +227,19 @@ def _process_session_file(
                 ds["total_messages"] += 1
                 stats["assistant_messages"] += 1
                 stats["total_messages"] += 1
-
-                # Current-agent token totals from per-turn metadata.
-                # Do not write into daily_stats global token fields (overlay).
-                tokens = _extract_turn_usage_tokens(msg_data)
-                if tokens is not None:
-                    pt, ct = tokens
-                    agent_prompt_tokens += pt
-                    agent_completion_tokens += ct
-                    agent_llm_calls += 1
-                    ds["agent_prompt_tokens"] += pt
-                    ds["agent_completion_tokens"] += ct
-                    ds["agent_llm_calls"] += 1
-
-                cache_tokens = _extract_turn_cache_tokens(msg_data)
-                if cache_tokens is not None:
-                    cache_read, cache_eligible = cache_tokens
-                    cache_read_tokens += cache_read
-                    cache_eligible_input_tokens += cache_eligible
-                    ds.setdefault("agent_cache_read_tokens", 0)
-                    ds.setdefault("agent_cache_eligible_input_tokens", 0)
-                    ds["agent_cache_read_tokens"] += cache_read
-                    ds["agent_cache_eligible_input_tokens"] += cache_eligible
+                estimate = (
+                    _extract_local_estimate(msg_data)
+                    if collect_local_estimates
+                    else None
+                )
+                if estimate is not None:
+                    prompt_tokens, completion_tokens = estimate
+                    estimated_prompt_tokens += prompt_tokens
+                    estimated_completion_tokens += completion_tokens
+                    estimated_turns += 1
+                    ds["estimated_prompt_tokens"] += prompt_tokens
+                    ds["estimated_completion_tokens"] += completion_tokens
+                    ds["estimated_turns"] += 1
 
             if isinstance(content, list):
                 for block in content:
@@ -288,11 +261,9 @@ def _process_session_file(
     return _SessionStats(
         tool_calls=tool_call_count,
         has_messages=has_messages_in_range,
-        prompt_tokens=agent_prompt_tokens,
-        completion_tokens=agent_completion_tokens,
-        llm_calls=agent_llm_calls,
-        cache_read_tokens=cache_read_tokens,
-        cache_eligible_input_tokens=cache_eligible_input_tokens,
+        estimated_prompt_tokens=estimated_prompt_tokens,
+        estimated_completion_tokens=estimated_completion_tokens,
+        estimated_turns=estimated_turns,
         chat_id=chat_id,
         chat_name=chat_name,
     )
@@ -313,10 +284,14 @@ class AgentStatsService:
     ) -> AgentStatsSummary:
         """Return Agent Statistics for one workspace.
 
-        When include_token_overlay is False, global token fields stay 0
-        and are indistinguishable from no usage. Session-derived
-        agent_llm_calls and tool_calls are still counted.
+        Session files provide message/Tool activity and explicitly labelled
+        local estimates. Model Call facts provide all authoritative token,
+        cache, coverage, and LLM-call statistics. The two layers never mix.
         """
+        if include_token_overlay and not (agent_id and agent_id.strip()):
+            raise ValueError(
+                "agent_id is required for Agent Statistics usage",
+            )
         chats_file = workspace_dir / "chats.json"
         sessions_dir = workspace_dir / "sessions"
 
@@ -338,6 +313,10 @@ class AgentStatsService:
                 "agent_prompt_tokens": 0,
                 "agent_completion_tokens": 0,
                 "agent_llm_calls": 0,
+                "agent_cache_read_tokens": 0,
+                "estimated_prompt_tokens": 0,
+                "estimated_completion_tokens": 0,
+                "estimated_turns": 0,
             }
 
         start_date_str = start_date.isoformat()
@@ -347,17 +326,19 @@ class AgentStatsService:
         total_tool_calls = 0
         active_sessions: dict[str, set[str]] = {}
         total_active_sessions = 0
-        agent_prompt_tokens = 0
-        agent_completion_tokens = 0
-        agent_llm_calls = 0
+        chat_names: dict[str, str] = {}
         chat_by_session_path: dict[str, tuple[str, str]] = {}
-        chat_usage_by_id: dict[str, ChatUsageStats] = {}
+        estimates_by_chat: dict[str, ChatUsageStats] = {}
+        agent_estimated_prompt_tokens = 0
+        agent_estimated_completion_tokens = 0
+        agent_estimated_turns = 0
 
         if chats_file.exists():
             try:
                 repo = JsonChatRepository(chats_file)
                 chats = await repo.list_chats()
                 for chat in chats:
+                    chat_names[chat.id] = chat.name
                     for relative_path in session_relative_paths(
                         chat.session_id,
                         chat.user_id,
@@ -442,10 +423,7 @@ class AgentStatsService:
                         relative_path = session_file.relative_to(
                             sessions_dir,
                         ).as_posix()
-                        chat_identity = chat_by_session_path.get(
-                            relative_path,
-                        )
-
+                        chat_identity = chat_by_session_path.get(relative_path)
                         return _process_session_file(
                             session_data,
                             start_date_str,
@@ -461,6 +439,7 @@ class AgentStatsService:
                             chat_name=(
                                 chat_identity[1] if chat_identity else None
                             ),
+                            collect_local_estimates=include_token_overlay,
                         )
 
                 tasks = [_process_one(sf) for sf in session_files]
@@ -470,24 +449,28 @@ class AgentStatsService:
                         total_tool_calls += result.tool_calls
                         if result.has_messages:
                             total_active_sessions += 1
-                        agent_prompt_tokens += result.prompt_tokens
-                        agent_completion_tokens += result.completion_tokens
-                        agent_llm_calls += result.llm_calls
-                        if result.chat_id and result.llm_calls > 0:
-                            row = chat_usage_by_id.setdefault(
+                        agent_estimated_prompt_tokens += (
+                            result.estimated_prompt_tokens
+                        )
+                        agent_estimated_completion_tokens += (
+                            result.estimated_completion_tokens
+                        )
+                        agent_estimated_turns += result.estimated_turns
+                        if result.chat_id and result.estimated_turns > 0:
+                            row = estimates_by_chat.setdefault(
                                 result.chat_id,
                                 ChatUsageStats(
                                     chat_id=result.chat_id,
                                     name=result.chat_name,
                                 ),
                             )
-                            row.prompt_tokens += result.prompt_tokens
-                            row.completion_tokens += result.completion_tokens
-                            row.cache_read_tokens += result.cache_read_tokens
-                            row.cache_eligible_input_tokens += (
-                                result.cache_eligible_input_tokens
+                            row.estimated_prompt_tokens += (
+                                result.estimated_prompt_tokens
                             )
-                            row.call_count += result.llm_calls
+                            row.estimated_completion_tokens += (
+                                result.estimated_completion_tokens
+                            )
+                            row.estimated_turns += result.estimated_turns
                     elif isinstance(result, Exception):
                         logger.debug("Failed to process session: %s", result)
             except Exception as e:
@@ -496,30 +479,29 @@ class AgentStatsService:
         total_prompt_tokens = 0
         total_completion_tokens = 0
         total_llm_calls = 0
-        chat_usage: list[ChatUsageStats] = sorted(
-            chat_usage_by_id.values(),
-            key=lambda item: (
-                -(item.prompt_tokens + item.completion_tokens),
-                item.name or "",
-                item.chat_id or "",
-            ),
-        )
-        for item in chat_usage:
-            if item.cache_eligible_input_tokens > 0:
-                item.cache_hit_rate = (
-                    item.cache_read_tokens
-                    / item.cache_eligible_input_tokens
-                    * 100
-                )
+        agent_prompt_tokens = 0
+        agent_completion_tokens = 0
+        agent_llm_calls = 0
+        agent_cache_read_tokens = 0
+        agent_cache_eligible_input_tokens = 0
+        chat_usage: list[ChatUsageStats] = []
         if include_token_overlay:
             token_manager = get_token_usage_manager()
             token_summary = await token_manager.get_summary(
                 start_date=start_date,
                 end_date=end_date,
+                agent_id=agent_id,
             )
             total_prompt_tokens = token_summary.total_prompt_tokens
             total_completion_tokens = token_summary.total_completion_tokens
             total_llm_calls = token_summary.total_calls
+            agent_prompt_tokens = token_summary.total_prompt_tokens
+            agent_completion_tokens = token_summary.total_completion_tokens
+            agent_llm_calls = token_summary.total_calls
+            agent_cache_read_tokens = token_summary.total_cache_read_tokens
+            agent_cache_eligible_input_tokens = (
+                token_summary.total_cache_eligible_input_tokens
+            )
             for date_str, ts in token_summary.by_date.items():
                 if date_str in daily_stats:
                     daily_stats[date_str]["prompt_tokens"] = ts.prompt_tokens
@@ -527,6 +509,76 @@ class AgentStatsService:
                         "completion_tokens"
                     ] = ts.completion_tokens
                     daily_stats[date_str]["llm_calls"] = ts.call_count
+                    daily_stats[date_str][
+                        "agent_prompt_tokens"
+                    ] = ts.prompt_tokens
+                    daily_stats[date_str][
+                        "agent_completion_tokens"
+                    ] = ts.completion_tokens
+                    daily_stats[date_str]["agent_llm_calls"] = ts.call_count
+                    daily_stats[date_str][
+                        "agent_cache_read_tokens"
+                    ] = ts.cache_read_tokens
+            chat_usage = sorted(
+                (
+                    ChatUsageStats(
+                        chat_id=row.chat_id,
+                        name=(
+                            chat_names.get(row.chat_id)
+                            if row.chat_id is not None
+                            else None
+                        ),
+                        prompt_tokens=row.prompt_tokens,
+                        completion_tokens=row.completion_tokens,
+                        cache_read_tokens=row.cache_read_tokens,
+                        cache_eligible_input_tokens=(
+                            row.cache_eligible_input_tokens
+                        ),
+                        cache_hit_rate=(
+                            row.cache_read_tokens
+                            / row.cache_eligible_input_tokens
+                            * 100
+                            if row.cache_eligible_input_tokens > 0
+                            else None
+                        ),
+                        usage_unobserved_calls=(row.usage_unobserved_calls),
+                        call_count=row.call_count,
+                    )
+                    for row in token_summary.scopes.chats
+                ),
+                key=lambda item: (
+                    -(item.prompt_tokens + item.completion_tokens),
+                    item.name or "",
+                    item.chat_id or "",
+                ),
+            )
+
+        chat_usage_by_id = {
+            row.chat_id: row for row in chat_usage if row.chat_id is not None
+        }
+        for chat_id, estimate in estimates_by_chat.items():
+            row = chat_usage_by_id.get(chat_id)
+            if row is None:
+                chat_usage.append(estimate)
+                chat_usage_by_id[chat_id] = estimate
+                continue
+            row.estimated_prompt_tokens = estimate.estimated_prompt_tokens
+            row.estimated_completion_tokens = (
+                estimate.estimated_completion_tokens
+            )
+            row.estimated_turns = estimate.estimated_turns
+        chat_usage.sort(
+            key=lambda item: (
+                -(
+                    item.prompt_tokens
+                    + item.completion_tokens
+                    + item.estimated_prompt_tokens
+                    + item.estimated_completion_tokens
+                ),
+                item.name or "",
+                item.chat_id or "",
+            ),
+        )
 
         for date_str, session_set in active_sessions.items():
             if date_str in daily_stats:
@@ -539,14 +591,6 @@ class AgentStatsService:
             ds["assistant_messages"] for ds in by_date
         )
         total_messages = total_user_messages + total_assistant_messages
-        agent_cache_read_tokens = sum(
-            int(ds.get("agent_cache_read_tokens", 0) or 0) for ds in by_date
-        )
-        agent_cache_eligible_input_tokens = sum(
-            int(ds.get("agent_cache_eligible_input_tokens", 0) or 0)
-            for ds in by_date
-        )
-
         return AgentStatsSummary(
             total_active_sessions=total_active_sessions,
             total_messages=total_messages,
@@ -584,6 +628,11 @@ class AgentStatsService:
                 if agent_cache_eligible_input_tokens > 0
                 else None
             ),
+            agent_estimated_prompt_tokens=agent_estimated_prompt_tokens,
+            agent_estimated_completion_tokens=(
+                agent_estimated_completion_tokens
+            ),
+            agent_estimated_turns=agent_estimated_turns,
         )
 
     async def get_global_llm_tool_by_date(
@@ -591,7 +640,7 @@ class AgentStatsService:
         start_date: date,
         end_date: date,
     ) -> list[LlmToolDaily]:
-        """Sum Agent Statistics daily LLM turns and tool calls."""
+        """Combine global Model Call facts with session Tool activity."""
         if (end_date - start_date).days + 1 > 365:
             start_date = end_date - timedelta(days=364)
 
@@ -602,6 +651,13 @@ class AgentStatsService:
                 "agent_llm_calls": 0,
                 "tool_calls": 0,
             }
+        usage = await get_token_usage_manager().get_summary(
+            start_date=start_date,
+            end_date=end_date,
+        )
+        for date_str, stats in usage.by_date.items():
+            if date_str in totals:
+                totals[date_str]["agent_llm_calls"] = stats.call_count
         seen: set[str] = set()
         for path in get_agent_dirs():
             key = str(path.resolve())
@@ -615,7 +671,6 @@ class AgentStatsService:
                 include_token_overlay=False,
             )
             for ds in summary.by_date:
-                totals[ds.date]["agent_llm_calls"] += ds.agent_llm_calls
                 totals[ds.date]["tool_calls"] += ds.tool_calls
         return [
             LlmToolDaily(date=date_str, **totals[date_str])

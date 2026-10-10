@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for current-agent token aggregation in AgentStatsService."""
+"""Tests for Model-Call-backed usage in Agent Statistics."""
 
 from __future__ import annotations
 
@@ -10,13 +10,18 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from qwenpaw.agent_stats.models import AgentStatsSummary
+from qwenpaw.agent_stats.models import AgentStatsSummary, DailyStats
 from qwenpaw.agent_stats.service import (
     AgentStatsService,
     _process_session_file,
 )
 from qwenpaw.app.chats.session import session_filename
-from qwenpaw.token_usage.manager import TokenUsageStats, TokenUsageSummary
+from qwenpaw.token_usage.models import (
+    TokenUsageByChat,
+    TokenUsageScopeRows,
+    TokenUsageStats,
+    TokenUsageSummary,
+)
 from qwenpaw.token_usage.turn_usage import TURN_USAGE_META_KEY
 
 
@@ -35,578 +40,398 @@ def _empty_daily(date_str: str) -> dict:
         "agent_prompt_tokens": 0,
         "agent_completion_tokens": 0,
         "agent_llm_calls": 0,
+        "agent_cache_read_tokens": 0,
+        "estimated_prompt_tokens": 0,
+        "estimated_completion_tokens": 0,
+        "estimated_turns": 0,
     }
 
 
-def _assistant_with_usage(
-    *,
-    created_at: str,
-    prompt_tokens: int,
-    completion_tokens: int,
-) -> dict:
+def _assistant_message(*, prompt_tokens: int = 999) -> dict:
     return {
         "role": "assistant",
-        "created_at": created_at,
-        "content": [{"type": "text", "text": "hi"}],
+        "created_at": "2026-07-23T08:00:01Z",
+        "content": [
+            {"type": "text", "text": "done"},
+            {"type": "tool_use", "id": "tool-1", "name": "read"},
+        ],
         "metadata": {
             TURN_USAGE_META_KEY: {
                 "usage": {
                     "prompt_tokens": prompt_tokens,
-                    "completion_tokens": completion_tokens,
-                    "total_tokens": prompt_tokens + completion_tokens,
+                    "completion_tokens": 99,
+                    "total_tokens": prompt_tokens + 99,
                 },
             },
         },
     }
 
 
-class TestProcessSessionFileAgentTokens:
-    """Cover agent token accumulation inside _process_session_file."""
+def _assistant_local_estimate(
+    *,
+    prompt_tokens: int = 578,
+    completion_tokens: int = 24,
+) -> dict:
+    message = _assistant_message(prompt_tokens=prompt_tokens)
+    usage = message["metadata"][TURN_USAGE_META_KEY]["usage"]
+    usage.update(
+        {
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+            "measurement": "local_estimate",
+            "estimated": True,
+        },
+    )
+    return message
 
-    def test_accumulates_turn_usage_from_assistant_metadata(self):
-        daily_stats = {
-            "2026-07-23": _empty_daily("2026-07-23"),
-            "2026-07-24": _empty_daily("2026-07-24"),
-        }
-        channel_stats: dict = {}
-        active_sessions: dict = {}
-        session_data = {
-            "agent": {
-                "state": {
-                    "context": [
-                        {
-                            "role": "user",
-                            "created_at": "2026-07-2aT10:00:00Z",
-                            "content": [{"type": "text", "text": "bad"}],
-                        },
-                        {
-                            "role": "user",
-                            "created_at": "2026-07-23T10:00:00Z",
-                            "content": [{"type": "text", "text": "q"}],
-                        },
-                        _assistant_with_usage(
-                            created_at="2026-07-23T10:00:01Z",
-                            prompt_tokens=100,
-                            completion_tokens=40,
-                        ),
-                        {
-                            "role": "user",
-                            "created_at": "2026-07-23T11:00:00Z",
-                            "content": [{"type": "text", "text": "q2"}],
-                        },
-                        _assistant_with_usage(
-                            created_at="2026-07-23T11:00:01Z",
-                            prompt_tokens=200,
-                            completion_tokens=60,
-                        ),
-                    ],
-                },
+
+def _usage_summary() -> TokenUsageSummary:
+    by_date = TokenUsageStats(
+        prompt_tokens=120,
+        completion_tokens=30,
+        cache_read_tokens=40,
+        cache_eligible_input_tokens=80,
+        cache_observed_calls=2,
+        usage_observed_calls=2,
+        usage_unobserved_calls=1,
+        call_count=3,
+    )
+    chat = TokenUsageByChat(
+        agent_id="agent-a",
+        chat_id="chat-a",
+        prompt_tokens=120,
+        completion_tokens=30,
+        cache_read_tokens=40,
+        cache_eligible_input_tokens=80,
+        cache_observed_calls=2,
+        usage_observed_calls=2,
+        usage_unobserved_calls=1,
+        call_count=3,
+    )
+    return TokenUsageSummary(
+        total_prompt_tokens=120,
+        total_completion_tokens=30,
+        total_cache_read_tokens=40,
+        total_cache_eligible_input_tokens=80,
+        cache_observed_calls=2,
+        cache_hit_rate=50,
+        total_calls=3,
+        usage_observed_calls=2,
+        usage_unobserved_calls=1,
+        by_date={"2026-07-23": by_date},
+        scopes=TokenUsageScopeRows(chats=[chat]),
+    )
+
+
+def _write_workspace(path: Path) -> None:
+    path.mkdir()
+    (path / "chats.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "chats": [
+                    {
+                        "id": "chat-a",
+                        "name": "Architecture review",
+                        "session_id": "console:chat-a",
+                        "user_id": "console",
+                        "channel": "console",
+                        "created_at": "2026-07-23T08:00:00Z",
+                        "updated_at": "2026-07-23T08:00:00Z",
+                    },
+                ],
             },
-        }
+        ),
+        encoding="utf-8",
+    )
+    sessions = path / "sessions" / "console"
+    sessions.mkdir(parents=True)
+    messages = [
+        {
+            "role": "user",
+            "created_at": "2026-07-23T08:00:00Z",
+            "content": [{"type": "text", "text": "review"}],
+        },
+        _assistant_message(),
+    ]
+    (sessions / session_filename("console:chat-a", "console")).write_text(
+        json.dumps({"agent": {"state": {"context": messages}}}),
+        encoding="utf-8",
+    )
 
-        result = _process_session_file(
-            session_data,
-            "2026-07-01",
-            "2026-07-31",
-            daily_stats,
-            channel_stats,
-            "console",
-            "sess-1",
-            active_sessions,
-        )
 
-        assert result.has_messages is True
-        assert result.tool_calls == 0
-        assert result.prompt_tokens == 300
-        assert result.completion_tokens == 100
-        assert result.llm_calls == 2
-        # Global daily token fields must remain untouched (overlay owns them)
-        assert daily_stats["2026-07-23"]["prompt_tokens"] == 0
-        assert daily_stats["2026-07-23"]["completion_tokens"] == 0
-        assert daily_stats["2026-07-23"]["llm_calls"] == 0
-        assert daily_stats["2026-07-23"]["assistant_messages"] == 2
-        # Agent daily token fields accumulate from turn metadata
-        assert daily_stats["2026-07-23"]["agent_prompt_tokens"] == 300
-        assert daily_stats["2026-07-23"]["agent_completion_tokens"] == 100
-        assert daily_stats["2026-07-23"]["agent_llm_calls"] == 2
-        assert daily_stats["2026-07-24"]["agent_prompt_tokens"] == 0
-        assert daily_stats["2026-07-24"]["agent_completion_tokens"] == 0
-        assert daily_stats["2026-07-24"]["agent_llm_calls"] == 0
+def _empty_agent_summary(*, tool_calls: int = 0) -> AgentStatsSummary:
+    return AgentStatsSummary(
+        total_active_sessions=0,
+        total_messages=0,
+        total_user_messages=0,
+        total_assistant_messages=0,
+        total_prompt_tokens=0,
+        total_completion_tokens=0,
+        total_llm_calls=0,
+        total_tool_calls=tool_calls,
+        by_date=[
+            DailyStats(
+                date="2026-07-23",
+                chats=0,
+                active_sessions=0,
+                user_messages=0,
+                assistant_messages=0,
+                total_messages=0,
+                prompt_tokens=0,
+                completion_tokens=0,
+                llm_calls=0,
+                tool_calls=tool_calls,
+            ),
+        ],
+        channel_stats=[],
+        start_date="2026-07-23",
+        end_date="2026-07-23",
+    )
 
-    def test_ignores_missing_or_empty_usage(self):
-        daily_stats = {"2026-07-23": _empty_daily("2026-07-23")}
-        session_data = {
-            "agent": {
-                "state": {
-                    "context": [
-                        {
-                            "role": "assistant",
-                            "created_at": "2026-07-23T10:00:00Z",
-                            "content": [{"type": "text", "text": "a"}],
-                            "metadata": {},
-                        },
-                        {
-                            "role": "assistant",
-                            "created_at": "2026-07-23T10:01:00Z",
-                            "content": [{"type": "text", "text": "b"}],
-                            "metadata": {
-                                TURN_USAGE_META_KEY: {"usage": None},
-                            },
-                        },
-                        {
-                            "role": "assistant",
-                            "created_at": "2026-07-23T10:02:00Z",
-                            "content": [{"type": "text", "text": "c"}],
-                            "metadata": {
-                                TURN_USAGE_META_KEY: {
-                                    "usage": {
-                                        "prompt_tokens": 0,
-                                        "completion_tokens": 0,
-                                    },
-                                },
-                            },
-                        },
-                    ],
-                },
-            },
-        }
 
-        result = _process_session_file(
-            session_data,
-            "2026-07-23",
-            "2026-07-23",
-            daily_stats,
-            {},
-            "console",
-            "sess-2",
-            {},
-        )
-        assert result.prompt_tokens == 0
-        assert result.completion_tokens == 0
-        assert result.llm_calls == 0
+def test_message_usage_is_not_an_accounting_fact() -> None:
+    daily = {"2026-07-23": _empty_daily("2026-07-23")}
+    result = _process_session_file(
+        {"agent": {"state": {"context": [_assistant_message()]}}},
+        "2026-07-23",
+        "2026-07-23",
+        daily,
+        {},
+        "console",
+        "session-a",
+        {},
+    )
 
-    def test_invalid_usage_tokens_do_not_wipe_session_stats(self):
-        daily_stats = {"2026-07-23": _empty_daily("2026-07-23")}
-        session_data = {
-            "agent": {
-                "state": {
-                    "context": [
-                        {
-                            "role": "assistant",
-                            "created_at": "2026-07-23T10:00:00Z",
-                            "content": [{"type": "text", "text": "bad"}],
-                            "metadata": {
-                                TURN_USAGE_META_KEY: {
-                                    "usage": {
-                                        "prompt_tokens": "abc",
-                                        "completion_tokens": 10,
-                                    },
-                                },
-                            },
-                        },
-                        _assistant_with_usage(
-                            created_at="2026-07-23T10:01:00Z",
-                            prompt_tokens=20,
-                            completion_tokens=5,
-                        ),
-                    ],
-                },
-            },
-        }
+    assert result.has_messages is True
+    assert result.tool_calls == 1
+    assert daily["2026-07-23"]["assistant_messages"] == 1
+    assert daily["2026-07-23"]["agent_prompt_tokens"] == 0
+    assert daily["2026-07-23"]["agent_llm_calls"] == 0
+    assert daily["2026-07-23"]["estimated_turns"] == 0
 
-        result = _process_session_file(
-            session_data,
-            "2026-07-23",
-            "2026-07-23",
-            daily_stats,
-            {},
-            "console",
-            "sess-invalid",
-            {},
-        )
 
-        assert result.has_messages is True
-        assert daily_stats["2026-07-23"]["assistant_messages"] == 2
-        assert result.prompt_tokens == 20
-        assert result.completion_tokens == 5
-        assert result.llm_calls == 1
-        assert daily_stats["2026-07-23"]["agent_prompt_tokens"] == 20
-        assert daily_stats["2026-07-23"]["agent_completion_tokens"] == 5
+def test_session_scan_keeps_explicit_local_estimate_separate() -> None:
+    daily = {"2026-07-23": _empty_daily("2026-07-23")}
+    result = _process_session_file(
+        {"agent": {"state": {"context": [_assistant_local_estimate()]}}},
+        "2026-07-23",
+        "2026-07-23",
+        daily,
+        {},
+        "console",
+        "session-a",
+        {},
+        chat_id="chat-a",
+    )
 
-    def test_accumulates_agent_tokens_per_day(self):
-        daily_stats = {
-            "2026-07-23": _empty_daily("2026-07-23"),
-            "2026-07-24": _empty_daily("2026-07-24"),
-        }
-        session_data = {
-            "agent": {
-                "state": {
-                    "context": [
-                        _assistant_with_usage(
-                            created_at="2026-07-23T10:00:00Z",
-                            prompt_tokens=100,
-                            completion_tokens=10,
-                        ),
-                        _assistant_with_usage(
-                            created_at="2026-07-24T10:00:00Z",
-                            prompt_tokens=50,
-                            completion_tokens=5,
-                        ),
-                    ],
-                },
-            },
-        }
-
-        result = _process_session_file(
-            session_data,
-            "2026-07-23",
-            "2026-07-24",
-            daily_stats,
-            {},
-            "console",
-            "sess-days",
-            {},
-        )
-
-        assert result.has_messages is True
-        assert result.prompt_tokens == 150
-        assert result.completion_tokens == 15
-        assert result.llm_calls == 2
-        assert daily_stats["2026-07-23"]["agent_prompt_tokens"] == 100
-        assert daily_stats["2026-07-23"]["agent_completion_tokens"] == 10
-        assert daily_stats["2026-07-23"]["agent_llm_calls"] == 1
-        assert daily_stats["2026-07-24"]["agent_prompt_tokens"] == 50
-        assert daily_stats["2026-07-24"]["agent_completion_tokens"] == 5
-        assert daily_stats["2026-07-24"]["agent_llm_calls"] == 1
-        assert daily_stats["2026-07-23"]["prompt_tokens"] == 0
-        assert daily_stats["2026-07-24"]["prompt_tokens"] == 0
-
-    def test_skips_usage_outside_date_range(self):
-        daily_stats = {"2026-07-23": _empty_daily("2026-07-23")}
-        session_data = {
-            "agent": {
-                "state": {
-                    "context": [
-                        _assistant_with_usage(
-                            created_at="2026-07-22T10:00:00Z",
-                            prompt_tokens=999,
-                            completion_tokens=999,
-                        ),
-                        _assistant_with_usage(
-                            created_at="2026-07-23T10:00:00Z",
-                            prompt_tokens=10,
-                            completion_tokens=5,
-                        ),
-                    ],
-                },
-            },
-        }
-
-        result = _process_session_file(
-            session_data,
-            "2026-07-23",
-            "2026-07-23",
-            daily_stats,
-            {},
-            "console",
-            "sess-3",
-            {},
-        )
-        assert result.prompt_tokens == 10
-        assert result.completion_tokens == 5
-        assert result.llm_calls == 1
-        assert daily_stats["2026-07-23"]["agent_prompt_tokens"] == 10
-        assert daily_stats["2026-07-23"]["agent_completion_tokens"] == 5
-        assert daily_stats["2026-07-23"]["prompt_tokens"] == 0
+    assert result.estimated_prompt_tokens == 578
+    assert result.estimated_completion_tokens == 24
+    assert result.estimated_turns == 1
+    assert daily["2026-07-23"]["agent_prompt_tokens"] == 0
+    assert daily["2026-07-23"]["estimated_prompt_tokens"] == 578
+    assert daily["2026-07-23"]["estimated_completion_tokens"] == 24
+    assert daily["2026-07-23"]["estimated_turns"] == 1
 
 
 @pytest.mark.asyncio
-class TestAgentStatsServiceAgentTokens:
-    """Cover get_summary wiring for agent_* vs global totals."""
+async def test_agent_usage_comes_from_filtered_model_call_projection(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "agent-a"
+    _write_workspace(workspace)
+    manager = AsyncMock()
+    manager.get_summary = AsyncMock(return_value=_usage_summary())
 
-    async def test_get_summary_keeps_global_and_fills_agent_fields(
-        self,
-        tmp_path: Path,
+    with patch(
+        "qwenpaw.agent_stats.service.get_token_usage_manager",
+        return_value=manager,
     ):
-        workspace = tmp_path / "agent-a"
-        sessions = workspace / "sessions" / "console"
-        sessions.mkdir(parents=True)
-        session_file = sessions / "s1.json"
-        session_file.write_text(
-            json.dumps(
-                {
-                    "agent": {
-                        "state": {
-                            "context": [
-                                {
-                                    "role": "user",
-                                    "created_at": "2026-07-23T09:00:00Z",
-                                    "content": [
-                                        {"type": "text", "text": "hi"},
-                                    ],
-                                },
-                                _assistant_with_usage(
-                                    created_at="2026-07-23T09:00:01Z",
-                                    prompt_tokens=111,
-                                    completion_tokens=22,
-                                ),
-                            ],
-                        },
-                    },
-                },
-            ),
-            encoding="utf-8",
+        summary = await AgentStatsService().get_summary(
+            workspace_dir=workspace,
+            start_date=date(2026, 7, 23),
+            end_date=date(2026, 7, 24),
+            agent_id="agent-a",
         )
 
-        global_summary = TokenUsageSummary(
-            total_prompt_tokens=4_000_000,
-            total_completion_tokens=284_800,
-            total_calls=72,
-            by_model={},
-            by_date={
-                "2026-07-23": TokenUsageStats(
-                    prompt_tokens=4_000_000,
-                    completion_tokens=284_800,
-                    call_count=72,
-                ),
-            },
-        )
-        mock_manager = AsyncMock()
-        mock_manager.get_summary = AsyncMock(return_value=global_summary)
+    manager.get_summary.assert_awaited_once_with(
+        start_date=date(2026, 7, 23),
+        end_date=date(2026, 7, 24),
+        agent_id="agent-a",
+    )
+    assert summary.total_prompt_tokens == 120
+    assert summary.agent_prompt_tokens == 120
+    assert summary.agent_completion_tokens == 30
+    assert summary.agent_llm_calls == 3
+    assert summary.agent_cache_hit_rate == 50
+    assert summary.total_messages == 2
+    assert summary.total_tool_calls == 1
+    assert summary.by_date[0].agent_prompt_tokens == 120
+    assert summary.by_date[0].agent_llm_calls == 3
+    assert summary.by_date[1].agent_prompt_tokens == 0
+    assert len(summary.chat_usage) == 1
+    chat = summary.chat_usage[0]
+    assert chat.chat_id == "chat-a"
+    assert chat.name == "Architecture review"
+    assert chat.prompt_tokens == 120
+    assert chat.usage_unobserved_calls == 1
+    assert chat.call_count == 3
+    assert not hasattr(chat, "turn_id")
 
-        with patch(
-            "qwenpaw.agent_stats.service.get_token_usage_manager",
-            return_value=mock_manager,
-        ):
-            summary = await AgentStatsService().get_summary(
-                workspace_dir=workspace,
-                start_date=date(2026, 7, 23),
-                end_date=date(2026, 7, 24),
-            )
 
-        assert isinstance(summary, AgentStatsSummary)
-        # Global totals remain from token_usage manager
-        assert summary.total_prompt_tokens == 4_000_000
-        assert summary.total_completion_tokens == 284_800
-        assert summary.total_llm_calls == 72
-        assert summary.by_date[0].prompt_tokens == 4_000_000
-        assert summary.by_date[0].completion_tokens == 284_800
-        assert summary.by_date[0].llm_calls == 72
-        # Agent-scoped fields come from session turn metadata
-        assert summary.agent_prompt_tokens == 111
-        assert summary.agent_completion_tokens == 22
-        assert summary.agent_llm_calls == 1
-        assert summary.total_messages == 2
-        # Daily agent token fields are independent of global overlay
-        assert summary.by_date[0].agent_prompt_tokens == 111
-        assert summary.by_date[0].agent_completion_tokens == 22
-        assert summary.by_date[0].agent_llm_calls == 1
-        assert summary.by_date[1].agent_prompt_tokens == 0
-        assert summary.by_date[1].agent_completion_tokens == 0
-        assert summary.by_date[1].agent_llm_calls == 0
-
-    async def test_agent_tokens_isolated_per_workspace(self, tmp_path: Path):
-        def _write_workspace(name: str, prompt: int, completion: int) -> Path:
-            root = tmp_path / name
-            sess_dir = root / "sessions" / "console"
-            sess_dir.mkdir(parents=True)
-            (sess_dir / "s.json").write_text(
-                json.dumps(
-                    {
-                        "agent": {
-                            "state": {
-                                "context": [
-                                    _assistant_with_usage(
-                                        created_at="2026-07-23T10:00:00Z",
-                                        prompt_tokens=prompt,
-                                        completion_tokens=completion,
-                                    ),
-                                ],
-                            },
-                        },
-                    },
-                ),
-                encoding="utf-8",
-            )
-            return root
-
-        ws_a = _write_workspace("agent-a", 100, 10)
-        ws_b = _write_workspace("agent-b", 500, 50)
-
-        empty_global = TokenUsageSummary(
-            total_prompt_tokens=999,
-            total_completion_tokens=99,
-            total_calls=9,
-            by_model={},
-            by_date={},
-        )
-        mock_manager = AsyncMock()
-        mock_manager.get_summary = AsyncMock(return_value=empty_global)
-
-        with patch(
-            "qwenpaw.agent_stats.service.get_token_usage_manager",
-            return_value=mock_manager,
-        ):
-            summary_a = await AgentStatsService().get_summary(
-                workspace_dir=ws_a,
-                start_date=date(2026, 7, 23),
-                end_date=date(2026, 7, 23),
-            )
-            summary_b = await AgentStatsService().get_summary(
-                workspace_dir=ws_b,
-                start_date=date(2026, 7, 23),
-                end_date=date(2026, 7, 23),
-            )
-
-        assert summary_a.agent_prompt_tokens == 100
-        assert summary_a.agent_completion_tokens == 10
-        assert summary_a.agent_llm_calls == 1
-        assert summary_b.agent_prompt_tokens == 500
-        assert summary_b.agent_completion_tokens == 50
-        assert summary_b.agent_llm_calls == 1
-        # Global fields stay identical (same mocked manager)
-        assert summary_a.total_prompt_tokens == 999
-        assert summary_b.total_prompt_tokens == 999
-
-    async def test_chat_usage_is_scoped_to_agent_and_resolves_names(
-        self,
-        tmp_path: Path,
-    ):
-        workspace = tmp_path / "agent-a"
-        workspace.mkdir()
-        (workspace / "chats.json").write_text(
-            json.dumps(
-                {
-                    "version": 1,
-                    "chats": [
-                        {
-                            "id": "chat-a",
-                            "name": "Architecture review",
-                            "session_id": "console:chat-a",
-                            "user_id": "console",
-                            "channel": "console",
-                            "created_at": "2026-07-23T08:00:00Z",
-                            "updated_at": "2026-07-23T08:00:00Z",
-                        },
-                    ],
-                },
-            ),
-            encoding="utf-8",
-        )
-        sessions = workspace / "sessions" / "console"
-        sessions.mkdir(parents=True)
-        messages = [
-            _assistant_with_usage(
-                created_at=f"2026-07-23T08:00:0{index}Z",
-                prompt_tokens=40,
-                completion_tokens=10,
-            )
-            for index in range(3)
-        ]
-        messages[0]["metadata"][TURN_USAGE_META_KEY]["usage"].update(
+@pytest.mark.asyncio
+async def test_model_facts_and_local_estimates_never_mix(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "agent-a"
+    _write_workspace(workspace)
+    session_path = (
+        workspace
+        / "sessions"
+        / "console"
+        / session_filename("console:chat-a", "console")
+    )
+    session_path.write_text(
+        json.dumps(
             {
-                "cache_observed": True,
-                "cache_read_tokens": 40,
-                "cache_eligible_input_tokens": 80,
-                "estimated": True,
-                "measurement": "local_estimate",
+                "agent": {
+                    "state": {
+                        "context": [
+                            _assistant_local_estimate(
+                                prompt_tokens=578,
+                                completion_tokens=24,
+                            ),
+                        ],
+                    },
+                },
             },
-        )
-        (sessions / session_filename("console:chat-a", "console")).write_text(
-            json.dumps({"agent": {"state": {"context": messages}}}),
-            encoding="utf-8",
-        )
-        global_summary = TokenUsageSummary()
-        mock_manager = AsyncMock()
-        mock_manager.get_summary = AsyncMock(return_value=global_summary)
+        ),
+        encoding="utf-8",
+    )
+    manager = AsyncMock()
+    manager.get_summary = AsyncMock(return_value=_usage_summary())
 
-        with patch(
-            "qwenpaw.agent_stats.service.get_token_usage_manager",
-            return_value=mock_manager,
-        ):
-            summary = await AgentStatsService().get_summary(
-                workspace_dir=workspace,
-                start_date=date(2026, 7, 23),
-                end_date=date(2026, 7, 23),
-                agent_id="agent-a",
-            )
+    with patch(
+        "qwenpaw.agent_stats.service.get_token_usage_manager",
+        return_value=manager,
+    ):
+        summary = await AgentStatsService().get_summary(
+            workspace_dir=workspace,
+            start_date=date(2026, 7, 23),
+            end_date=date(2026, 7, 23),
+            agent_id="agent-a",
+        )
 
-        mock_manager.get_summary.assert_awaited_once_with(
+    assert summary.agent_prompt_tokens == 120
+    assert summary.agent_completion_tokens == 30
+    assert summary.agent_llm_calls == 3
+    assert summary.agent_estimated_prompt_tokens == 578
+    assert summary.agent_estimated_completion_tokens == 24
+    assert summary.agent_estimated_turns == 1
+    assert summary.by_date[0].agent_prompt_tokens == 120
+    assert summary.by_date[0].estimated_prompt_tokens == 578
+    chat = summary.chat_usage[0]
+    assert chat.prompt_tokens == 120
+    assert chat.completion_tokens == 30
+    assert chat.call_count == 3
+    assert chat.estimated_prompt_tokens == 578
+    assert chat.estimated_completion_tokens == 24
+    assert chat.estimated_turns == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_usage_requires_explicit_agent_identity(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="agent_id is required"):
+        await AgentStatsService().get_summary(
+            workspace_dir=tmp_path,
             start_date=date(2026, 7, 23),
             end_date=date(2026, 7, 23),
         )
-        assert len(summary.chat_usage) == 1
-        chat = summary.chat_usage[0]
-        assert chat.chat_id == "chat-a"
-        assert chat.name == "Architecture review"
-        assert chat.prompt_tokens == 120
-        assert chat.completion_tokens == 30
-        assert chat.cache_hit_rate == 50
-        assert chat.usage_unobserved_calls == 0
-        assert chat.call_count == 3
-        assert not hasattr(chat, "turn_id")
-
-
-def _write_trend_workspace(root: Path, n_turns: int, n_tools: int) -> Path:
-    sess_dir = root / "sessions" / "console"
-    sess_dir.mkdir(parents=True)
-    (root / "agent.json").write_text("{}", encoding="utf-8")
-    content: list[dict] = [{"type": "text", "text": "hi"}]
-    content.extend(
-        {"type": "tool_use", "id": f"t{i}", "name": "x", "input": {}}
-        for i in range(n_tools)
-    )
-    turns = []
-    for _ in range(n_turns):
-        msg = _assistant_with_usage(
-            created_at="2026-07-23T10:00:00Z",
-            prompt_tokens=10,
-            completion_tokens=1,
-        )
-        msg["content"] = list(content)
-        turns.append(msg)
-    (sess_dir / "s.json").write_text(
-        json.dumps({"agent": {"state": {"context": turns}}}),
-        encoding="utf-8",
-    )
-    return root
 
 
 @pytest.mark.asyncio
-async def test_get_global_llm_tool_by_date_sums_skips_and_fills(tmp_path):
-    """Sum agents, skip dup, fill days; overlay must not run."""
-    ws_a = _write_trend_workspace(tmp_path / "a", 2, 2)
-    ws_b = _write_trend_workspace(tmp_path / "b", 1, 1)
+async def test_activity_only_scan_does_not_query_usage_projection(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "agent-a"
+    _write_workspace(workspace)
+    with patch(
+        "qwenpaw.agent_stats.service.get_token_usage_manager",
+    ) as manager:
+        summary = await AgentStatsService().get_summary(
+            workspace_dir=workspace,
+            start_date=date(2026, 7, 23),
+            end_date=date(2026, 7, 23),
+            include_token_overlay=False,
+        )
+
+    manager.assert_not_called()
+    assert summary.agent_prompt_tokens == 0
+    assert summary.agent_llm_calls == 0
+    assert summary.total_tool_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_global_trend_uses_model_calls_and_session_tools() -> None:
+    service = AgentStatsService()
+    usage = TokenUsageSummary(
+        by_date={"2026-07-23": TokenUsageStats(call_count=3)},
+    )
+    manager = AsyncMock()
+    manager.get_summary = AsyncMock(return_value=usage)
+    service.get_summary = AsyncMock(
+        side_effect=[
+            _empty_agent_summary(tool_calls=4),
+            _empty_agent_summary(tool_calls=2),
+        ],
+    )
+
     with (
         patch(
-            "qwenpaw.agent_stats.service.get_agent_dirs",
-            return_value=[ws_a, ws_a, ws_b],
+            "qwenpaw.agent_stats.service.get_token_usage_manager",
+            return_value=manager,
         ),
         patch(
-            "qwenpaw.agent_stats.service.get_token_usage_manager",
-        ) as mock_overlay,
+            "qwenpaw.agent_stats.service.get_agent_dirs",
+            return_value=[Path("/a"), Path("/a"), Path("/b")],
+        ),
     ):
-        rows = await AgentStatsService().get_global_llm_tool_by_date(
+        rows = await service.get_global_llm_tool_by_date(
             start_date=date(2026, 7, 23),
             end_date=date(2026, 7, 24),
         )
 
-    mock_overlay.assert_not_called()
-    assert [row.date for row in rows] == ["2026-07-23", "2026-07-24"]
-    assert (rows[0].agent_llm_calls, rows[0].tool_calls) == (3, 5)
-    assert (rows[1].agent_llm_calls, rows[1].tool_calls) == (0, 0)
+    manager.get_summary.assert_awaited_once_with(
+        start_date=date(2026, 7, 23),
+        end_date=date(2026, 7, 24),
+    )
+    assert [(row.agent_llm_calls, row.tool_calls) for row in rows] == [
+        (3, 6),
+        (0, 0),
+    ]
 
 
 @pytest.mark.asyncio
-async def test_get_global_llm_tool_by_date_clamps_to_365_days():
-    with patch(
-        "qwenpaw.agent_stats.service.get_agent_dirs",
-        return_value=[],
+async def test_global_trend_clamps_to_365_days() -> None:
+    manager = AsyncMock()
+    manager.get_summary = AsyncMock(return_value=TokenUsageSummary())
+    with (
+        patch(
+            "qwenpaw.agent_stats.service.get_token_usage_manager",
+            return_value=manager,
+        ),
+        patch(
+            "qwenpaw.agent_stats.service.get_agent_dirs",
+            return_value=[],
+        ),
     ):
         rows = await AgentStatsService().get_global_llm_tool_by_date(
             start_date=date(2025, 1, 1),
             end_date=date(2026, 8, 1),
         )
+
     assert len(rows) == 365
     assert rows[0].date == "2025-08-02"
     assert rows[-1].date == "2026-08-01"
