@@ -1111,9 +1111,12 @@ PawApp / SDK 的运行所有权迁移见
   客户端；Chat 控制、Task、Interaction、Host negotiation 复用生成契约和同一实现，
   不拥有 Agent Loop、Queue 或生命周期事实。
 - [ ] 按 coding-agent SDK 对比结论交付最小 managed-local SDK，不再造执行内核：
-  - [ ] 首版只负责发现或启动隔离的本地 QwenPaw Host、等待 readiness、完成版本与
-    feature handshake，并在不兼容时于接收工作前失败；不得静默使用任意 `PATH`
-    可执行文件。
+  - [x] Host 已提供版本化 managed launch contract：CLI 预绑定 loopback socket，
+    支持安全的 `--port 0`，输出真实 `api_url + pid`；禁止 non-loopback/reload，且不
+    覆盖用户的 last API。launch record 只证明绑定，SDK 仍须等待 readiness。
+  - [ ] SDK 首版只负责发现或启动隔离的本地 QwenPaw Host、等待 readiness、完成版本
+    与 feature handshake，并在不兼容时于接收工作前失败；不得静默使用任意
+    `PATH` 可执行文件。
   - [ ] managed-local SDK 直接组合 `@qwenpaw/client`，remote 与 managed 模式必须
     返回相同值、错误和事件；`send()` 仅聚合同一事件流，EOF 不得替代 terminal
     receipt。

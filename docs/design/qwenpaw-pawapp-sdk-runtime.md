@@ -202,6 +202,22 @@ The minimum viable managed SDK is intentionally small:
 - accept untrusted external messages through an explicitly lower-trust input
   type rather than treating every string as a user instruction.
 
+The Host-side launch contract is now versioned independently from the HTTP
+protocol. `qwenpaw app --managed --host 127.0.0.1 --port 0` pre-binds a
+loopback socket and emits exactly one machine-readable line:
+
+```text
+QWENPAW_MANAGED_HOST {"schema":"qwenpaw.managed-host-launch.v1","api_url":"http://127.0.0.1:<port>/api","pid":<pid>}
+```
+
+This record proves process ownership and the actual bound address, not
+application readiness. The SDK must continue polling the advertised
+`/api/version` endpoint and validate `qwenpaw.host-handshake.v1` before it
+returns a client. Managed mode rejects non-loopback binds and reload, does not
+overwrite the user's last-connected API address, and retains the normal Host
+graceful-shutdown path. These rules avoid the unsafe "find a free port, close
+it, then spawn" race without introducing another transport protocol.
+
 Deferred until those guarantees pass conformance tests: runtime bundling for
 every platform, in-process Node embedding, SDK-only tool loops, SDK-owned
 checkpoints and SDK-specific Task state. The existing Python application has

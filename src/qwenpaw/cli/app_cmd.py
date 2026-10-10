@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import json
 import logging
 import os
+import socket
 
 import click
 import uvicorn
@@ -17,6 +19,8 @@ from ..utils.logging import SuppressPathAccessLogFilter, setup_logger
 from ..utils.platform import warn_unelevated_sandbox
 
 logger = logging.getLogger(__name__)
+
+MANAGED_HOST_LAUNCH_PREFIX = "QWENPAW_MANAGED_HOST"
 
 
 def _format_bind_address(host: str, port: int) -> str:
@@ -58,9 +62,11 @@ def configure_server_process(
     hide_access_paths: tuple[str, ...],
     *,
     reload: bool = False,
+    record_last_api: bool = True,
 ) -> None:
     """Configure shared process state for an HTTP server command."""
-    write_last_api(probe_host_for_bind_host(host), port)
+    if record_last_api:
+        write_last_api(probe_host_for_bind_host(host), port)
     os.environ[LOG_LEVEL_ENV] = log_level
     if reload:
         os.environ["QWENPAW_RELOAD_MODE"] = "1"
@@ -79,6 +85,63 @@ def configure_server_process(
     warn_unelevated_sandbox()
 
 
+def _socket_port(sock: socket.socket) -> int:
+    """Return the TCP port owned by a bound server socket."""
+    address = sock.getsockname()
+    if not isinstance(address, tuple) or len(address) < 2:
+        raise RuntimeError(f"unexpected managed Host address: {address!r}")
+    return int(address[1])
+
+
+def _managed_api_url(host: str, port: int) -> str:
+    """Return the loopback API root published to a managed SDK."""
+    display_host = host.strip()
+    if ":" in display_host and not display_host.startswith("["):
+        display_host = f"[{display_host}]"
+    return f"http://{display_host}:{port}/api"
+
+
+def _run_managed_server(
+    host: str,
+    port: int,
+    log_level: str,
+    hide_access_paths: tuple[str, ...],
+) -> None:
+    """Run one SDK-owned Host and publish its pre-bound API address."""
+    config = uvicorn.Config(
+        "qwenpaw.app._app:app",
+        host=host,
+        port=port,
+        reload=False,
+        workers=1,
+        log_level=log_level,
+        timeout_graceful_shutdown=5,
+        ws_max_size=NM_MAX_INBOUND_BYTES,
+    )
+    managed_socket = config.bind_socket()
+    try:
+        actual_port = _socket_port(managed_socket)
+        configure_server_process(
+            host,
+            actual_port,
+            log_level,
+            hide_access_paths,
+            record_last_api=False,
+        )
+        launch = {
+            "schema": "qwenpaw.managed-host-launch.v1",
+            "api_url": _managed_api_url(host, actual_port),
+            "pid": os.getpid(),
+        }
+        click.echo(
+            f"{MANAGED_HOST_LAUNCH_PREFIX} "
+            f"{json.dumps(launch, separators=(',', ':'))}",
+        )
+        uvicorn.Server(config).run(sockets=[managed_socket])
+    finally:
+        managed_socket.close()
+
+
 @click.command("app")
 @click.option(
     "--host",
@@ -89,11 +152,16 @@ def configure_server_process(
 @click.option(
     "--port",
     default=8088,
-    type=int,
+    type=click.IntRange(0, 65535),
     show_default=True,
     help="Bind port",
 )
 @click.option("--reload", is_flag=True, help="Enable auto-reload (dev only)")
+@click.option(
+    "--managed",
+    is_flag=True,
+    help="Run an SDK-owned loopback Host and emit its launch record.",
+)
 @click.option(
     "--log-level",
     default="info",
@@ -129,6 +197,7 @@ def app_cmd(
     host: str,
     port: int,
     reload: bool,
+    managed: bool,
     workers: int,  # pylint: disable=unused-argument
     log_level: str,
     hide_access_paths: tuple[str, ...],
@@ -156,8 +225,22 @@ def app_cmd(
         )
         click.echo(err=True)
 
+    if managed and reload:
+        raise click.UsageError("--managed cannot be combined with --reload")
+    if managed and not is_loopback_host(host):
+        raise click.UsageError("--managed requires a loopback --host")
+
     profile = resolve_edition(edition)
     os.environ[EDITION_ENV] = profile.edition
+
+    if managed:
+        _run_managed_server(
+            host,
+            port,
+            log_level,
+            hide_access_paths,
+        )
+        return
 
     configure_server_process(
         host,
