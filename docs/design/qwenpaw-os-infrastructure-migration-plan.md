@@ -1136,16 +1136,11 @@ PawApp / SDK 的运行所有权迁移见
     观察，不会伪装成 `interrupt()` 或改变 Host-owned Invocation。POSIX managed Host
     现运行于 SDK-owned process group，优雅关闭超时后整组升级强杀，并由真实派生子
     进程验证无孤儿；Windows tree cleanup 与 Linux 实机仍保留为平台门禁。
-- [ ] Codex Harness 从私有 app-server 传输迁移到已声明的官方
-  `openai-codex` SDK，但以审批安全为硬门禁：
-  - [ ] 对仓库实际固定版本验证 thread start/resume/fork、stream、steer、
-    interrupt、history、login、models 与 cancellation，不以 `main` 分支能力代替。
-  - [ ] 官方 SDK 必须支持 QwenPaw 持久化 Interaction 所需的延迟/异步审批响应，
-    且无 handler 时 fail-closed；门禁未通过前冻结私有客户端范围，不继续添加领域
-    能力。
-  - [ ] 门禁通过后一次性替换 transport，保留的 QwenPaw 代码只做 typed Codex
-    notification -> `HarnessEvent` 和审批决策映射；删除私有 subprocess、JSON-RPC、
-    reader/router 实现及其专属测试，不长期维护双传输。
+- [x] 冻结 Codex 参考边界：Codex 仅用于比较 thread、stream、fork、steer、
+  interrupt 与生命周期的人机接口，不作为 QwenPaw SDK 的运行时或传输依赖。
+  `openai-codex` 只属于 Codex Harness adapter；它不得向 Kernel、公共 Client、
+  managed-local SDK 或 Plugin SDK 泄露 Codex 领域类型。未来是否替换 Harness 内部
+  transport 是独立 adapter 决策，不进入 OS 3.0 SDK 路线。
 
 验收：新开发者不阅读内部源码即可完成插件开发、校验、安装、热替换和卸载；
 错误插件不会污染当前 generation。外部应用可选择连接现有 Host 或托管本地 Host，

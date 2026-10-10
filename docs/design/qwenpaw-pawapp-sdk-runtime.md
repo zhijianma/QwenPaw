@@ -118,10 +118,10 @@ an SDK:
   expose thread-like ergonomic handles, but it must compose the same Host and
   client package rather than implement another Agent loop.
 
-This combines Codex's packaged-runtime reuse with OpenCode's remote/embedded
-split. It also avoids a known weakness of CLI wrappers: a missing or mismatched
-CLI binary must be detected through Host handshake and package compatibility,
-not discovered only after the first developer call.
+This borrows the lifecycle lesson from Codex and the remote/embedded boundary
+from OpenCode. It does not reuse either product's SDK or runtime. A missing or
+mismatched QwenPaw executable must be detected through Host handshake and
+package compatibility, not discovered only after the first developer call.
 
 Primary references used for this decision:
 
@@ -225,43 +225,29 @@ substantial process-global lifecycle, so an isolated managed Host process is
 the safer first implementation than pretending it is already an embeddable
 library.
 
-#### 5.1.2 Codex Harness reuse decision
+#### 5.1.2 Codex reference boundary
 
-QwenPaw already declares `openai-codex` as its optional Codex dependency, but
-the current Harness still owns a private `CodexAppServerClient`. That client
-duplicates process startup, JSON-RPC correlation, notification routing,
-shutdown and error handling now provided by the official Python SDK. It is a
-migration liability and must not become the foundation of the QwenPaw SDK.
+Codex is a comparison target, not an implementation dependency for the
+QwenPaw SDK. Its thread handle, buffered/streamed parity, explicit lifecycle,
+fork, steer, interrupt and typed event design are evidence used to evaluate
+QwenPaw's public ergonomics. They do not authorize replacing QwenPaw Host,
+Kernel, execution contracts or client transport with the Codex SDK.
 
-The official SDK is the target implementation, but an immediate wholesale
-replacement is not yet safe. QwenPaw approval requests are durable,
-asynchronous Interactions that may wait for a human. The current official SDK
-surface does not yet provide a proven deferred/asynchronous server-request
-handler for this flow, and its default approval behavior has an open safety
-report. QwenPaw must never trade durable HITL semantics for transport reuse.
-The official async stream also has a recently reported cancellation cleanup
-edge that must pass QwenPaw's cancellation conformance before adoption.
+The optional `openai-codex` package belongs only to the Codex Harness adapter.
+That adapter translates one external engine into QwenPaw's provider-neutral
+`harness.runner` contract. It must not leak Codex Thread, Turn, approval or
+event types into `@qwenpaw/client`, `@qwenpaw/sdk`, `qwenpaw.plugins.sdk` or
+Kernel contracts.
 
-The migration rule is therefore:
+The resulting rules are:
 
-- freeze the private client's scope; do not add SDK, product or domain
-  semantics to it;
-- keep approval fail-closed and asynchronous in the current adapter until the
-  official SDK can wait for QwenPaw's Interaction resolution without blocking
-  or auto-accepting;
-- test the pinned official SDK version, not only its `main` branch, against
-  thread start/resume/fork, stream completion, steer, interrupt, history,
-  login, model discovery, cancellation and approval conformance;
-- switch the entire Codex transport boundary to `AsyncCodex` once those gates
-  pass, leaving only typed conversion from Codex notifications to
-  `HarnessEvent` and from QwenPaw approval decisions to Codex decisions;
-- remove `CodexAppServerClient` and its subprocess/JSON-RPC tests in that same
-  migration instead of maintaining two live transports indefinitely.
-
-Until then, the private client is a quarantined compatibility adapter, not a
-public SDK. The public QwenPaw client and future managed Host SDK depend only
-on QwenPaw Host contracts and therefore remain independent of this temporary
-Codex implementation detail.
+- QwenPaw SDK work starts from QwenPaw's existing Host APIs and generated
+  contracts; it does not adopt the Codex SDK as its transport or runtime;
+- Codex-specific process and protocol code stays behind the Harness adapter;
+- useful Codex behavior is copied only as a product requirement and is proved
+  independently against QwenPaw's own domain models and conformance fixtures;
+- replacing the internal Codex Harness transport, if ever desired, is a
+  separate adapter decision and is not part of the OS 3.0 SDK roadmap.
 
 ### 5.2 Contract publication
 
