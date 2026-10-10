@@ -314,9 +314,10 @@ Workbench 必须提供：创建/启动、计划、真实对话、工具活动、
   保留名不能由旧插件注册，跨 Provider 普通名称冲突会显示歧义错误，不再按安装
   顺序覆盖；动态 Skill fallback 只允许系统 Provider 使用。
 - Chat Lifecycle Hook 已通过 `hook.provider` Slot 装配。系统 Provider 在请求开始
-  时固定八阶段 Hook Catalog；旧 `HookBase` 只在兼容 Host 内运行，公开 Outcome
+  时固定九阶段 Hook Catalog；旧 `HookBase` 只在兼容 Host 内运行，公开 Outcome
   不依赖 AgentScope。跨 Provider 的 `before`/`after` 依赖、priority、短路与
-  `SKIP_AGENT` 粘性由统一 Router 执行。
+  `SKIP_AGENT` 粘性由统一 Router 执行。`ON_CANCEL` 按 generation 固定，并以逐 Hook
+  超时、失败隔离和重复 cancellation 排空保证插件清理不能阻断 Host 会话保存。
 - Chat Stop Gate 已通过 `loop.gate.provider` Slot 装配。每个 Invocation 固定
   Gate Catalog，Router 保留 unscoped、default、Goal/Mission/custom scope 的选择
   语义，并把 `BYPASS`、继续推理和终止收敛为公开契约。工具调用后的停止仍延迟到

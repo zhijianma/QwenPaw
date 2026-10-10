@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""8-phase request orchestration.
+"""Nine-phase request orchestration.
 
 Delegates to:
 
@@ -44,6 +44,7 @@ from ..kernel import (
 from .phases import Phase
 
 logger = logging.getLogger(__name__)
+_CANCEL_HOOK_TIMEOUT_SECONDS = 2.0
 
 
 class Runtime:
@@ -67,11 +68,11 @@ class Runtime:
         self,
         request: Any,
     ) -> AsyncGenerator[Any, None]:
-        """8-phase lifecycle orchestration."""
+        """Nine-phase lifecycle orchestration."""
         request = self._normalize(request)
         ctx = self._build_context(request)
         envelope = Envelope(session_id=ctx.session_id)
-        ctx._envelope = envelope  # pylint: disable=protected-access
+        ctx.envelope = envelope
         skip_agent = False
         assembly = None
         ctx.extras["invocation_terminal_status"] = SubmissionStatus.FAILED
@@ -119,18 +120,18 @@ class Runtime:
                 None,
             )
             if legacy_approval_compatibility is not None:
-                ctx.extras[
-                    "legacy_approval_compatibility"
-                ] = legacy_approval_compatibility
+                ctx.extras["legacy_approval_compatibility"] = (
+                    legacy_approval_compatibility
+                )
             resource_wait_service = getattr(
                 self.workspace,
                 "model_resource_wait_service",
                 None,
             )
             if resource_wait_service is not None:
-                ctx.extras[
-                    "model_resource_wait_service"
-                ] = resource_wait_service
+                ctx.extras["model_resource_wait_service"] = (
+                    resource_wait_service
+                )
             if control_service is not None:
                 ctx.extras["invocation_control_service"] = control_service
                 await self._open_invocation_control(
@@ -143,12 +144,12 @@ class Runtime:
                 ctx,
                 assembly,
             )
-            ctx.extras[
-                "stop_gate_session"
-            ] = await self._open_stop_gate_session(ctx, assembly)
-            ctx.extras[
-                "agent_mode_session"
-            ] = await self._open_agent_mode_session(ctx, assembly)
+            ctx.extras["stop_gate_session"] = (
+                await self._open_stop_gate_session(ctx, assembly)
+            )
+            ctx.extras["agent_mode_session"] = (
+                await self._open_agent_mode_session(ctx, assembly)
+            )
             ctx.extras["command_session"] = await self._open_command_session(
                 ctx,
                 assembly,
@@ -159,9 +160,9 @@ class Runtime:
             if r.disposition == HookDisposition.SHORT_CIRCUIT:
                 async for ev in envelope.from_msg(self._hook_message(r)):
                     yield ev
-                ctx.extras[
-                    "invocation_terminal_status"
-                ] = SubmissionStatus.SUCCEEDED
+                ctx.extras["invocation_terminal_status"] = (
+                    SubmissionStatus.SUCCEEDED
+                )
                 return
             if r.disposition == HookDisposition.SKIP_AGENT:
                 skip_agent = True
@@ -272,15 +273,20 @@ class Runtime:
             # Finalize envelope (complete message + response).
             async for ev in envelope.finalize():
                 yield ev
-            ctx.extras[
-                "invocation_terminal_status"
-            ] = SubmissionStatus.SUCCEEDED
+            ctx.extras["invocation_terminal_status"] = (
+                SubmissionStatus.SUCCEEDED
+            )
 
         except (asyncio.CancelledError, KeyboardInterrupt) as e:
             ctx.error = e
-            ctx.extras[
-                "invocation_terminal_status"
-            ] = SubmissionStatus.INTERRUPTED
+            ctx.extras["invocation_terminal_status"] = (
+                SubmissionStatus.INTERRUPTED
+            )
+            # Every selected system/plugin Provider observes cancellation
+            # through its generation-pinned session. Each hook is bounded
+            # and isolated; Host persistence remains authoritative below.
+            await self._run_cancel_phase(ctx)
+
             # The Task's _must_cancel flag may still be True after
             # catching CancelledError, causing the next await to raise
             # CancelledError again.  Wrap ON_ERROR hooks so that
@@ -397,9 +403,9 @@ class Runtime:
             "os_submission_idempotency_key",
         )
         if not conversation_id or not idempotency_key:
-            ctx.extras[
-                "steering_session"
-            ] = await control_service.open_steering(invocation_id)
+            ctx.extras["steering_session"] = (
+                await control_service.open_steering(invocation_id)
+            )
             return
 
         raw_priority = request_context.get("os_submission_priority", 20)
@@ -792,6 +798,44 @@ class Runtime:
             ctx,
         )
 
+    async def _run_cancel_phase(self, ctx: HookContext) -> None:
+        """Drain pinned cancellation hooks under repeated cancellation."""
+
+        async def run_phase() -> tuple[str, ...]:
+            session = ctx.extras.get("hook_session")
+            if session is not None:
+                return await session.run_isolated(
+                    LifecyclePhase.ON_CANCEL,
+                    timeout_seconds=_CANCEL_HOOK_TIMEOUT_SECONDS,
+                )
+            return await self.workspace.plugins.hook_registry.run_isolated(
+                Phase.ON_CANCEL,
+                ctx,
+                timeout_seconds=_CANCEL_HOOK_TIMEOUT_SECONDS,
+            )
+
+        cleanup = asyncio.create_task(run_phase())
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                current = asyncio.current_task()
+                if current is not None:
+                    current.uncancel()
+            except BaseException:  # noqa: BLE001
+                break
+        try:
+            failures = cleanup.result()
+        except BaseException:  # noqa: BLE001
+            logger.warning(
+                "runtime: cancellation hook phase failed session=%s",
+                getattr(ctx, "session_id", ""),
+                exc_info=True,
+            )
+            failures = ("hook.provider",)
+        if failures:
+            ctx.extras["cancel_hook_failures"] = failures
+
     @staticmethod
     def _hook_message(outcome: HookOutcome) -> Any:
         """Convert one public short-circuit response for the SSE envelope."""
@@ -963,22 +1007,12 @@ class Runtime:
         independent copy of the data so ``agent.close()`` in the
         ``finally`` block cannot corrupt it.
 
-        .. note:: Why hardcoded instead of a hook?
+        .. note:: Why persistence remains Host-owned
 
-           This runs *outside* the ``try/except`` that wraps
-           ``hooks.run(Phase.ON_ERROR)``, so it executes even when
-           re-cancellation skips all ON_ERROR hooks.  The synchronous
-           parts (inject + restore + state_dict) complete before any ``await``,
-           and ``asyncio.shield`` protects the I/O — guarantees that a
-           generic hook framework cannot provide.
-
-        TODO: Session saving and cron history restoration have cancel-path
-         equivalents here. Other ``POST_RESPONSE`` and plugin hooks are
-         skipped on /stop.  A future improvement should unify the
-         cancel and normal paths — e.g. via a dedicated ``ON_CANCEL``
-         phase with per-hook shield execution — so plugins can
-         participate in the cancel lifecycle.  ``ctx._envelope`` should
-         also be promoted to a first-class ``HookContext`` field.
+           Generation-pinned ``ON_CANCEL`` hooks run first, but their failure
+           or timeout cannot prevent the Host from preserving the interrupted
+           turn. The synchronous inject, Cron restore and state snapshot stay
+           here as invariants, while ``asyncio.shield`` protects the write.
         """
         request = getattr(ctx, "request", None)
         request_context = getattr(request, "request_context", None)
@@ -998,7 +1032,7 @@ class Runtime:
         if session is None:
             return None
         try:
-            envelope = getattr(ctx, "_envelope", None)
+            envelope = getattr(ctx, "envelope", None)
             if envelope is not None and include_partial:
                 self._inject_partial_response(agent, envelope)
 

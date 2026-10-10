@@ -973,6 +973,7 @@ class ProjectHookSession:
 
     def __init__(self, host):
         self.host = host
+        self.cancelled = False
 
     def list_hooks(self):
         return (
@@ -982,13 +983,24 @@ class ProjectHookSession:
                 phase=LifecyclePhase.PRE_EXECUTE,
                 priority=120,
             ),
+            HookDefinition(
+                hook_id=f"{self.provider_id}.cancel-cleanup",
+                provider_id=self.provider_id,
+                phase=LifecyclePhase.ON_CANCEL,
+                priority=120,
+            ),
         )
 
     async def run_hook(self, hook_id):
-        self.host.inject_context(
-            "Use the project's established terminology.",
-            source=hook_id,
-        )
+        if hook_id.endswith(".terminology"):
+            self.host.inject_context(
+                "Use the project's established terminology.",
+                source=hook_id,
+            )
+        elif hook_id.endswith(".cancel-cleanup"):
+            self.cancelled = True
+        else:
+            raise LookupError(hook_id)
         return HookOutcome()
 
     async def close(self):
@@ -1012,6 +1024,12 @@ closed. `SKIP_AGENT` is sticky for the phase, while `SHORT_CIRCUIT` stops the
 phase immediately and requires a `HookMessage`. The system compatibility
 provider keeps existing `HookBase` plugins working, but new plugins should not
 depend on `HookContext`, AgentScope `Msg`, or mutable Workspace registries.
+`ON_CANCEL` is different from an ordinary decision phase: the Host executes
+every selected hook in deterministic order, ignores dispositions, isolates
+failures, and bounds each hook to two seconds. It then performs Host-owned
+session persistence even when a plugin fails or times out. Use this phase only
+to release invocation-scoped resources; never treat it as authorization to
+replay side effects or as a replacement for `close()`.
 The runnable reference is
 `examples/plugins/runtime-provider-kit/runtime_provider_kit/hook.py`; it uses
 only the public SDK and is activated from the same manifest as the other

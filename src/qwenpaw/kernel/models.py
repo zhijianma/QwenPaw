@@ -213,9 +213,9 @@ class ActionRetryReason(str, Enum):
 class ActionRetryPolicy(KernelModel):
     """Host-owned bounded retry policy for immutable Action attempts."""
 
-    policy_id: Literal[
+    policy_id: Literal["qwenpaw.action-retry-policy.v1"] = (
         "qwenpaw.action-retry-policy.v1"
-    ] = "qwenpaw.action-retry-policy.v1"
+    )
     max_attempts: int = Field(default=2, ge=1, le=10)
     initial_delay_seconds: float = Field(default=0, ge=0, le=300)
     backoff_multiplier: float = Field(default=2, ge=1, le=10)
@@ -448,9 +448,9 @@ class ModelTransportValidationReason(str, Enum):
 class ModelTransportContract(KernelModel):
     """Provider-neutral transport capability fixed before network I/O."""
 
-    schema_version: Literal[
+    schema_version: Literal["qwenpaw.model-transport.v1"] = (
         "qwenpaw.model-transport.v1"
-    ] = "qwenpaw.model-transport.v1"
+    )
     protocol: ModelTransportProtocol = ModelTransportProtocol.HTTP
     resume_mode: ModelStreamResumeMode = ModelStreamResumeMode.NONE
     route_affinity: ModelRouteAffinity = ModelRouteAffinity.NONE
@@ -885,10 +885,13 @@ class ActionRequest(_ChatIdentity):
     environment_ref: EnvironmentRef | None = None
     capability_id: NamespacedId
     tool_selection: "ToolSelection | None" = None
-    provider_execution_digest: Annotated[
-        str,
-        StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$"),
-    ] | None = None
+    provider_execution_digest: (
+        Annotated[
+            str,
+            StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$"),
+        ]
+        | None
+    ) = None
     kind: ActionKind
     action_name: NonEmptyStr
     arguments: SkipJsonSchema[JsonObject] = Field(
@@ -1061,10 +1064,13 @@ class ActionRetryInputCheckpoint(_ChatIdentity):
     registry_generation: int = Field(ge=1)
     capability_id: NamespacedId
     tool_selection: "ToolSelection | None" = None
-    provider_execution_digest: Annotated[
-        str,
-        StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$"),
-    ] | None = None
+    provider_execution_digest: (
+        Annotated[
+            str,
+            StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$"),
+        ]
+        | None
+    ) = None
     kind: ActionKind
     action_name: NonEmptyStr
     arguments_hash: Annotated[
@@ -1415,6 +1421,7 @@ class LifecyclePhase(str, Enum):
     POST_AGENT_BUILD = "post_agent_build"
     PRE_EXECUTE = "pre_execute"
     POST_RESPONSE = "post_response"
+    ON_CANCEL = "on_cancel"
     ON_ERROR = "on_error"
     FINALLY = "finally"
 
@@ -2273,10 +2280,13 @@ class ContextManifest(_ChatIdentity):
     registry_epoch_id: UUID | None = None
     registry_generation: int = Field(ge=1)
     capability_lock_id: UUID | None = None
-    capability_lock_hash: Annotated[
-        str,
-        StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$"),
-    ] | None = None
+    capability_lock_hash: (
+        Annotated[
+            str,
+            StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$"),
+        ]
+        | None
+    ) = None
     model_call_index: int = Field(ge=1)
     attempt_kind: Literal["primary", "overflow_retry"] = "primary"
     policy_id: NamespacedId
@@ -2396,7 +2406,7 @@ class ModelCallResult(_ChatIdentity):
     failure_class: ModelFailureClass | None = None
     recovery_disposition: ModelRecoveryDisposition | None = None
     transport_recovery_mode: ModelTransportRecoveryMode | None = None
-    transport_validation_reason: (ModelTransportValidationReason | None) = None
+    transport_validation_reason: ModelTransportValidationReason | None = None
     retry_after_seconds: float | None = Field(
         default=None,
         ge=0,

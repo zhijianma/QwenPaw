@@ -1603,3 +1603,23 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
   usage 仍由 Chat 消息承载。
 - Codex 在本方案中仍只是产品与 Harness 机制参考；QwenPaw SDK 复用自身 Kernel、
   Host 和生成契约。外部 Codex 类型只允许停留在 Harness Adapter，不能进入公共 SDK。
+
+## 16. 2026-10-10 Generation-pinned 取消生命周期
+
+- Runtime 生命周期新增稳定 `ON_CANCEL` Phase；系统 Hook 与插件 Hook 继续通过同一
+  `hook.provider` Catalog 和当前 Invocation 固定的 generation 执行，不建立取消专用
+  插件旁路。旧 `CancelCleanupHook` 已迁入该 Phase；`ON_ERROR` 继续只处理错误归一。
+- Host 对每个取消 Hook 施加两秒上限，逐项隔离异常和超时，并忽略
+  `SHORT_CIRCUIT/SKIP_AGENT` disposition，保证一个插件不能跳过后续 Provider。
+  Runtime 遭遇重复 task cancellation 时会 drain 同一清理任务，再执行 Host-owned
+  Session 保存、Invocation 终结和资源关闭。
+- `Envelope` 已从动态私有属性提升为正式 `HookContext.envelope` 字段；公共 Plugin SDK
+  仍只暴露 `HookHost`，不会把 Envelope 或 Workspace 私有对象扩散给二次开发者。
+- Runtime Provider Kit 示例同时展示 PRE_AGENT_BUILD 与 ON_CANCEL；系统/插件共用
+  合同行为测试覆盖固定目录、取消清理及 generation 装配。Task Workbench 保持暂停。
+- 固定 Chat `1ee31988-b37a-48b9-b6ce-423c52f6a3a9` 在真实 8004 Host 中执行
+  `sleep 30` 后通过 Chat 的 Stop 触发 interrupt；页面重载后仍展示
+  `已取消 · 2 个步骤`、`执行活动：已中断`、control requested/resolved。
+  后端 Runtime 已无 active invocation 和 queue submission，最新 control receipt 为
+  `applied`，且报告前台子进程已取消；这证明取消终态已持久化，
+  不是 Console 仅根据本地事件推测。

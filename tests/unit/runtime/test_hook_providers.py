@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Tests for generation-pinned lifecycle Hook Provider routing."""
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -124,11 +125,12 @@ def _definition(
     *,
     priority: int = 100,
     before: tuple[str, ...] = (),
+    phase: LifecyclePhase = LifecyclePhase.PRE_EXECUTE,
 ) -> HookDefinition:
     return HookDefinition(
         hook_id=f"{provider_id}.{name}",
         provider_id=provider_id,
-        phase=LifecyclePhase.PRE_EXECUTE,
+        phase=phase,
         priority=priority,
         before=before,
     )
@@ -215,6 +217,87 @@ async def test_skip_is_sticky_and_short_circuit_stops_phase() -> None:
     assert outcome.message is not None
     assert outcome.message.text == "stopped"
     assert calls == [stop_id]
+
+
+@pytest.mark.asyncio
+async def test_cancel_cleanup_is_bounded_and_failure_isolated() -> None:
+    calls: list[str] = []
+    provider_id = "example.cancel.hooks"
+    stop_id = f"{provider_id}.stop"
+    fail_id = f"{provider_id}.fail"
+    slow_id = f"{provider_id}.slow"
+    after_id = f"{provider_id}.after"
+
+    class _CancelSession(_Session):
+        async def run_hook(self, hook_id):
+            self._calls.append(hook_id)
+            if hook_id == fail_id:
+                raise RuntimeError("cleanup failed")
+            if hook_id == slow_id:
+                await asyncio.Event().wait()
+            return self._outcomes.get(hook_id, HookOutcome())
+
+    session = _CancelSession(
+        provider_id,
+        tuple(
+            _definition(
+                provider_id,
+                name,
+                priority=priority,
+                phase=LifecyclePhase.ON_CANCEL,
+            )
+            for priority, name in enumerate(
+                ("stop", "fail", "slow", "after"),
+                start=1,
+            )
+        ),
+        {
+            stop_id: HookOutcome(
+                disposition=HookDisposition.SHORT_CIRCUIT,
+                message=HookMessage(text="ignored during cleanup"),
+            ),
+        },
+        calls,
+    )
+
+    failures = await HookRouterSession((session,)).run_isolated(
+        LifecyclePhase.ON_CANCEL,
+        timeout_seconds=0.01,
+    )
+
+    assert failures == (fail_id, slow_id)
+    assert calls == [stop_id, fail_id, slow_id, after_id]
+
+
+@pytest.mark.asyncio
+async def test_legacy_cancel_cleanup_is_failure_isolated() -> None:
+    calls: list[str] = []
+
+    class _CancelHook(HookBase):
+        phase = Phase.ON_CANCEL
+
+        def __init__(self, name: str, *, fail: bool = False) -> None:
+            self.name = name
+            self._fail = fail
+
+        async def run(self, _context):
+            calls.append(self.name)
+            if self._fail:
+                raise RuntimeError("cleanup failed")
+            return HookResult(action=HookAction.SHORT_CIRCUIT)
+
+    registry = HookRegistry()
+    registry.register(_CancelHook("broken", fail=True))
+    registry.register(_CancelHook("after"))
+
+    failures = await registry.run_isolated(
+        Phase.ON_CANCEL,
+        _context(registry),
+        timeout_seconds=0.1,
+    )
+
+    assert failures == ("broken",)
+    assert calls == ["broken", "after"]
 
 
 class _ShortCircuitHook(HookBase):

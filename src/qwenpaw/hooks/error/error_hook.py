@@ -76,7 +76,7 @@ class ErrorNormalizeHook(LifecycleHook):
 class CancelCleanupHook(LifecycleHook):
     """Clean up pending approvals and interrupt agent on cancellation."""
 
-    phase = Phase.ON_ERROR
+    phase = Phase.ON_CANCEL
     name = "cancel_cleanup"
     priority = 20
 

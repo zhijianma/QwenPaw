@@ -1671,6 +1671,10 @@ PawApp / SDK 的运行所有权迁移见
     所有权、跨 Provider 确定性排序、sticky `SKIP_AGENT`、立即
     `SHORT_CIRCUIT` 和有来源的上下文注入。参考插件通过 manifest、
     固定 generation、RuntimeAssembly、Runtime 会话打开与真实生命周期执行链路。
+    `ON_CANCEL` 已成为第九个稳定 Phase：Host 逐 Hook 施加两秒上限并隔离失败，
+    disposition 不得短路取消收尾；重复 task cancellation 期间仍排空固定 generation
+    的清理链，随后由 Host 保存中断会话。`HookContext.envelope` 已提升为正式字段，
+    插件仍只能使用公共 HookHost，不能取得 Runtime 私有 Envelope。
   - [x] `loop.gate.provider` 具有 system/plugin 行为合同：固定目录、
     Provider 所有权、scope 选择、稳定优先级、turn/conversation reset 和
     第一个 actionable decision。工具调用轮次的继续指令在工具完成后的下一个

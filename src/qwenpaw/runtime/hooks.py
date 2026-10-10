@@ -19,6 +19,7 @@ Three return semantics (``HookAction``):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -94,7 +95,7 @@ class HookContext:
     workspace_dir: Path | None
 
     # ── Containers (read by hooks; never mutated) ──
-    workspace: (Any)  # forward ref: app/workspace/workspace.py:Workspace
+    workspace: Any  # forward ref: app/workspace/workspace.py:Workspace
     app_services: Any  # forward ref: AppServiceManager
 
     # ── Per-request mutable state, filled in across phases ──
@@ -104,6 +105,7 @@ class HookContext:
     agent: "Agent | None" = None
     error: BaseException | None = None
     invocation_scope: "InvocationScope | None" = None
+    envelope: Any | None = None
 
     # ── Context injections (改动6B) ──
     context_injections: list = field(default_factory=list)
@@ -328,6 +330,30 @@ class HookRegistry:
             if result.action == HookAction.SKIP_AGENT:
                 final_action = HookAction.SKIP_AGENT
         return HookResult(action=final_action)
+
+    async def run_isolated(
+        self,
+        phase: Phase,
+        ctx: HookContext,
+        *,
+        timeout_seconds: float,
+    ) -> tuple[str, ...]:
+        """Run every cleanup hook with bounded, isolated semantics."""
+        failures: list[str] = []
+        for hook in self.hooks_for(phase):
+            try:
+                await asyncio.wait_for(
+                    hook.run(ctx),
+                    timeout=timeout_seconds,
+                )
+            except BaseException:  # noqa: BLE001
+                failures.append(hook.name)
+                logger.warning(
+                    "isolated lifecycle hook failed: %s",
+                    hook.name,
+                    exc_info=True,
+                )
+        return tuple(failures)
 
     @classmethod
     def merge(cls, *registries: "HookRegistry") -> "HookRegistry":

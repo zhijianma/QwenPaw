@@ -126,7 +126,7 @@ Model Call Plane 和可派生的 Budget Lease 是 Handbook 比对后确认的增
 | MCP / Drivers | `app/mcp/*`、`drivers/*` | `driver.provider` / scoped runtime | 保留策略与凭据边界 | 系统 Driver 已接入固定 generation；原生插件治理契约待冻结 |
 | Modes | `modes/*` | `agent.mode.provider` + 细分 Contributions | 与 Task `strategy` 分离 | 生命周期与 namespaced Mode State Host 已适配，内部贡献待拆分 |
 | Commands | `runtime/slash_command_registry.py` | `command.provider` | 系统保留名优先，普通冲突显式报错 | 固定 Catalog、三态分发与 Skill fallback 已接入 |
-| Lifecycle Hooks | `runtime/hooks.py`、`hooks/*` | `hook.provider` | 八阶段、依赖图、短路与清理语义保留 | 固定 Catalog 与跨 Provider Router 已接入 |
+| Lifecycle Hooks | `runtime/hooks.py`、`hooks/*` | `hook.provider` | 九阶段、依赖图、短路与有界取消清理语义 | 固定 Catalog 与跨 Provider Router 已接入 |
 | ReAct Stop Gates | `loop/stop.py`、Mode stop handlers | `loop.gate.provider` | 只控制推理循环，不承担请求取消；旧空 `TERMINATE` 在 Provider 边界归一为 `BYPASS`，真实终止保持权威 | 固定 Catalog、scope 选择、延迟停止与跨 Provider 组合已接入 |
 | Codex/Qoder Harness | `harnesses/*` | `runner` Contribution | 复用统一事件模型，不成为独立 Task 系统 | 已有能力待接 TaskRunner |
 | Plugin v1 | `plugins/registry.py`、`plugins/api.py` | legacy adapter | 继续兼容 `type` 和单入口 | 已实现兼容 |

@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import re
 from collections import defaultdict
 from collections.abc import Sequence
@@ -20,6 +22,7 @@ from .hooks import HookContext, HookRegistry, HookResult
 from .phases import Phase
 
 _HOOK_ID_PART_RE = re.compile(r"[^a-z0-9_.-]+")
+logger = logging.getLogger(__name__)
 
 
 def _message_text(message: Any) -> str:
@@ -229,6 +232,30 @@ class HookRouterSession:
             if outcome.disposition == HookDisposition.SKIP_AGENT:
                 disposition = HookDisposition.SKIP_AGENT
         return HookOutcome(disposition=disposition)
+
+    async def run_isolated(
+        self,
+        phase: LifecyclePhase,
+        *,
+        timeout_seconds: float,
+    ) -> tuple[str, ...]:
+        """Run every cleanup hook despite failures or dispositions."""
+        failures: list[str] = []
+        for hook_id in self._ordered.get(phase, ()):
+            session, _ = self._definitions[hook_id]
+            try:
+                await asyncio.wait_for(
+                    session.run_hook(hook_id),
+                    timeout=timeout_seconds,
+                )
+            except BaseException:  # noqa: BLE001
+                failures.append(hook_id)
+                logger.warning(
+                    "isolated lifecycle hook failed: %s",
+                    hook_id,
+                    exc_info=True,
+                )
+        return tuple(failures)
 
     async def close(self) -> None:
         """Close every provider session even if one close operation fails."""

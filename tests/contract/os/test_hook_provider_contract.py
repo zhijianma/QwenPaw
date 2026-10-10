@@ -39,6 +39,12 @@ class _RecordingHost:
                 phase=LifecyclePhase.PRE_AGENT_BUILD,
                 priority=100,
             ),
+            HookDefinition(
+                hook_id=f"{DEFAULT_HOOK_PROVIDER_ID}.cancel-cleanup",
+                provider_id=DEFAULT_HOOK_PROVIDER_ID,
+                phase=LifecyclePhase.ON_CANCEL,
+                priority=100,
+            ),
         )
 
     async def run_hook(self, hook_id: str) -> HookOutcome:
@@ -148,6 +154,15 @@ async def test_system_and_plugin_hooks_share_behavioral_contract(
             "source": ("runtime-provider-kit.project-hooks.project-context"),
         },
     ]
+    failures = await router.run_isolated(
+        LifecyclePhase.ON_CANCEL,
+        timeout_seconds=0.1,
+    )
+    assert failures == ()
+    assert system_host.calls[-1] == (
+        f"{DEFAULT_HOOK_PROVIDER_ID}.cancel-cleanup"
+    )
+    assert sessions[1].cancelled is True
     await router.close()
 
 

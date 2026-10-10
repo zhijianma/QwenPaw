@@ -19,7 +19,8 @@ from qwenpaw.hooks.cron.cron_hook import (
     CronMemoryRestoreHook,
 )
 from qwenpaw.hooks.session.session_hook import SessionLoadHook, SessionSaveHook
-from qwenpaw.runtime.hooks import HookRegistry
+from qwenpaw.runtime.hooks import HookBase, HookRegistry, HookResult
+from qwenpaw.runtime.phases import Phase
 from qwenpaw.runtime.runtime import Runtime
 
 
@@ -33,6 +34,18 @@ class Agent:
 
     def state_dict(self):
         return {"state": self.state.model_dump(mode="json")}
+
+
+class _CancelProbeHook(HookBase):
+    phase = Phase.ON_CANCEL
+    name = "cancel_probe"
+
+    def __init__(self, calls: list[str]) -> None:
+        self._calls = calls
+
+    async def run(self, _ctx) -> HookResult:
+        self._calls.append(self.name)
+        return HookResult()
 
 
 @pytest.mark.asyncio
@@ -62,12 +75,14 @@ async def test_runtime_keeps_old_history_on_disk(
         agent=Agent(state),
     )
     hooks = HookRegistry()
+    cancel_calls: list[str] = []
     for hook in [
         CronContextHook(),
         SessionLoadHook(),
         CronMemoryIsolateHook(),
         CronMemoryRestoreHook(),
         SessionSaveHook(),
+        _CancelProbeHook(cancel_calls),
     ]:
         hooks.register(hook)
     workspace = SimpleNamespace(
@@ -154,6 +169,7 @@ async def test_runtime_keeps_old_history_on_disk(
     assert len(result["context"]) == 6
     assert result["context"][-1]["content"][0]["text"] == "本次已产生的内容"
     assert result["summary"] == "old summary"
+    assert cancel_calls == ([] if ending == "success" else ["cancel_probe"])
 
 
 @pytest.mark.asyncio

@@ -372,6 +372,57 @@ async def test_repeated_cancellation_cannot_leak_provider_sessions() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancel_phase_drains_after_task_recancellation() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class _CancelSession:
+        async def run_isolated(self, phase, *, timeout_seconds):
+            assert phase.value == "on_cancel"
+            assert timeout_seconds > 0
+            entered.set()
+            await release.wait()
+            return ("example.failed-hook",)
+
+    context = SimpleNamespace(
+        extras={"hook_session": _CancelSession()},
+    )
+    runtime = Runtime(
+        workspace=SimpleNamespace(),
+        app_services=SimpleNamespace(),
+    )
+    task = asyncio.create_task(runtime._run_cancel_phase(context))
+    await entered.wait()
+
+    task.cancel()
+    release.set()
+    await task
+
+    assert context.extras["cancel_hook_failures"] == ("example.failed-hook",)
+
+
+@pytest.mark.asyncio
+async def test_cancel_phase_infrastructure_failure_cannot_block_host() -> None:
+    class _BrokenCancelSession:
+        async def run_isolated(self, _phase, *, timeout_seconds):
+            assert timeout_seconds > 0
+            raise RuntimeError("router failed")
+
+    context = SimpleNamespace(
+        extras={"hook_session": _BrokenCancelSession()},
+        session_id="chat-a",
+    )
+    runtime = Runtime(
+        workspace=SimpleNamespace(),
+        app_services=SimpleNamespace(),
+    )
+
+    await runtime._run_cancel_phase(context)
+
+    assert context.extras["cancel_hook_failures"] == ("hook.provider",)
+
+
+@pytest.mark.asyncio
 async def test_partial_provider_open_rolls_back_every_session() -> None:
     events: list[str] = []
 

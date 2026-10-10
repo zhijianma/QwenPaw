@@ -21,6 +21,7 @@ class ProjectHookSession:
     def __init__(self, project_name: str, host: HookHost) -> None:
         self._project_name = project_name
         self._host = host
+        self.cancelled = False
 
     def list_hooks(self) -> tuple[HookDefinition, ...]:
         """Return a deterministic provider-owned hook catalog."""
@@ -31,18 +32,26 @@ class ProjectHookSession:
                 phase=LifecyclePhase.PRE_AGENT_BUILD,
                 priority=120,
             ),
+            HookDefinition(
+                hook_id=f"{self.provider_id}.cancel-cleanup",
+                provider_id=self.provider_id,
+                phase=LifecyclePhase.ON_CANCEL,
+                priority=120,
+            ),
         )
 
     async def run_hook(self, hook_id: str) -> HookOutcome:
         """Inject bounded context for the declared hook."""
-        expected_id = f"{self.provider_id}.project-context"
-        if hook_id != expected_id:
+        if hook_id == f"{self.provider_id}.project-context":
+            self._host.inject_context(
+                f"The active project is {self._project_name}.",
+                priority=120,
+                source=hook_id,
+            )
+        elif hook_id == f"{self.provider_id}.cancel-cleanup":
+            self.cancelled = True
+        else:
             raise LookupError(hook_id)
-        self._host.inject_context(
-            f"The active project is {self._project_name}.",
-            priority=120,
-            source=hook_id,
-        )
         return HookOutcome()
 
     async def close(self) -> None:
