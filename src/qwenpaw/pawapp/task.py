@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""TaskManager + SSEChannel — Long-running task infrastructure.
+"""Legacy PawApp task compatibility adapter.
+
+New task, interaction, event and artifact semantics belong to the unified
+QwenPaw Runtime. This module only preserves existing ``@app.task`` behavior
+while PawApps migrate to public Contributions.
 
 Enables ``ctx.ui.push()`` to send realtime events to the frontend,
 and ``paw.api.task()`` to subscribe to those events via EventSource.
@@ -33,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 
 class SSEChannel:
-    """Async-safe Server-Sent Events channel.
+    """Legacy in-process Server-Sent Events delivery channel.
 
     Producers call ``send_event(data)``; consumers iterate with
     ``async for event in channel``.
@@ -90,7 +94,7 @@ class SSEChannel:
 
 
 class TaskRecord:
-    """Internal record for a running task."""
+    """Non-durable compatibility record for one legacy PawApp task."""
 
     def __init__(
         self,
@@ -113,7 +117,7 @@ class TaskRecord:
 
 
 class TaskManager:
-    """Manages long-running PawApp tasks with SSE push channels."""
+    """Run legacy PawApp handlers until they migrate to Runner slots."""
 
     def __init__(self):
         self._tasks: Dict[str, TaskRecord] = {}

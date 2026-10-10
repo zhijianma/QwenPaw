@@ -116,8 +116,8 @@ dependency without changing legacy handler execution.
 ### P1: freeze compatibility and diagnostics
 
 - classify `@app.task`, `TaskManager`, `TaskRecord` and `SSEChannel` as legacy;
-- expose a structured migration diagnostic pointing to `runner` or
-  `tool.provider` according to the declared operation;
+- expose a structured, deduplicated `PawApp.task -> runner` diagnostic through
+  the existing plugin management projection, including a v2 manifest skeleton;
 - reject new PawApp APIs that attempt to create another approval, artifact or
   lifecycle store.
 

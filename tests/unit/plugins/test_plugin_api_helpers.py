@@ -225,6 +225,38 @@ class TestRegisterPromptSection:
         }
         assert api.migration_diagnostics == (diagnostic,)
 
+    def test_accepts_host_compatibility_migration_diagnostic(self):
+        diagnostics = []
+        api = PluginApi(
+            "test-plugin",
+            {},
+            migration_diagnostics=diagnostics,
+        )
+        fragment = {
+            "schema_version": "qwenpaw.plugin.v2",
+            "contributions": [
+                {
+                    "id": "task-runner",
+                    "slot": "runner",
+                    "entrypoint": "<module>:<runner_factory>",
+                },
+            ],
+        }
+
+        for _ in range(2):
+            api.report_migration_diagnostic(
+                api_name="PawApp.task",
+                target_slot="runner",
+                message="Legacy PawApp task runtime is active.",
+                recovery="Declare a runner contribution.",
+                manifest_fragment=fragment,
+            )
+
+        assert len(diagnostics) == 1
+        assert diagnostics[0].api_name == "PawApp.task"
+        assert diagnostics[0].target_slot == "runner"
+        assert diagnostics[0].manifest_fragment == fragment
+
     def test_without_registry_does_nothing(self):
         api = PluginApi("test-plugin", {})
         api.set_registry(None)

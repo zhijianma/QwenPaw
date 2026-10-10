@@ -363,10 +363,7 @@ class PluginApi:  # pylint: disable=too-many-public-methods
     def _record_contribution_migration(self, api_name: str) -> None:
         """Record one deduplicated legacy-to-Contribution migration hint."""
         target_slot = _LEGACY_CONTRIBUTION_TARGETS[api_name]
-        if api_name in self._reported_legacy_apis:
-            return
-        self._reported_legacy_apis.add(api_name)
-        diagnostic = PluginMigrationDiagnostic(
+        self.report_migration_diagnostic(
             api_name=api_name,
             target_slot=target_slot,
             message=(
@@ -387,6 +384,27 @@ class PluginApi:  # pylint: disable=too-many-public-methods
                     },
                 ],
             },
+        )
+
+    def report_migration_diagnostic(
+        self,
+        *,
+        api_name: str,
+        target_slot: str,
+        message: str,
+        recovery: str,
+        manifest_fragment: Dict[str, Any],
+    ) -> None:
+        """Record one actionable, deduplicated compatibility diagnostic."""
+        if api_name in self._reported_legacy_apis:
+            return
+        self._reported_legacy_apis.add(api_name)
+        diagnostic = PluginMigrationDiagnostic(
+            api_name=api_name,
+            target_slot=target_slot,
+            message=message,
+            recovery=recovery,
+            manifest_fragment=manifest_fragment,
         )
         self._migration_diagnostics.append(diagnostic)
         logger.warning("%s %s", diagnostic.message, diagnostic.recovery)

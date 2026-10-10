@@ -1506,3 +1506,6 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
   响应，并恢复原 handler。
 - 本切片没有把 PawTask 前端任务句柄自动重连或插件热替换冒充成已完成；两者仍需
   独立真实浏览器验收。Task Workbench 继续暂停。
+- `@app.task`、内存 `TaskManager / TaskRecord / SSEChannel` 已明确降为兼容适配器。
+  注册旧任务时通过既有 `/api/plugins` 管理投影产生去重的
+  `PawApp.task -> runner` 迁移诊断及 v2 manifest 骨架；旧路由行为暂时保留。

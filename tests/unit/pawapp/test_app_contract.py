@@ -413,6 +413,25 @@ def test_pawapp_task_decorator_exposes_unified_task_start(
     router = api.register_http_router.call_args.args[0]
     assert "/translate" in _route_paths(router)
     assert "/task/{task_id}/stream" in _route_paths(router)
+    api.report_migration_diagnostic.assert_called_once_with(
+        api_name="PawApp.task",
+        target_slot="runner",
+        message="PawApp 'fixture' uses the legacy @app.task runtime.",
+        recovery=(
+            "Declare a 'runner' contribution and let the Host own Task, "
+            "Run, Interaction, Event and Artifact lifecycle."
+        ),
+        manifest_fragment={
+            "schema_version": "qwenpaw.plugin.v2",
+            "contributions": [
+                {
+                    "id": "task-runner",
+                    "slot": "runner",
+                    "entrypoint": "<module>:<runner_factory>",
+                },
+            ],
+        },
+    )
 
     record = SimpleNamespace(chat_id="chat-child")
 

@@ -390,6 +390,7 @@ class PawApp:  # pylint: disable=too-many-public-methods
         self._prompt_sections: List[dict] = []
         self._workspace_hooks: List[dict] = []
         self._runtime_hooks: List[Any] = []
+        self._legacy_tasks: List[str] = []
         self._services: List[ManagedService] = []
         self._agent_profiles: List[ManagedAgentProfile] = []
         self.dependencies = DependencyRegistry(lambda: self.app_id)
@@ -459,10 +460,11 @@ class PawApp:  # pylint: disable=too-many-public-methods
     # ─── Decorator: long-running task ──────────────────────────────
 
     def task(self, path: str):
-        """Register a JSON-started task with SSE and Interaction support.
+        """Register a legacy JSON/SSE task compatibility route.
 
         Task handlers are asynchronous and receive ``ctx`` followed by
-        keyword arguments decoded from the request JSON object.
+        keyword arguments decoded from the request JSON object. New apps
+        should declare a generation-pinned ``runner`` Contribution instead.
         """
         if not path.startswith("/") or path == "/":
             raise ValueError("PawApp task path must start with '/'")
@@ -480,6 +482,7 @@ class PawApp:  # pylint: disable=too-many-public-methods
                 raise TypeError(
                     "PawApp task handler must receive ctx first",
                 )
+            self._legacy_tasks.append(path)
 
             async def start_task(
                 request: Request,
@@ -861,6 +864,30 @@ class PawApp:  # pylint: disable=too-many-public-methods
         registrations now.
         """
         self._plugin_api = api
+
+        if self._legacy_tasks:
+            api.report_migration_diagnostic(
+                api_name="PawApp.task",
+                target_slot="runner",
+                message=(
+                    f"PawApp '{self.app_id or self.name}' uses the legacy "
+                    "@app.task runtime."
+                ),
+                recovery=(
+                    "Declare a 'runner' contribution and let the Host own "
+                    "Task, Run, Interaction, Event and Artifact lifecycle."
+                ),
+                manifest_fragment={
+                    "schema_version": "qwenpaw.plugin.v2",
+                    "contributions": [
+                        {
+                            "id": "task-runner",
+                            "slot": "runner",
+                            "entrypoint": "<module>:<runner_factory>",
+                        },
+                    ],
+                },
+            )
 
         # Create app_id injector dependency
         app_id_injector = Depends(_make_app_id_injector(self.app_id))
