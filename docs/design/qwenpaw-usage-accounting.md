@@ -85,7 +85,11 @@ For every provider attempt:
 This ordering prevents a failed durable write from creating a phantom call in
 the legacy statistics file. A projection failure must not mutate the immutable
 fact or create an aggregated fallback row that cannot later be deduplicated.
-Reconciliation replays the fact later.
+Lite keeps the content-free Attempt/Result pair in an attempt-ID-deduplicated
+in-process repair set. A later query or successful write replays it; a process
+restart still rebuilds from the durable Model Call store. Projection health
+exposes only health, pending count, error type and timestamp, never exception
+text, Prompt or message content.
 
 ## 4. Query contract
 
@@ -202,6 +206,12 @@ During the pre-cutover shadow period, queries may overlay fact-derived context
 fields onto an exact legacy aggregation identity. Token and call totals still
 come from JSON, so the overlay cannot double count them.
 
+If a projected pre-cutover identity has no corresponding legacy row, the Model
+Call fact is returned directly. This covers an unavailable-usage call or a
+transient compatibility-write failure without adding a fact on top of an
+existing aggregate. Once a matching legacy row exists, the normal overlay rule
+applies.
+
 No direct date-level addition is allowed. The query removes attributed JSON
 rows on and after cutover before adding projected rows. Records that predate
 Agent, Chat, or Turn ownership remain explicitly unattributed.
@@ -214,6 +224,8 @@ Agent, Chat, or Turn ownership remain explicitly unattributed.
 - A failed Model Call result write emits no legacy projection row.
 - Historical Model Call files without Agent/cache fields remain readable.
 - Summary values remain stable across restart and projection rebuild.
+- A transient projection failure repairs on a later query without restart;
+  diagnostics report degraded health until the attempt is indexed.
 - Global, Agent, Chat and Turn totals reconcile to the same attempt set.
 - Date and actual Provider/Model totals reconcile to that same attempt set.
 - Summary/Details responses contain `chat_id` only; legacy input still restores.

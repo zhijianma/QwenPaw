@@ -1364,4 +1364,9 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
   `TurnUsageAccumulator` 校验 payload 的 Chat/Turn 身份与所有权 Key，并能从 payload
   补全兼容调用遗漏的 Invocation Key。
 - 定点验证：Token Usage、Turn、Model Call、Router 后端 `182 passed`；Chat Turn
-  前端 `58 passed`。下一切片是投影失败后的进程内自愈和健康度投影，不涉及 Task UI。
+  前端 `58 passed`。
+- Lite Usage Projection 的瞬时写失败现在进入按 `attempt_id` 去重的进程内待重放集；
+  后续查询或成功写入自动修复，重启仍从 Model Call Store 重建。诊断状态新增
+  `healthy/pending_attempts/last_error_at/last_error_kind`，不包含异常正文或内容数据。
+- cutover 前事实若没有匹配 legacy JSON 行会直接参与查询；已有匹配行仍只做 shadow
+  overlay，保证恢复不漏记且不双算。Task UI 未参与本切片。

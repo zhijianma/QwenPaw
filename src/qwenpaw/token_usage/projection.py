@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..kernel import ModelCallAttempt, ModelCallRecord, ModelCallResult
 from ..utils.io_utils import run_sync_io
@@ -28,6 +28,10 @@ class UsageProjectionStatus(BaseModel):
     indexed_attempts: int
     last_rebuild_at: datetime | None = None
     last_rebuild_count: int = 0
+    healthy: bool = True
+    pending_attempts: int = Field(default=0, ge=0)
+    last_error_at: datetime | None = None
+    last_error_kind: str | None = None
 
 
 class LiteUsageProjection:

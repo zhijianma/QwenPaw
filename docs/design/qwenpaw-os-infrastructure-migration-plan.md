@@ -1313,7 +1313,11 @@ Cron 不形成独立审批或产物事实源。
       全部已配置 Agent Workspace 并原子 rebuild。首次初始化冻结下一 UTC 日为 legacy
       cutover：新代码在水位前双写作 shadow，水位后停止有归属的 JSON 写入；查询过滤
       水位后的有归属 legacy row 后再合并投影，因此不按日期直接相加或双算。诊断 API
-      返回 cutover、索引量、最后 rebuild 时间与条数，不暴露 Prompt 或消息。
+      返回 cutover、索引量、最后 rebuild 时间与条数，不暴露 Prompt 或消息。瞬时写入
+      失败会以 `attempt_id` 进入进程内待重放集，下一次查询或成功写入自动修复；健康投影
+      只公开 `healthy`、待修复数量、最后错误类型与时间。重启后仍由不可变 Model Call
+      全量 rebuild 兜底。cutover 前没有匹配 JSON 行的事实可直接进入查询；已有匹配行时
+      仍只覆盖事实字段，避免重复 Token/Call。
     - [x] Model Call usage evidence 已补齐历史规范化：Kernel 读取到成对的 legacy
       input/output counter 时补为 `provider_reported`，只出现一侧时失败关闭。真实 Lite
       的 17 条 Result 中有 14 条属于缺 measurement 的旧格式；无需修改事实文件，下一次

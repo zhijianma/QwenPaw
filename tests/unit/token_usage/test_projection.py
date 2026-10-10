@@ -566,3 +566,50 @@ async def test_projection_failure_does_not_create_undeduplicated_fallback(
     )
 
     assert record_legacy is False
+    status = await manager.get_projection_status()
+    assert status.healthy is False
+    assert status.pending_attempts == 1
+    assert status.last_error_kind == "OSError"
+
+
+@pytest.mark.asyncio
+async def test_projection_failure_repairs_on_next_query(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "qwenpaw.token_usage.manager.WORKING_DIR",
+        tmp_path,
+    )
+    manager = TokenUsageManager(
+        projection_path=tmp_path / "projection.sqlite3",
+        projection_cutover_date=date(2026, 10, 10),
+    )
+    projection = manager._projection  # pylint: disable=protected-access
+    original_record = projection.record
+    projection.record = AsyncMock(
+        side_effect=OSError("disk unavailable"),
+    )
+    record = _record(
+        completed_at=datetime(2026, 10, 9, 1, tzinfo=timezone.utc),
+    )
+    assert record.result is not None
+
+    assert not await manager.project_model_call(
+        record.attempt,
+        record.result,
+    )
+    projection.record = original_record
+
+    summary = await manager.get_summary(
+        date(2026, 10, 9),
+        date(2026, 10, 9),
+    )
+    status = await manager.get_projection_status()
+
+    assert summary.total_prompt_tokens == 100
+    assert summary.total_completion_tokens == 20
+    assert summary.total_calls == 1
+    assert status.healthy is True
+    assert status.pending_attempts == 0
+    assert status.last_error_kind == "OSError"

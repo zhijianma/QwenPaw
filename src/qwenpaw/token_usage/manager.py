@@ -76,7 +76,45 @@ class TokenUsageManager:
             or (WORKING_DIR / "token_usage_projection.sqlite3").expanduser(),
             initial_cutover_date=projection_cutover_date,
         )
+        self._pending_projection: dict[
+            str,
+            tuple[ModelCallAttempt, ModelCallResult],
+        ] = {}
+        self._projection_last_error_at: datetime | None = None
+        self._projection_last_error_kind: str | None = None
         self._flush_interval = 10  # default
+
+    def _remember_projection_failure(
+        self,
+        attempt: ModelCallAttempt,
+        result: ModelCallResult,
+        error: Exception,
+    ) -> None:
+        """Keep content-free facts available for an in-process retry."""
+        self._pending_projection[str(attempt.attempt_id)] = (attempt, result)
+        self._projection_last_error_at = datetime.now(tz=timezone.utc)
+        self._projection_last_error_kind = type(error).__name__
+
+    async def _repair_pending_projection(self) -> int:
+        """Replay transient projection failures without requiring restart."""
+        repaired = 0
+        for attempt_id, (attempt, result) in tuple(
+            self._pending_projection.items(),
+        ):
+            try:
+                await self._projection.record(attempt, result)
+            except Exception as exc:
+                self._remember_projection_failure(attempt, result, exc)
+                logger.warning(
+                    "token_usage: projection repair pending attempt=%s "
+                    "kind=%s",
+                    attempt_id,
+                    type(exc).__name__,
+                )
+                continue
+            self._pending_projection.pop(attempt_id, None)
+            repaired += 1
+        return repaired
 
     async def project_model_call(
         self,
@@ -86,7 +124,8 @@ class TokenUsageManager:
         """Index one fact and return whether legacy JSON should also record."""
         try:
             cutover = await self._projection.record(attempt, result)
-        except Exception:
+        except Exception as exc:
+            self._remember_projection_failure(attempt, result, exc)
             logger.exception(
                 "token_usage: model-call projection failed attempt=%s",
                 attempt.attempt_id,
@@ -94,19 +133,38 @@ class TokenUsageManager:
             # Never create an aggregated fallback row that cannot later be
             # deduplicated from the authoritative attempt during rebuild.
             return False
+        self._pending_projection.pop(str(attempt.attempt_id), None)
+        if self._pending_projection:
+            await self._repair_pending_projection()
         completed_date = result.completed_at.astimezone(timezone.utc).date()
         return completed_date < cutover
 
     async def get_projection_status(self) -> "UsageProjectionStatus":
         """Return content-free state for reconciliation diagnostics."""
-        return await self._projection.status()
+        status = await self._projection.status()
+        return status.model_copy(
+            update={
+                "healthy": not self._pending_projection,
+                "pending_attempts": len(self._pending_projection),
+                "last_error_at": self._projection_last_error_at,
+                "last_error_kind": self._projection_last_error_kind,
+            },
+        )
 
     async def rebuild_projection(
         self,
         records: list[ModelCallRecord],
     ) -> int:
         """Replace the disposable index from authoritative Model Calls."""
-        return await self._projection.rebuild(records)
+        rebuilt = await self._projection.rebuild(records)
+        rebuilt_ids = {
+            str(record.attempt.attempt_id)
+            for record in records
+            if record.result is not None
+        }
+        for attempt_id in rebuilt_ids:
+            self._pending_projection.pop(attempt_id, None)
+        return rebuilt
 
     def start(self, flush_interval: int = 10) -> None:
         """Start background flush task.
@@ -293,6 +351,8 @@ class TokenUsageManager:
         turn_id: Optional[str],
     ) -> list[TokenUsageRecord]:
         """Merge pre-cutover compatibility rows with fact projections."""
+        if self._pending_projection:
+            await self._repair_pending_projection()
         merged = await self._buffer.get_merged_data()
         legacy = query_legacy_usage(
             merged,

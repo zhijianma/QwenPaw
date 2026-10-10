@@ -26,10 +26,16 @@ def test_token_usage_projection_status(app_server) -> None:
     payload = resp.json()
     assert set(payload) == {
         "cutover_date",
+        "healthy",
         "indexed_attempts",
+        "last_error_at",
+        "last_error_kind",
         "last_rebuild_at",
         "last_rebuild_count",
+        "pending_attempts",
     }
+    assert payload["healthy"] is True
+    assert payload["pending_attempts"] == 0
 
 
 # ------------------------------------------------------------------ #

@@ -156,6 +156,7 @@ def merge_cutover_usage(
         for record in projected
         if date.fromisoformat(record.date) < cutover
     }
+    matched_shadow_identities: set[tuple[str | None, ...]] = set()
     compatible: list[TokenUsageRecord] = []
     for record in legacy:
         before_cutover = date.fromisoformat(record.date) < cutover
@@ -163,6 +164,8 @@ def merge_cutover_usage(
         if not before_cutover and not unscoped:
             continue
         shadow = shadow_by_identity.get(_record_identity(record))
+        if shadow is not None:
+            matched_shadow_identities.add(_record_identity(record))
         compatible.append(
             _overlay_fact_stats(record, shadow)
             if before_cutover and shadow is not None
@@ -173,7 +176,12 @@ def merge_cutover_usage(
         for record in projected
         if date.fromisoformat(record.date) >= cutover
     ]
-    return [*compatible, *authoritative]
+    unmatched_shadow = [
+        record
+        for identity, record in shadow_by_identity.items()
+        if identity not in matched_shadow_identities
+    ]
+    return [*compatible, *unmatched_shadow, *authoritative]
 
 
 __all__ = ["merge_cutover_usage", "query_legacy_usage"]
