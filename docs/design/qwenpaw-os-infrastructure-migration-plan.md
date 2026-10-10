@@ -1138,11 +1138,6 @@ PawApp / SDK 的运行所有权迁移见
     进程验证无孤儿；Windows tree cleanup 与 Linux 实机仍保留为平台门禁。
 - [ ] Codex Harness 从私有 app-server 传输迁移到已声明的官方
   `openai-codex` SDK，但以审批安全为硬门禁：
-  - [x] 新增精确 wheel 静态门禁 `scripts/audit_codex_sdk_wheel.py`，并对声明版本
-    `openai-codex==0.144.4` 实跑。thread start/resume/fork、history、stream、steer、
-    interrupt、login、models 均存在，但默认审批 accept、Async 无 handler 注入、
-    handler 不可 await、取消后阻塞 waiter 不被唤醒四项失败，因此 production transport
-    保持不切换。完整证据见 `docs/design/qwenpaw-codex-sdk-adoption-gate.md`。
   - [ ] 对仓库实际固定版本验证 thread start/resume/fork、stream、steer、
     interrupt、history、login、models 与 cancellation，不以 `main` 分支能力代替。
   - [ ] 官方 SDK 必须支持 QwenPaw 持久化 Interaction 所需的延迟/异步审批响应，

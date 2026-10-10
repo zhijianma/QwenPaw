@@ -263,15 +263,6 @@ public SDK. The public QwenPaw client and future managed Host SDK depend only
 on QwenPaw Host contracts and therefore remain independent of this temporary
 Codex implementation detail.
 
-The pinned 0.144.4 wheel has now been audited directly rather than inferred
-from repository `main`. Its functional surface contains every required thread,
-turn, login and model operation, but the adoption gate reports four blockers:
-the default handler accepts approvals, async callers cannot inject a handler,
-the handler cannot await a durable Interaction, and cancelling an offloaded
-queue wait unregisters routing without waking that worker. The deterministic
-wheel checker and exact artifact evidence are documented in
-`qwenpaw-codex-sdk-adoption-gate.md`.
-
 ### 5.2 Contract publication
 
 Kernel Pydantic models are the contract source of truth. The repository
