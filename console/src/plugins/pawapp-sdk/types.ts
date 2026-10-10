@@ -178,11 +178,7 @@ export interface PawApiNamespace {
   ): AsyncGenerator<string>;
   /** Standards-compliant SSE reader with event names and multiline data. */
   events(path: string, opts?: PawSseOptions): AsyncGenerator<PawSseEvent>;
-  task(
-    path: string,
-    params?: unknown,
-    options?: PawTaskOptions,
-  ): PawTaskHandle;
+  task(path: string, params?: unknown, options?: PawTaskOptions): PawTaskHandle;
 }
 
 /** Host capabilities namespace. */
@@ -467,10 +463,115 @@ export interface PawTaskHandle {
   readonly taskId: string;
 }
 
+export type PawRuntimeTaskStatus =
+  | "created"
+  | "planned"
+  | "running"
+  | "waiting_approval"
+  | "suspended"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface PawRuntimeTask {
+  task_id: string;
+  objective: string;
+  status: PawRuntimeTaskStatus;
+  source: string;
+  agent_id: string;
+  constraints: string[];
+  acceptance_criteria: string[];
+  execution_contract: Record<string, unknown> | null;
+  version: number;
+  active_run_id: string | null;
+  created_at: string;
+  updated_at: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface PawRuntimeTaskEvent {
+  event_id: string;
+  task_id: string;
+  run_id: string | null;
+  sequence: number;
+  event_type: string;
+  occurred_at: string;
+  payload: Record<string, unknown>;
+  artifact_refs: unknown[];
+  evidence_refs: unknown[];
+}
+
+/** Authoritative Task read model. New fields remain available to apps. */
+export interface PawRuntimeTaskProjection {
+  task: PawRuntimeTask;
+  last_sequence: number;
+  active_run: Record<string, unknown> | null;
+  runs: Array<Record<string, unknown>>;
+  latest_plan: Record<string, unknown> | null;
+  conversation_messages: Array<Record<string, unknown>>;
+  pending_approvals: Array<Record<string, unknown>>;
+  artifacts: Array<Record<string, unknown>>;
+  evidence: Array<Record<string, unknown>>;
+  capabilities: Array<Record<string, unknown>>;
+  [key: string]: unknown;
+}
+
+export interface PawRuntimeTaskRequest {
+  objective: string;
+  constraints?: string[];
+  acceptanceCriteria?: string[];
+  projectDir?: string;
+  runnerId?: string;
+  strategyId?: string;
+  approvalLevel?: "strict" | "smart" | "auto" | "off";
+}
+
+export interface PawRuntimeTaskRunOptions {
+  signal?: AbortSignal;
+  /** Reuse this key when retrying one logical task creation request. */
+  idempotencyKey?: string;
+  /** Number of reconnects after a non-terminal stream disconnect. */
+  reconnectAttempts?: number;
+  /** Initial reconnect delay. Later attempts use bounded linear backoff. */
+  reconnectDelayMs?: number;
+}
+
+export interface PawRuntimeTaskCancelReceipt {
+  taskId: string;
+  idempotencyKey: string;
+  task: PawRuntimeTask;
+}
+
+export interface PawRuntimeTaskHandle {
+  readonly taskId: string;
+  readonly lastSequence: number;
+  /** Starts cursor replay on first access and settles from a projection. */
+  readonly result: Promise<PawRuntimeTaskProjection>;
+  on(
+    event: string,
+    handler: PawTaskEventHandler<PawRuntimeTaskEvent>,
+  ): PawRuntimeTaskHandle;
+  off(
+    event: string,
+    handler: PawTaskEventHandler<PawRuntimeTaskEvent>,
+  ): PawRuntimeTaskHandle;
+  projection(): Promise<PawRuntimeTaskProjection>;
+  cancel(): Promise<PawRuntimeTaskCancelReceipt>;
+}
+
+export interface PawRuntimeTasksNamespace {
+  run(
+    request: PawRuntimeTaskRequest,
+    options?: PawRuntimeTaskRunOptions,
+  ): Promise<PawRuntimeTaskHandle>;
+}
+
 /** The top-level paw SDK object. */
 export interface PawSdk {
   readonly appId: string;
   api: PawApiNamespace;
+  /** Durable Agent OS tasks backed by Kernel projections and event cursors. */
+  tasks: PawRuntimeTasksNamespace;
   host: PawHostNamespace;
   ui: PawUiNamespace;
   dependencies: PawDependenciesNamespace;

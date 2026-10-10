@@ -26,6 +26,7 @@ import {
 } from "./host";
 import { createUiNamespace } from "./ui";
 import { createDependenciesNamespace } from "./dependencies";
+import { createRuntimeTasksNamespace } from "./runtimeTasks";
 import type { PawSdk, PawSdkFactory } from "./types";
 import { getActivePawAppId } from "./context";
 import { normalizeAppId } from "./scope";
@@ -43,6 +44,7 @@ export const paw: PawSdk = {
     return getActivePawAppId();
   },
   api: apiNamespace,
+  tasks: createRuntimeTasksNamespace(),
   host: hostNamespace,
   ui: createUiNamespace(getActivePawAppId),
   dependencies: createDependenciesNamespace(apiNamespace),
@@ -68,6 +70,7 @@ export function forApp(appId: string): PawSdk {
   const scoped: PawSdk = {
     appId: normalized,
     api: createApiNamespace(appIdProvider),
+    tasks: createRuntimeTasksNamespace(),
     host,
     ui: createUiNamespace(normalized),
     dependencies: createDependenciesNamespace(
@@ -104,6 +107,14 @@ export type {
   PawCapabilityStatus,
   PawRequestOptions,
   PawRequestInit,
+  PawRuntimeTask,
+  PawRuntimeTaskCancelReceipt,
+  PawRuntimeTaskEvent,
+  PawRuntimeTaskHandle,
+  PawRuntimeTaskProjection,
+  PawRuntimeTaskRequest,
+  PawRuntimeTaskRunOptions,
+  PawRuntimeTasksNamespace,
   PawSseEvent,
   PawSseOptions,
   PawChatOptions,
@@ -125,6 +136,10 @@ export type {
 } from "./types";
 
 export { createPawTask, PawTaskTransportError } from "./task";
+export {
+  createRuntimeTasksNamespace,
+  PawRuntimeTaskError,
+} from "./runtimeTasks";
 export { createDependenciesNamespace } from "./dependencies";
 export { PawApiError } from "./api";
 export { PawChatStreamError } from "./host";

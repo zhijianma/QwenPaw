@@ -72,7 +72,11 @@ parallel task identifier or persists an authoritative lifecycle in its UI.
 
 ## 5. SDK behavior
 
-The replacement for `PawTaskHandle` is a projection-backed handle:
+New applications use `paw.tasks.run()` and receive a projection-backed
+handle. `paw.api` remains the PawApp-private HTTP namespace, so developers do
+not have to guess whether `task()` means a private endpoint or a Kernel Task.
+
+The projection-backed handle guarantees:
 
 - `taskId` is the real Kernel Task identity;
 - `runId` and `invocationId` are distinct and exposed only when present;
@@ -86,9 +90,10 @@ The replacement for `PawTaskHandle` is a projection-backed handle:
 - output files and previews are Artifact/Evidence references, not arbitrary
   trusted URLs or inline bytes.
 
-The facade may retain the `paw.api.task()` spelling during migration. Its
-semantics change only after a compatibility negotiation reports that the Host
-supports the unified contract. Older Hosts continue using the legacy adapter.
+The existing `paw.api.task()` spelling remains a deprecated compatibility
+adapter with its original PawApp endpoint semantics. It will not silently
+change meaning. Migration is explicit from `paw.api.task()` to
+`paw.tasks.run()`.
 
 ## 6. Interaction rule
 
@@ -131,6 +136,34 @@ dependency without changing legacy handler execution.
   replay remains unavailable;
 - route Interaction responses and cancellation through shared commands.
 
+#### P2 implementation status
+
+Implemented in the frontend SDK:
+
+- `paw.tasks.run()` creates and starts a real Kernel Task;
+- explicitly requested `runner` and `strategy` capabilities are checked
+  against the current Host registry before Task creation;
+- Task creation and cancellation carry stable idempotency keys;
+- the event monitor starts lazily on the first subscription or `result`
+  access, preventing early replay events from racing listener registration;
+- committed sequence numbers are deduplicated and reconnect through
+  `Last-Event-ID` with bounded retries;
+- every stream EOF or transport error is reconciled with the authoritative
+  Projection; only `completed` resolves successfully;
+- `failed` and `cancelled` reject with a typed error that retains the terminal
+  Projection;
+- repeated `cancel()` calls share one command Promise and return the
+  Host-acknowledged Task plus the idempotency key.
+
+Still pending in P2:
+
+- expose approval and general Interaction response commands in the new Task
+  namespace;
+- replace the current structural Projection fields with generated or shared
+  schema types so frontend API modules and PawApp SDK cannot drift;
+- add a browser disconnect test against the running Host rather than only
+  server replay plus SDK unit tests.
+
 ### P3: backend Contribution adapter
 
 - adapt registered legacy task handlers to generation-pinned runner
@@ -171,7 +204,21 @@ real evidence:
 Component existence, mocked UI cards and an open SSE connection are not
 completion evidence.
 
-## 9. Explicit non-goals
+## 9. Verification evidence
+
+Verified on 2026-10-10 against the running Lite Host on port 8004:
+
+- registry generation 11 exposed
+  `qwenpaw.system.tasks.console-agent` in the `runner` slot;
+- a real Task created through `POST /api/tasks`, started through the shared
+  application route and reached the durable `completed` status;
+- its terminal Projection reported `last_sequence = 7` and pinned both the
+  runner and default strategy to registry generation 11;
+- reconnecting with `Last-Event-ID: 5` replayed exactly sequence 6 and 7;
+- PawApp SDK targeted tests cover terminal reconciliation, cursor reconnect,
+  missing runner rejection, listener timing and idempotent cancellation.
+
+## 10. Explicit non-goals
 
 - Do not build the Task Workbench page during this migration.
 - Do not expose `TaskManager`, filesystem stores, registries or AgentScope
