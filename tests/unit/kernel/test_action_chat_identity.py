@@ -14,7 +14,29 @@ from qwenpaw.kernel import (
     ActionStatus,
     ApprovalSource,
     CommittedActionItem,
+    ToolDefinition,
 )
+
+
+def _legacy_mcp_tool() -> None:
+    """Provide a stable callable for ActionKind compatibility coverage."""
+
+
+def test_legacy_mcp_action_kind_normalizes_to_driver() -> None:
+    assert ActionKind.MCP is ActionKind.DRIVER
+    assert ActionKind("mcp") is ActionKind.DRIVER
+
+    definition = ToolDefinition(
+        function=_legacy_mcp_tool,
+        name="_legacy_mcp_tool",
+        tool_type="network",
+        action_kind="mcp",
+    )
+
+    assert definition.action_kind is ActionKind.DRIVER
+    payload = definition.model_dump(mode="json")
+    assert payload["action_kind"] == "driver"
+    assert all(kind.value != "mcp" for kind in ActionKind)
 
 
 def test_action_models_serialize_canonical_chat_identity() -> None:

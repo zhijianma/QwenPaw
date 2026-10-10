@@ -125,10 +125,20 @@ class ActionKind(str, Enum):
 
     TOOL = "tool"
     DRIVER = "driver"
-    MCP = "mcp"
+    # MCP is a Driver protocol, not a second executor family. Keep the Python
+    # name as a source-compatible alias for early SDK consumers while all new
+    # records serialize the canonical ``driver`` value.
+    MCP = "driver"
     SHELL = "shell"
     BROWSER = "browser"
     HARNESS_REMOTE = "harness_remote"
+
+    @classmethod
+    def _missing_(cls, value: object) -> ActionKind | None:
+        """Read pre-canonicalization MCP records as Driver actions."""
+        if value == "mcp":
+            return cls.DRIVER
+        return None
 
 
 class ActionIdempotencyMode(str, Enum):

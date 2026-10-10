@@ -1098,8 +1098,9 @@ Cron 不形成独立审批或产物事实源。
     用户原文未落盘，文件模式 `0600`，Conversation key 与 Manifest hash 复算一致。
     当前 Token 为估算值，且记录的是最终 AgentScope 输入而非 Provider SDK 的
     序列化字节；实际 usage 与 formatter 版本留给 Model Call Plane。
-  - [ ] `ActionRequest` / `ActionResult` 统一 Tool、Driver、MCP、Shell、Browser
-    与 Harness Remote Action 的身份、风险、幂等、审批、结果和 Evidence。
+  - [x] Lite `ActionRequest` / `ActionResult` 已统一 Tool、Driver/MCP、Shell、
+    Browser 与本地 Harness Remote Action 的身份、风险、幂等、审批、结果和
+    Evidence；Hub 跨主机执行作为独立门禁保留，不再反向阻塞 Lite 基建状态。
     - [x] 冻结 `ActionKind` / `ActionStatus` / `ActionRequest` /
       `ActionResult` / `ActionRecord` 与 host-owned `ActionStore`；纯领域模型从
       Plugin SDK 导出，文件存储和 Recorder 不作为插件 API 暴露。
@@ -1132,6 +1133,9 @@ Cron 不形成独立审批或产物事实源。
       Driver Manager 兼容路径也生成 `DRIVER` Action。运行中产生的审批通过不可变
       `ActionApprovalLink` 关联 Request/Result；策略拒绝记为 `denied`，不误报为
       执行失败。MCP 作为 Driver 协议已覆盖，未建立第二套 MCP Tool Namespace。
+      早期 SDK 的 `ActionKind.MCP` 名称与历史 JSON 值 `"mcp"` 保持可读兼容，
+      但统一规范化并序列化为 `ActionKind.DRIVER / "driver"`，防止插件重新制造
+      竞争执行平面。
       固定 Chat `1ee31988-b37a-48b9-b6ce-423c52f6a3a9` 已在 generation 11
       真实调用 dingtalkdoc `get_document_info`：Action 与 ChatSpec.id、Invocation、
       系统 Driver Provider 和真实 capability 对齐，结果成功且 JSON 权限为
@@ -1164,10 +1168,10 @@ Cron 不形成独立审批或产物事实源。
       JSON。Provider 丢失 TOOL_COMPLETED 时终态为 `unknown`，副作用为 `uncertain`，
       禁止把断线伪装为失败后可安全重试。68 项 Harness 定点测试及全部 Python 文件
       门禁通过。
-    - [ ] Hub remote runner 与跨主机执行仍待接入 attested Action/Environment
-      Adapter；现有 Task `SideEffectRecord` 继续作为 Task 防重放权威，不迁移为第二
-      状态机。仅有 TOOL_STARTED 的 Provider 事件属于 observed boundary，不宣称
-      宿主已在实际执行前拦截。
+  - [ ] Workstation/Hub remote runner 与跨主机执行仍待接入 attested
+    Action/Environment Adapter；现有 Task `SideEffectRecord` 继续作为 Task 防重放
+    权威，不迁移为第二状态机。仅有 TOOL_STARTED 的 Provider 事件属于 observed
+    boundary，不宣称宿主已在实际执行前拦截。
   - [ ] `EnvironmentContract` 冻结 Workspace、Sandbox、Harness 和 Hub runtime
     共同需要的挂载、网络、凭据引用、依赖、资源、快照与清理语义。
     - [x] Kernel 已冻结 Contract、Resolution、Ref 与 Resolver/Store Port；Lite

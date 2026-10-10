@@ -1379,3 +1379,16 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
   Interrupt 和活动状态来自 Runtime Projection/SSE。外部 Backend 的 legacy sender
   继续作为明确兼容边界保留。Console 定点回归 `203 passed`；固定 Chat 的真实
   Runtime/Queue projection revision 均为 429，active/queued Submission 均为空。
+
+## 9. 2026-10-10 Lite Action Plane 门禁收敛
+
+- Lite 的 Tool、Shell、Browser、Driver/MCP 与本地 Codex/Qoder Harness Remote 已
+  共用 `ActionRequest / ActionResult / ActionRecord`、Action Store、审批关联、Artifact /
+  Evidence 和 Observation 投影；Workstation/Hub 跨主机 attestation 改为独立门禁，
+  不再让远期能力把已完成的 Lite Action 基建显示为未完成。
+- MCP 继续是 `driver.provider` 的具体协议。早期 SDK 的 `ActionKind.MCP` Python 名称
+  与历史 `"mcp"` JSON 可继续读取，但会规范化并序列化为 `DRIVER / "driver"`，避免
+  二次开发者误建第二套 MCP Tool Namespace 和竞争生命周期。
+- Action 核心/Provider/Governance/Harness/API 定点回归 `176 passed`。固定 Chat 的
+  Action API 实测返回 18 条权威记录：Tool 8、Shell 5、Browser 3、Driver/MCP 2；
+  16 条 succeeded、2 条 failed，失败记录仍保留诊断 Artifact 引用。

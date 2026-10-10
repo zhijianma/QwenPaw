@@ -539,8 +539,9 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
 - [x] 完成 Chat 工具输出到不可变 Artifact / Evidence 的宿主捕获；内置
   `write_file`、`edit_file`、`append_file`、`send_file_to_user` 与插件声明共享
   `ToolArtifactOutput`，由 Tool Coordinator 的统一 result processor 发布。
-- [ ] 将 Tool、Driver、MCP、Shell、Browser 与远程执行统一适配到
-  `ActionRequest` / `ActionResult`，不为每类能力复制审批、重试和审计。
+- [x] Lite 已将 Tool、Driver/MCP、Shell、Browser 与本地 Harness Remote 统一适配
+  到 `ActionRequest` / `ActionResult`，不为每类能力复制审批、重试和审计；Hub
+  跨主机执行保留为独立路线门禁。
   - [x] Tool 垂直切片已落地：系统 Tool 与插件 Tool 共用执行前 Request、执行后
     Result、内容最小化、Artifact/Evidence 关联和 fail-closed 语义。Action 公共模型
     统一以 `chat_id = ChatSpec.id` 表达归属，历史 `conversation_id` 仅作为输入与
@@ -548,7 +549,9 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
   - [x] Driver 垂直切片已落地：系统与插件 Provider、旧 Driver Manager 兼容路径
     共用 Driver Action；运行中审批通过不可变 `ActionApprovalLink` 关联，拒绝与
     执行失败分开。MCP 作为 Driver 协议随该路径接入；显式 `readOnlyHint` 映射为
-    低风险无副作用，缺少注解时保持保守默认值，不按名称推断。
+    低风险无副作用，缺少注解时保持保守默认值，不按名称推断。早期
+    `ActionKind.MCP` 名称和 `"mcp"` 历史值仅作为读取兼容入口，运行期与新 JSON
+    均规范化为 `DRIVER / "driver"`，不开放第二套 MCP 执行平面。
   - [x] Browser 外层受治理执行边界已迁移：统一与兼容实现、内置与插件均用
     显式 `ActionKind.BROWSER`，执行前后复用同一 Request / Result 管线，不按名称
     推断；真实 Chromium、固定 Chat、失败输出 Artifact/Evidence 及安全 Action 查询
