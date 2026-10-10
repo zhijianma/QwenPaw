@@ -569,9 +569,11 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
     均已通过。Browser 内部逐方法副作用分类仍由对应子系统继续闭环。
   - [x] 本地 Codex/Qoder Harness Remote 已通过 provider-neutral Event Adapter
     接入：受控 Chat turn 固定 generation 和 EnvironmentRef；审批回调在 Provider
-    恢复前记录 Request/Approval Link，TOOL_COMPLETED 写入最小化 Result，缺失终态
-    收敛为 `unknown/uncertain`。仅有 TOOL_STARTED 的动作属于观测边界，不冒充宿主
-    执行前拦截。
+    恢复前记录 Request/Approval Link，并追加 provider `ask` 决策；决策证据仍是
+    `provider_event`，不冒充 Tool Policy Audit。TOOL_COMPLETED 写入最小化 Result；
+    缺失终态或缺少 TOOL_STARTED 的非拒绝终态均收敛为 `unknown/uncertain`，分别以
+    `provider_completion_missing` / `provider_start_missing` 暴露事件链缺口。仅有
+    TOOL_STARTED 的动作属于观测边界，不冒充宿主执行前拦截。
   - [ ] Hub remote runner、跨主机执行与 attested Runtime 仍待显式 Adapter；不能因
     本地 Harness 已接入就宣称远程 Action Plane 全量完成。
 - [x] 将 `PromptFragment` 兼容演进为带来源、版本、信任级和哈希的

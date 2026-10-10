@@ -1430,5 +1430,10 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
   `DriverHost.require_approval()` 记录 `ask`；未请求审批的插件不伪造 `allow`。
   决策保存失败时在外部副作用或 Interaction 创建前 fail closed。它与
   `ActionApprovalLink` 分别表达执行器策略事实和审批关联，Chat Action API 返回两者。
-- 总体验收门禁仍未关闭：Harness 还需校验 provider permission/tool 事件完整性，并完成
-  对应真实端到端门禁；不能把 Driver 决策闭环外推为整个 Action Plane 已验收。
+- Harness 的 provider permission/tool 事件完整性已增加代码门禁：审批请求在 Provider
+  恢复前追加 `provider_event` 类型的 `ask` Admission Decision；非拒绝 completion
+  缺少 TOOL_STARTED 时以 `provider_start_missing + unknown/uncertain` 收敛，丢失
+  completion 则继续以 `provider_completion_missing + unknown/uncertain` 收敛。二者都
+  不冒充宿主执行前 Policy Audit。
+- 总体验收门禁仍未关闭：上述 Harness 合同还需 Codex/Qoder 真实审批及异常事件端到端
+  验证；不能把单元合同或 Driver 决策闭环外推为整个 Action Plane 已验收。

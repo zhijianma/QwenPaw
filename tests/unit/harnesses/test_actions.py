@@ -91,7 +91,22 @@ async def test_approval_creates_action_before_provider_completion(
         "command": "[CONTENT OMITTED]",
     }
     assert pending.approval_links[0].approval_id == approval_id
+    assert len(pending.admission_decisions) == 1
+    admission_decision = pending.admission_decisions[0]
+    assert admission_decision.authority == "qwenpaw.system.harness.codex"
+    assert admission_decision.decision == "ask"
+    assert admission_decision.evidence is (
+        ActionAdmissionEvidence.PROVIDER_EVENT
+    )
 
+    await tracker.begin_event(
+        HarnessEvent(
+            kind=HarnessEventKind.TOOL_STARTED,
+            item_id="item-approval",
+            tool_name="shell",
+            data={"provider_type": "commandExecution"},
+        ),
+    )
     await tracker.complete_event(
         HarnessEvent(
             kind=HarnessEventKind.TOOL_COMPLETED,
@@ -208,3 +223,55 @@ async def test_provider_retry_hint_is_constrained_by_host_policy(
     assert record.result.side_effect_status is expected_side_effect
     assert record.result.retry_decision is not None
     assert record.result.retry_decision.disposition is expected_disposition
+
+
+@pytest.mark.asyncio
+async def test_completion_without_start_is_recorded_as_unknown(
+    tmp_path: Path,
+) -> None:
+    """Do not treat an orphan completion as a complete execution chain."""
+    invocation_id = uuid4()
+    scope = InvocationScope(
+        invocation_id=invocation_id,
+        agent_id="default",
+        chat_id="chat-missing-start",
+        session_id="chat-1",
+        root_agent_id="default",
+        root_session_id="chat-1",
+        workspace_dir=str(tmp_path),
+        registry_generation=7,
+    )
+    store = lite_action_store(tmp_path)
+    tracker = HarnessActionTracker(
+        backend="codex",
+        scope=scope,
+        recorder=RuntimeActionRecorder(scope, store),
+    )
+    resolution = await RuntimeHarnessEnvironmentManager(
+        FilesystemEnvironmentStore(tmp_path),
+    ).resolve(
+        "codex",
+        tmp_path,
+        {"sandbox": "workspace-write"},
+        invocation_id=invocation_id,
+        conversation_id="chat-missing-start",
+    )
+    tracker.bind_environment(resolution)
+
+    await tracker.complete_event(
+        HarnessEvent(
+            kind=HarnessEventKind.TOOL_COMPLETED,
+            item_id="item-without-start",
+            tool_name="shell",
+            data={
+                "provider_type": "commandExecution",
+                "exit_code": 0,
+            },
+        ),
+    )
+
+    [record] = await store.list_for_conversation("chat-missing-start")
+    assert record.result is not None
+    assert record.result.status is ActionStatus.UNKNOWN
+    assert record.result.error_code == "provider_start_missing"
+    assert record.result.side_effect_status is SideEffectStatus.UNCERTAIN

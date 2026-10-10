@@ -9,6 +9,7 @@ from typing import Any
 from uuid import UUID
 
 from ..kernel import (
+    ActionAdmissionEvidence,
     ActionStatus,
     ApprovalSource,
     CommittedActionItem,
@@ -78,6 +79,7 @@ class HarnessActionTracker:
         self._recorder = recorder
         self._environment_ref: EnvironmentRef | None = None
         self._contexts: dict[str, ToolCallContext] = {}
+        self._started_items: set[str] = set()
         self._committed_items: dict[str, CommittedActionItem] = {}
 
     def bind_environment(self, resolution: EnvironmentResolution) -> None:
@@ -159,11 +161,17 @@ class HarnessActionTracker:
                 approval_id,
                 ApprovalSource.HARNESS,
             )
+            await self._recorder.record_admission_decision(
+                context,
+                authority=f"qwenpaw.system.harness.{self._backend}",
+                decision="ask",
+                evidence=ActionAdmissionEvidence.PROVIDER_EVENT,
+            )
         return context
 
     async def begin_event(self, event: HarnessEvent) -> None:
         """Record one normalized TOOL_STARTED event."""
-        await self.begin(
+        context = await self.begin(
             item_id=event.item_id,
             tool_name=event.tool_name,
             arguments=(
@@ -173,6 +181,8 @@ class HarnessActionTracker:
             ),
             provider_type=str(event.data.get("provider_type") or ""),
         )
+        if context is not None:
+            self._started_items.add(event.item_id)
 
     async def complete_event(self, event: HarnessEvent) -> None:
         """Complete one normalized TOOL_COMPLETED event."""
@@ -191,6 +201,12 @@ class HarnessActionTracker:
         if context is None:
             return
         status, error_code = _terminal_status(event)
+        if (
+            event.item_id not in self._started_items
+            and status is not ActionStatus.DENIED
+        ):
+            status = ActionStatus.UNKNOWN
+            error_code = "provider_start_missing"
         committed_item = await self._recorder.complete_harness_remote(
             context,
             status=status,
@@ -199,6 +215,7 @@ class HarnessActionTracker:
         )
         self._committed_items[event.item_id] = committed_item
         self._contexts.pop(event.item_id, None)
+        self._started_items.discard(event.item_id)
 
     async def finalize_pending(
         self,
@@ -208,6 +225,7 @@ class HarnessActionTracker:
         """Terminalize actions whose provider never emitted completion."""
         pending = tuple(self._contexts.items())
         self._contexts.clear()
+        self._started_items.clear()
         for _item_id, context in pending:
             await self._recorder.complete_harness_remote(
                 context,
