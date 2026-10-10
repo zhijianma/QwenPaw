@@ -30,7 +30,8 @@
 - `source_event_id`：已经提交的 Execution、Interaction 或 Artifact 事件。
 - `kind`：`reply / result / approval / activity / exception / artifact_ready`。
 - `mode`：`stream / final / silent`。
-- `agent_id`、可选 `conversation_id / task_id / run_id`：稳定业务归属。
+- `agent_id`、可选 `chat_id / task_id / run_id`：稳定业务归属；`chat_id` 是
+  `ChatSpec.id`。旧 `conversation_id` 只兼容读取，不进入新 JSON/schema。
 - 可选 `invocation_id / correlation_id`：源事件的不可变因果链身份。
 - `destination.adapter_id + address`：外设路由，不暴露 transport session。
 - `artifact_refs`：只读内容引用。
@@ -134,6 +135,8 @@ Lite 已实现 `InboxProjectionPort` 与 SQLite Store，并由 `TaskDeliveryWork
 ## 5. 验收
 
 - [x] Kernel 模型拒绝无 Task 的 Run 引用和跨 Conversation destination。
+- [x] Destination、Request 与 Inbox Item 只输出 `chat_id`；旧 JSON 可直接恢复，
+  冲突双身份失败关闭，Delivery ID 与 SQLite 表结构不变。
 - [x] failed Receipt 必须有错误码，成功/抑制 Receipt 不得携带失败状态。
 - [x] 核心请求序列化不含 `session_id`。
 - [x] system 与 plugin Adapter 使用同一公开 Protocol 和 Slot identity 门禁。

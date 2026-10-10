@@ -11,6 +11,9 @@ Item 保存 source event、Task、Run、Conversation、Artifact 与 Evidence 引
 最多 2000 字符的展示摘要。`source_payload` 只保存来源事件声明的 JSON 业务载荷，
 不复制完整 Delivery payload、执行历史或 Artifact 内容；重放时该载荷也属于不可变
 来源事实，不能静默改写。
+Conversation 归属在公共模型中只使用可选 `chat_id = ChatSpec.id`。SQLite 历史
+`data` JSON 中的 `conversation_id` 由模型兼容读取，重新输出时只产生 `chat_id`；
+不改变 Item ID、Delivery ID、revision 或数据库表结构。
 并发重放若观察到相同 Delivery 正由另一 owner 执行，会读取持久化 attempt 并等待其
 终态 Receipt，而不是创建第二次投递或把暂态误报为失败。
 

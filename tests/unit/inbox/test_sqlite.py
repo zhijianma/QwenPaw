@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """Tests for the Delivery-backed Lite Inbox projection."""
 
+import json
 from pathlib import Path
+import sqlite3
 from uuid import uuid4
 
 import pytest
@@ -30,9 +32,9 @@ def _request() -> DeliveryRequest:
         destination=DeliveryDestination(
             adapter_id="test.channel-delivery",
             address="opaque",
-            conversation_id="chat-1",
+            chat_id="chat-1",
         ),
-        conversation_id="chat-1",
+        chat_id="chat-1",
         task_id=uuid4(),
         run_id=uuid4(),
         payload={
@@ -86,6 +88,31 @@ async def test_project_read_and_handle_do_not_change_source(
     assert handled.source_payload == {"uid": 42, "folder": "INBOX"}
     assert "ignored" not in handled.model_dump_json()
     assert await store.list_items(agent_id="default", unread_only=True) == ()
+
+
+@pytest.mark.asyncio
+async def test_projection_reads_legacy_chat_identity_from_sqlite(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "inbox.db"
+    store = SQLiteInboxProjectionStore(database_path)
+    request = _request()
+    item = await store.project(request, _receipt(request))
+    payload = item.model_dump(mode="json")
+    payload["conversation_id"] = payload.pop("chat_id")
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "UPDATE inbox_items SET data = ? WHERE item_id = ?",
+            (json.dumps(payload), str(item.item_id)),
+        )
+
+    restored = await store.get(item.item_id)
+
+    assert restored is not None
+    assert restored.chat_id == "chat-1"
+    assert restored.conversation_id == "chat-1"
+    assert "chat_id" in restored.model_json_schema()["properties"]
+    assert "conversation_id" not in restored.model_json_schema()["properties"]
 
 
 @pytest.mark.asyncio

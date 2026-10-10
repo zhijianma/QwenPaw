@@ -238,7 +238,7 @@ class CronScheduleAdapter:
                     user_id=binding.user_id,
                     transport_context=job.dispatch.target.session_id,
                 ),
-                conversation_id=binding.conversation_id,
+                chat_id=binding.conversation_id,
                 metadata={"channel_meta": channel_meta},
             ),
             mode=mode,

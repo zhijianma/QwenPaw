@@ -936,6 +936,12 @@ Invocation，新 Invocation 自动使用新 generation。
     `DeliveryAdapter`，核心契约不含 `session_id`；新增 public
     `delivery.adapter` Slot，并在 generation 发布前校验 Protocol 与 namespaced
     identity。详细设计见 `docs/design/qwenpaw-delivery-contract.md`。
+  - [x] `DeliveryDestination`、`DeliveryRequest` 与 `InboxItem` 的公共身份统一为可选
+    `chat_id = ChatSpec.id`；旧 `conversation_id` 仅兼容读取及只读 Python 属性，
+    冲突双身份失败关闭。SQLite 仍保存完整 JSON，无需 schema migration；确定性
+    Delivery ID、attempt 和 Inbox revision 不变。2026-10-10 Kernel/Inbox/Delivery/
+    Scheduler/Cron 共 86 项定点测试通过，Plugin SDK 的旧身份模型由 7 个降至 4 个；
+    剩余 3 个属于已后置的 Task/Scheduler 合同，另 1 个是合法传输 `session_id`。
   - [x] Lite SQLite Projection 以确定性 Delivery ID、显式 attempt、owner/revision
     CAS 和 lease expiry 提供并发幂等；只有明确 failed 才允许下一 attempt，过期、
     Adapter 异常或无效 Receipt 均 fail closed 为 uncertain。Dispatcher 固定 Request

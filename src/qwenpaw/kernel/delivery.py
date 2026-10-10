@@ -8,7 +8,12 @@ from enum import Enum
 from typing import Any, Self
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from pydantic import AwareDatetime, Field, model_validator
+from pydantic import (
+    AliasChoices,
+    AwareDatetime,
+    Field,
+    model_validator,
+)
 
 from .models import (
     ArtifactRef,
@@ -76,8 +81,30 @@ class DeliveryDestination(KernelModel):
 
     adapter_id: NamespacedId
     address: NonEmptyStr
-    conversation_id: NonEmptyStr | None = None
+    chat_id: NonEmptyStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("chat_id", "conversation_id"),
+        description="Owning ChatSpec.id",
+    )
     metadata: JsonObject = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_chat_identity(cls, value: object) -> object:
+        """Reject ambiguous canonical and legacy Chat identities."""
+        if isinstance(value, Mapping):
+            chat_id = value.get("chat_id")
+            conversation_id = value.get("conversation_id")
+            if chat_id and conversation_id and chat_id != conversation_id:
+                raise ValueError(
+                    "chat_id and conversation_id must identify one Chat",
+                )
+        return value
+
+    @property
+    def conversation_id(self) -> str | None:
+        """Return the deprecated Python alias during migration."""
+        return self.chat_id
 
 
 class DeliveryPolicy(KernelModel):
@@ -118,7 +145,11 @@ class DeliveryRequest(KernelModel):
     kind: DeliveryKind
     mode: DeliveryMode
     destination: DeliveryDestination
-    conversation_id: NonEmptyStr | None = None
+    chat_id: NonEmptyStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("chat_id", "conversation_id"),
+        description="Owning ChatSpec.id",
+    )
     task_id: UUID | None = None
     run_id: UUID | None = None
     invocation_id: UUID | None = None
@@ -132,6 +163,13 @@ class DeliveryRequest(KernelModel):
     @classmethod
     def derive_stable_delivery_id(cls, value: Any) -> Any:
         """Derive identity from stable routing and idempotency facts."""
+        if isinstance(value, Mapping):
+            chat_id = value.get("chat_id")
+            conversation_id = value.get("conversation_id")
+            if chat_id and conversation_id and chat_id != conversation_id:
+                raise ValueError(
+                    "chat_id and conversation_id must identify one Chat",
+                )
         if not isinstance(value, Mapping) or value.get("delivery_id"):
             return value
         destination = value.get("destination")
@@ -171,14 +209,19 @@ class DeliveryRequest(KernelModel):
         if self.run_id is not None and self.task_id is None:
             raise ValueError("delivery run_id requires task_id")
         if (
-            self.conversation_id is not None
-            and self.destination.conversation_id is not None
-            and self.conversation_id != self.destination.conversation_id
+            self.chat_id is not None
+            and self.destination.chat_id is not None
+            and self.chat_id != self.destination.chat_id
         ):
             raise ValueError(
-                "delivery destination conversation does not match source",
+                "delivery destination Chat does not match source",
             )
         return self
+
+    @property
+    def conversation_id(self) -> str | None:
+        """Return the deprecated Python alias during migration."""
+        return self.chat_id
 
     def same_projection(self, other: "DeliveryRequest") -> bool:
         """Compare logical facts while ignoring observation time."""

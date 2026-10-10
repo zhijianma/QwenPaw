@@ -208,14 +208,14 @@ class LiteHeartbeatTaskRuntime:  # pylint: disable=too-few-public-methods
                     user_id=user_id,
                     transport_context=transport_context,
                 ),
-                conversation_id=conversation_id,
+                chat_id=conversation_id,
             )
             kinds = (DeliveryKind.RESULT,)
         else:
             destination = DeliveryDestination(
                 adapter_id=SYSTEM_INBOX_DELIVERY_ID,
                 address=SYSTEM_INBOX_ADDRESS,
-                conversation_id=conversation_id,
+                chat_id=conversation_id,
             )
             kinds = (DeliveryKind.RESULT,) if target == "inbox" else ()
         return DeliveryPolicy(

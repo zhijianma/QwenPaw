@@ -155,7 +155,7 @@ class TaskDeliveryProjector:
             kind=kind,
             mode=policy.mode,
             destination=policy.destination,
-            conversation_id=policy.destination.conversation_id,
+            chat_id=policy.destination.chat_id,
             task_id=event.task_id,
             run_id=event.run_id,
             invocation_id=event.invocation_id,

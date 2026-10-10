@@ -507,6 +507,12 @@ adapter from `DeliveryDestination.adapter_id`, pins the request's registry
 generation, owns attempts and leases, and persists the returned
 `DeliveryReceipt`.
 
+When a projection belongs to a persisted Chat, both `DeliveryRequest.chat_id`
+and `DeliveryDestination.chat_id` identify the same `ChatSpec.id`; projected
+`InboxItem` records carry that `chat_id` forward. Public JSON and schemas do
+not emit `conversation_id`. The deprecated name is accepted only while
+reading older records and remains a read-only Python alias for migration.
+
 Implement `adapter_id`, `supports(request)`, and
 `deliver(request, attempt)`. Return a receipt with the exact request identity
 and attempt. Report a definite destination rejection as `failed`; use

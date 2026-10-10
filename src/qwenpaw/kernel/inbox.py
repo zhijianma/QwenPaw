@@ -3,10 +3,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import AwareDatetime, Field
+from pydantic import AliasChoices, AwareDatetime, Field, model_validator
 
 from .delivery import DeliveryKind, DeliveryStatus
 from .models import (
@@ -42,7 +43,11 @@ class InboxItem(KernelModel):
     kind: DeliveryKind
     delivery_status: DeliveryStatus
     delivery_attempt: int = Field(ge=1)
-    conversation_id: NonEmptyStr | None = None
+    chat_id: NonEmptyStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("chat_id", "conversation_id"),
+        description="Owning ChatSpec.id",
+    )
     task_id: UUID | None = None
     run_id: UUID | None = None
     invocation_id: UUID | None = None
@@ -57,6 +62,24 @@ class InboxItem(KernelModel):
     handled_at: AwareDatetime | None = None
     created_at: AwareDatetime = Field(default_factory=utc_now)
     updated_at: AwareDatetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_chat_identity(cls, value: object) -> object:
+        """Reject ambiguous canonical and legacy Chat identities."""
+        if isinstance(value, Mapping):
+            chat_id = value.get("chat_id")
+            conversation_id = value.get("conversation_id")
+            if chat_id and conversation_id and chat_id != conversation_id:
+                raise ValueError(
+                    "chat_id and conversation_id must identify one Chat",
+                )
+        return value
+
+    @property
+    def conversation_id(self) -> str | None:
+        """Return the deprecated Python alias during migration."""
+        return self.chat_id
 
     @property
     def read(self) -> bool:

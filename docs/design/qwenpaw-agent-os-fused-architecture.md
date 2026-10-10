@@ -376,6 +376,8 @@ canonical 参数，并在生成 Scope 前完成兼容归一化。
 Conversation Fork 的 Command、Origin、Result 和 lineage Port 也只发布
 `parent_chat_id`、`root_chat_id`、`child_chat_id` 与 `chat_id`；历史
 `*_conversation_id` 仅由 SDK 兼容读取，不能形成第二套分支所有权。
+Delivery Destination、Request 与 Inbox Item 继续传递同一个可选 `chat_id`；历史
+SQLite JSON 由模型兼容读取，投递幂等 ID、attempt、read/handled revision 均保持不变。
 Provider-owned `AgentModeState` 与可观测 `CompactionRecord` 也沿用同一公共身份；
 SQLite 列、owner hash 和 Store 查询参数仍是 Adapter 私有兼容面，不要求数据迁移。
 Invocation 的 `CapabilityLockManifest` 同样只公开 `chat_id = ChatSpec.id`，Compiler、

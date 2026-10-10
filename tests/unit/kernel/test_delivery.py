@@ -47,9 +47,9 @@ def _request(**updates) -> DeliveryRequest:
         "destination": DeliveryDestination(
             adapter_id="example.delivery",
             address="channel-address",
-            conversation_id="chat-1",
+            chat_id="chat-1",
         ),
-        "conversation_id": "chat-1",
+        "chat_id": "chat-1",
         "task_id": uuid4(),
     }
     values.update(updates)
@@ -95,14 +95,52 @@ def test_delivery_causal_identity_is_optional_and_round_trips() -> None:
     assert DeliveryRequest.model_validate(legacy).invocation_id is None
 
 
-def test_delivery_rejects_cross_conversation_destination() -> None:
-    with pytest.raises(ValueError, match="conversation does not match"):
+def test_delivery_rejects_cross_chat_destination() -> None:
+    with pytest.raises(ValueError, match="Chat does not match"):
         _request(
             destination=DeliveryDestination(
                 adapter_id="example.delivery",
                 address="channel-address",
-                conversation_id="chat-2",
+                chat_id="chat-2",
             ),
+        )
+
+
+def test_delivery_reads_legacy_chat_identity_and_emits_canonical() -> None:
+    request = _request()
+    payload = request.model_dump(mode="json")
+    payload["conversation_id"] = payload.pop("chat_id")
+    destination = payload["destination"]
+    destination["conversation_id"] = destination.pop("chat_id")
+
+    restored = DeliveryRequest.model_validate(payload)
+
+    assert restored == request
+    assert restored.chat_id == "chat-1"
+    assert restored.conversation_id == "chat-1"
+    assert restored.destination.chat_id == "chat-1"
+    assert "chat_id" in restored.model_json_schema()["properties"]
+    assert "conversation_id" not in restored.model_json_schema()["properties"]
+    assert "chat_id" in DeliveryDestination.model_json_schema()["properties"]
+
+
+def test_delivery_rejects_conflicting_chat_identities() -> None:
+    request = _request()
+    with pytest.raises(ValueError, match="must identify one Chat"):
+        DeliveryRequest.model_validate(
+            {
+                **request.model_dump(mode="json"),
+                "conversation_id": "chat-2",
+            },
+        )
+    with pytest.raises(ValueError, match="must identify one Chat"):
+        DeliveryDestination.model_validate(
+            {
+                "adapter_id": "example.delivery",
+                "address": "channel-address",
+                "chat_id": "chat-1",
+                "conversation_id": "chat-2",
+            },
         )
 
 
