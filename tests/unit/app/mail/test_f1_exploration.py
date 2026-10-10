@@ -136,9 +136,15 @@ class _FakeGovernor:
         self.policy = _FakePolicy(execution_level)
         self.seen_levels: list[str] = []
 
-    def assert_policy(self, _tc_spec: ToolCallSpec) -> GovernanceDecision:
-        self.seen_levels.append(self.policy.execution_level)
-        if self.policy.execution_level == "strict":
+    def assert_policy(
+        self,
+        _tc_spec: ToolCallSpec,
+        *,
+        execution_level: str | None = None,
+    ) -> GovernanceDecision:
+        level = execution_level or self.policy.execution_level
+        self.seen_levels.append(level)
+        if level == "strict":
             return GovernanceDecision(
                 action=GovernanceAction.ASK,
                 reason="STRICT mode: all tool calls require approval",
@@ -148,8 +154,9 @@ class _FakeGovernor:
             reason="allowed",
         )
 
-    def audit(self, tc_spec: ToolCallSpec, decision: Any) -> None:
-        pass
+    def audit(self, tc_spec: ToolCallSpec, decision: Any) -> bool:
+        del tc_spec, decision
+        return True
 
 
 def _make_tool(governor, request_context=None, name="edit_file"):

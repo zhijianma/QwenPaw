@@ -241,16 +241,15 @@ class AuditLog:
         workspace_dir: str,
         tc_spec: ToolCallSpec,
         decision: GovernanceDecision,
-    ) -> None:
-        """Record a policy decision, writing to SQLite immediately.
+    ) -> bool:
+        """Record a policy decision and report durable persistence.
 
         Args:
             workspace_dir: Workspace path this event belongs to
             tc_spec: ToolCallSpec instance
             decision: GovernanceDecision instance (action + reason)
-        Errors are caught and logged: an audit-write failure must NOT
-        propagate into ``assert_policy`` and disrupt the policy
-        decision returned to the caller.
+        Errors are caught and logged.  Callers decide whether the failed
+        write is advisory or must close a side-effecting execution path.
 
         ``audit_level == "none"`` is handled by
         ``ResourceGovernor.audit()`` before this method is called.
@@ -261,7 +260,7 @@ class AuditLog:
             with self._lock:
                 conn = self._conn
                 if conn is None:
-                    return
+                    return False
                 conn.execute(
                     "INSERT INTO audit_events "
                     "(ts, workspace_dir, agent_id, session_id, "
@@ -292,6 +291,7 @@ class AuditLog:
                     self._insert_count = 0
                     if self.count >= self.MAX_RECORDS:
                         self._auto_purge()
+                return True
         except sqlite3.Error as e:
             _logger.error(
                 "AuditLog.record: SQLite error (tool=%s, target=%r): %s",
@@ -300,6 +300,7 @@ class AuditLog:
                 e,
                 exc_info=True,
             )
+            return False
 
     def query(
         self,

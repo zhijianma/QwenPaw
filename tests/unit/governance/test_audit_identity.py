@@ -66,7 +66,7 @@ def test_audit_round_trips_action_causal_identity(
         action_id="action-1",
     )
 
-    audit.record(
+    persisted = audit.record(
         str(tmp_path),
         spec,
         GovernanceDecision(
@@ -85,7 +85,31 @@ def test_audit_round_trips_action_causal_identity(
     assert events[0].correlation_id == "correlation-1"
     assert events[0].chat_id == "chat-spec-1"
     assert events[0].action_id == "action-1"
+    assert persisted is True
     audit.close()
+
+
+def test_closed_audit_reports_failed_persistence(tmp_path: Path) -> None:
+    audit = AuditLog._create(  # pylint: disable=protected-access
+        tmp_path / "audit.db",
+    )
+    audit.close()
+
+    persisted = audit.record(
+        str(tmp_path),
+        ToolCallSpec(
+            tool_name="Write",
+            target="README.md",
+            agent_id="default",
+            session_id="chat",
+        ),
+        GovernanceDecision(
+            action=GovernanceAction.ALLOW,
+            reason="test",
+        ),
+    )
+
+    assert persisted is False
 
 
 def test_tool_call_correlation_defaults_to_invocation() -> None:

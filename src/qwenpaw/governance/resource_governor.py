@@ -312,8 +312,8 @@ class ResourceGovernor:
         self,
         tc_spec: ToolCallSpec,
         decision: GovernanceDecision,
-    ) -> None:
-        """Record a governance decision to the audit log.
+    ) -> bool:
+        """Record a governance decision and report durable persistence.
 
         Callers should invoke this after ``assert_policy()`` to persist
         the decision for compliance / forensics:
@@ -322,8 +322,8 @@ class ResourceGovernor:
             governor.audit(tc_spec, decision)
         """
         if self._policy is not None and self._policy.audit_level == "none":
-            return
-        self.audit_log.record(
+            return False
+        return self.audit_log.record(
             str(self.workspace_dir),
             tc_spec,
             decision,

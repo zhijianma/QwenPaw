@@ -1989,12 +1989,10 @@ class AgentBuilder:
         Two recall paths exist: the structured ``recall_history`` tool
         (in-process bound queries — needs no sandbox, only a working guard
         layer) and the sandboxed ``recall_history_python`` REPL, which fails
-        closed unless a ``sandbox_config`` is supplied. That config is
-        injected only by the governor (via ``PolicyGuardedTool``); the
-        ``GuardedFunctionTool`` fallback used when the governor is absent
-        never supplies one. A missing governor means the guard layer itself is
-        degraded, so we stay conservative: recall is runnable iff the governor
-        is present, or the deployment has opted into unsandboxed recall —
+        closed unless a ``sandbox_config`` is supplied. A missing governor
+        means the guard layer itself is degraded, so we stay conservative:
+        recall is runnable iff the governor is present, or the deployment has
+        opted into unsandboxed recall —
         which requires BOTH the ``QWENPAW_ALLOW_UNSANDBOXED_RECALL`` env var
         and ``scroll_config.allow_unsandboxed`` (see
         ``scroll_unsandboxed_allowed`` — agent.json alone can never bypass the
@@ -2117,20 +2115,13 @@ class AgentBuilder:
         request_context: dict[str, Any],
         governor: Any,
     ) -> Any:
-        """Wrap a raw tool fn in the repo's standard guard (policy or tool)."""
-        if governor is not None:
-            from ..governance import PolicyGuardedTool
+        """Wrap a raw tool in the single fail-closed policy boundary."""
+        del agent_id
+        from ..governance import PolicyGuardedTool
 
-            return PolicyGuardedTool(
-                fn,
-                governor=governor,
-                request_context=request_context,
-            )
-        from .tool_guard import GuardedFunctionTool
-
-        return GuardedFunctionTool(
+        return PolicyGuardedTool(
             fn,
-            agent_id=agent_id,
+            governor=governor,
             request_context=request_context,
         )
 

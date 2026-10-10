@@ -127,7 +127,10 @@ async def test_builder_guard_wraps_raw_provider_tools() -> None:
         ctx=context,
         local_workspace=None,
         agent_config=SimpleNamespace(),
-        request_context={"agent_id": "default"},
+        request_context={
+            "agent_id": "default",
+            "approval_level": "strict",
+        },
         governor=None,
         active_modes=(),
         active_skills=(),
@@ -139,6 +142,9 @@ async def test_builder_guard_wraps_raw_provider_tools() -> None:
     assert callable(getattr(tools[0], "check_permissions", None))
     request_context = getattr(tools[0], "_qp_request_context")
     assert request_context["agent_id"] == "default"
+    decision = await tools[0].check_permissions({})
+    assert decision.behavior.value == "deny"
+    assert "Governance layer unavailable" in decision.message
 
 
 def test_tool_host_exposes_interaction_broker_without_private_key() -> None:

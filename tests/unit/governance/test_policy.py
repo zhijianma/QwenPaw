@@ -640,9 +640,10 @@ class TestAssertPolicySSHCommands:
         decision = governor.assert_policy(tc)
         before = governor.audit_log.count
 
-        governor.audit(tc, decision)
+        persisted = governor.audit(tc, decision)
 
         assert governor.audit_log.count == before
+        assert persisted is False
 
     def test_audit_level_all_persists_decision(self, governor):
         """The default all level continues to persist audit events."""
@@ -651,9 +652,10 @@ class TestAssertPolicySSHCommands:
         decision = governor.assert_policy(tc)
         before = governor.audit_log.count
 
-        governor.audit(tc, decision)
+        persisted = governor.audit(tc, decision)
 
         assert governor.audit_log.count == before + 1
+        assert persisted is True
 
 
 # ---------------------------------------------------------------------------

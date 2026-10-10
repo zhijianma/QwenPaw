@@ -371,13 +371,30 @@ async def _policy_tool_check_permissions(
 
     if effective_level is not None and effective_level.is_disabled():
         # OFF means "never ask the user" — it does NOT mean "skip the
-        # sandbox". Sandbox isolation is an execution mechanism, not an
-        # approval gate. Fail-closed tools (the REPL) return DENIED without
-        # a sandbox_config, which the guard layer then misreads as a sandbox
-        # violation and escalates to a recurring approval prompt OFF can
-        # never resolve. So we still compile+attach the sandbox here; only
-        # the "ask the user" step is skipped.
+        # sandbox or durable audit". Sandbox isolation and audit evidence
+        # are execution mechanisms, not approval gates.
         _prepare_off_mode_sandbox(self, governor)
+        tc_spec = self._build_tc_spec()
+        _bind_policy_audit_identity(self, tc_spec)
+        decision = GovernanceDecision(
+            action=GovernanceAction.ALLOW,
+            reason="approval_level=off",
+        )
+        audit_persisted = (
+            _audit_policy_decision(governor, tc_spec, decision)
+            if governor is not None
+            else False
+        )
+        if not audit_persisted and _requires_durable_policy_audit(tc_spec):
+            return PermissionDecision(
+                behavior=PermissionBehavior.DENY,
+                message=(
+                    "Governance audit is required for side-effecting "
+                    "tools even when approval is disabled."
+                ),
+            )
+        self._qp_policy_decision = decision
+        self._qp_tc_spec = tc_spec
         return PermissionDecision(
             behavior=PermissionBehavior.ALLOW,
             message="governance: approval_level=off, all tools allowed.",
@@ -386,6 +403,15 @@ async def _policy_tool_check_permissions(
     if governor is None:
         # Check if execution_level is "off" (dev mode) — allow pass-through
         if _is_execution_level_off():
+            tc_spec = self._build_tc_spec()
+            if _requires_durable_policy_audit(tc_spec):
+                return PermissionDecision(
+                    behavior=PermissionBehavior.DENY,
+                    message=(
+                        "Governance audit is unavailable for a "
+                        "side-effecting tool."
+                    ),
+                )
             return PermissionDecision(
                 behavior=PermissionBehavior.ALLOW,
                 message="governance: execution_level=off (dev mode), "
@@ -416,7 +442,19 @@ async def _policy_tool_check_permissions(
             effective_level.value if effective_level is not None else None
         ),
     )
-    governor.audit(tc_spec, decision)
+    audit_persisted = _audit_policy_decision(
+        governor,
+        tc_spec,
+        decision,
+    )
+    if not audit_persisted and _requires_durable_policy_audit(tc_spec):
+        return PermissionDecision(
+            behavior=PermissionBehavior.DENY,
+            message=(
+                "Governance audit could not be persisted; "
+                "side-effecting tool execution was denied."
+            ),
+        )
 
     # Cache the decision + tc_spec for __call__ to use
     self._qp_policy_decision = decision
@@ -522,6 +560,28 @@ def _bind_policy_audit_identity(tool: Any, spec: ToolCallSpec) -> None:
     effect = ToolEffect(spec.effect)
     kind = _runtime_action_kind(tool, effect)
     spec.action_id = str(recorder.action_id(context, kind=kind))
+
+
+def _requires_durable_policy_audit(spec: ToolCallSpec) -> bool:
+    """Return whether executing this tool requires durable audit proof."""
+    return ToolEffect(spec.effect) is not ToolEffect.NONE
+
+
+def _audit_policy_decision(
+    governor: Any,
+    spec: ToolCallSpec,
+    decision: GovernanceDecision,
+) -> bool:
+    """Persist policy evidence while supporting legacy governor adapters."""
+    result = governor.audit(spec, decision)
+    if result is False:
+        logger.error(
+            "Policy audit persistence failed for tool '%s' action '%s'.",
+            spec.tool_name,
+            spec.action_id,
+        )
+        return False
+    return True
 
 
 async def _begin_tool_action(tool: Any) -> None:
@@ -848,6 +908,7 @@ async def _execute_policy_tool_call(
         # Fallback: reconstruct if check_permissions didn't run
         self._qp_raw_params = {}
         tc_spec = self._build_tc_spec()
+        _bind_policy_audit_identity(self, tc_spec)
 
     governance_reason = getattr(
         getattr(self, "_qp_policy_decision", None),
@@ -861,7 +922,8 @@ async def _execute_policy_tool_call(
     )
 
     # Record the ASK escalation (sandbox violation → ask user)
-    governor.audit(
+    escalation_persisted = _audit_policy_decision(
+        governor,
         tc_spec,
         GovernanceDecision(
             action=GovernanceAction.ASK,
@@ -872,6 +934,23 @@ async def _execute_policy_tool_call(
             ),
         ),
     )
+    if (
+        not escalation_persisted
+        and _requires_durable_policy_audit(tc_spec)
+    ):
+        return ToolChunk(
+            is_last=True,
+            state=ToolResultState.DENIED,
+            content=[
+                TextBlock(
+                    type="text",
+                    text=(
+                        "Sandbox escalation audit could not be persisted; "
+                        "the tool remained blocked."
+                    ),
+                ),
+            ],
+        )
 
     from agentscope.permission import PermissionBehavior
 
@@ -1189,7 +1268,20 @@ async def _ask_user_approval(  # pylint: disable=too-many-statements
         action=GovernanceAction.ALLOW if approved else GovernanceAction.DENY,
         reason=(f"User Approve ({scope_label})" if approved else "User Deny"),
     )
-    governor.audit(tc_spec, approval_decision)
+    approval_audited = _audit_policy_decision(
+        governor,
+        tc_spec,
+        approval_decision,
+    )
+    if not approval_audited and _requires_durable_policy_audit(tc_spec):
+        return PermissionDecision(
+            behavior=PermissionBehavior.DENY,
+            message=(
+                "Approval was not executed because its governance audit "
+                "could not be persisted."
+                + _NO_RETRY_INSTRUCTION
+            ),
+        )
 
     summary = format_findings_summary(guard_result)
     if decision == ApprovalDecision.APPROVED:

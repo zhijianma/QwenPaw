@@ -100,7 +100,13 @@ def _tc(target: str = "git status") -> ToolCallSpec:
     )
 
 
-async def _run_approval(scope: ApprovalScope | None, monkeypatch):
+async def _run_approval(
+    scope: ApprovalScope | None,
+    monkeypatch,
+    *,
+    governor=None,
+    tc_spec: ToolCallSpec | None = None,
+):
     """Drive ``_ask_user_approval`` with fakes; return (governor, pending)."""
     from qwenpaw.governance import tool_adapter
 
@@ -132,7 +138,7 @@ async def _run_approval(scope: ApprovalScope | None, monkeypatch):
         raising=False,
     )
 
-    governor = _FakeGovernor()
+    governor = governor or _FakeGovernor()
     # ``_ask_user_approval`` imports get_approval_service lazily from
     # ..app.approvals; patch that path too.
     import qwenpaw.app.approvals as approvals_mod
@@ -144,10 +150,9 @@ async def _run_approval(scope: ApprovalScope | None, monkeypatch):
         raising=False,
     )
 
-    tc = _tc()
-    await tool_adapter._ask_user_approval(
+    decision = await tool_adapter._ask_user_approval(
         governor=governor,
-        tc_spec=tc,
+        tc_spec=tc_spec or _tc(),
         request_context={
             "user_id": "u",
             "channel": "console",
@@ -157,14 +162,14 @@ async def _run_approval(scope: ApprovalScope | None, monkeypatch):
         },
         source="No rule hit",
     )
-    return governor, fake_svc._pending
+    return governor, fake_svc._pending, decision
 
 
 class TestApprovalScopeConsumer:
     """The consumer picks the recorded target from the chosen scope."""
 
     async def test_similar_records_pattern(self, monkeypatch):
-        governor, _pending = await _run_approval(
+        governor, _pending, _decision = await _run_approval(
             ApprovalScope.SIMILAR,
             monkeypatch,
         )
@@ -176,7 +181,7 @@ class TestApprovalScopeConsumer:
         assert "similar" in decision.reason
 
     async def test_exact_records_literal(self, monkeypatch):
-        governor, _pending = await _run_approval(
+        governor, _pending, _decision = await _run_approval(
             ApprovalScope.EXACT,
             monkeypatch,
         )
@@ -266,14 +271,17 @@ class TestApprovalScopeConsumer:
 
     async def test_none_scope_defaults_to_exact(self, monkeypatch):
         """No scope (IM channel / CLI) → records the literal target."""
-        governor, _pending = await _run_approval(None, monkeypatch)
+        governor, _pending, _decision = await _run_approval(
+            None,
+            monkeypatch,
+        )
         _tc_spec, target = governor.added[0]
         assert target == "git status"
         _spec, decision = governor.audits[-1]
         assert "exact" in decision.reason
 
     async def test_display_payload_carries_both_targets(self, monkeypatch):
-        _governor, pending = await _run_approval(
+        _governor, pending, _decision = await _run_approval(
             ApprovalScope.SIMILAR,
             monkeypatch,
         )
@@ -281,6 +289,30 @@ class TestApprovalScopeConsumer:
         assert display["is_generalized"] is True
         assert display["exact_target"] == "git status"
         assert display["similar_target"] == "git *"
+
+    async def test_approved_side_effect_denied_when_audit_fails(
+        self,
+        monkeypatch,
+    ):
+        class _UnavailableAuditGovernor(_FakeGovernor):
+            def audit(self, tc_spec, decision):  # noqa: ANN
+                super().audit(tc_spec, decision)
+                return False
+
+        governor = _UnavailableAuditGovernor()
+        tc_spec = _tc()
+        tc_spec.effect = "external_write"
+
+        governor, _pending, decision = await _run_approval(
+            ApprovalScope.EXACT,
+            monkeypatch,
+            governor=governor,
+            tc_spec=tc_spec,
+        )
+
+        assert decision.behavior.value == "deny"
+        assert "audit could not be persisted" in decision.message
+        assert governor.added == []
 
 
 class TestRequestScopedApprovalLevel:
@@ -330,3 +362,109 @@ class TestRequestScopedApprovalLevel:
         assert decision.behavior.value == "allow"
         assert governor.received_level == "strict"
         assert governor.policy.execution_level == "smart"
+
+    async def test_side_effect_is_denied_when_policy_audit_fails(self):
+        from types import SimpleNamespace
+
+        from qwenpaw.governance import tool_adapter
+
+        class _Governor:
+            policy = SimpleNamespace(execution_level="smart")
+
+            @staticmethod
+            def assert_policy(_tc_spec, *, execution_level=None):
+                del execution_level
+                return GovernanceDecision(
+                    action=GovernanceAction.ALLOW,
+                    reason="test",
+                )
+
+            @staticmethod
+            def audit(_tc_spec, _decision):
+                return False
+
+        tool = SimpleNamespace(
+            name="write_file",
+            _qp_governor=_Governor(),
+            _qp_request_context={"approval_level": "strict"},
+            _build_tc_spec=lambda: ToolCallSpec(
+                tool_name="Write",
+                target="README.md",
+                agent_id="agent-1",
+                session_id="chat-1",
+                effect="local_write",
+            ),
+        )
+
+        decision = await tool_adapter._policy_tool_check_permissions(tool, {})
+
+        assert decision.behavior.value == "deny"
+        assert "audit could not be persisted" in decision.message
+
+    async def test_read_only_tool_remains_available_when_audit_fails(self):
+        from types import SimpleNamespace
+
+        from qwenpaw.governance import tool_adapter
+
+        class _Governor:
+            policy = SimpleNamespace(execution_level="smart")
+
+            @staticmethod
+            def assert_policy(_tc_spec, *, execution_level=None):
+                del execution_level
+                return GovernanceDecision(
+                    action=GovernanceAction.ALLOW,
+                    reason="test",
+                )
+
+            @staticmethod
+            def audit(_tc_spec, _decision):
+                return False
+
+        tool = SimpleNamespace(
+            name="read_file",
+            _qp_governor=_Governor(),
+            _qp_request_context={"approval_level": "strict"},
+            _build_tc_spec=lambda: ToolCallSpec(
+                tool_name="Read",
+                target="README.md",
+                agent_id="agent-1",
+                session_id="chat-1",
+                effect="none",
+            ),
+        )
+
+        decision = await tool_adapter._policy_tool_check_permissions(tool, {})
+
+        assert decision.behavior.value == "allow"
+
+    async def test_disabled_approval_still_requires_side_effect_audit(self):
+        from types import SimpleNamespace
+
+        from qwenpaw.governance import tool_adapter
+
+        class _Governor:
+            policy = SimpleNamespace(execution_level="off")
+            sandbox_usable = False
+
+            @staticmethod
+            def audit(_tc_spec, _decision):
+                return False
+
+        tool = SimpleNamespace(
+            name="write_file",
+            _qp_governor=_Governor(),
+            _qp_request_context={"approval_level": "off"},
+            _build_tc_spec=lambda: ToolCallSpec(
+                tool_name="Write",
+                target="README.md",
+                agent_id="agent-1",
+                session_id="chat-1",
+                effect="local_write",
+            ),
+        )
+
+        decision = await tool_adapter._policy_tool_check_permissions(tool, {})
+
+        assert decision.behavior.value == "deny"
+        assert "even when approval is disabled" in decision.message

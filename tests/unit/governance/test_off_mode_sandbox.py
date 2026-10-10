@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """UT for OFF-mode sandbox provisioning.
 
-approval_level=OFF skips "ask the user" but must NOT skip "run it in a
-sandbox". These tests pin that only fail-closed tools (the REPL) get a
+approval_level=OFF skips "ask the user" but must NOT skip audit or "run it
+in a sandbox". These tests pin that only fail-closed tools (the REPL) get a
 sandbox_config compiled in OFF mode, that fail-open shell tools (Bash) are
 left untouched, and that no sandbox platform → no-op.
 """
@@ -15,6 +15,7 @@ from types import SimpleNamespace
 import pytest
 
 from qwenpaw.governance import tool_adapter
+from qwenpaw.governance.policy import ToolCallSpec
 from qwenpaw.governance.resource_governor import ResourceGovernor
 from qwenpaw.governance.tool_registry import DEFAULT_REGISTRY
 
@@ -36,7 +37,7 @@ class _FakeGovernor:
 
     def compile_sandbox_config(self, tc_spec):  # noqa: ANN
         self.compiled.append(tc_spec)
-        return f"sandbox-cfg-for-{tc_spec}"
+        return f"sandbox-cfg-for-{tc_spec.tool_name}"
 
 
 class _FakeTool:
@@ -45,8 +46,13 @@ class _FakeTool:
     def __init__(self, name: str) -> None:
         self.name = name
 
-    def _build_tc_spec(self):  # noqa: ANN
-        return f"tc:{self.name}"
+    def _build_tc_spec(self) -> ToolCallSpec:
+        return ToolCallSpec(
+            tool_name=self.name,
+            target="",
+            agent_id="test-agent",
+            session_id="test-session",
+        )
 
 
 class TestRegistryFlag:
@@ -66,6 +72,10 @@ class TestOffModeSandbox:
         class _PolicyMustNotRun:
             def assert_policy(self, _tc_spec):
                 raise AssertionError("OFF must not evaluate governance policy")
+
+            @staticmethod
+            def audit(_tc_spec, _decision):
+                return True
 
         tool = _FakeTool("read_file")
         tool._qp_governor = _PolicyMustNotRun()
@@ -87,7 +97,7 @@ class TestOffModeSandbox:
         assert tool._qp_sandbox_mode is True
         assert (
             tool._qp_sandbox_config
-            == "sandbox-cfg-for-tc:recall_history_python"
+            == "sandbox-cfg-for-recall_history_python"
         )
         assert gov.compiled, "compile_sandbox_config was never called"
 

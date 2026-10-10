@@ -1413,6 +1413,13 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
 - 旧 SQLite Audit 表原位补列并建立 Chat/Action 索引，历史行保持可读；Task、普通
   Chat、Action Retry 与本地 Harness 请求上下文均优先传递 `os_chat_id`，旧
   `os_conversation_id` 只作为兼容输入。
-- Audit/Policy/Approval/Action/Driver/Harness/Observation 定点回归共 227 项通过。
-  Driver/Harness 目前仍以 Action Observation 作为执行审计，并非同一 Policy Audit；
-  审计落盘失败也尚未对全部高风险入口统一 fail closed，因此总体验收门禁未关闭。
+- Audit Store 公开持久化成败；受治理 Tool 的 `local_write`、`external_write`、`process`
+  在首次 Policy、Sandbox 升级、用户审批结果任一审计失败时均拒绝继续。显式
+  `approval_level=off` 仅代表不询问用户，不能绕过高风险审计；`effect=none` 在审计
+  暂时不可用时维持只读可用性并留下错误日志。
+- AgentBuilder 已删除 Governor 缺失时回退旧 `GuardedFunctionTool` 的运行时分支；所有
+  新装配 Tool 继续走 `PolicyGuardedTool`，Governor 初始化失败即按统一边界拒绝。
+  `GuardedFunctionTool` 仅保留历史 import 兼容，不是 3.0 Runtime 执行路径。
+- Driver/Harness 目前仍以 Action Observation 作为执行审计，并非同一 Policy Audit；
+  尚未冻结共享 Policy Admission，因此总体验收门禁未关闭，不能用本次 Tool 闭环
+  宣称所有执行器已对齐。
