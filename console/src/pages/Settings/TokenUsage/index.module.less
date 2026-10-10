@@ -7,6 +7,19 @@
 
 .toolbar {
   margin: 20px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+
+  > :global(.ant-picker) {
+    min-width: 240px;
+  }
+
+  > :global(.ant-select) {
+    min-width: 150px;
+    max-width: 260px;
+    flex: 1 1 150px;
+  }
 }
 
 .loading {

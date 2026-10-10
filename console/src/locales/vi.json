@@ -1678,6 +1678,7 @@
     "recordedTurnsAllAgents": "Lượt gọi LLM",
     "byAgent": "Theo Agent",
     "agent": "Agent",
+    "provider": "Nhà cung cấp",
     "unattributed": "Chưa gán",
     "cacheRead": "Token trúng bộ nhớ đệm",
     "cacheHitRate": "Tỷ lệ trúng bộ nhớ đệm",

@@ -1670,6 +1670,7 @@
     "reportedCost": "報告済み費用（マイクロ単位）",
     "costUnknown": "費用不明の呼び出し",
     "byModel": "モデル別",
+    "provider": "プロバイダー",
     "byDate": "日付別",
     "model": "モデル",
     "date": "日付",

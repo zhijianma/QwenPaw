@@ -2055,6 +2055,7 @@
     "reportedCost": "已报告费用（微单位）",
     "costUnknown": "费用未知调用",
     "byModel": "按模型",
+    "provider": "服务商",
     "byDate": "按日期",
     "model": "模型",
     "date": "日期",

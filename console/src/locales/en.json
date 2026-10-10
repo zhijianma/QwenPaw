@@ -2264,6 +2264,7 @@
     "reportedCost": "Reported Cost (microunits)",
     "costUnknown": "Cost Unknown Calls",
     "byModel": "By Model",
+    "provider": "Provider",
     "byDate": "By Date",
     "model": "Model",
     "date": "Date",

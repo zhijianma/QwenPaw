@@ -144,7 +144,30 @@ vi.mock("antd", () => {
     });
   };
   const DatePicker = { RangePicker };
-  return { DatePicker, Tooltip };
+  const Select = ({
+    "aria-label": ariaLabel,
+    value,
+    options = [],
+    onChange,
+  }: any) =>
+    React.createElement(
+      "select",
+      {
+        "aria-label": ariaLabel,
+        value: value ?? "",
+        onChange: (event: React.ChangeEvent<HTMLSelectElement>) =>
+          onChange(event.target.value || undefined),
+      },
+      React.createElement("option", { value: "" }),
+      ...options.map((option: { value: string; label: string }) =>
+        React.createElement(
+          "option",
+          { key: option.value, value: option.value },
+          option.label,
+        ),
+      ),
+    );
+  return { DatePicker, Select, Tooltip };
 });
 
 import TokenUsagePage from "./index";
@@ -605,6 +628,34 @@ describe("TokenUsagePage", () => {
       ];
     expect(range.start_date).toBe(
       dayjs().subtract(7, "day").format("YYYY-MM-DD"),
+    );
+  });
+
+  it("queries one ownership and model scope on the server", async () => {
+    const user = userEvent.setup();
+    render(<TokenUsagePage />);
+    await waitFor(() => expect(capturedProps.tables).toBeTruthy());
+    const trendCalls = apiMocks.getGlobalLlmToolTrend.mock.calls.length;
+
+    await user.selectOptions(
+      screen.getByLabelText("tokenUsage.agent"),
+      "agent-a",
+    );
+    await waitFor(() =>
+      expect(apiMocks.getTokenUsage).toHaveBeenLastCalledWith(
+        expect.objectContaining({ agent_id: "agent-a" }),
+      ),
+    );
+    expect(apiMocks.getGlobalLlmToolTrend).toHaveBeenCalledTimes(trendCalls);
+
+    await user.selectOptions(screen.getByLabelText("Provider"), "openai");
+    await waitFor(() =>
+      expect(apiMocks.getTokenUsage).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          agent_id: "agent-a",
+          provider: "openai",
+        }),
+      ),
     );
   });
 

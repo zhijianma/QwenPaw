@@ -1370,3 +1370,7 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
   `healthy/pending_attempts/last_error_at/last_error_kind`，不包含异常正文或内容数据。
 - cutover 前事实若没有匹配 legacy JSON 行会直接参与查询；已有匹配行仍只做 shadow
   overlay，保证恢复不漏记且不双算。Task UI 未参与本切片。
+- Token Usage Settings 增加日期、Agent、Chat、Turn、Provider、Model 组合筛选；筛选
+  直接进入服务端 Summary 参数，浏览器不维护第二套统计口径。真实页面按 DashScope、
+  默认 Agent 和固定 Chat 逐级筛选后返回 6 个调用，与 API 的 4 个 Turn、两条实际模型
+  路由一致。全局 LLM/工具趋势不随 Scope 筛选重复请求。

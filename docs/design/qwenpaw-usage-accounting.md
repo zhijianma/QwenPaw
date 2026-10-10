@@ -107,6 +107,11 @@ of JSON-encoded dictionary keys. The older `by_agent/by_chat/by_turn` maps remai
 read-only compatibility projections during migration and must reconcile exactly
 with the structured rows; clients should not parse their keys.
 
+The Console sends Agent, Chat, Turn, Provider and Model selections back to the
+same Summary endpoint. It does not download details and create a second
+browser-owned aggregation. Date changes refresh both Usage and the explicitly
+global LLM/tool trend; ownership or route filters refresh Usage only.
+
 `chat_id` is the canonical public identity field and always means
 `ChatSpec.id`. New Summary/Details JSON and OpenAPI only expose `chat_id`.
 Historical payloads and extensions may still provide `conversation_id`, and
@@ -236,6 +241,8 @@ Agent, Chat, or Turn ownership remain explicitly unattributed.
 - A Provider-reported Turn is never rewritten with a local output estimate.
 - Turn route totals, coverage, Chat identity and Invocation identity reconcile
   before the snapshot can enter SSE or message metadata.
+- Console scope and route drill-down uses server-side Summary filters and
+  retains the same date/model accounting contract.
 - Malformed live Turn totals or measurement states are rejected before they
   can reach SSE or persisted message metadata.
 - Task pages and Task-specific frontend work remain out of scope.

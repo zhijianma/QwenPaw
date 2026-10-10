@@ -2383,6 +2383,7 @@
     "reportedCost": "Biaya Dilaporkan (unit mikro)",
     "costUnknown": "Panggilan dengan Biaya Tidak Diketahui",
     "byModel": "Berdasarkan Model",
+    "provider": "Penyedia",
     "byDate": "Berdasarkan Tanggal",
     "model": "Model",
     "date": "Tanggal",

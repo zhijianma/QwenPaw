@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { DatePicker, Tooltip } from "antd";
+import { DatePicker, Select, Tooltip } from "antd";
 import { Card } from "@agentscope-ai/design";
 import { Line } from "@ant-design/plots";
 import { useTranslation } from "react-i18next";
@@ -47,6 +47,11 @@ function TokenUsagePage() {
     dayjs().subtract(30, "day"),
   );
   const [endDate, setEndDate] = useState<Dayjs>(dayjs());
+  const [agentFilter, setAgentFilter] = useState<string>();
+  const [chatFilter, setChatFilter] = useState<string>();
+  const [turnFilter, setTurnFilter] = useState<string>();
+  const [providerFilter, setProviderFilter] = useState<string>();
+  const [modelFilter, setModelFilter] = useState<string>();
   const detailsFetchIdRef = useRef(0);
   const trendFetchIdRef = useRef(0);
   const trendAbortRef = useRef<AbortController | null>(null);
@@ -57,6 +62,25 @@ function TokenUsagePage() {
       end_date: endDate.format("YYYY-MM-DD"),
     }),
     [startDate, endDate],
+  );
+
+  const usageQuery = useMemo(
+    () => ({
+      ...dateRange,
+      agent_id: agentFilter,
+      chat_id: chatFilter,
+      turn_id: turnFilter,
+      provider: providerFilter,
+      model: modelFilter,
+    }),
+    [
+      agentFilter,
+      chatFilter,
+      dateRange,
+      modelFilter,
+      providerFilter,
+      turnFilter,
+    ],
   );
 
   const fetchTrend = useCallback(
@@ -91,12 +115,10 @@ function TokenUsagePage() {
 
   const fetchData = useCallback(async () => {
     const detailsId = ++detailsFetchIdRef.current;
-    const trendId = ++trendFetchIdRef.current;
     setLoading(true);
     setError(false);
-    void fetchTrend(trendId);
     try {
-      const summary = await api.getTokenUsage(dateRange);
+      const summary = await api.getTokenUsage(usageQuery);
       if (detailsId !== detailsFetchIdRef.current) return;
       setUsageSummary(summary);
     } catch (err) {
@@ -110,11 +132,15 @@ function TokenUsagePage() {
         setLoading(false);
       }
     }
-  }, [dateRange, fetchTrend, message, t]);
+  }, [message, t, usageQuery]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  useEffect(() => {
+    void fetchTrend(++trendFetchIdRef.current);
+  }, [fetchTrend]);
 
   const handleDateChange = (dates: [Dayjs | null, Dayjs | null] | null) => {
     if (!dates || !dates[0] || !dates[1]) {
@@ -126,6 +152,52 @@ function TokenUsagePage() {
 
   const aggregatedData =
     usageSummary && usageSummary.total_calls > 0 ? usageSummary : null;
+
+  const filterOptions = useMemo(() => {
+    const scopeRows = usageSummary?.scopes;
+    const agentIds = new Set<string>();
+    const chatIds = new Set<string>();
+    const turnIds = new Set<string>();
+    for (const row of scopeRows?.agents ?? []) {
+      if (row.agent_id) agentIds.add(row.agent_id);
+    }
+    for (const row of scopeRows?.chats ?? []) {
+      if (row.chat_id) chatIds.add(row.chat_id);
+    }
+    for (const row of scopeRows?.turns ?? []) {
+      if (row.turn_id) turnIds.add(row.turn_id);
+    }
+    const providers = new Set<string>();
+    const models = new Set<string>();
+    for (const row of Object.values(usageSummary?.by_model ?? {})) {
+      if (row.provider_id) providers.add(row.provider_id);
+      if (row.model) models.add(row.model);
+    }
+    return {
+      agents: [...agentIds].sort().map((agentId) => ({
+        value: agentId,
+        label: agentsById.has(agentId)
+          ? getAgentDisplayName(agentsById.get(agentId)!, t)
+          : agentId,
+      })),
+      chats: [...chatIds].sort().map((chatId) => ({
+        value: chatId,
+        label: chatId,
+      })),
+      turns: [...turnIds].sort().map((turnId) => ({
+        value: turnId,
+        label: turnId,
+      })),
+      providers: [...providers].sort().map((provider) => ({
+        value: provider,
+        label: provider,
+      })),
+      models: [...models].sort().map((model) => ({
+        value: model,
+        label: model,
+      })),
+    };
+  }, [agentsById, t, usageSummary]);
 
   const modelTrendConfig = useModelTrendConfig({
     byDateModel: aggregatedData?.by_date_model ?? null,
@@ -334,6 +406,56 @@ function TokenUsagePage() {
               }
               return false;
             }}
+          />
+          <Select
+            aria-label={t("tokenUsage.agent")}
+            allowClear
+            placeholder={t("tokenUsage.agent")}
+            value={agentFilter}
+            options={filterOptions.agents}
+            onChange={(value) => {
+              setAgentFilter(value);
+              setChatFilter(undefined);
+              setTurnFilter(undefined);
+            }}
+          />
+          <Select
+            aria-label={t("tokenUsage.chat")}
+            allowClear
+            placeholder={t("tokenUsage.chat")}
+            value={chatFilter}
+            options={filterOptions.chats}
+            onChange={(value) => {
+              setChatFilter(value);
+              setTurnFilter(undefined);
+            }}
+          />
+          <Select
+            aria-label={t("tokenUsage.turn")}
+            allowClear
+            placeholder={t("tokenUsage.turn")}
+            value={turnFilter}
+            options={filterOptions.turns}
+            onChange={setTurnFilter}
+          />
+          <Select
+            aria-label={t("tokenUsage.provider", "Provider")}
+            allowClear
+            placeholder={t("tokenUsage.provider", "Provider")}
+            value={providerFilter}
+            options={filterOptions.providers}
+            onChange={(value) => {
+              setProviderFilter(value);
+              setModelFilter(undefined);
+            }}
+          />
+          <Select
+            aria-label={t("tokenUsage.model")}
+            allowClear
+            placeholder={t("tokenUsage.model")}
+            value={modelFilter}
+            options={filterOptions.models}
+            onChange={setModelFilter}
           />
         </div>
 

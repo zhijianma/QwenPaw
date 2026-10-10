@@ -6,6 +6,7 @@ vi.mock("../request", () => ({
 
 import { tokenUsageApi } from "./tokenUsage";
 import { request } from "../request";
+import type { TokenUsageRecord, TokenUsageSummary } from "../types/tokenUsage";
 
 describe("tokenUsageApi", () => {
   beforeEach(() => {
@@ -17,7 +18,7 @@ describe("tokenUsageApi", () => {
   });
 
   it("getTokenUsage builds query with start_date + end_date only", async () => {
-    const summary = { total_tokens: 100 } as any;
+    const summary = {} as TokenUsageSummary;
     vi.mocked(request).mockResolvedValue(summary);
     const result = await tokenUsageApi.getTokenUsage({
       start_date: "2026-01-01",
@@ -29,8 +30,23 @@ describe("tokenUsageApi", () => {
     expect(result).toEqual(summary);
   });
 
+  it("getTokenUsage includes ownership and route filters", async () => {
+    await tokenUsageApi.getTokenUsage({
+      start_date: "2026-01-01",
+      end_date: "2026-01-31",
+      agent_id: "bot-a",
+      chat_id: "chat-1",
+      turn_id: "turn-1",
+      provider: "openai",
+      model: "gpt-4o",
+    });
+    expect(request).toHaveBeenCalledWith(
+      "/token-usage?start_date=2026-01-01&end_date=2026-01-31&model=gpt-4o&provider=openai&agent_id=bot-a&chat_id=chat-1&turn_id=turn-1",
+    );
+  });
+
   it("getTokenUsageDetails includes model + provider when provided", async () => {
-    const records = [{ id: "r1" }] as any;
+    const records: TokenUsageRecord[] = [];
     vi.mocked(request).mockResolvedValue(records);
     const result = await tokenUsageApi.getTokenUsageDetails({
       start_date: "2026-01-01",
@@ -45,7 +61,7 @@ describe("tokenUsageApi", () => {
   });
 
   it("getTokenUsageDetails omits model/provider query when not provided", async () => {
-    const records = [] as any;
+    const records: TokenUsageRecord[] = [];
     vi.mocked(request).mockResolvedValue(records);
     await tokenUsageApi.getTokenUsageDetails({
       start_date: "2026-02-01",
