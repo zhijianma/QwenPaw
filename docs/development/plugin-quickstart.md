@@ -1220,6 +1220,22 @@ the Host learns about an internal tool from normalized provider events. The
 legacy `policy_decision` field is a compatibility projection and must always
 equal `admission.decision`.
 
+The request admission is a declaration, not the Driver's later verdict.
+QwenPaw appends `ActionAdmissionDecision` records when a concrete Driver policy
+decision becomes observable. The built-in Driver compatibility path records
+its effective `allow`, `ask`, or `deny`. A plugin's call to
+`DriverHost.require_approval()` records `ask` before the Interaction is opened.
+If a plugin never asks, the Host preserves `executor_delegated` and does not
+invent an `allow` decision on the plugin's behalf. Plugins must not create or
+persist admission decisions directly. Failure to persist a decision rejects
+the Driver operation before approval creation or external side effects.
+
+`ActionApprovalLink` is separate: it links the Action to a durable approval
+request/resolution after an `ask` decision. Consumers should read
+`ActionRequest.admission` for the authority model,
+`ActionRecord.admission_decisions` for actual executor policy facts, and
+`ActionRecord.approval_links` for human decision references.
+
 Third-party providers receive a minimal `DriverHost` containing only config,
 pre-bound credential handles, and the unified approval method. The built-in
 Workspace adapter receives a different private compatibility Host with

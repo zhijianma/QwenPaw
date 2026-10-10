@@ -552,6 +552,11 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
     `provider_observed + provider_event`。统一的是领域合同、Action 身份、审批关联与
     结果证据，而不是假设 Host 能预判外部 Agent 的每个内部工具。旧
     `policy_decision` 只保留为与 `admission.decision` 强一致的兼容投影。
+    Driver 在 intent 落盘后追加不可变 `ActionAdmissionDecision`：旧 Driver
+    Manager 记录实际 `allow / ask / deny`，插件 Driver 调用统一审批 Host 时记录
+    `ask`；没有调用审批的插件不伪造 `allow`。该决策与 `ActionApprovalLink` 分层：
+    前者是执行器策略事实，后者只关联随后产生的 Interaction/Approval。决策落盘
+    失败时系统与插件 Driver 均在副作用前 fail closed。
   - [x] Driver 垂直切片已落地：系统与插件 Provider、旧 Driver Manager 兼容路径
     共用 Driver Action；运行中审批通过不可变 `ActionApprovalLink` 关联，拒绝与
     执行失败分开。MCP 作为 Driver 协议随该路径接入；显式 `readOnlyHint` 映射为

@@ -1420,11 +1420,15 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
 - AgentBuilder 已删除 Governor 缺失时回退旧 `GuardedFunctionTool` 的运行时分支；所有
   新装配 Tool 继续走 `PolicyGuardedTool`，Governor 初始化失败即按统一边界拒绝。
   `GuardedFunctionTool` 仅保留历史 import 兼容，不是 3.0 Runtime 执行路径。
-- Driver/Harness 目前仍以 Action Observation 作为执行审计，并非同一 Policy Audit；
-  不应复制 Tool Audit。公共 `ActionAdmission` 已冻结真实时序：Tool 为
+- Driver/Harness 不复制 Tool Policy Audit。公共 `ActionAdmission` 已冻结真实时序：Tool 为
   `host_pre_execution/policy_audit`，Driver 为 `executor_delegated/action_intent`，
   Harness 为 `provider_observed/provider_event`，Retry 为 Host 执行前 admission。
   `ActionRequest.admission` 是权威字段，历史 `policy_decision` 仅为强一致兼容投影；
   旧 JSON 自动标记 `legacy` evidence，不会被误报为新证据。
-- 总体验收门禁仍未关闭：Driver Policy 决策本身尚未形成独立可查询证据，Harness 还需
-  校验 provider permission/tool 事件的完整性；本次只解决领域语义与插件 API 对齐。
+- Driver Policy 实际决策已形成独立、不可变、可查询的
+  `ActionAdmissionDecision`。旧 Driver Manager 记录 `allow / ask / deny`，插件
+  `DriverHost.require_approval()` 记录 `ask`；未请求审批的插件不伪造 `allow`。
+  决策保存失败时在外部副作用或 Interaction 创建前 fail closed。它与
+  `ActionApprovalLink` 分别表达执行器策略事实和审批关联，Chat Action API 返回两者。
+- 总体验收门禁仍未关闭：Harness 还需校验 provider permission/tool 事件完整性，并完成
+  对应真实端到端门禁；不能把 Driver 决策闭环外推为整个 Action Plane 已验收。

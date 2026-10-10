@@ -33,10 +33,18 @@ from qwenpaw.drivers.capabilities import (
     DriverCapability,
     DriverInvocationResult,
 )
+from qwenpaw.drivers.contracts import DriverCard, PolicyRule
+from qwenpaw.drivers.credentials.providers import NoneProvider
+from qwenpaw.drivers.errors import (
+    ApprovalRequiredError,
+    DriverPermissionDeniedError,
+)
+from qwenpaw.drivers.handler import DriverHandler
 from qwenpaw.kernel import (
     ACTION_RETRY_DECISION_METADATA_KEY,
     ACTION_RETRY_HINT_METADATA_KEY,
     COMMITTED_ACTION_ITEM_METADATA_KEY,
+    ActionAdmissionDecision,
     ActionAdmissionEvidence,
     ActionAdmissionMode,
     ActionIdempotencyMode,
@@ -88,6 +96,26 @@ from qwenpaw.runtime.tool_artifacts import (
 )
 from qwenpaw.tool_calls import ToolCallContext
 from qwenpaw.tool_calls import ToolCoordinator
+from qwenpaw.tool_calls._ctxvars import (
+    reset_call_context,
+    set_call_context,
+)
+
+
+class _PolicyProbeDriverHandler(DriverHandler):
+    """Expose the shared Driver policy boundary without protocol I/O."""
+
+    async def _setup(self) -> None:
+        return None
+
+    async def _teardown(self) -> None:
+        return None
+
+    async def authorize(self, request_context: dict) -> None:
+        await self._authorize_invocation(  # pylint: disable=protected-access
+            "write",
+            request_context=request_context,
+        )
 
 
 def _scope(tmp_path: Path, conversation_id: str = "chat-1") -> InvocationScope:
@@ -382,6 +410,175 @@ async def test_action_store_is_private_and_never_persists_raw_values(
     assert record.request.arguments_hash != f"sha256:{raw_arguments_hash}"
     assert stat.S_IMODE(request_path.stat().st_mode) == 0o600
     assert stat.S_IMODE(result_path.stat().st_mode) == 0o600
+
+
+@pytest.mark.asyncio
+async def test_action_store_appends_immutable_admission_decision(
+    tmp_path: Path,
+) -> None:
+    scope = _scope(tmp_path, conversation_id="chat-admission")
+    store = FilesystemActionStore(tmp_path)
+    recorder = RuntimeActionRecorder(scope, store)
+    context = _context()
+    request = await recorder.begin_driver_capability(
+        context,
+        provider_id="qwenpaw.system.workspace-driver",
+        capability_id="driver://mcp/files/tools/write#invoke",
+        effect=ToolEffect.EXTERNAL_WRITE,
+        risk=RiskLevel.HIGH,
+        reversible=False,
+        idempotency_mode=ActionIdempotencyMode.EXECUTOR_ENFORCED,
+    )
+    decision = await recorder.record_admission_decision(
+        context,
+        authority="driver:mcp:files",
+        decision="ask",
+        evidence=ActionAdmissionEvidence.ACTION_INTENT,
+    )
+
+    [record] = await store.list_for_conversation("chat-admission")
+    assert record.admission_decisions == (decision,)
+    assert decision.action_id == request.action_id
+    assert decision.invocation_id == request.invocation_id
+    assert decision.chat_id == request.chat_id
+    assert context.governance_metadata["admission_decision_ids"] == [
+        str(decision.decision_id),
+    ]
+
+    await store.record_admission(
+        decision.model_copy(
+            update={"decided_at": decision.decided_at + timedelta(seconds=1)},
+        ),
+    )
+    with pytest.raises(ActionConflictError):
+        await store.record_admission(
+            ActionAdmissionDecision(
+                decision_id=decision.decision_id,
+                action_id=request.action_id,
+                invocation_id=request.invocation_id,
+                chat_id=request.chat_id,
+                authority=decision.authority,
+                decision="deny",
+                evidence=decision.evidence,
+            ),
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("policy_effect", ["allow", "ask", "deny"])
+async def test_system_driver_records_effective_policy_decision(
+    tmp_path: Path,
+    policy_effect: str,
+) -> None:
+    scope = _scope(tmp_path, conversation_id=f"chat-{policy_effect}")
+    store = FilesystemActionStore(tmp_path)
+    recorder = RuntimeActionRecorder(scope, store)
+    context = _context(tool_name="driver_write")
+    await recorder.begin_driver_capability(
+        context,
+        provider_id="qwenpaw.system.workspace-driver",
+        capability_id="driver://mcp/files/tools/write#invoke",
+        effect=ToolEffect.EXTERNAL_WRITE,
+        risk=RiskLevel.HIGH,
+        reversible=False,
+        idempotency_mode=ActionIdempotencyMode.EXECUTOR_ENFORCED,
+    )
+    handler = _PolicyProbeDriverHandler(
+        DriverCard(
+            name="files",
+            protocol="mcp",
+            endpoint={},
+            policy=[PolicyRule(subject="*", effect=policy_effect)],
+        ),
+        NoneProvider(),
+    )
+    token = set_call_context(context)
+    try:
+        if policy_effect == "deny":
+            with pytest.raises(DriverPermissionDeniedError):
+                await handler.authorize(
+                    {
+                        "_action_recorder": recorder,
+                        "approval_level": "OFF",
+                    },
+                )
+        elif policy_effect == "ask":
+            with pytest.raises(ApprovalRequiredError):
+                await handler.authorize(
+                    {
+                        "_action_recorder": recorder,
+                        "approval_level": "AUTO",
+                    },
+                )
+        else:
+            await handler.authorize(
+                {
+                    "_action_recorder": recorder,
+                    "approval_level": "OFF",
+                },
+            )
+    finally:
+        reset_call_context(token)
+
+    [record] = await store.list_for_conversation(scope.chat_id)
+    assert len(record.admission_decisions) == 1
+    decision = record.admission_decisions[0]
+    assert decision.authority == "driver:mcp:files"
+    assert decision.decision == policy_effect
+    assert decision.evidence is ActionAdmissionEvidence.ACTION_INTENT
+
+
+@pytest.mark.asyncio
+async def test_system_driver_fails_closed_when_decision_cannot_persist(
+    tmp_path: Path,
+) -> None:
+    class FailingAdmissionStore(FilesystemActionStore):
+        async def record_admission(self, decision) -> None:
+            del decision
+            raise OSError("disk unavailable")
+
+    scope = _scope(tmp_path, conversation_id="chat-admission-failure")
+    store = FailingAdmissionStore(tmp_path)
+    recorder = RuntimeActionRecorder(scope, store)
+    context = _context(tool_name="driver_write")
+    await recorder.begin_driver_capability(
+        context,
+        provider_id="qwenpaw.system.workspace-driver",
+        capability_id="driver://mcp/files/tools/write#invoke",
+        effect=ToolEffect.EXTERNAL_WRITE,
+        risk=RiskLevel.HIGH,
+        reversible=False,
+        idempotency_mode=ActionIdempotencyMode.EXECUTOR_ENFORCED,
+    )
+    handler = _PolicyProbeDriverHandler(
+        DriverCard(
+            name="files",
+            protocol="mcp",
+            endpoint={},
+            policy=[PolicyRule(subject="*", effect="allow")],
+        ),
+        NoneProvider(),
+    )
+    token = set_call_context(context)
+    try:
+        with pytest.raises(
+            DriverPermissionDeniedError,
+            match="Permission denied",
+        ) as raised:
+            await handler.authorize(
+                {
+                    "_action_recorder": recorder,
+                    "approval_level": "OFF",
+                },
+            )
+    finally:
+        reset_call_context(token)
+
+    assert raised.value.reason == (
+        "Driver policy decision could not be persisted."
+    )
+    [record] = await store.list_for_conversation(scope.chat_id)
+    assert record.admission_decisions == ()
 
 
 @pytest.mark.asyncio
@@ -1259,6 +1456,9 @@ async def test_request_store_failure_prevents_tool_execution(
 
         async def link_approval(self, link):
             raise AssertionError("approval linking must not run")
+
+        async def record_admission(self, decision):
+            raise AssertionError("admission recording must not run")
 
         async def list_for_conversation(self, conversation_id, *, limit=100):
             del conversation_id, limit

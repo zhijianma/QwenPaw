@@ -31,6 +31,7 @@ from .releases import (
 )
 from .models import (
     ActionApprovalLink,
+    ActionAdmissionDecision,
     ActionRecord,
     ActionRequest,
     ActionResult,
@@ -1854,6 +1855,12 @@ class ActionStore(Protocol):
 
     async def link_approval(self, link: ActionApprovalLink) -> None:
         """Persist an approval relation discovered during execution."""
+
+    async def record_admission(
+        self,
+        decision: ActionAdmissionDecision,
+    ) -> None:
+        """Persist an executor policy decision discovered after intent."""
 
     async def get(
         self,

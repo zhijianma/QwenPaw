@@ -7,6 +7,7 @@ import pytest
 
 from qwenpaw.kernel import (
     ActionAdmission,
+    ActionAdmissionDecision,
     ActionAdmissionEvidence,
     ActionAdmissionMode,
     ActionApprovalLink,
@@ -50,6 +51,14 @@ def test_action_models_serialize_canonical_chat_identity() -> None:
     correlation_id = uuid4()
     digest = f"sha256:{'a' * 64}"
     models = (
+        ActionAdmissionDecision(
+            action_id=action_id,
+            invocation_id=invocation_id,
+            conversation_id="chat-legacy",
+            authority="driver:mcp:files",
+            decision="allow",
+            evidence=ActionAdmissionEvidence.ACTION_INTENT,
+        ),
         ActionApprovalLink(
             action_id=action_id,
             invocation_id=invocation_id,

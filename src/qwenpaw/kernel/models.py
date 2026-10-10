@@ -819,6 +819,18 @@ class ActionAdmission(KernelModel):
     evidence: ActionAdmissionEvidence
 
 
+class ActionAdmissionDecision(_ChatIdentity):
+    """Append-only executor policy decision linked to one Action."""
+
+    decision_id: UUID = Field(default_factory=uuid4)
+    action_id: UUID
+    invocation_id: UUID
+    authority: NonEmptyStr
+    decision: Literal["allow", "ask", "deny"]
+    evidence: ActionAdmissionEvidence
+    decided_at: AwareDatetime = Field(default_factory=utc_now)
+
+
 class ActionRequest(_ChatIdentity):
     """Privacy-safe durable intent recorded before external execution.
 
@@ -899,7 +911,7 @@ class ActionRequest(_ChatIdentity):
         except ValueError:
             kind = ActionKind.TOOL
         capability_id = str(
-            data.get("capability_id") or "qwenpaw.legacy.unknown"
+            data.get("capability_id") or "qwenpaw.legacy.unknown",
         )
         if decision == "retry_policy":
             mode = ActionAdmissionMode.HOST_PRE_EXECUTION
@@ -1102,10 +1114,34 @@ class CommittedActionItem(_ChatIdentity):
     ]
 
 
+def _validate_action_admission_decisions(
+    request: ActionRequest,
+    decisions: tuple[ActionAdmissionDecision, ...],
+) -> None:
+    """Require append-only decisions to belong to one Action request."""
+    decision_ids = tuple(decision.decision_id for decision in decisions)
+    if len(decision_ids) != len(set(decision_ids)):
+        raise ValueError("action admission decisions must be unique")
+    for decision in decisions:
+        if decision.action_id != request.action_id:
+            raise ValueError(
+                "action admission decision does not match request",
+            )
+        if decision.invocation_id != request.invocation_id:
+            raise ValueError(
+                "action admission invocation does not match request",
+            )
+        if decision.chat_id != request.chat_id:
+            raise ValueError(
+                "action admission chat does not match request",
+            )
+
+
 class ActionRecord(KernelModel):
     """Queryable action projection with an optional terminal result."""
 
     request: ActionRequest
+    admission_decisions: tuple[ActionAdmissionDecision, ...] = ()
     approval_links: tuple[ActionApprovalLink, ...] = ()
     result: ActionResult | None = None
 
@@ -1117,6 +1153,10 @@ class ActionRecord(KernelModel):
         else:
             result_approval_ids = self.result.approval_ids
         link_ids = tuple(link.approval_id for link in self.approval_links)
+        _validate_action_admission_decisions(
+            self.request,
+            self.admission_decisions,
+        )
         if len(link_ids) != len(set(link_ids)):
             raise ValueError("action approval links must be unique")
         for link in self.approval_links:

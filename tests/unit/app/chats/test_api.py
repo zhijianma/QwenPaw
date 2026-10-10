@@ -27,6 +27,8 @@ from qwenpaw.invocation_control import (
     SQLiteInvocationControl,
 )
 from qwenpaw.kernel import (
+    ActionAdmissionDecision,
+    ActionAdmissionEvidence,
     ActionKind,
     ActionRequest,
     CapabilityLockManifest,
@@ -197,6 +199,16 @@ async def test_list_chat_actions_returns_privacy_safe_records(tmp_path):
         idempotency_key="browser:legacy:call-1",
     )
     await lite_action_store(tmp_path).begin(request)
+    await lite_action_store(tmp_path).record_admission(
+        ActionAdmissionDecision(
+            action_id=request.action_id,
+            invocation_id=request.invocation_id,
+            chat_id=chat_id,
+            authority="driver:mcp:files",
+            decision="allow",
+            evidence=ActionAdmissionEvidence.ACTION_INTENT,
+        ),
+    )
 
     records = await list_chat_actions(
         chat_id=chat_id,
@@ -223,6 +235,11 @@ async def test_list_chat_actions_returns_privacy_safe_records(tmp_path):
         "decision": "allow",
         "evidence": "legacy",
     }
+    assert payload["admission_decisions"][0]["authority"] == (
+        "driver:mcp:files"
+    )
+    assert payload["admission_decisions"][0]["decision"] == "allow"
+    assert payload["admission_decisions"][0]["evidence"] == "action_intent"
     assert "conversation_id" not in payload["request"]
     assert "arguments" not in payload["request"]
     manager.get_chat.assert_awaited_once_with(chat_id)

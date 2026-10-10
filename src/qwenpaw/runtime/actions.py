@@ -9,7 +9,7 @@ import logging
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Literal, Sequence
 from uuid import UUID, uuid5
 
 from agentscope.message import ToolResultState
@@ -19,6 +19,7 @@ from ..kernel import (
     ACTION_RETRY_DECISION_METADATA_KEY,
     ACTION_RETRY_HINT_METADATA_KEY,
     ActionAdmission,
+    ActionAdmissionDecision,
     ActionAdmissionEvidence,
     ActionAdmissionMode,
     ActionApprovalLink,
@@ -99,6 +100,10 @@ class ActionRequestPersistenceError(RuntimeError):
 
 class ActionResultPersistenceError(RuntimeError):
     """Raised after execution when its terminal evidence cannot be stored."""
+
+
+class ActionAdmissionPersistenceError(RuntimeError):
+    """Raised when an executor policy decision cannot be stored."""
 
 
 def _action_admission(
@@ -545,7 +550,12 @@ class FilesystemActionStore:
     @staticmethod
     async def _append_immutable(
         path: Path,
-        model: ActionApprovalLink | ActionRequest | ActionResult,
+        model: (
+            ActionAdmissionDecision
+            | ActionApprovalLink
+            | ActionRequest
+            | ActionResult
+        ),
         *,
         timestamp_field: str,
     ) -> None:
@@ -607,8 +617,13 @@ class FilesystemActionStore:
             self._load_approval_links,
             directory,
         )
+        admission_decisions = await run_sync_io(
+            self._load_admission_decisions,
+            directory,
+        )
         ActionRecord(
             request=request,
+            admission_decisions=admission_decisions,
             approval_links=approval_links,
             result=result,
         )
@@ -639,6 +654,31 @@ class FilesystemActionStore:
             directory / "approval-links" / f"{link.approval_id}.json",
             link,
             timestamp_field="linked_at",
+        )
+
+    async def record_admission(
+        self,
+        decision: ActionAdmissionDecision,
+    ) -> None:
+        """Persist one executor policy decision under its owning action."""
+        directory = self._action_dir(
+            conversation_id=decision.chat_id,
+            invocation_id=decision.invocation_id,
+            action_id=decision.action_id,
+        )
+        try:
+            request = ActionRequest.model_validate(
+                await read_json_async(directory / "request.json"),
+            )
+        except FileNotFoundError as exc:
+            raise ActionConflictError(
+                "action admission decision has no durable request",
+            ) from exc
+        ActionRecord(request=request, admission_decisions=(decision,))
+        await self._append_immutable(
+            directory / "admission-decisions" / f"{decision.decision_id}.json",
+            decision,
+            timestamp_field="decided_at",
         )
 
     async def get(
@@ -676,6 +716,10 @@ class FilesystemActionStore:
             result = None
         return ActionRecord(
             request=request,
+            admission_decisions=await run_sync_io(
+                self._load_admission_decisions,
+                directory,
+            ),
             approval_links=await run_sync_io(
                 self._load_approval_links,
                 directory,
@@ -695,6 +739,21 @@ class FilesystemActionStore:
         ]
         return tuple(links)
 
+    @staticmethod
+    def _load_admission_decisions(
+        directory: Path,
+    ) -> tuple[ActionAdmissionDecision, ...]:
+        decisions = [
+            ActionAdmissionDecision.model_validate_json(
+                path.read_text(encoding="utf-8"),
+            )
+            for path in sorted(
+                (directory / "admission-decisions").glob("*.json"),
+            )
+        ]
+        decisions.sort(key=lambda item: item.decided_at)
+        return tuple(decisions)
+
     def _list_sync(
         self,
         conversation_id: str,
@@ -708,6 +767,9 @@ class FilesystemActionStore:
             )
             result_path = request_path.with_name("result.json")
             approval_links = self._load_approval_links(request_path.parent)
+            admission_decisions = self._load_admission_decisions(
+                request_path.parent,
+            )
             result = (
                 ActionResult.model_validate_json(
                     result_path.read_text(encoding="utf-8"),
@@ -718,6 +780,7 @@ class FilesystemActionStore:
             records.append(
                 ActionRecord(
                     request=request,
+                    admission_decisions=admission_decisions,
                     approval_links=approval_links,
                     result=result,
                 ),
@@ -1254,6 +1317,47 @@ class RuntimeActionRecorder:
             raw_ids.append(str(approval_id))
         return link
 
+    async def record_admission_decision(
+        self,
+        context: ToolCallContext,
+        *,
+        authority: str,
+        decision: Literal["allow", "ask", "deny"],
+        evidence: ActionAdmissionEvidence,
+    ) -> ActionAdmissionDecision:
+        """Append an executor policy decision to the active Action."""
+        request = context.extra.get(ACTION_REQUEST_CONTEXT_KEY)
+        if not isinstance(request, ActionRequest):
+            raise ActionConflictError(
+                "admission decision has no active action request",
+            )
+        record = ActionAdmissionDecision(
+            decision_id=uuid5(
+                request.action_id,
+                f"admission:{authority}:{decision}",
+            ),
+            action_id=request.action_id,
+            invocation_id=request.invocation_id,
+            chat_id=request.chat_id,
+            authority=authority,
+            decision=decision,
+            evidence=evidence,
+            decided_at=self._clock(),
+        )
+        try:
+            await self._store.record_admission(record)
+        except Exception as exc:
+            raise ActionAdmissionPersistenceError(
+                "executor policy decision could not be recorded",
+            ) from exc
+        raw_ids = context.governance_metadata.setdefault(
+            "admission_decision_ids",
+            [],
+        )
+        if str(record.decision_id) not in raw_ids:
+            raw_ids.append(str(record.decision_id))
+        return record
+
     async def _ensure_request(
         self,
         context: ToolCallContext,
@@ -1589,6 +1693,30 @@ async def link_active_action_approval(
     await recorder.link_approval(context, approval_id, source)
 
 
+async def record_active_action_admission(
+    request_context: dict[str, Any],
+    *,
+    authority: str,
+    decision: Literal["allow", "ask", "deny"],
+    evidence: ActionAdmissionEvidence,
+) -> ActionAdmissionDecision | None:
+    """Append a decision when an Action is active; no-op for legacy use."""
+    recorder = request_context.get("_action_recorder")
+    if not isinstance(recorder, RuntimeActionRecorder):
+        return None
+    from ..tool_calls._ctxvars import get_call_context
+
+    context = get_call_context()
+    if context is None:
+        return None
+    return await recorder.record_admission_decision(
+        context,
+        authority=authority,
+        decision=decision,
+        evidence=evidence,
+    )
+
+
 __all__ = [
     "ACTION_REQUEST_CONTEXT_KEY",
     "ACTION_REQUEST_STATE_KEY",
@@ -1597,6 +1725,7 @@ __all__ = [
     "ACTION_RESULT_CONTEXT_KEY",
     "COMMITTED_ACTION_ITEM_METADATA_KEY",
     "ActionConflictError",
+    "ActionAdmissionPersistenceError",
     "ActionRetryNotReadyError",
     "ActionRequestPersistenceError",
     "ActionResultPersistenceError",
@@ -1605,6 +1734,7 @@ __all__ = [
     "current_action_execution",
     "assess_model_step_reconciliation",
     "link_active_action_approval",
+    "record_active_action_admission",
     "lite_action_store",
     "model_step_action_call_ids",
     "model_step_action_context_bindings",

@@ -19,6 +19,7 @@ from qwenpaw.capabilities.system_drivers import WorkspaceDriverProvider
 from qwenpaw.kernel.invocation import CapabilitySelection, InvocationScope
 from qwenpaw.kernel.invocation import DEFAULT_DRIVER_PROVIDER_ID
 from qwenpaw.kernel.models import (
+    ActionAdmissionEvidence,
     CapabilityBundle,
     CapabilityContribution,
     CapabilityProviderKind,
@@ -513,11 +514,96 @@ async def test_driver_approval_links_to_active_action(
     await recorder.complete(response, call_context)
 
     [record] = await store.list_for_conversation("driver-plugin-chat")
+    assert len(record.admission_decisions) == 1
+    assert record.admission_decisions[0].authority == provider_id
+    assert record.admission_decisions[0].decision == "ask"
+    assert record.admission_decisions[0].evidence is (
+        ActionAdmissionEvidence.ACTION_INTENT
+    )
     assert len(record.approval_links) == 1
     assert record.approval_links[0].approval_id == opened[0].interaction_id
     assert record.approval_links[0].source.value == "driver"
     assert record.result is not None
     assert record.result.approval_ids == (opened[0].interaction_id,)
+
+
+@pytest.mark.asyncio
+async def test_plugin_driver_approval_fails_closed_on_admission_store_error(
+    tmp_path: Path,
+) -> None:
+    class FailingAdmissionStore(FilesystemActionStore):
+        async def record_admission(self, decision) -> None:
+            del decision
+            raise OSError("disk unavailable")
+
+    interactions = InteractionService(tmp_path / "interactions.sqlite3")
+    provider_id = "example.driver"
+    scope = InvocationScope(
+        agent_id="default",
+        conversation_id="driver-plugin-fail-closed",
+        session_id="console:driver-plugin",
+        root_agent_id="default",
+        root_session_id="console:driver-plugin",
+        workspace_dir=str(tmp_path),
+        registry_generation=7,
+    )
+    store = FailingAdmissionStore(tmp_path)
+    recorder = RuntimeActionRecorder(scope, store)
+    request_context = {
+        **_approval_context(interactions),
+        "os_conversation_id": scope.chat_id,
+        "os_invocation_id": str(scope.invocation_id),
+        "os_correlation_id": str(scope.invocation_id),
+        "_action_recorder": recorder,
+    }
+    host = WorkspaceDriverHost(None, request_context, provider_id)
+
+    async def invoke(payload):
+        return payload
+
+    definition = DriverToolDefinition(
+        provider_id=provider_id,
+        capability_id="driver://example/tools/write#invoke",
+        name="driver_write",
+        invoke=invoke,
+    )
+    call_context = ToolCallContext(
+        tool_call_id="driver-call-fail-closed",
+        tool_name=definition.name,
+        session_id=scope.session_id,
+        agent_id=scope.agent_id,
+        root_session_id=scope.root_session_id,
+        root_agent_id=scope.root_agent_id,
+        started_at=0.0,
+        offload_deadline=None,
+        cancel_event=asyncio.Event(),
+    )
+    call_context.extra["tool_input"] = {"path": "result.md"}
+    await recorder.begin_driver(call_context, definition)
+    token = set_call_context(call_context)
+    try:
+        with pytest.raises(DriverApprovalRejectedError):
+            await host.require_approval(
+                DriverApprovalRequest(
+                    provider_id=provider_id,
+                    capability_id=definition.capability_id,
+                    tool_name=definition.name,
+                    redacted_arguments={"path": "result.md"},
+                ),
+            )
+    finally:
+        reset_call_context(token)
+
+    assert (
+        await interactions.list_open(
+            agent_id="default",
+            conversation_id=scope.chat_id,
+        )
+        == ()
+    )
+    [record] = await store.list_for_conversation(scope.chat_id)
+    assert record.admission_decisions == ()
+    assert record.approval_links == ()
 
 
 @pytest.mark.asyncio

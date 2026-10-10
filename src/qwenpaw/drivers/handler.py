@@ -184,13 +184,6 @@ class DriverHandler(ABC):
             extras=dict(extras or {}),
         )
         effect = evaluate_policy(self._card.policy, context)
-        if effect == POLICY_EFFECT_DENY:
-            raise DriverPermissionDeniedError(
-                self._card.name,
-                subject,
-                operation,
-            )
-
         execution_level = _resolve_driver_execution_level(
             context.request_context,
         )
@@ -200,6 +193,43 @@ class DriverHandler(ABC):
             effect == POLICY_EFFECT_ALLOW
             and execution_level.requires_approval_for_all_tools()
         )
+        effective_decision = (
+            POLICY_EFFECT_DENY
+            if effect == POLICY_EFFECT_DENY
+            else POLICY_EFFECT_ASK
+            if needs_approval
+            else POLICY_EFFECT_ALLOW
+        )
+        from ..kernel import ActionAdmissionEvidence
+        from ..runtime.actions import (
+            ActionAdmissionPersistenceError,
+            ActionConflictError,
+            record_active_action_admission,
+        )
+
+        try:
+            await record_active_action_admission(
+                context.request_context,
+                authority=(f"driver:{self._card.protocol}:{self._card.name}"),
+                decision=effective_decision,
+                evidence=ActionAdmissionEvidence.ACTION_INTENT,
+            )
+        except (
+            ActionAdmissionPersistenceError,
+            ActionConflictError,
+        ) as exc:
+            raise DriverPermissionDeniedError(
+                self._card.name,
+                subject,
+                operation,
+                reason="Driver policy decision could not be persisted.",
+            ) from exc
+        if effective_decision == POLICY_EFFECT_DENY:
+            raise DriverPermissionDeniedError(
+                self._card.name,
+                subject,
+                operation,
+            )
         if needs_approval:
             await self._request_approval(context)
         return context

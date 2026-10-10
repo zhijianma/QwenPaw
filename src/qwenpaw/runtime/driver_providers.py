@@ -186,9 +186,27 @@ async def _require_driver_approval(
             **dict(request.redacted_arguments),
         },
     )
+    from ..kernel import ActionAdmissionEvidence
+    from .actions import (
+        ActionAdmissionPersistenceError,
+        ActionConflictError,
+        record_active_action_admission,
+    )
+
     try:
+        await record_active_action_admission(
+            approval_context,
+            authority=provider_id,
+            decision="ask",
+            evidence=ActionAdmissionEvidence.ACTION_INTENT,
+        )
         await QwenPawDriverApprovalGate().request_approval(context)
-    except (ApprovalRequiredError, DriverPermissionDeniedError) as error:
+    except (
+        ActionAdmissionPersistenceError,
+        ActionConflictError,
+        ApprovalRequiredError,
+        DriverPermissionDeniedError,
+    ) as error:
         raise DriverApprovalRejectedError(
             request.capability_id,
             getattr(error, "reason", str(error)),

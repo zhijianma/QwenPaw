@@ -1136,6 +1136,13 @@ Cron 不形成独立审批或产物事实源。
       Host 执行前准入。`ActionRequest.admission` 是新权威字段；旧 `policy_decision`
       保留为强一致兼容投影，历史 JSON 自动派生 `legacy` evidence，不伪造成新审计。
       Kernel 与 Plugin SDK 同时导出这些模型，二次开发者无需理解 Runtime 私有对象。
+    - [x] 冻结 append-only `ActionAdmissionDecision`：它引用同一 Action、Invocation
+      与 `ChatSpec.id`，保存 Driver 执行边界实际产生的 `allow / ask / deny`，并由
+      `ActionStore.record_admission()` 原子追加。系统 Driver Policy 始终记录实际
+      决策；插件 Driver 通过 `DriverHost.require_approval()` 记录 `ask`，未请求审批的
+      插件保持 `executor_delegated` 声明而不伪造允许证据。Decision 持久化失败在
+      外部调用或 Interaction 创建前 fail closed；`ActionApprovalLink` 继续只表示
+      审批事实关联，二者不互相覆盖。Chat Action API 直接返回该不可变决策序列。
     - [x] Action 公共合同统一使用 `chat_id = ChatSpec.id`：Request、Result、Approval
       Link、Execution Context、Retry Checkpoint 和 Committed Item 的新 JSON 不再公开
       `conversation_id`。历史 JSON 与旧 Python 调用仍通过只读兼容别名恢复，Store 的
@@ -1151,7 +1158,9 @@ Cron 不形成独立审批或产物事实源。
     - [x] 系统与插件 Driver Provider 通过显式 Adapter 接入同一 Recorder；旧
       Driver Manager 兼容路径也生成 `DRIVER` Action。运行中产生的审批通过不可变
       `ActionApprovalLink` 关联 Request/Result；策略拒绝记为 `denied`，不误报为
-      执行失败。MCP 作为 Driver 协议已覆盖，未建立第二套 MCP Tool Namespace。
+      执行失败；实际 Driver Policy 决策另以不可变 `ActionAdmissionDecision` 查询，
+      不再从结果或审批链接反推。MCP 作为 Driver 协议已覆盖，未建立第二套 MCP
+      Tool Namespace。
       早期 SDK 的 `ActionKind.MCP` 名称与历史 JSON 值 `"mcp"` 保持可读兼容，
       但统一规范化并序列化为 `ActionKind.DRIVER / "driver"`，防止插件重新制造
       竞争执行平面。
