@@ -102,6 +102,60 @@ test("reports an unexpected runtime exit after readiness", async () => {
   await host.close();
 });
 
+test("aborts turn observation without interrupting Host execution", async () => {
+  const host = await QwenPawHost.create(options("stream-holds"));
+  const controller = new AbortController();
+
+  try {
+    const turn = await host.chats.open("chat-1").send("keep running", {
+      idempotencyKey: "submission-1",
+    });
+    const stream = turn.follow({ signal: controller.signal });
+    const running = await stream.next();
+    assert.equal(running.done, false);
+    assert.equal(running.value.state, "running");
+
+    const waiting = stream.next();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    controller.abort(new DOMException("Stop observing", "AbortError"));
+    await assert.rejects(waiting, (error) => error?.name === "AbortError");
+
+    const projection = await host.client.chats.runtime("chat-1");
+    assert.equal(projection.execution_chains[0].state, "running");
+  } finally {
+    await host.close();
+  }
+});
+
+test("reports a Host crash while a turn stream is active", async () => {
+  const host = await QwenPawHost.create(options("crash-during-stream"));
+
+  try {
+    const turn = await host.chats.open("chat-1").send("crash while running", {
+      idempotencyKey: "submission-1",
+    });
+    const stream = turn.follow();
+    const running = await stream.next();
+    assert.equal(running.value.state, "running");
+
+    const waiting = stream.next().then(
+      () => undefined,
+      (error) => error,
+    );
+    const [exit, streamError] = await Promise.all([host.exited, waiting]);
+    assert.deepEqual(exit, {
+      pid: host.pid,
+      expected: false,
+      forced: false,
+      code: 32,
+      signal: null,
+    });
+    assert.ok(streamError instanceof Error);
+  } finally {
+    await host.close();
+  }
+});
+
 test(
   "reports forced shutdown escalation",
   { skip: process.platform === "win32" },

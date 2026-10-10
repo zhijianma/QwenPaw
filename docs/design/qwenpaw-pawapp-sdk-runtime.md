@@ -563,6 +563,14 @@ Verified on 2026-10-10 against the running Lite Host on port 8004:
   releasing its reader. A consumer can stop after one snapshot without leaving
   a Node HTTP connection alive; cancellation failure cannot hide the original
   transport error.
+- AbortSignal propagation is covered through a managed child Host and a live
+  HTTP/SSE turn. Aborting `Turn.follow()` closes observation promptly while the
+  authoritative execution chain remains `running`; callers must use the
+  explicit `interrupt()` command to stop execution.
+- A managed Host crash is also exercised after a turn stream is active. The
+  immutable `host.exited` promise reports an unexpected exit independently,
+  while the stream fails rather than manufacturing an inactive or successful
+  terminal state.
 
 ## 10. Explicit non-goals
 

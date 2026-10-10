@@ -1131,8 +1131,10 @@ PawApp / SDK 的运行所有权迁移见
     获得 user instruction 或 approval 权限；Host 会覆盖信任元数据并写入 Context
     Manifest。
   - [ ] conformance 同时覆盖 remote Host 与 managed Host；当前 managed Host 已覆盖
-    真实 Host readiness、进程提前退出、spawn 失败、启动超时、协议/feature 不兼容
-    和重复 close；跨平台退出、运行中崩溃通知与取消传播仍待验证。
+    真实 Host readiness、进程提前退出、spawn 失败、启动超时、协议/feature 不兼容、
+    重复 close、运行中崩溃通知与真实 HTTP/SSE 取消传播。取消 `Turn.follow()` 只终止
+    观察，不会伪装成 `interrupt()` 或改变 Host-owned Invocation；跨平台退出与进程树
+    回收仍待 Windows/Linux 实机验证。
 - [ ] Codex Harness 从私有 app-server 传输迁移到已声明的官方
   `openai-codex` SDK，但以审批安全为硬门禁：
   - [ ] 对仓库实际固定版本验证 thread start/resume/fork、stream、steer、

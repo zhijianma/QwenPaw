@@ -1,6 +1,8 @@
 import { createServer } from "node:http";
 
 const mode = process.env.FAKE_QWENPAW_MODE ?? "ready";
+const holdsRuntime =
+  mode === "stream-holds" || mode === "crash-during-stream";
 const runtimeProjection = {
   schema: "qwenpaw.conversation-runtime-projection.v1",
   agent_id: "agent-1",
@@ -21,6 +23,33 @@ const runtimeProjection = {
   cursor: "cursor-2",
   observed_at: "2026-10-10T00:00:00Z",
 };
+const runningProjection = {
+  ...runtimeProjection,
+  queue: {
+    ...runtimeProjection.queue,
+    submissions: [
+      {
+        submission_id: "submission-1",
+        status: "running",
+      },
+    ],
+  },
+  execution_chains: [
+    {
+      chat_id: "chat-1",
+      correlation_id: "correlation-1",
+      state: "running",
+      submission_ids: ["submission-1"],
+      invocation_ids: ["invocation-1"],
+      head_submission_id: "submission-1",
+      head_invocation_id: "invocation-1",
+      latest_submission_status: "running",
+      open_interaction_ids: [],
+      accepted_at: "2026-10-10T00:00:00Z",
+      latest_submission_at: "2026-10-10T00:00:00Z",
+    },
+  ],
+};
 
 function sendJson(response, status, body) {
   response.writeHead(status, { "Content-Type": "application/json" });
@@ -36,6 +65,7 @@ if (mode === "no-launch") {
 } else {
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const projection = holdsRuntime ? runningProjection : runtimeProjection;
     if (url.pathname === "/api/version") {
       sendJson(
         response,
@@ -66,11 +96,12 @@ if (mode === "no-launch") {
       return;
     }
     if (url.pathname === "/api/chats/chat-1/runtime") {
-      sendJson(response, 200, runtimeProjection);
+      sendJson(response, 200, projection);
       return;
     }
     if (url.pathname === "/api/chats/chat-1/runtime/stream") {
-      if (request.headers["last-event-id"] !== "cursor-1") {
+      const expectedCursor = holdsRuntime ? "cursor-2" : "cursor-1";
+      if (request.headers["last-event-id"] !== expectedCursor) {
         sendJson(response, 400, { detail: "missing runtime cursor" });
         return;
       }
@@ -78,11 +109,30 @@ if (mode === "no-launch") {
         "Cache-Control": "no-cache",
         "Content-Type": "text/event-stream",
       });
-      response.end(
+      response.write(
         `id: cursor-2\nevent: snapshot\ndata: ${JSON.stringify(
-          runtimeProjection,
+          projection,
         )}\n\n`,
       );
+      if (mode === "crash-during-stream") {
+        setTimeout(() => process.exit(32), 25);
+      } else if (!holdsRuntime) {
+        response.end();
+      }
+      return;
+    }
+    if (
+      url.pathname === "/api/chats/chat-1/submissions" &&
+      request.method === "POST"
+    ) {
+      sendJson(response, 200, {
+        schema: "qwenpaw.control-receipt.v1",
+        chat_id: "chat-1",
+        command_id: "command-1",
+        kind: "enqueue",
+        status: "accepted",
+        submission_id: "submission-1",
+      });
       return;
     }
     if (url.pathname === "/api/chats/missing") {

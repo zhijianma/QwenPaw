@@ -1538,3 +1538,9 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
 - 真实 8004 Host 的单帧消费检查发现 async generator 提前结束后 SSE socket 未关闭；
   公共 Client 现会先 `reader.cancel()` 再释放锁，并以未结束 ReadableStream 回归测试
   锁定资源释放行为，避免 SDK 调用方读取一次 snapshot 后挂住 Node 进程。
+- managed 子进程的 running turn 现覆盖 AbortSignal 全链路：取消 `Turn.follow()` 会
+  关闭真实 HTTP/SSE 等待并返回 AbortError，再读 Host projection 仍为 running；这
+  固定了“停止观察 ≠ interrupt”的公共语义，执行中止只能通过显式控制命令完成。
+- 运行中崩溃也已进入 managed SDK 门禁：建立 Turn SSE 后让子 Host 以 code 32 退出，
+  `host.exited` 独立报告 unexpected，活跃 stream 以错误结束，不能把 transport EOF
+  伪装为 inactive、completed 或其他终态。
