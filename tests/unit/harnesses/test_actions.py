@@ -12,6 +12,7 @@ from qwenpaw.harnesses.actions import (
     HARNESS_ACTION_TRACKER_KEY,
     HarnessActionTracker,
     begin_harness_approval_action,
+    resolve_harness_approval_action,
 )
 from qwenpaw.harnesses.events import HarnessEvent, HarnessEventKind
 from qwenpaw.kernel import (
@@ -275,3 +276,80 @@ async def test_completion_without_start_is_recorded_as_unknown(
     assert record.result.status is ActionStatus.UNKNOWN
     assert record.result.error_code == "provider_start_missing"
     assert record.result.side_effect_status is SideEffectStatus.UNCERTAIN
+
+
+@pytest.mark.asyncio
+async def test_approval_denial_overrides_provider_success(
+    tmp_path: Path,
+) -> None:
+    """Keep a rejected command denied when Provider reports completed."""
+    invocation_id = uuid4()
+    scope = InvocationScope(
+        invocation_id=invocation_id,
+        agent_id="default",
+        chat_id="chat-denied",
+        session_id="chat-1",
+        root_agent_id="default",
+        root_session_id="chat-1",
+        workspace_dir=str(tmp_path),
+        registry_generation=7,
+    )
+    store = lite_action_store(tmp_path)
+    tracker = HarnessActionTracker(
+        backend="codex",
+        scope=scope,
+        recorder=RuntimeActionRecorder(scope, store),
+    )
+    resolution = await RuntimeHarnessEnvironmentManager(
+        FilesystemEnvironmentStore(tmp_path),
+    ).resolve(
+        "codex",
+        tmp_path,
+        {"sandbox": "workspace-write"},
+        invocation_id=invocation_id,
+        conversation_id="chat-denied",
+    )
+    tracker.bind_environment(resolution)
+    request_context = {HARNESS_ACTION_TRACKER_KEY: tracker}
+
+    await begin_harness_approval_action(
+        request_context,
+        backend="codex",
+        item_id="item-denied",
+        tool_name="shell",
+        arguments={"command": "curl -I https://example.com"},
+        provider_type="commandExecution",
+        approval_id=uuid4(),
+    )
+    resolve_harness_approval_action(
+        request_context,
+        backend="codex",
+        item_id="item-denied",
+        approved=False,
+    )
+    await tracker.begin_event(
+        HarnessEvent(
+            kind=HarnessEventKind.TOOL_STARTED,
+            item_id="item-denied",
+            tool_name="shell",
+            data={"provider_type": "commandExecution"},
+        ),
+    )
+    await tracker.complete_event(
+        HarnessEvent(
+            kind=HarnessEventKind.TOOL_COMPLETED,
+            item_id="item-denied",
+            tool_name="shell",
+            data={
+                "provider_type": "commandExecution",
+                "status": "completed",
+                "exit_code": 0,
+            },
+        ),
+    )
+
+    [record] = await store.list_for_conversation("chat-denied")
+    assert record.result is not None
+    assert record.result.status is ActionStatus.DENIED
+    assert record.result.error_code == "permission_denied"
+    assert record.result.side_effect_status is SideEffectStatus.FAILED

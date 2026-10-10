@@ -574,6 +574,10 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
     缺失终态或缺少 TOOL_STARTED 的非拒绝终态均收敛为 `unknown/uncertain`，分别以
     `provider_completion_missing` / `provider_start_missing` 暴露事件链缺口。仅有
     TOOL_STARTED 的动作属于观测边界，不冒充宿主执行前拦截。
+    真实 Codex `on-request` 回合已验证 elevated command 的 Interaction 拒绝：Provider
+    后续即使把 item 报为 completed，Tracker 仍以 Host 已知的审批结果优先，Action
+    收敛为 `denied / permission_denied`，不会再误记为 succeeded；Qoder 复用同一
+    approval-resolution bridge。
   - [ ] Hub remote runner、跨主机执行与 attested Runtime 仍待显式 Adapter；不能因
     本地 Harness 已接入就宣称远程 Action Plane 全量完成。
 - [x] 将 `PromptFragment` 兼容演进为带来源、版本、信任级和哈希的

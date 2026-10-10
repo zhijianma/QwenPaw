@@ -1435,5 +1435,12 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
   缺少 TOOL_STARTED 时以 `provider_start_missing + unknown/uncertain` 收敛，丢失
   completion 则继续以 `provider_completion_missing + unknown/uncertain` 收敛。二者都
   不冒充宿主执行前 Policy Audit。
-- 总体验收门禁仍未关闭：上述 Harness 合同还需 Codex/Qoder 真实审批及异常事件端到端
-  验证；不能把单元合同或 Driver 决策闭环外推为整个 Action Plane 已验收。
+- 真实 Codex 审批验收曾发现拒绝后 Provider completed 被误记为 succeeded；现已由
+  Codex/Qoder 共用的 approval-resolution bridge 修复。固定测试 Chat
+  `f92b0749-f6d7-4fa7-ad5e-50490562c596` 在 `/clear` 后发起 elevated command，统一
+  Interaction 拒绝后 Action 终态为 `denied / permission_denied`，`ask` Decision、
+  Approval Link、Invocation 与 Chat 身份一致，开放 Interaction 为 0，Provider 明确
+  返回命令未执行。
+- 总体验收门禁仍未关闭：Qoder 尚未认证，真实 Qoder 审批与异常事件端到端未执行；
+  Codex 审批通过路径、Harness cwd 对 Chat 项目目录的继承仍需闭环，不能把本次拒绝
+  路径外推为整个 Action Plane 已验收。

@@ -41,7 +41,10 @@ from ...utils.io_utils import (
     write_json_atomic_async,
 )
 from ..base import HarnessAdapter, HarnessOperationNotSupportedError
-from ..actions import begin_harness_approval_action
+from ..actions import (
+    begin_harness_approval_action,
+    resolve_harness_approval_action,
+)
 from ..capabilities import HarnessRuntimeCapabilities
 from ..events import (
     HarnessAttachment,
@@ -634,6 +637,12 @@ class QoderAdapter(HarnessAdapter):
         decision = await service.wait_for_approval(
             pending,
             timeout_seconds,
+        )
+        resolve_harness_approval_action(
+            request_context,
+            backend="qoder",
+            item_id=str(context.tool_use_id or ""),
+            approved=decision == ApprovalDecision.APPROVED,
         )
         if decision == ApprovalDecision.APPROVED:
             return PermissionResultAllow(updated_input=input_data)

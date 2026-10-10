@@ -80,6 +80,7 @@ class HarnessActionTracker:
         self._environment_ref: EnvironmentRef | None = None
         self._contexts: dict[str, ToolCallContext] = {}
         self._started_items: set[str] = set()
+        self._denied_items: set[str] = set()
         self._committed_items: dict[str, CommittedActionItem] = {}
 
     def bind_environment(self, resolution: EnvironmentResolution) -> None:
@@ -184,6 +185,11 @@ class HarnessActionTracker:
         if context is not None:
             self._started_items.add(event.item_id)
 
+    def resolve_approval(self, item_id: str, *, approved: bool) -> None:
+        """Remember a host-visible denial until terminal evidence is saved."""
+        if item_id in self._contexts and not approved:
+            self._denied_items.add(item_id)
+
     async def complete_event(self, event: HarnessEvent) -> None:
         """Complete one normalized TOOL_COMPLETED event."""
         context = self._contexts.get(event.item_id)
@@ -201,6 +207,9 @@ class HarnessActionTracker:
         if context is None:
             return
         status, error_code = _terminal_status(event)
+        if event.item_id in self._denied_items:
+            status = ActionStatus.DENIED
+            error_code = "permission_denied"
         if (
             event.item_id not in self._started_items
             and status is not ActionStatus.DENIED
@@ -216,6 +225,7 @@ class HarnessActionTracker:
         self._committed_items[event.item_id] = committed_item
         self._contexts.pop(event.item_id, None)
         self._started_items.discard(event.item_id)
+        self._denied_items.discard(event.item_id)
 
     async def finalize_pending(
         self,
@@ -226,11 +236,18 @@ class HarnessActionTracker:
         pending = tuple(self._contexts.items())
         self._contexts.clear()
         self._started_items.clear()
-        for _item_id, context in pending:
+        denied_items = set(self._denied_items)
+        self._denied_items.clear()
+        for item_id, context in pending:
+            terminal_status = status
+            terminal_error = error_code
+            if item_id in denied_items:
+                terminal_status = ActionStatus.DENIED
+                terminal_error = "permission_denied"
             await self._recorder.complete_harness_remote(
                 context,
-                status=status,
-                error_code=error_code,
+                status=terminal_status,
+                error_code=terminal_error,
             )
 
 
@@ -264,8 +281,25 @@ async def begin_harness_approval_action(
     )
 
 
+def resolve_harness_approval_action(
+    request_context: dict[str, Any],
+    *,
+    backend: str,
+    item_id: str,
+    approved: bool,
+) -> None:
+    """Forward one durable approval outcome into the Harness event state."""
+    tracker = request_context.get(HARNESS_ACTION_TRACKER_KEY)
+    if not isinstance(tracker, HarnessActionTracker):
+        return
+    if tracker.backend != backend:
+        return
+    tracker.resolve_approval(item_id, approved=approved)
+
+
 __all__ = [
     "HARNESS_ACTION_TRACKER_KEY",
     "HarnessActionTracker",
     "begin_harness_approval_action",
+    "resolve_harness_approval_action",
 ]

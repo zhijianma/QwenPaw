@@ -21,7 +21,10 @@ from ...kernel.models import ApprovalDisplay, ApprovalSource
 from ...security.tool_guard.approval import ApprovalDecision
 from ...utils.io_utils import read_json, write_json_atomic_async
 from ..base import HarnessAdapter
-from ..actions import begin_harness_approval_action
+from ..actions import (
+    begin_harness_approval_action,
+    resolve_harness_approval_action,
+)
 from ..capabilities import HarnessRuntimeCapabilities
 from ..events import (
     HarnessAttachment,
@@ -793,6 +796,12 @@ class CodexAdapter(HarnessAdapter):
         decision = await service.wait_for_approval(
             pending,
             timeout_seconds,
+        )
+        resolve_harness_approval_action(
+            context,
+            backend="codex",
+            item_id=str(params.get("itemId") or ""),
+            approved=decision == ApprovalDecision.APPROVED,
         )
         if is_permissions:
             permissions = (

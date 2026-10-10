@@ -1197,7 +1197,10 @@ Cron 不形成独立审批或产物事实源。
       禁止把断线伪装为失败后可安全重试。Provider 审批请求同时追加不可变 `ask`
       Admission Decision；若收到非拒绝 TOOL_COMPLETED 却从未观察到 TOOL_STARTED，
       Action 以 `provider_start_missing + unknown/uncertain` 收敛，不把残缺事件序列
-      伪造成完整执行。Harness 定点合同覆盖正常链路、审批链路及缺失首事件链路。
+      伪造成完整执行。审批拒绝由 Adapter 同步回填 Tracker，优先于 Provider 对 item
+      的 completed 投影；没有 completion 时也在回合收尾落 `denied`。Harness 定点合同
+      覆盖正常、审批、拒绝覆盖及缺失首事件链路；真实 Codex elevated command 拒绝
+      已验证 Interaction、Action、Admission Decision 与 Approval Link 四方身份一致。
   - [ ] Workstation/Hub remote runner 与跨主机执行仍待接入 attested
     Action/Environment Adapter；现有 Task `SideEffectRecord` 继续作为 Task 防重放
     权威，不迁移为第二状态机。仅有 TOOL_STARTED 的 Provider 事件属于 observed
