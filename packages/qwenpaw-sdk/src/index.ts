@@ -107,33 +107,38 @@ interface ManagedHostLifecycle {
 }
 
 export class QwenPawTurnError extends Error {
-  readonly code: "TURN_RECEIPT_INVALID";
+  readonly code: "TURN_RECEIPT_INVALID" | "TURN_IDENTITY_INVALID";
 
-  constructor(message: string) {
+  constructor(
+    message: string,
+    code:
+      | "TURN_RECEIPT_INVALID"
+      | "TURN_IDENTITY_INVALID" = "TURN_RECEIPT_INVALID",
+  ) {
     super(message);
     this.name = "QwenPawTurnError";
-    this.code = "TURN_RECEIPT_INVALID";
+    this.code = code;
   }
 }
 
-export class QwenPawTurn {
+export class QwenPawTurnHandle {
   readonly chatId: string;
   readonly submissionId: string;
-  readonly receipt: ControlReceipt;
 
   readonly #client: QwenPawClient;
 
-  constructor(client: QwenPawClient, chatId: string, receipt: ControlReceipt) {
-    const submissionId = receipt.submission_id?.trim();
-    if (!submissionId) {
+  constructor(client: QwenPawClient, chatId: string, submissionId: string) {
+    const normalizedChatId = chatId.trim();
+    const normalizedSubmissionId = submissionId.trim();
+    if (!normalizedChatId || !normalizedSubmissionId) {
       throw new QwenPawTurnError(
-        "QwenPaw Host accepted a Chat turn without a submission identity",
+        "QwenPaw turn handles require ChatSpec and submission identities",
+        "TURN_IDENTITY_INVALID",
       );
     }
     this.#client = client;
-    this.chatId = chatId;
-    this.submissionId = submissionId;
-    this.receipt = receipt;
+    this.chatId = normalizedChatId;
+    this.submissionId = normalizedSubmissionId;
   }
 
   follow(
@@ -154,6 +159,21 @@ export class QwenPawTurn {
       const result = await stream.next();
       if (result.done) return result.value;
     }
+  }
+}
+
+export class QwenPawTurn extends QwenPawTurnHandle {
+  readonly receipt: ControlReceipt;
+
+  constructor(client: QwenPawClient, chatId: string, receipt: ControlReceipt) {
+    const submissionId = receipt.submission_id?.trim();
+    if (!submissionId) {
+      throw new QwenPawTurnError(
+        "QwenPaw Host accepted a Chat turn without a submission identity",
+      );
+    }
+    super(client, chatId, submissionId);
+    this.receipt = receipt;
   }
 }
 
@@ -254,6 +274,10 @@ export class QwenPawChat {
         : input;
     const receipt = await this.submit(body, options);
     return new QwenPawTurn(this.#client, this.id, receipt);
+  }
+
+  resumeTurn(submissionId: string): QwenPawTurnHandle {
+    return new QwenPawTurnHandle(this.#client, this.id, submissionId);
   }
 
   queue(options: ChatRequestOptions = {}): Promise<QueueProjection> {

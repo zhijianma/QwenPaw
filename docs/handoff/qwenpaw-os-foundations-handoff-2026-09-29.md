@@ -1623,3 +1623,19 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
   后端 Runtime 已无 active invocation 和 queue submission，最新 control receipt 为
   `applied`，且报告前台子进程已取消；这证明取消终态已持久化，
   不是 Console 仅根据本地事件推测。
+
+## 17. 2026-10-10 SDK 无状态 Turn 重新附着
+
+- `@qwenpaw/sdk` 新增 `QwenPawTurnHandle` 与
+  `chat.resumeTurn(submission_id)`。新提交继续返回带权威 admission receipt 的
+  `QwenPawTurn`；应用重启后只持有 `ChatSpec.id + submission_id` 时创建不带
+  receipt 的观察句柄，不伪造 Host 事实。
+- 句柄直接复用 `@qwenpaw/client.followSubmission()` 的 Runtime Projection、
+  cursor reconnect、终态和 AbortSignal 语义；不 enqueue、不重放、不重启
+  Invocation，也不建立 SDK 私有 checkpoint 或竞争状态源。
+- 真实 8004 Host 验证使用固定 Chat 及已持久化的 interrupted Submission：
+  新 SDK 对象恢复原 Invocation 和 `interrupted` 状态，Queue revision 前后均为
+  504，active 为空、queued 为 0，句柄没有伪造 receipt。SDK 定点测试
+  7 项与两个包的 TypeScript check 通过。
+- Codex 仅作为 thread/turn 可恢复性的产品参考；本实现只使用 QwenPaw
+  Host、Client 和自身领域模型，不依赖或复用 Codex SDK。

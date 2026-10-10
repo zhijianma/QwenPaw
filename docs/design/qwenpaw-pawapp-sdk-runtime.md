@@ -528,9 +528,12 @@ Verified on 2026-10-10 against the running Lite Host on port 8004:
   execution chain by `submission_id`, emits `waiting_user` without inventing
   completion, reconciles every EOF or transient disconnect against the latest
   Host projection, and reconnects from its cursor. The managed SDK adds only a
-  thin `QwenPawTurn` wrapper. Mechanical `inactive` remains distinct from the
-  verified Outcome states `achieved`, `partial`, `not_achieved` and
-  `abandoned`; a truncated projection window fails closed instead of guessing.
+  thin `QwenPawTurn` wrapper. After application restart,
+  `chat.resumeTurn(submission_id)` rebuilds a stateless `QwenPawTurnHandle`
+  against that same projection without enqueueing or replaying execution.
+  Mechanical `inactive` remains distinct from the verified Outcome states
+  `achieved`, `partial`, `not_achieved` and `abandoned`; a truncated projection
+  window fails closed instead of guessing.
 - Managed Host lifecycle is now observable after readiness through one
   immutable `host.exited` Promise. It distinguishes SDK-initiated shutdown from
   an unexpected runtime exit using the owned PID, exit code/signal and explicit
@@ -581,6 +584,11 @@ Verified on 2026-10-10 against the running Lite Host on port 8004:
   HTTP/SSE turn. Aborting `Turn.follow()` closes observation promptly while the
   authoritative execution chain remains `running`; callers must use the
   explicit `interrupt()` command to stop execution.
+- Stateless turn reattachment is verified against the running Lite Host with
+  Chat `1ee31988-b37a-48b9-b6ce-423c52f6a3a9` and its persisted interrupted
+  submission. A newly constructed SDK handle recovered the same invocation and
+  `interrupted` state; Queue revision remained 504 before and after, no item was
+  enqueued, and the resumed handle did not manufacture an admission receipt.
 - A managed Host crash is also exercised after a turn stream is active. The
   immutable `host.exited` promise reports an unexpected exit independently,
   while the stream fails rather than manufacturing an inactive or successful

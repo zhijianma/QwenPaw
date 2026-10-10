@@ -1146,8 +1146,9 @@ PawApp / SDK 的运行所有权迁移见
     是 latest-state snapshot，不伪装成 durable event replay。
   - [x] 提供显式 `create/close` 生命周期和 ChatSpec-scoped handle；resume、fork、
     steer、interrupt、approval 全部委托已有 Host 命令，身份统一使用
-    `ChatSpec.id`。这里的 resume 是重新 `open(ChatSpec.id)` 并从 Host cursor follow，
-    不是可能重放副作用的通用执行命令。
+    `ChatSpec.id`。应用重启后可用 `chat.resumeTurn(submission_id)` 重建无状态
+    `QwenPawTurnHandle`，继续从 Host Runtime Projection 和 cursor 观察原执行链；
+    它不重新 enqueue、重放或重启执行，也不保存 SDK 私有 checkpoint。
   - [x] 引入低信任 external-message 输入类型，外部 Agent、Tool 或应用消息不得自动
     获得 user instruction 或 approval 权限；Host 会覆盖信任元数据并写入 Context
     Manifest。

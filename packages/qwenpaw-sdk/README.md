@@ -33,6 +33,11 @@ const turn = await chat.send({
 const settled = await turn.wait();
 console.log(settled.state, settled.outcome);
 
+// Reattach after an application restart without enqueueing another turn.
+const resumed = chat.resumeTurn(savedSubmissionId);
+const resumedState = await resumed.wait();
+console.log(resumedState.state, resumedState.outcome);
+
 const direct = await chat.send("Review the README", {
   idempotencyKey: crypto.randomUUID(),
 });
@@ -123,3 +128,9 @@ reconciles disconnects until execution settles. A settled `inactive` state is
 not promoted to `achieved`; verified goal outcomes remain explicit Host facts.
 Aborting observation closes the HTTP/SSE stream but does not interrupt the
 Host-owned Invocation; use `chat.interrupt()` when execution itself must stop.
+
+After an application restart, `chat.resumeTurn(submissionId)` creates a
+stateless `QwenPawTurnHandle` over the same durable Host identity. It does not
+enqueue, replay or restart execution, and it owns no SDK-side checkpoint. The
+handle reconciles through the same Runtime Projection and cursor-aware stream
+as a newly submitted turn.

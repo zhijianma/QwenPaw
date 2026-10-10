@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { QwenPawChat } from "../dist/index.js";
+import { QwenPawChat, QwenPawTurnError } from "../dist/index.js";
 
 function fakeClient() {
   const calls = [];
@@ -115,6 +115,41 @@ test("returns a turn handle that waits on the shared runtime client", async () =
       ["follow", "chat/one"],
     ],
   );
+});
+
+test("reattaches to a durable turn without submitting new work", async () => {
+  const { calls, client } = fakeClient();
+  const chat = new QwenPawChat(client, "chat/one");
+  const controller = new AbortController();
+  const turn = chat.resumeTurn("persisted-submission");
+
+  assert.equal(turn.chatId, "chat/one");
+  assert.equal(turn.submissionId, "persisted-submission");
+  assert.equal(
+    (await turn.wait({ signal: controller.signal })).state,
+    "inactive",
+  );
+  assert.deepEqual(calls, [
+    [
+      "follow",
+      "chat/one",
+      "persisted-submission",
+      { signal: controller.signal },
+    ],
+  ]);
+});
+
+test("rejects an empty durable turn identity before transport access", () => {
+  const { calls, client } = fakeClient();
+  const chat = new QwenPawChat(client, "chat/one");
+
+  assert.throws(
+    () => chat.resumeTurn("   "),
+    (error) =>
+      error instanceof QwenPawTurnError &&
+      error.code === "TURN_IDENTITY_INVALID",
+  );
+  assert.deepEqual(calls, []);
 });
 
 test("accepts ergonomic direct and lower-trust external inputs", async () => {
