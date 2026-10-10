@@ -1231,6 +1231,11 @@ Cron 不形成独立审批或产物事实源。
       Queue lease 正常结算。Resolution 分开保存宿主验证的 Workspace/依赖和
       Provider 声明的 sandbox/permission，Secret 值不进入 Contract。Harness、
       Environment、Sandbox、Action 与 SDK 共 120 项定点测试通过。
+    - [x] 第三方 Harness 不再硬编码 Agent workspace 作为 cwd；Workspace 路由按
+      `ChatSpec.id` 读取 Session project dirs，并调用同一
+      `resolve_effective_project_dirs()`。规范 Chat 身份无法读取时 fail closed。
+      真实 Codex 固定 Chat 在 `/clear` 后执行 `pwd`，Provider 输出与最新 Action cwd
+      均指向 QwenPawCodex 项目目录，历史 Action 保持原证据不被改写。
   - [ ] Harness Remote、Workstation 与 Hub runner 仍需实现等价 Adapter、真实
     约束兑现和可验证 attestation；不以 Provider 声明替代宿主证明。
   - [x] 语义观测统一 `MODEL`、`ACTION`、`CONTROL`、`GUARDRAIL`、

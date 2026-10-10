@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -70,6 +71,89 @@ async def test_coding_mode_routes_directly_to_harness(
             },
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_harness_uses_chat_project_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prefer the canonical Chat override over the Agent workspace."""
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    config = SimpleNamespace(
+        backend="codex",
+        backend_settings={},
+        project_dir=None,
+        project_dirs=[],
+    )
+    monkeypatch.setattr(
+        "qwenpaw.app.workspace.workspace.load_agent_config",
+        lambda _agent_id: config,
+    )
+    workspace = Workspace("agent-1", str(tmp_path / "workspace"))
+    workspace._service_manager.services["chat_manager"] = SimpleNamespace(
+        get_chat=AsyncMock(
+            return_value=SimpleNamespace(
+                meta={
+                    "runtime_context": {
+                        "project_dirs": [
+                            {"path": str(project_dir), "label": "Project"},
+                        ],
+                    },
+                },
+            ),
+        ),
+    )
+    runtime = FakeHarnessRuntime()
+    workspace._harness_runtime = runtime
+    request = SimpleNamespace(
+        request_context={"os_conversation_id": "chat-1"},
+        session_id="console:chat-1",
+        user_id="local-user",
+        channel="console",
+    )
+
+    output = [item async for item in workspace.stream_query(request)]
+
+    assert output == ["harness-output"]
+    assert runtime.call is not None
+    assert runtime.call["cwd"] == project_dir.resolve()
+    workspace.chat_manager.get_chat.assert_awaited_once_with("chat-1")
+
+
+@pytest.mark.asyncio
+async def test_harness_missing_canonical_chat_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Do not fall back to another directory for a bound Chat identity."""
+    monkeypatch.setattr(
+        "qwenpaw.app.workspace.workspace.load_agent_config",
+        lambda _agent_id: SimpleNamespace(
+            backend="codex",
+            backend_settings={},
+            project_dir=None,
+            project_dirs=[],
+        ),
+    )
+    workspace = Workspace("agent-1", str(tmp_path / "workspace"))
+    workspace._service_manager.services["chat_manager"] = SimpleNamespace(
+        get_chat=AsyncMock(return_value=None),
+    )
+    runtime = FakeHarnessRuntime()
+    workspace._harness_runtime = runtime
+    request = SimpleNamespace(
+        request_context={"os_conversation_id": "missing-chat"},
+        session_id="console:missing-chat",
+        user_id="local-user",
+        channel="console",
+    )
+
+    with pytest.raises(RuntimeError, match="Chat identity is unavailable"):
+        _ = [item async for item in workspace.stream_query(request)]
+
+    assert runtime.call is None
 
 
 @pytest.mark.asyncio

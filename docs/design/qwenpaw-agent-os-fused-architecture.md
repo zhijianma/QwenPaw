@@ -605,6 +605,10 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
     生成同一 Contract/Resolution；Workspace、Skill 目录和 MCP stdio 依赖由宿主
     校验，MCP Secret 只保存变量名和 opaque 引用。Codex sandbox 与 Qoder
     permission 明确记录为 `provider_declared`，不冒充宿主 enforcement 或远端证明。
+    Harness cwd 复用 Native Tool 的 Chat-first 项目目录解析：优先按
+    `os_conversation_id = ChatSpec.id` 读取受控 Session override，Chat 身份丢失时
+    fail closed，不静默回退 Agent workspace。真实 Codex `/clear -> pwd` 已验证
+    Provider 输出与 Action cwd 均为同一 Chat 绑定的项目目录。
   - [ ] 将 Harness Remote 和 Hub runner 适配到同一契约并提供
     `provider_attested` 证据；在这些 Adapter 完成前，不把 Provider 声明或枚举存在
     误报为平台已具备远端隔离能力。

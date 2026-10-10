@@ -500,6 +500,50 @@ class Workspace:  # pylint: disable=too-many-public-methods
         """Expose shared runtime coordinators to workspace services."""
         return self._app_services
 
+    async def _harness_project_dir(
+        self,
+        request: Any,
+        config: Any,
+        request_context: dict[str, Any],
+    ) -> Path:
+        """Resolve the same effective Chat directory used by native tools."""
+        from ...services.project_directory import (
+            agent_project_dirs_from_config,
+            resolve_effective_project_dirs,
+            session_project_dirs_raw_from_meta,
+        )
+
+        chat = None
+        chat_manager = self.chat_manager
+        chat_id = str(request_context.get("os_conversation_id") or "")
+        if chat_id:
+            if chat_manager is None:
+                raise RuntimeError("Chat project directory is unavailable")
+            chat = await chat_manager.get_chat(chat_id)
+            if chat is None:
+                raise RuntimeError("Harness Chat identity is unavailable")
+        elif chat_manager is not None:
+            session_id = str(getattr(request, "session_id", "") or "")
+            if session_id:
+                resolved_chat_id = await chat_manager.get_chat_id_by_session(
+                    session_id,
+                    getattr(request, "channel", None) or "console",
+                    getattr(request, "user_id", None) or None,
+                )
+                if resolved_chat_id:
+                    chat = await chat_manager.get_chat(resolved_chat_id)
+
+        def resolve() -> Path:
+            return resolve_effective_project_dirs(
+                self.workspace_dir,
+                agent_project_dirs=agent_project_dirs_from_config(config),
+                session_project_dirs=session_project_dirs_raw_from_meta(
+                    getattr(chat, "meta", None),
+                ),
+            ).primary_path
+
+        return await asyncio.to_thread(resolve)
+
     async def stream_query(
         self,
         request: Any,
@@ -541,10 +585,15 @@ class Workspace:  # pylint: disable=too-many-public-methods
                 "user_id": getattr(request, "user_id", None),
                 "channel": getattr(request, "channel", None) or "console",
             }
+            cwd = await self._harness_project_dir(
+                request,
+                config,
+                request_context,
+            )
             async for item in self.harness_runtime.stream(
                 backend=backend,
                 request=request,
-                cwd=self.workspace_dir.resolve(),
+                cwd=cwd,
                 settings=settings,
             ):
                 yield item
