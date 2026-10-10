@@ -1117,6 +1117,10 @@ PawApp / SDK 的运行所有权迁移见
     `1ee31988-b37a-48b9-b6ce-423c52f6a3a9`：最新 generation 12 的两条 Lock 分别
     固定 3/10 个 release，两条 Manifest 分别返回 76/73 个内容最小化 fragment 和
     71 个工具披露；全程仅使用 `ChatSpec.id`，未读取私有文件。
+  - [x] Host negotiation 已发布真实 Chat 功能位：control、runtime、Interaction、
+    fork、evidence 与 execution manifests。公开 Client 对运行中的 8004 Host 校验三项
+    required feature 无缺失；managed SDK 又以当前 Python 发行版启动独立真实 Host，
+    在接收工作前完成同一门禁并正常关闭。未知未来功能仍可被旧 Client 接受。
 - [ ] 按 coding-agent SDK 对比结论交付最小 managed-local SDK，不再造执行内核：
   - [x] Host 已提供版本化 managed launch contract：CLI 预绑定 loopback socket，
     支持安全的 `--port 0`，输出真实 `api_url + pid`；禁止 non-loopback/reload，且不

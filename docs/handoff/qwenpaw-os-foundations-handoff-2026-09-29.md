@@ -1564,3 +1564,8 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
 - Schema/Host 路由定点测试 20 项、公共 Client 7 项、managed SDK 20 项通过；生成
   契约新鲜度、两个包 TypeScript 检查和全部变更文件 pre-commit 通过。Task Workbench
   仍保持暂停。
+- Host 握手此前未发布 SDK 文档已经要求的 `chat.control.v1`，导致真实 managed Host
+  可能在调用前被错误拒绝；现已补齐 control、runtime、Interaction、fork、evidence
+  与 execution manifests 六组 Chat 功能位。运行中的 8004 Host 和由 SDK 新启动的
+  当前 Python Host 均通过 required-feature 门禁，缺失集合为空；未来未知功能名保持
+  向前兼容。

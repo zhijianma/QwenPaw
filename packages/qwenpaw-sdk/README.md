@@ -16,7 +16,10 @@ await using host = await QwenPawHost.create({
     args: ["-m", "qwenpaw"],
   },
   stateDir: "/absolute/path/to/qwenpaw-state",
-  requiredFeatures: ["chat.control.v1"],
+  requiredFeatures: [
+    "chat.control.v1",
+    "chat.execution-manifests.v1",
+  ],
 });
 
 const chat = host.chats.open("chat-spec-id");

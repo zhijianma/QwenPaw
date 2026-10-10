@@ -54,6 +54,12 @@ if (receipt.submission_id) {
 }
 ```
 
+The handshake advertises feature names before a client accepts work. Public
+Chat surfaces currently include `chat.control.v1`, `chat.runtime.v1`,
+`chat.interactions`, `chat.fork.v1`, `chat.evidence.v1`, and
+`chat.execution-manifests.v1`. Unknown future feature names remain valid so an
+older client can negotiate with a newer Host.
+
 Use `buildChatSubmission()` when an integration wants the SDK-style text
 input without adopting the managed-process package. Plain strings represent
 direct user instructions. Content copied from an issue, webhook, email or

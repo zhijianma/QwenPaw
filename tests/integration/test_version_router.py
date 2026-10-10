@@ -38,6 +38,8 @@ def test_version_endpoint(app_server) -> None:
     assert payload["product"] == "qwenpaw"
     assert payload["protocol_version"] == 1
     assert "task.runtime" in payload["features"]
+    assert "chat.control.v1" in payload["features"]
+    assert "chat.execution-manifests.v1" in payload["features"]
 
 
 @pytest.mark.integration

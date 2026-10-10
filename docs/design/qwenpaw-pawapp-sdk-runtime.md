@@ -279,6 +279,13 @@ therefore expose the exact generation/provider releases and content-free model
 input provenance without exporting Registry, Store, prompt content or any
 Codex-specific type.
 
+The Host handshake advertises each independently consumable Chat surface before
+the SDK accepts work: control, runtime projection, Interaction, fork, evidence
+and execution manifests. Feature identifiers are additive and open-ended;
+older clients accept unknown optional features, while managed callers may fail
+closed on explicitly required identifiers. This prevents a documented SDK
+method from degrading into a first-call 404 on an incompatible Host.
+
 `paw.chatControls` publishes submission, queue, steer, interrupt,
 stop-and-clear, queued cancellation and reorder over `ChatSpec.id`. Console
 uses this same client implementation. Queue order and command receipts remain

@@ -17,7 +17,12 @@ HOST_PROTOCOL_VERSION = 1
 HOST_FEATURES: tuple[str, ...] = (
     "artifact.references",
     "capability.catalog",
+    "chat.control.v1",
+    "chat.evidence.v1",
+    "chat.execution-manifests.v1",
+    "chat.fork.v1",
     "chat.interactions",
+    "chat.runtime.v1",
     "task.event-cursor",
     "task.runtime",
 )

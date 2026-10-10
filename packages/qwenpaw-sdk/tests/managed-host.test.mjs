@@ -50,10 +50,14 @@ async function waitForProcessExit(pid, timeoutMs = 1_000) {
 
 test("starts, negotiates and closes one owned Host", async () => {
   const host = await QwenPawHost.create(
-    options("ready", { requiredFeatures: ["chat.control.v1"] }),
+    options("ready", {
+      requiredFeatures: ["chat.control.v1", "chat.execution-manifests.v1"],
+    }),
   );
 
   assert.equal(host.handshake.schema, "qwenpaw.host-handshake.v1");
+  assert.ok(host.handshake.features.includes("chat.control.v1"));
+  assert.ok(host.handshake.features.includes("chat.execution-manifests.v1"));
   assert.match(host.apiUrl, /^http:\/\/127\.0\.0\.1:\d+\/api$/);
   assert.ok(host.pid > 0);
   await host.close();

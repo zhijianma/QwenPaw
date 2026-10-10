@@ -74,15 +74,17 @@ if (mode === "no-launch") {
         mode === "invalid-handshake-value"
           ? "wrong"
           : mode === "invalid-handshake"
-            ? { schema: "wrong" }
-            : {
-                schema: "qwenpaw.host-handshake.v1",
-                product: "qwenpaw",
-                version: "test",
-                protocol_version: 1,
-                features:
-                  mode === "missing-feature" ? [] : ["chat.control.v1"],
-              },
+          ? { schema: "wrong" }
+          : {
+              schema: "qwenpaw.host-handshake.v1",
+              product: "qwenpaw",
+              version: "test",
+              protocol_version: 1,
+              features:
+                mode === "missing-feature"
+                  ? []
+                  : ["chat.control.v1", "chat.execution-manifests.v1"],
+            },
       );
       if (mode === "crash-after-handshake") {
         setTimeout(() => process.exit(31), 25);
