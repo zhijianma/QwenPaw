@@ -301,6 +301,10 @@ Verified on 2026-10-10 against the running Lite Host on port 8004:
   client for Host negotiation. PawApps can inspect or require stable Host
   features without treating plugin capability discovery as protocol
   compatibility.
+- The complete Task Workbench projection now has a strict public Pydantic
+  response model and an OpenAPI component. This freezes the server-side source
+  needed for generated SDK contracts and validates every projection before it
+  leaves the Host.
 
 ## 10. Explicit non-goals
 

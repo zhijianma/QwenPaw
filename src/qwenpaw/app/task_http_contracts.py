@@ -1,17 +1,33 @@
 # -*- coding: utf-8 -*-
-"""Versioned HTTP input contracts for the Task API."""
+"""Versioned HTTP contracts for the Task API."""
 
 from typing import Literal
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
+from ..kernel.events import ExecutionEvent
 from ..kernel.models import (
+    ApprovalDecision,
     ApprovalDecisionValue,
+    ApprovalRequest,
+    ArtifactPreviewDescriptor,
+    ArtifactRecord,
+    ArtifactRef,
+    EvidenceRecord,
+    EvidenceRef,
+    ExecutionCheckpoint,
     ExecutionContract,
+    NamespacedId,
+    Plan,
+    ResultPackage,
+    Run,
     Task,
     TaskSource,
+    UsageSnapshot,
+    VerificationRecord,
+    VerificationResult,
 )
-from ..kernel.events import ExecutionEvent
 
 
 class TaskHttpModel(BaseModel):
@@ -68,10 +84,69 @@ class TaskEventPageResponse(TaskHttpModel):
     next_sequence: int = Field(ge=0)
 
 
+class TaskConversationMessageResponse(TaskHttpModel):
+    """One committed Chat message projected into the Task Workbench."""
+
+    role: Literal["user", "assistant"]
+    text: str
+    run_id: UUID | None
+    created_at: AwareDatetime
+    completed_at: AwareDatetime
+
+
+class TaskApprovalResponse(ApprovalRequest):
+    """One approval request with its optional immutable decision."""
+
+    decision: ApprovalDecision | None
+
+
+class TaskArtifactResponse(ArtifactRef):
+    """One immutable Artifact with current preview availability."""
+
+    preview: ArtifactPreviewDescriptor
+
+
+class TaskCapabilitySelectionResponse(TaskHttpModel):
+    """One generation-pinned capability visible in the projection."""
+
+    capability_id: NamespacedId
+    slot: NamespacedId
+    registry_generation: int = Field(ge=1)
+
+
+class TaskProjectionResponse(TaskHttpModel):
+    """Authoritative, bounded Task Workbench read contract."""
+
+    task: Task
+    active_run: Run | None
+    runs: tuple[Run, ...]
+    latest_plan: Plan | None
+    conversation_messages: tuple[TaskConversationMessageResponse, ...]
+    tool_activities: tuple[ExecutionEvent, ...]
+    pending_approvals: tuple[TaskApprovalResponse, ...]
+    recent_decisions: tuple[TaskApprovalResponse, ...]
+    artifacts: tuple[TaskArtifactResponse, ...]
+    artifact_registry: tuple[ArtifactRecord, ...]
+    evidence: tuple[EvidenceRef, ...]
+    evidence_registry: tuple[EvidenceRecord, ...]
+    verifications: tuple[VerificationResult, ...]
+    verification_registry: tuple[VerificationRecord, ...]
+    result_package: ResultPackage | None
+    usage: UsageSnapshot
+    checkpoint: ExecutionCheckpoint | None
+    capabilities: tuple[TaskCapabilitySelectionResponse, ...]
+    last_sequence: int = Field(ge=0)
+
+
 __all__ = [
     "ApprovalDecisionRequest",
     "CreateTaskRequest",
     "SideEffectRetryRequest",
     "TaskEventPageResponse",
     "TaskListResponse",
+    "TaskApprovalResponse",
+    "TaskArtifactResponse",
+    "TaskCapabilitySelectionResponse",
+    "TaskConversationMessageResponse",
+    "TaskProjectionResponse",
 ]

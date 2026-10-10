@@ -73,6 +73,7 @@ from ..task_http_contracts import (
     SideEffectRetryRequest,
     TaskEventPageResponse,
     TaskListResponse,
+    TaskProjectionResponse,
 )
 from ..task_runtime import task_application_bindings
 
@@ -218,8 +219,11 @@ async def get_task(task_id: UUID, request: Request) -> dict:
     }
 
 
-@router.get("/{task_id}/projection")
-async def get_task_projection(task_id: UUID, request: Request) -> dict:
+@router.get("/{task_id}/projection", response_model=TaskProjectionResponse)
+async def get_task_projection(
+    task_id: UUID,
+    request: Request,
+) -> TaskProjectionResponse:
     """Return the authoritative bounded Task Workbench read model."""
     bindings = await task_application_bindings(request)
     try:
@@ -272,67 +276,71 @@ async def get_task_projection(task_id: UUID, request: Request) -> dict:
         }
         for renderer_id, generation in sorted(renderer_capabilities)
     )
-    return {
-        "task": task.model_dump(mode="json"),
-        "active_run": (
-            active_run.model_dump(mode="json") if active_run else None
-        ),
-        "runs": [run.model_dump(mode="json") for run in workbench.runs],
-        "latest_plan": (
-            workbench.latest_plan.model_dump(mode="json")
-            if workbench.latest_plan
-            else None
-        ),
-        "conversation_messages": [
-            item.to_public_dict() for item in workbench.conversation_messages
-        ],
-        "tool_activities": [
-            event.model_dump(mode="json")
-            for event in workbench.tool_activities
-        ],
-        "pending_approvals": [
-            item.to_public_dict() for item in workbench.pending_approvals
-        ],
-        "recent_decisions": [
-            item.to_public_dict() for item in workbench.recent_decisions
-        ],
-        "artifacts": artifact_items,
-        "artifact_registry": [
-            record.model_dump(mode="json")
-            for record in result_projection.artifacts
-        ],
-        "evidence": [
-            item.model_dump(mode="json") for item in result_projection.evidence
-        ],
-        "evidence_registry": [
-            record.model_dump(mode="json")
-            for record in result_projection.evidence_records
-        ],
-        "verifications": [
-            result.model_dump(mode="json")
-            for result in result_projection.verifications
-        ],
-        "verification_registry": [
-            record.model_dump(mode="json")
-            for record in result_projection.verification_records
-        ],
-        "result_package": (
-            result_projection.package(
-                task.task_id,
-                active_run.run_id,
-            ).model_dump(mode="json")
-            if active_run
-            else None
-        ),
-        "usage": workbench.usage.model_dump(mode="json"),
-        "checkpoint": (
-            workbench.checkpoint.model_dump(mode="json")
-            if workbench.checkpoint
-            else None
-        ),
-        "capabilities": capabilities,
-        "last_sequence": workbench.last_sequence,
-    }
+    return TaskProjectionResponse.model_validate(
+        {
+            "task": task.model_dump(mode="json"),
+            "active_run": (
+                active_run.model_dump(mode="json") if active_run else None
+            ),
+            "runs": [run.model_dump(mode="json") for run in workbench.runs],
+            "latest_plan": (
+                workbench.latest_plan.model_dump(mode="json")
+                if workbench.latest_plan
+                else None
+            ),
+            "conversation_messages": [
+                item.to_public_dict()
+                for item in workbench.conversation_messages
+            ],
+            "tool_activities": [
+                event.model_dump(mode="json")
+                for event in workbench.tool_activities
+            ],
+            "pending_approvals": [
+                item.to_public_dict() for item in workbench.pending_approvals
+            ],
+            "recent_decisions": [
+                item.to_public_dict() for item in workbench.recent_decisions
+            ],
+            "artifacts": artifact_items,
+            "artifact_registry": [
+                record.model_dump(mode="json")
+                for record in result_projection.artifacts
+            ],
+            "evidence": [
+                item.model_dump(mode="json")
+                for item in result_projection.evidence
+            ],
+            "evidence_registry": [
+                record.model_dump(mode="json")
+                for record in result_projection.evidence_records
+            ],
+            "verifications": [
+                result.model_dump(mode="json")
+                for result in result_projection.verifications
+            ],
+            "verification_registry": [
+                record.model_dump(mode="json")
+                for record in result_projection.verification_records
+            ],
+            "result_package": (
+                result_projection.package(
+                    task.task_id,
+                    active_run.run_id,
+                ).model_dump(mode="json")
+                if active_run
+                else None
+            ),
+            "usage": workbench.usage.model_dump(mode="json"),
+            "checkpoint": (
+                workbench.checkpoint.model_dump(mode="json")
+                if workbench.checkpoint
+                else None
+            ),
+            "capabilities": capabilities,
+            "last_sequence": workbench.last_sequence,
+        },
+    )
 
 
 @router.post("/{task_id}/start", status_code=202)

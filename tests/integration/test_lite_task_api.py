@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Focused HTTP contract tests for the Lite task API."""
+
 # pylint: disable=protected-access
 
 import asyncio
@@ -329,6 +330,34 @@ def test_workspace_reuses_one_edition_runtime_assembly_across_requests(
 
     assert response.status_code == 200
     assert not calls
+
+
+def test_task_projection_is_published_in_openapi(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    client = _client(monkeypatch, tmp_path)
+
+    document = client.get("/openapi.json").json()
+    response = document["paths"]["/api/tasks/{task_id}/projection"]["get"][
+        "responses"
+    ]["200"]["content"]["application/json"]["schema"]
+    projection = document["components"]["schemas"]["TaskProjectionResponse"]
+
+    assert response == {
+        "$ref": "#/components/schemas/TaskProjectionResponse",
+    }
+    assert {
+        "task",
+        "runs",
+        "conversation_messages",
+        "pending_approvals",
+        "artifacts",
+        "evidence",
+        "usage",
+        "capabilities",
+        "last_sequence",
+    }.issubset(projection["required"])
 
 
 def test_create_preserves_execution_contract(monkeypatch, tmp_path) -> None:
