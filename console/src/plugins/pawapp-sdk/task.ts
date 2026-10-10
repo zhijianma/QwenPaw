@@ -17,6 +17,18 @@ import type {
 } from "./types";
 import { normalizeAppId, normalizeAppRelativePath } from "./scope";
 
+export class PawTaskTransportError extends Error {
+  readonly code = "PAW_TASK_STREAM_INTERRUPTED";
+
+  constructor(taskId: string) {
+    super(
+      `PawTask ${taskId} stream ended before a durable terminal result. ` +
+        "The task outcome is unknown.",
+    );
+    this.name = "PawTaskTransportError";
+  }
+}
+
 /**
  * Create a PawTask — posts to backend to start task, then connects
  * to SSE stream for realtime events.
@@ -30,7 +42,7 @@ function createPawTaskWithScope(
 ): PawTaskHandle {
   const listeners = new Map<string, Set<PawTaskEventHandler>>();
   const chatId =
-    options.chatId ?? window.QwenPaw.host?.getCurrentChatId?.() ?? undefined;
+    options.chatId ?? window.QwenPaw?.host?.getCurrentChatId?.() ?? undefined;
   let taskId = "";
   let abortController: AbortController | null = new AbortController();
 
@@ -177,8 +189,15 @@ function createPawTaskWithScope(
         }
       }
 
-      // Stream ended without explicit done/error
-      resolveResult(null);
+      // The legacy stream has no durable cursor. Transport EOF is not proof
+      // that the task completed, so never turn it into a successful null.
+      const interrupted = new PawTaskTransportError(taskId);
+      emit("error", {
+        type: "error",
+        code: interrupted.code,
+        message: interrupted.message,
+      });
+      throw interrupted;
     } catch (err) {
       if ((err as Error).name === "AbortError") {
         rejectResult(new Error("Task cancelled"));

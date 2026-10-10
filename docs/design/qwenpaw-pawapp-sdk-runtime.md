@@ -126,7 +126,9 @@ dependency without changing legacy handler execution.
 - add Host capability negotiation;
 - create or bind a real Task through the application service;
 - subscribe with cursor replay and terminal projection reconciliation;
-- make transport EOF an indeterminate reconnect state, never success;
+- make transport EOF an indeterminate state, never success; the legacy SDK
+  now raises `PawTaskTransportError(PAW_TASK_STREAM_INTERRUPTED)` while cursor
+  replay remains unavailable;
 - route Interaction responses and cancellation through shared commands.
 
 ### P3: backend Contribution adapter

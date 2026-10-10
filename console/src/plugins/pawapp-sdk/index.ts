@@ -124,7 +124,7 @@ export type {
   PawTaskOptions,
 } from "./types";
 
-export { createPawTask } from "./task";
+export { createPawTask, PawTaskTransportError } from "./task";
 export { createDependenciesNamespace } from "./dependencies";
 export { PawApiError } from "./api";
 export { PawChatStreamError } from "./host";

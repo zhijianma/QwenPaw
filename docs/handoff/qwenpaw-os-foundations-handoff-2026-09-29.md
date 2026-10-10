@@ -1509,3 +1509,6 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
 - `@app.task`、内存 `TaskManager / TaskRecord / SSEChannel` 已明确降为兼容适配器。
   注册旧任务时通过既有 `/api/plugins` 管理投影产生去重的
   `PawApp.task -> runner` 迁移诊断及 v2 manifest 骨架；旧路由行为暂时保留。
+- 旧前端 PawTask SSE 未收到 `done/error` 就 EOF 时不再解析成成功 `null`，而是抛出
+  可识别的 `PAW_TASK_STREAM_INTERRUPTED`，明确结果未知。真正自动恢复仍等待统一
+  Task Event cursor replay，未在兼容层伪造。

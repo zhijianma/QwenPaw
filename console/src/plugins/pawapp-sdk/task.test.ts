@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { hostFetch } from "../hostSdk/fetch";
-import { createScopedPawTask } from "./task";
+import { createScopedPawTask, PawTaskTransportError } from "./task";
 import type { PawTaskInteractionRequest } from "./types";
 
 vi.mock("../hostSdk/fetch", () => ({
@@ -140,5 +140,29 @@ describe("PawTask interactions", () => {
     } finally {
       window.QwenPaw = originalQwenPaw;
     }
+  });
+
+  it("rejects transport EOF instead of reporting null success", async () => {
+    mockedHostFetch
+      .mockResolvedValueOnce(jsonResponse({ task_id: "task-interrupted" }))
+      .mockResolvedValueOnce(sseResponse([]));
+
+    const task = createScopedPawTask("review-app", "/run", {});
+    const onError = vi.fn();
+    task.on("error", onError);
+
+    await expect(task.result).rejects.toMatchObject({
+      name: "PawTaskTransportError",
+      code: "PAW_TASK_STREAM_INTERRUPTED",
+      message: expect.stringContaining("outcome is unknown"),
+    });
+    await task.result.catch((error: unknown) => {
+      expect(error).toBeInstanceOf(PawTaskTransportError);
+    });
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: "PAW_TASK_STREAM_INTERRUPTED",
+      }),
+    );
   });
 });
