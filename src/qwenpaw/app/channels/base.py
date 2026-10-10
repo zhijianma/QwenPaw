@@ -1951,6 +1951,25 @@ class BaseChannel(ABC):
             channel = getattr(request, "channel", "") or self.channel
             from ...app.agent_context import get_current_invocation_id
 
+            estimated_provider_id = ""
+            estimated_model_name = ""
+            config = getattr(workspace, "config", None)
+            backend = str(getattr(config, "backend", "") or "")
+            if backend and backend != "qwenpaw":
+                estimated_provider_id = backend
+                backend_settings = dict(
+                    getattr(config, "backend_settings", {}) or {},
+                )
+                request_context = dict(
+                    getattr(request, "request_context", None) or {},
+                )
+                backend_controls = request_context.get("backend_controls")
+                if isinstance(backend_controls, dict):
+                    backend_settings.update(backend_controls)
+                estimated_model_name = str(
+                    backend_settings.get("model") or "",
+                )
+
             turn, ctx, agent_state = await turn_usage.resolve_turn_usage(
                 chat_id=session_id,
                 agent_id=agent_id,
@@ -1958,6 +1977,8 @@ class BaseChannel(ABC):
                 user_id=user_id,
                 channel=channel,
                 invocation_id=get_current_invocation_id(),
+                estimated_provider_id=estimated_provider_id,
+                estimated_model_name=estimated_model_name,
             )
             if turn is None and ctx is None:
                 return []

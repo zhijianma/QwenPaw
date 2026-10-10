@@ -264,6 +264,8 @@ class TestResolveTurnUsage:
             session=SimpleNamespace(),
             user_id="u",
             channel="console",
+            estimated_provider_id="codex",
+            estimated_model_name="gpt-5.6-sol",
         )
 
         assert ctx == {
@@ -276,6 +278,9 @@ class TestResolveTurnUsage:
         assert got_turn["estimated"] is True
         assert got_turn["total_tokens"] == 500
         assert got_turn["completion_tokens"] == 100
+        assert got_turn["provider_id"] == "codex"
+        assert got_turn["model_name"] == "gpt-5.6-sol"
+        assert got_turn["measurement"] == "local_estimate"
         assert state is agent_state
 
     async def test_existing_provider_turn_is_not_replaced_by_estimate(

@@ -18,15 +18,20 @@ def fmt_tokens(n: int) -> str:
     return f"{n / 1000:.1f}K" if n >= 1000 else str(n)
 
 
-def _turn_from_stats(stats: dict[str, Any]) -> dict[str, Any] | None:
+def _turn_from_stats(
+    stats: dict[str, Any],
+    *,
+    provider_id: str = "",
+    model_name: str = "",
+) -> dict[str, Any] | None:
     """Build estimated turn usage from a context-stats snapshot."""
     est = int(stats.get("estimated_tokens", 0) or 0)
     if est <= 0:
         return None
     latest_out = int(stats.get("latest_assistant_tokens", 0) or 0)
     return {
-        "provider_id": "",
-        "model_name": "",
+        "provider_id": provider_id,
+        "model_name": model_name,
         "prompt_tokens": max(est - latest_out, 0),
         "completion_tokens": latest_out,
         "total_tokens": est,
@@ -167,6 +172,8 @@ async def resolve_turn_usage(
     user_id: str,
     channel: str,
     invocation_id: str | None = None,
+    estimated_provider_id: str = "",
+    estimated_model_name: str = "",
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, Any | None]:
     """Resolve turn/ctx from provider usage + full agent-state estimate."""
     turn = get_turn_usage_accumulator().pop(
@@ -211,7 +218,11 @@ async def resolve_turn_usage(
         ),
     }
     if turn is None:
-        turn = _turn_from_stats(stats)
+        turn = _turn_from_stats(
+            stats,
+            provider_id=estimated_provider_id,
+            model_name=estimated_model_name,
+        )
     turn = add_session_cache_usage(
         turn,
         getattr(agent_state, "context", None),

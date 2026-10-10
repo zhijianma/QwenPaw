@@ -1363,6 +1363,11 @@ Cron 不形成独立审批或产物事实源。
       全局、模型与日期资源视图；Agent Token 归入“智能体统计”，Chat/Turn 仅由 Chat
       回合用量消费，不在设置页形成记录浏览器。服务端 Summary 仍保留 Agent、Chat、
       Turn 查询能力和同一事实口径，避免展示调整破坏领域数据或后续投影。
+      智能体统计的“按对话”不再依赖 ModelCall-only projection，而是按
+      `session_relative_paths()` 将当前 Workspace 的持久 Session 精确映射到
+      `ChatSpec.id`，再聚合 assistant turn usage metadata；Native 与 Harness 因而走同一
+      展示口径且不会双算。Harness 无 Provider usage 时保留 `local_estimate`，并带实际
+      backend/model 路由身份；Turn 仍不进入设置页表格。
     - [x] Provider/Model 聚合不再直接以 `provider:model` 作为内部归并身份；领域层使用
       精确二元组，普通 key 保持兼容，只有两条实际路由发生分隔符碰撞时才切换为 JSON
       tuple key。Console 从 `provider_id/model` 字段渲染标签，不解析兼容 key。碰撞路由

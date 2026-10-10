@@ -657,6 +657,12 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
     临近压缩调用。缓存语义可验证时用 cache-eligible input，否则用 Provider input；
     旧调用缺 window 时保持不可观测，不伪造 `0%`。Chat 的 `local_estimate` 只服务当前
     上下文指示器，不混入跨范围 Provider 统计。
+  - [x] 展示职责分层：Token Usage Settings 只展示 global / Provider / Model / 日期；
+    当前 Agent 的 Chat 汇总放在“智能体统计”，Turn 明细只随 Chat 消息展示。Agent
+    Chat 汇总直接聚合已持久化的每轮 usage metadata，并通过既有
+    `session_relative_paths()` 映射回 `ChatSpec.id`，因此本地 Codex/Qoder Harness
+    即使没有 Model Call 投影也不会漏掉对话；该兼容展示不回写或污染全局 Provider
+    事实投影。
 - [x] 将 Chat 运行模型从隐含的一问一答升级为 Conversation Execution Chain：
   `Submission` 是输入，`Invocation` 是一次运行尝试，`correlation_id` 贯穿同一意图
   的多次等待与恢复；短问答继续使用单 Invocation 快速路径。

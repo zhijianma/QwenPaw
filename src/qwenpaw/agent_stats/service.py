@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -14,6 +15,7 @@ import aiofiles.os
 import orjson
 
 from ..app.chats.repo import JsonChatRepository
+from ..app.chats.session import session_relative_paths
 from ..config.utils import get_agent_dirs
 from ..token_usage import get_token_usage_manager
 from ..token_usage.turn_usage import TURN_USAGE_META_KEY
@@ -26,6 +28,21 @@ from .models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _SessionStats:
+    """Independent result from scanning one persisted Conversation."""
+
+    tool_calls: int = 0
+    has_messages: bool = False
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    llm_calls: int = 0
+    cache_read_tokens: int = 0
+    cache_eligible_input_tokens: int = 0
+    chat_id: str | None = None
+    chat_name: str | None = None
 
 
 # pylint: disable=unused-argument
@@ -166,12 +183,17 @@ def _process_session_file(
     channel: str,
     session_stem: str,
     active_sessions: dict[str, set[str]],
-) -> tuple[int, bool, int, int, int]:
+    *,
+    chat_id: str | None = None,
+    chat_name: str | None = None,
+) -> _SessionStats:
     tool_call_count = 0
     has_messages_in_range = False
     agent_prompt_tokens = 0
     agent_completion_tokens = 0
     agent_llm_calls = 0
+    cache_read_tokens = 0
+    cache_eligible_input_tokens = 0
     try:
         memories = _extract_session_messages(session_data)
 
@@ -239,6 +261,8 @@ def _process_session_file(
                 cache_tokens = _extract_turn_cache_tokens(msg_data)
                 if cache_tokens is not None:
                     cache_read, cache_eligible = cache_tokens
+                    cache_read_tokens += cache_read
+                    cache_eligible_input_tokens += cache_eligible
                     ds.setdefault("agent_cache_read_tokens", 0)
                     ds.setdefault("agent_cache_eligible_input_tokens", 0)
                     ds["agent_cache_read_tokens"] += cache_read
@@ -261,12 +285,16 @@ def _process_session_file(
     if has_messages_in_range and channel in channel_stats:
         channel_stats[channel]["session_count"] += 1
 
-    return (
-        tool_call_count,
-        has_messages_in_range,
-        agent_prompt_tokens,
-        agent_completion_tokens,
-        agent_llm_calls,
+    return _SessionStats(
+        tool_calls=tool_call_count,
+        has_messages=has_messages_in_range,
+        prompt_tokens=agent_prompt_tokens,
+        completion_tokens=agent_completion_tokens,
+        llm_calls=agent_llm_calls,
+        cache_read_tokens=cache_read_tokens,
+        cache_eligible_input_tokens=cache_eligible_input_tokens,
+        chat_id=chat_id,
+        chat_name=chat_name,
     )
 
 
@@ -322,14 +350,23 @@ class AgentStatsService:
         agent_prompt_tokens = 0
         agent_completion_tokens = 0
         agent_llm_calls = 0
-        chat_names: dict[str, str] = {}
+        chat_by_session_path: dict[str, tuple[str, str]] = {}
+        chat_usage_by_id: dict[str, ChatUsageStats] = {}
 
         if chats_file.exists():
             try:
                 repo = JsonChatRepository(chats_file)
                 chats = await repo.list_chats()
                 for chat in chats:
-                    chat_names[chat.id] = chat.name
+                    for relative_path in session_relative_paths(
+                        chat.session_id,
+                        chat.user_id,
+                        chat.channel,
+                    ):
+                        chat_by_session_path[relative_path] = (
+                            chat.id,
+                            chat.name,
+                        )
                     if chat.created_at is None:
                         continue
                     chat_date = chat.created_at.date()
@@ -368,14 +405,14 @@ class AgentStatsService:
 
                 async def _process_one(
                     session_file: Path,
-                ) -> tuple[int, bool, int, int, int]:
+                ) -> _SessionStats:
                     async with session_fd_sem:
                         if _should_skip_by_mtime(
                             session_file,
                             start_date,
                             end_date,
                         ):
-                            return 0, False, 0, 0, 0
+                            return _SessionStats()
 
                         try:
                             async with aiofiles.open(
@@ -390,18 +427,24 @@ class AgentStatsService:
                                 session_file,
                                 e,
                             )
-                            return 0, False, 0, 0, 0
+                            return _SessionStats()
 
                         if _should_skip_by_content_range(
                             session_data,
                             start_date_str,
                             end_date_str,
                         ):
-                            return 0, False, 0, 0, 0
+                            return _SessionStats()
 
                         stem = session_file.stem
                         # Check if session is in a channel subdirectory
                         channel = session_file.parent.name
+                        relative_path = session_file.relative_to(
+                            sessions_dir,
+                        ).as_posix()
+                        chat_identity = chat_by_session_path.get(
+                            relative_path,
+                        )
 
                         return _process_session_file(
                             session_data,
@@ -412,25 +455,39 @@ class AgentStatsService:
                             channel,
                             stem,
                             active_sessions,
+                            chat_id=(
+                                chat_identity[0] if chat_identity else None
+                            ),
+                            chat_name=(
+                                chat_identity[1] if chat_identity else None
+                            ),
                         )
 
                 tasks = [_process_one(sf) for sf in session_files]
                 results = await asyncio.gather(*tasks, return_exceptions=True)
                 for result in results:
-                    if isinstance(result, tuple) and len(result) == 5:
-                        (
-                            tool_calls,
-                            has_messages,
-                            sess_prompt,
-                            sess_completion,
-                            sess_llm_calls,
-                        ) = result
-                        total_tool_calls += tool_calls
-                        if has_messages:
+                    if isinstance(result, _SessionStats):
+                        total_tool_calls += result.tool_calls
+                        if result.has_messages:
                             total_active_sessions += 1
-                        agent_prompt_tokens += sess_prompt
-                        agent_completion_tokens += sess_completion
-                        agent_llm_calls += sess_llm_calls
+                        agent_prompt_tokens += result.prompt_tokens
+                        agent_completion_tokens += result.completion_tokens
+                        agent_llm_calls += result.llm_calls
+                        if result.chat_id and result.llm_calls > 0:
+                            row = chat_usage_by_id.setdefault(
+                                result.chat_id,
+                                ChatUsageStats(
+                                    chat_id=result.chat_id,
+                                    name=result.chat_name,
+                                ),
+                            )
+                            row.prompt_tokens += result.prompt_tokens
+                            row.completion_tokens += result.completion_tokens
+                            row.cache_read_tokens += result.cache_read_tokens
+                            row.cache_eligible_input_tokens += (
+                                result.cache_eligible_input_tokens
+                            )
+                            row.call_count += result.llm_calls
                     elif isinstance(result, Exception):
                         logger.debug("Failed to process session: %s", result)
             except Exception as e:
@@ -439,7 +496,21 @@ class AgentStatsService:
         total_prompt_tokens = 0
         total_completion_tokens = 0
         total_llm_calls = 0
-        chat_usage: list[ChatUsageStats] = []
+        chat_usage: list[ChatUsageStats] = sorted(
+            chat_usage_by_id.values(),
+            key=lambda item: (
+                -(item.prompt_tokens + item.completion_tokens),
+                item.name or "",
+                item.chat_id or "",
+            ),
+        )
+        for item in chat_usage:
+            if item.cache_eligible_input_tokens > 0:
+                item.cache_hit_rate = (
+                    item.cache_read_tokens
+                    / item.cache_eligible_input_tokens
+                    * 100
+                )
         if include_token_overlay:
             token_manager = get_token_usage_manager()
             token_summary = await token_manager.get_summary(
@@ -456,47 +527,6 @@ class AgentStatsService:
                         "completion_tokens"
                     ] = ts.completion_tokens
                     daily_stats[date_str]["llm_calls"] = ts.call_count
-            if agent_id is not None:
-                agent_token_summary = await token_manager.get_summary(
-                    start_date=start_date,
-                    end_date=end_date,
-                    agent_id=agent_id,
-                )
-                chat_usage = sorted(
-                    (
-                        ChatUsageStats(
-                            chat_id=stats.chat_id,
-                            name=(
-                                chat_names.get(stats.chat_id)
-                                if stats.chat_id is not None
-                                else None
-                            ),
-                            prompt_tokens=stats.prompt_tokens,
-                            completion_tokens=stats.completion_tokens,
-                            cache_read_tokens=stats.cache_read_tokens,
-                            cache_eligible_input_tokens=(
-                                stats.cache_eligible_input_tokens
-                            ),
-                            cache_hit_rate=(
-                                stats.cache_read_tokens
-                                / stats.cache_eligible_input_tokens
-                                * 100
-                                if stats.cache_eligible_input_tokens > 0
-                                else None
-                            ),
-                            usage_unobserved_calls=(
-                                stats.usage_unobserved_calls
-                            ),
-                            call_count=stats.call_count,
-                        )
-                        for stats in agent_token_summary.scopes.chats
-                    ),
-                    key=lambda item: (
-                        -(item.prompt_tokens + item.completion_tokens),
-                        item.name or "",
-                        item.chat_id or "",
-                    ),
-                )
 
         for date_str, session_set in active_sessions.items():
             if date_str in daily_stats:

@@ -15,11 +15,8 @@ from qwenpaw.agent_stats.service import (
     AgentStatsService,
     _process_session_file,
 )
+from qwenpaw.app.chats.session import session_filename
 from qwenpaw.token_usage.manager import TokenUsageStats, TokenUsageSummary
-from qwenpaw.token_usage.models import (
-    TokenUsageByChat,
-    TokenUsageScopeRows,
-)
 from qwenpaw.token_usage.turn_usage import TURN_USAGE_META_KEY
 
 
@@ -107,13 +104,7 @@ class TestProcessSessionFileAgentTokens:
             },
         }
 
-        (
-            tool_calls,
-            has_messages,
-            agent_prompt,
-            agent_completion,
-            agent_llm_calls,
-        ) = _process_session_file(
+        result = _process_session_file(
             session_data,
             "2026-07-01",
             "2026-07-31",
@@ -124,11 +115,11 @@ class TestProcessSessionFileAgentTokens:
             active_sessions,
         )
 
-        assert has_messages is True
-        assert tool_calls == 0
-        assert agent_prompt == 300
-        assert agent_completion == 100
-        assert agent_llm_calls == 2
+        assert result.has_messages is True
+        assert result.tool_calls == 0
+        assert result.prompt_tokens == 300
+        assert result.completion_tokens == 100
+        assert result.llm_calls == 2
         # Global daily token fields must remain untouched (overlay owns them)
         assert daily_stats["2026-07-23"]["prompt_tokens"] == 0
         assert daily_stats["2026-07-23"]["completion_tokens"] == 0
@@ -190,7 +181,9 @@ class TestProcessSessionFileAgentTokens:
             "sess-2",
             {},
         )
-        assert result[2:] == (0, 0, 0)
+        assert result.prompt_tokens == 0
+        assert result.completion_tokens == 0
+        assert result.llm_calls == 0
 
     def test_invalid_usage_tokens_do_not_wipe_session_stats(self):
         daily_stats = {"2026-07-23": _empty_daily("2026-07-23")}
@@ -221,13 +214,7 @@ class TestProcessSessionFileAgentTokens:
             },
         }
 
-        (
-            _tool_calls,
-            has_messages,
-            agent_prompt,
-            agent_completion,
-            agent_llm_calls,
-        ) = _process_session_file(
+        result = _process_session_file(
             session_data,
             "2026-07-23",
             "2026-07-23",
@@ -238,11 +225,11 @@ class TestProcessSessionFileAgentTokens:
             {},
         )
 
-        assert has_messages is True
+        assert result.has_messages is True
         assert daily_stats["2026-07-23"]["assistant_messages"] == 2
-        assert agent_prompt == 20
-        assert agent_completion == 5
-        assert agent_llm_calls == 1
+        assert result.prompt_tokens == 20
+        assert result.completion_tokens == 5
+        assert result.llm_calls == 1
         assert daily_stats["2026-07-23"]["agent_prompt_tokens"] == 20
         assert daily_stats["2026-07-23"]["agent_completion_tokens"] == 5
 
@@ -270,13 +257,7 @@ class TestProcessSessionFileAgentTokens:
             },
         }
 
-        (
-            _tool_calls,
-            has_messages,
-            agent_prompt,
-            agent_completion,
-            agent_llm_calls,
-        ) = _process_session_file(
+        result = _process_session_file(
             session_data,
             "2026-07-23",
             "2026-07-24",
@@ -287,10 +268,10 @@ class TestProcessSessionFileAgentTokens:
             {},
         )
 
-        assert has_messages is True
-        assert agent_prompt == 150
-        assert agent_completion == 15
-        assert agent_llm_calls == 2
+        assert result.has_messages is True
+        assert result.prompt_tokens == 150
+        assert result.completion_tokens == 15
+        assert result.llm_calls == 2
         assert daily_stats["2026-07-23"]["agent_prompt_tokens"] == 100
         assert daily_stats["2026-07-23"]["agent_completion_tokens"] == 10
         assert daily_stats["2026-07-23"]["agent_llm_calls"] == 1
@@ -331,7 +312,9 @@ class TestProcessSessionFileAgentTokens:
             "sess-3",
             {},
         )
-        assert result[2:] == (10, 5, 1)
+        assert result.prompt_tokens == 10
+        assert result.completion_tokens == 5
+        assert result.llm_calls == 1
         assert daily_stats["2026-07-23"]["agent_prompt_tokens"] == 10
         assert daily_stats["2026-07-23"]["agent_completion_tokens"] == 5
         assert daily_stats["2026-07-23"]["prompt_tokens"] == 0
@@ -510,27 +493,32 @@ class TestAgentStatsServiceAgentTokens:
             ),
             encoding="utf-8",
         )
+        sessions = workspace / "sessions" / "console"
+        sessions.mkdir(parents=True)
+        messages = [
+            _assistant_with_usage(
+                created_at=f"2026-07-23T08:00:0{index}Z",
+                prompt_tokens=40,
+                completion_tokens=10,
+            )
+            for index in range(3)
+        ]
+        messages[0]["metadata"][TURN_USAGE_META_KEY]["usage"].update(
+            {
+                "cache_observed": True,
+                "cache_read_tokens": 40,
+                "cache_eligible_input_tokens": 80,
+                "estimated": True,
+                "measurement": "local_estimate",
+            },
+        )
+        (sessions / session_filename("console:chat-a", "console")).write_text(
+            json.dumps({"agent": {"state": {"context": messages}}}),
+            encoding="utf-8",
+        )
         global_summary = TokenUsageSummary()
-        agent_summary = TokenUsageSummary(
-            scopes=TokenUsageScopeRows(
-                chats=[
-                    TokenUsageByChat(
-                        agent_id="agent-a",
-                        chat_id="chat-a",
-                        prompt_tokens=120,
-                        completion_tokens=30,
-                        cache_read_tokens=40,
-                        cache_eligible_input_tokens=80,
-                        usage_unobserved_calls=1,
-                        call_count=3,
-                    ),
-                ],
-            ),
-        )
         mock_manager = AsyncMock()
-        mock_manager.get_summary = AsyncMock(
-            side_effect=[global_summary, agent_summary],
-        )
+        mock_manager.get_summary = AsyncMock(return_value=global_summary)
 
         with patch(
             "qwenpaw.agent_stats.service.get_token_usage_manager",
@@ -543,10 +531,9 @@ class TestAgentStatsServiceAgentTokens:
                 agent_id="agent-a",
             )
 
-        mock_manager.get_summary.assert_any_await(
+        mock_manager.get_summary.assert_awaited_once_with(
             start_date=date(2026, 7, 23),
             end_date=date(2026, 7, 23),
-            agent_id="agent-a",
         )
         assert len(summary.chat_usage) == 1
         chat = summary.chat_usage[0]
@@ -555,7 +542,7 @@ class TestAgentStatsServiceAgentTokens:
         assert chat.prompt_tokens == 120
         assert chat.completion_tokens == 30
         assert chat.cache_hit_rate == 50
-        assert chat.usage_unobserved_calls == 1
+        assert chat.usage_unobserved_calls == 0
         assert chat.call_count == 3
         assert not hasattr(chat, "turn_id")
 

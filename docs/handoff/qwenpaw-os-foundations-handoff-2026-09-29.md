@@ -1380,6 +1380,12 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
   Interrupt 和活动状态来自 Runtime Projection/SSE。外部 Backend 的 legacy sender
   继续作为明确兼容边界保留。Console 定点回归 `203 passed`；固定 Chat 的真实
   Runtime/Queue projection revision 均为 429，active/queued Submission 均为空。
+- 外部 Harness 的本地 Turn 估算现携带实际 backend/model 身份，不再显示为空路由。
+  “智能体统计”的按对话表直接从持久化 assistant turn usage 聚合，并用既有跨平台
+  Session 路径契约解析为 `ChatSpec.id`；不再要求 Harness 额外产生 ModelCall 记录。
+  固定 Agent `KcWGdf` 的真实 API 已返回 “Harness approval E2E”：input 578、output
+  24、2 个已记录 Turn。Token Usage Settings 仍不展示 Chat/Turn，Turn 只供 Chat
+  ResponseCard 使用。后端相关定点测试 107 项、前端两个页面 11 项通过。
 
 ## 9. 2026-10-10 Lite Action Plane 门禁收敛
 
