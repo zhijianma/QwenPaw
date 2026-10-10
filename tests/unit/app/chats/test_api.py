@@ -216,6 +216,13 @@ async def test_list_chat_actions_returns_privacy_safe_records(tmp_path):
     assert record.request.arguments_hash != "sha256:" + "a" * 64
     payload = record.model_dump(mode="json")
     assert payload["request"]["chat_id"] == chat_id
+    assert payload["request"]["admission"] == {
+        "schema": "qwenpaw.kernel-model.v1",
+        "mode": "legacy_unobserved",
+        "authority": "qwenpaw.legacy.governance",
+        "decision": "allow",
+        "evidence": "legacy",
+    }
     assert "conversation_id" not in payload["request"]
     assert "arguments" not in payload["request"]
     manager.get_chat.assert_awaited_once_with(chat_id)

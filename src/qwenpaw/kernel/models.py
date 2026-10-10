@@ -141,6 +141,24 @@ class ActionKind(str, Enum):
         return None
 
 
+class ActionAdmissionMode(str, Enum):
+    """Where an executor's authority is established in its lifecycle."""
+
+    HOST_PRE_EXECUTION = "host_pre_execution"
+    EXECUTOR_DELEGATED = "executor_delegated"
+    PROVIDER_OBSERVED = "provider_observed"
+    LEGACY_UNOBSERVED = "legacy_unobserved"
+
+
+class ActionAdmissionEvidence(str, Enum):
+    """Durable evidence class supporting an Action admission claim."""
+
+    POLICY_AUDIT = "policy_audit"
+    ACTION_INTENT = "action_intent"
+    PROVIDER_EVENT = "provider_event"
+    LEGACY = "legacy"
+
+
 class ActionIdempotencyMode(str, Enum):
     """Where an Action idempotency key is durably enforced."""
 
@@ -792,6 +810,15 @@ class ActionApprovalLink(_ChatIdentity):
     linked_at: AwareDatetime = Field(default_factory=utc_now)
 
 
+class ActionAdmission(KernelModel):
+    """Truthful admission semantics shared by every Action executor."""
+
+    mode: ActionAdmissionMode
+    authority: NamespacedId
+    decision: NonEmptyStr
+    evidence: ActionAdmissionEvidence
+
+
 class ActionRequest(_ChatIdentity):
     """Privacy-safe durable intent recorded before external execution.
 
@@ -843,8 +870,65 @@ class ActionRequest(_ChatIdentity):
     retry_of_action_id: UUID | None = None
     attempt: int = Field(default=1, ge=1)
     approval_id: UUID | None = None
+    admission: ActionAdmission
     policy_decision: NonEmptyStr = "allow"
     requested_at: AwareDatetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_admission(cls, value: object) -> object:
+        """Derive explicit admission semantics from historical records."""
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        admission = data.get("admission")
+        if admission is not None:
+            if "policy_decision" not in data:
+                if isinstance(admission, ActionAdmission):
+                    data["policy_decision"] = admission.decision
+                elif isinstance(admission, dict):
+                    data["policy_decision"] = admission.get(
+                        "decision",
+                        "allow",
+                    )
+            return data
+        decision = str(data.get("policy_decision") or "allow")
+        raw_kind = data.get("kind", ActionKind.TOOL.value)
+        try:
+            kind = ActionKind(raw_kind)
+        except ValueError:
+            kind = ActionKind.TOOL
+        capability_id = str(
+            data.get("capability_id") or "qwenpaw.legacy.unknown"
+        )
+        if decision == "retry_policy":
+            mode = ActionAdmissionMode.HOST_PRE_EXECUTION
+            authority = "qwenpaw.system.action-retry"
+        elif kind is ActionKind.DRIVER:
+            mode = ActionAdmissionMode.EXECUTOR_DELEGATED
+            authority = capability_id
+        elif kind is ActionKind.HARNESS_REMOTE:
+            mode = ActionAdmissionMode.PROVIDER_OBSERVED
+            authority = capability_id
+        else:
+            mode = ActionAdmissionMode.LEGACY_UNOBSERVED
+            authority = "qwenpaw.legacy.governance"
+        data["admission"] = {
+            "mode": mode.value,
+            "authority": authority,
+            "decision": decision,
+            "evidence": ActionAdmissionEvidence.LEGACY.value,
+        }
+        return data
+
+    @model_validator(mode="after")
+    def validate_admission_projection(self) -> Self:
+        """Keep the deprecated decision projection unambiguous."""
+        if self.policy_decision != self.admission.decision:
+            raise ValueError(
+                "policy_decision must match admission.decision",
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_retry_lineage(self) -> Self:

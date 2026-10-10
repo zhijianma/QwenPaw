@@ -1127,8 +1127,15 @@ Cron 不形成独立审批或产物事实源。
       不再旁路审计。新 Runtime 在 Governor 初始化失败时也不再回退到旧
       `GuardedFunctionTool`，统一由 `PolicyGuardedTool` fail closed；旧类仅保留 import
       兼容。该切片不把 Driver/Harness 的 Action Observation 冒充 Policy Audit；两者
-      是否接入共享 Policy Admission 尚未冻结，因此“所有高风险执行可追溯”总项保持
-      未完成。
+      已通过下述 `ActionAdmission` 区分委托与观察，不复制 Tool Audit。“所有高风险
+      执行可追溯”仍需 Driver Policy 决策证据与 Harness provider event 完整性门禁后
+      才能关闭。
+    - [x] 冻结公共 `ActionAdmissionMode / ActionAdmissionEvidence / ActionAdmission`：
+      Tool 明确为 Host 执行前准入与 Policy Audit，系统/插件 Driver 明确为执行器委托
+      与 Action intent，Harness 明确为 provider-observed 与标准事件证据，Retry 明确为
+      Host 执行前准入。`ActionRequest.admission` 是新权威字段；旧 `policy_decision`
+      保留为强一致兼容投影，历史 JSON 自动派生 `legacy` evidence，不伪造成新审计。
+      Kernel 与 Plugin SDK 同时导出这些模型，二次开发者无需理解 Runtime 私有对象。
     - [x] Action 公共合同统一使用 `chat_id = ChatSpec.id`：Request、Result、Approval
       Link、Execution Context、Retry Checkpoint 和 Committed Item 的新 JSON 不再公开
       `conversation_id`。历史 JSON 与旧 Python 调用仍通过只读兼容别名恢复，Store 的

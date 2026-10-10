@@ -546,6 +546,12 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
     Result、内容最小化、Artifact/Evidence 关联和 fail-closed 语义。Action 公共模型
     统一以 `chat_id = ChatSpec.id` 表达归属，历史 `conversation_id` 仅作为输入与
     Python 属性兼容，不再作为新 JSON 字段扩散。
+  - [x] `ActionAdmission` 冻结不同执行器的真实治理时序：Tool 使用
+    `host_pre_execution + policy_audit`，内置与插件 Driver 使用
+    `executor_delegated + action_intent`，外部 Harness 使用
+    `provider_observed + provider_event`。统一的是领域合同、Action 身份、审批关联与
+    结果证据，而不是假设 Host 能预判外部 Agent 的每个内部工具。旧
+    `policy_decision` 只保留为与 `admission.decision` 强一致的兼容投影。
   - [x] Driver 垂直切片已落地：系统与插件 Provider、旧 Driver Manager 兼容路径
     共用 Driver Action；运行中审批通过不可变 `ActionApprovalLink` 关联，拒绝与
     执行失败分开。MCP 作为 Driver 协议随该路径接入；显式 `readOnlyHint` 映射为

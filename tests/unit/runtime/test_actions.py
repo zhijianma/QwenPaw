@@ -37,6 +37,8 @@ from qwenpaw.kernel import (
     ACTION_RETRY_DECISION_METADATA_KEY,
     ACTION_RETRY_HINT_METADATA_KEY,
     COMMITTED_ACTION_ITEM_METADATA_KEY,
+    ActionAdmissionEvidence,
+    ActionAdmissionMode,
     ActionIdempotencyMode,
     ActionKind,
     ActionRecord,
@@ -1216,6 +1218,16 @@ async def test_tool_policy_audit_uses_authoritative_action_identity(
         scope.correlation_id or scope.invocation_id,
     )
     assert audit_spec.action_id == str(record.request.action_id)
+    assert record.request.admission.mode is (
+        ActionAdmissionMode.HOST_PRE_EXECUTION
+    )
+    assert record.request.admission.authority == (
+        "qwenpaw.system.governance"
+    )
+    assert record.request.admission.decision == "allow"
+    assert record.request.admission.evidence is (
+        ActionAdmissionEvidence.POLICY_AUDIT
+    )
 
 
 @pytest.mark.asyncio
@@ -1501,6 +1513,14 @@ async def test_driver_definition_uses_real_provider_and_capability_identity(
     assert record.request.reversible is False
     assert record.request.idempotency_mode is (
         ActionIdempotencyMode.EXECUTOR_ENFORCED
+    )
+    assert record.request.admission.mode is (
+        ActionAdmissionMode.EXECUTOR_DELEGATED
+    )
+    assert record.request.admission.authority == "example.driver-provider"
+    assert record.request.admission.decision == "driver_policy"
+    assert record.request.admission.evidence is (
+        ActionAdmissionEvidence.ACTION_INTENT
     )
     assert observed_execution is not None
     assert observed_execution.action_id == record.request.action_id

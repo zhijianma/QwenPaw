@@ -15,6 +15,8 @@ from qwenpaw.harnesses.actions import (
 )
 from qwenpaw.harnesses.events import HarnessEvent, HarnessEventKind
 from qwenpaw.kernel import (
+    ActionAdmissionEvidence,
+    ActionAdmissionMode,
     ActionRetryDisposition,
     ActionStatus,
     InvocationScope,
@@ -74,6 +76,16 @@ async def test_approval_creates_action_before_provider_completion(
 
     assert pending.result is None
     assert pending.request.policy_decision == "approval_required"
+    assert pending.request.admission.mode is (
+        ActionAdmissionMode.PROVIDER_OBSERVED
+    )
+    assert pending.request.admission.authority == (
+        "qwenpaw.system.harness.codex"
+    )
+    assert pending.request.admission.decision == "approval_required"
+    assert pending.request.admission.evidence is (
+        ActionAdmissionEvidence.PROVIDER_EVENT
+    )
     assert pending.request.approval_id is None
     assert pending.request.redacted_arguments == {
         "command": "[CONTENT OMITTED]",

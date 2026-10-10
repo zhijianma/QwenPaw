@@ -18,6 +18,9 @@ from agentscope.tool import ToolResponse
 from ..kernel import (
     ACTION_RETRY_DECISION_METADATA_KEY,
     ACTION_RETRY_HINT_METADATA_KEY,
+    ActionAdmission,
+    ActionAdmissionEvidence,
+    ActionAdmissionMode,
     ActionApprovalLink,
     ActionExecutionContext,
     ActionIdempotencyMode,
@@ -96,6 +99,50 @@ class ActionRequestPersistenceError(RuntimeError):
 
 class ActionResultPersistenceError(RuntimeError):
     """Raised after execution when its terminal evidence cannot be stored."""
+
+
+def _action_admission(
+    *,
+    kind: ActionKind,
+    capability_id: str,
+    policy_decision: str,
+) -> ActionAdmission:
+    """Describe the real admission boundary for one executor family."""
+    decision = policy_decision or "unknown"
+    if decision == "retry_policy":
+        return ActionAdmission(
+            mode=ActionAdmissionMode.HOST_PRE_EXECUTION,
+            authority="qwenpaw.system.action-retry",
+            decision=decision,
+            evidence=ActionAdmissionEvidence.ACTION_INTENT,
+        )
+    if kind is ActionKind.DRIVER:
+        return ActionAdmission(
+            mode=ActionAdmissionMode.EXECUTOR_DELEGATED,
+            authority=capability_id,
+            decision=decision,
+            evidence=ActionAdmissionEvidence.ACTION_INTENT,
+        )
+    if kind is ActionKind.HARNESS_REMOTE:
+        return ActionAdmission(
+            mode=ActionAdmissionMode.PROVIDER_OBSERVED,
+            authority=capability_id,
+            decision=decision,
+            evidence=ActionAdmissionEvidence.PROVIDER_EVENT,
+        )
+    if decision in {"unobserved", "unknown"}:
+        return ActionAdmission(
+            mode=ActionAdmissionMode.LEGACY_UNOBSERVED,
+            authority="qwenpaw.legacy.governance",
+            decision=decision,
+            evidence=ActionAdmissionEvidence.LEGACY,
+        )
+    return ActionAdmission(
+        mode=ActionAdmissionMode.HOST_PRE_EXECUTION,
+        authority="qwenpaw.system.governance",
+        decision=decision,
+        evidence=ActionAdmissionEvidence.POLICY_AUDIT,
+    )
 
 
 class ActionRetryNotReadyError(RuntimeError):
@@ -880,6 +927,11 @@ class RuntimeActionRecorder:
             retry_of_action_id=retry_of_action_id,
             attempt=attempt,
             approval_id=approval_id,
+            admission=_action_admission(
+                kind=kind,
+                capability_id=capability_id,
+                policy_decision=policy_decision,
+            ),
             policy_decision=policy_decision or "unknown",
             requested_at=self._clock(),
         )

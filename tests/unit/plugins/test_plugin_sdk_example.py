@@ -221,6 +221,12 @@ def test_public_sdk_exports_runtime_interaction_contract() -> None:
     assert sdk.DriverCredentialHandle is not None
     assert sdk.DriverCredentialUnavailableError is not None
     assert sdk.DriverToolDefinition is not None
+    assert sdk.ActionAdmission is not None
+    assert sdk.ActionAdmissionEvidence.POLICY_AUDIT.value == "policy_audit"
+    assert (
+        sdk.ActionAdmissionMode.EXECUTOR_DELEGATED.value
+        == "executor_delegated"
+    )
     assert sdk.ScheduleDefinition is not None
     assert sdk.ScheduleDefinitionNotFoundError is not None
     assert sdk.ScheduleFire is not None

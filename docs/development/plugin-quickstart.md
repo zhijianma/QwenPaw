@@ -1210,6 +1210,16 @@ reversible); read-only providers should declare narrower values explicitly.
 Approvals requested during `invoke` are linked to that Action by the host.
 Plugins neither create Action IDs nor write Action records directly.
 
+`ActionRequest.admission` describes where execution authority is established.
+Plugin Drivers use `executor_delegated`: QwenPaw first stores the Action intent,
+then the selected Driver evaluates its own policy and may call the unified Host
+approval method. Built-in Drivers use the identical contract. Do not claim
+`host_pre_execution` or `policy_audit` from Driver code; those values are for
+Host-governed Tools. External Harness actions use `provider_observed` because
+the Host learns about an internal tool from normalized provider events. The
+legacy `policy_decision` field is a compatibility projection and must always
+equal `admission.decision`.
+
 Third-party providers receive a minimal `DriverHost` containing only config,
 pre-bound credential handles, and the unified approval method. The built-in
 Workspace adapter receives a different private compatibility Host with
