@@ -269,6 +269,11 @@ export function createChatClient(transport: ChatClientTransport) {
         }
       }
     } finally {
+      try {
+        await reader.cancel();
+      } catch {
+        // Preserve the original stream error when cancellation also fails.
+      }
       reader.releaseLock();
     }
   };

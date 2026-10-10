@@ -1531,3 +1531,10 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
   可以解释 approval/user-input、timer、external-event、resource 等等待原因、恢复
   continuation mode 与 Provider 尝试结果，但不能绕过 Interaction、resource release
   或 checkpoint outbox 自行重放。SDK 不提供可能重复副作用的通用 `resume()`。
+- SDK remote/managed 同构门禁已落到真实子进程 fixture：两个公开入口读取相同的
+  history、runtime snapshot、携带 `Last-Event-ID` 的恢复流和 HTTP 错误，返回值、
+  游标与错误正文一致。该门禁明确验证 snapshot transport parity，不虚构 durable
+  event replay。
+- 真实 8004 Host 的单帧消费检查发现 async generator 提前结束后 SSE socket 未关闭；
+  公共 Client 现会先 `reader.cancel()` 再释放锁，并以未结束 ReadableStream 回归测试
+  锁定资源释放行为，避免 SDK 调用方读取一次 snapshot 后挂住 Node 进程。

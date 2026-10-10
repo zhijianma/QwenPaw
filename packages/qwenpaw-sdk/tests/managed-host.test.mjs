@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
+import {
+  createQwenPawClient,
+  QwenPawHttpError,
+} from "@qwenpaw/client";
 import { ManagedHostError, QwenPawHost } from "../dist/index.js";
 
 const fixture = fileURLToPath(
@@ -12,10 +16,18 @@ function options(mode, extra = {}) {
   return {
     runtime: { executable: process.execPath, args: [fixture] },
     env: { FAKE_QWENPAW_MODE: mode },
-    startupTimeoutMs: 1_000,
+    startupTimeoutMs: 2_000,
     shutdownTimeoutMs: 1_000,
     ...extra,
   };
+}
+
+async function readRuntimeStream(stream) {
+  const first = await stream.next();
+  const done = await stream.next();
+  assert.equal(first.done, false);
+  assert.equal(done.done, true);
+  return { projection: first.value, cursor: done.value };
 }
 
 test("starts, negotiates and closes one owned Host", async () => {
@@ -33,6 +45,48 @@ test("starts, negotiates and closes one owned Host", async () => {
   assert.equal(exit.expected, true);
   assert.equal(exit.forced, false);
   assert.ok(exit.code !== null || exit.signal !== null);
+});
+
+test("remote and managed modes preserve Chat values, errors and streams", async () => {
+  const host = await QwenPawHost.create(options("ready"));
+  const remote = createQwenPawClient({ baseUrl: host.apiUrl });
+  const managedChat = host.chats.open("chat-1");
+
+  try {
+    assert.deepEqual(
+      await managedChat.history(),
+      await remote.chats.history("chat-1"),
+    );
+    assert.deepEqual(
+      await managedChat.runtime(),
+      await remote.chats.runtime("chat-1"),
+    );
+
+    const managedStream = await readRuntimeStream(
+      managedChat.followRuntime({ afterCursor: "cursor-1" }),
+    );
+    const remoteStream = await readRuntimeStream(
+      remote.chats.followRuntime("chat-1", { afterCursor: "cursor-1" }),
+    );
+    assert.deepEqual(managedStream, remoteStream);
+    assert.equal(managedStream.cursor, "cursor-2");
+
+    const managedError = await host.chats
+      .open("missing")
+      .history()
+      .catch((error) => error);
+    const remoteError = await remote.chats
+      .history("missing")
+      .catch((error) => error);
+    assert.ok(managedError instanceof QwenPawHttpError);
+    assert.ok(remoteError instanceof QwenPawHttpError);
+    assert.deepEqual(
+      { status: managedError.status, body: managedError.body },
+      { status: remoteError.status, body: remoteError.body },
+    );
+  } finally {
+    await host.close();
+  }
 });
 
 test("reports an unexpected runtime exit after readiness", async () => {

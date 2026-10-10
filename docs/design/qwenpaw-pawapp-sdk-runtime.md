@@ -553,6 +553,16 @@ Verified on 2026-10-10 against the running Lite Host on port 8004:
   checkpoint storage. The SDK deliberately has no generic replay operation:
   Interaction decisions, resource release and checkpoint/outbox dispatch remain
   Host-owned so an integration cannot accidentally repeat a side effect.
+- Remote/managed conformance now exercises both public entry points against the
+  same managed Host fixture. Chat history, runtime snapshots, snapshot-stream
+  cursor termination and typed HTTP failures remain deeply equal at the public
+  contract boundary.
+  This intentionally verifies transport parity without relabelling the
+  latest-state stream as a replayable execution-event log.
+- Ending runtime iteration early now cancels the underlying response body before
+  releasing its reader. A consumer can stop after one snapshot without leaving
+  a Node HTTP connection alive; cancellation failure cannot hide the original
+  transport error.
 
 ## 10. Explicit non-goals
 

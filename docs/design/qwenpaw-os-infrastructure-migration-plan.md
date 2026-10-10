@@ -1118,14 +1118,18 @@ PawApp / SDK 的运行所有权迁移见
     完成版本与 feature handshake，并在不兼容时于接收工作前失败；调用者必须提供
     显式 executable，不从 `PATH` 猜测。SDK 暴露同一个 `QwenPawClient`，启动失败
     终止自有进程，`close()` 幂等。
-  - [ ] managed-local SDK 直接组合 `@qwenpaw/client`，remote 与 managed 模式必须
+  - [x] managed-local SDK 直接组合 `@qwenpaw/client`，remote 与 managed 模式必须
     返回相同值、错误和事件；`send()` 仅聚合同一事件流，EOF 不得替代 terminal
-    receipt。
-  - [ ] 提供显式 `create/close` 生命周期和 ChatSpec-scoped handle；resume、fork、
+    receipt。SDK conformance fixture 现以两个公开入口对同一 Host 验证 history、
+    runtime snapshot、携带 `Last-Event-ID` 的 SSE 与 HTTP 错误完全一致；该 SSE 仍明确
+    是 latest-state snapshot，不伪装成 durable event replay。
+  - [x] 提供显式 `create/close` 生命周期和 ChatSpec-scoped handle；resume、fork、
     steer、interrupt、approval 全部委托已有 Host 命令，身份统一使用
-    `ChatSpec.id`。
-  - [ ] 引入低信任 external-message 输入类型，外部 Agent、Tool 或应用消息不得自动
-    获得 user instruction 或 approval 权限。
+    `ChatSpec.id`。这里的 resume 是重新 `open(ChatSpec.id)` 并从 Host cursor follow，
+    不是可能重放副作用的通用执行命令。
+  - [x] 引入低信任 external-message 输入类型，外部 Agent、Tool 或应用消息不得自动
+    获得 user instruction 或 approval 权限；Host 会覆盖信任元数据并写入 Context
+    Manifest。
   - [ ] conformance 同时覆盖 remote Host 与 managed Host；当前 managed Host 已覆盖
     真实 Host readiness、进程提前退出、spawn 失败、启动超时、协议/feature 不兼容
     和重复 close；跨平台退出、运行中崩溃通知与取消传播仍待验证。
