@@ -9,11 +9,14 @@ import {
   type ChatControlRequest,
   type ChatForkRequest,
   type ChatHistory,
+  type ChatArtifactContentOptions,
   type ChatInput,
   type ChatInteractionDecisionRequest,
   type ChatInteractionResolution,
   type ChatQueueReorderRequest,
   type ChatRequestOptions,
+  type ChatListEvidenceOptions,
+  type ChatPageEvidenceOptions,
   type ChatSpec,
   type ChatSteerRequest,
   type ChatSubmissionRequest,
@@ -167,6 +170,29 @@ export class QwenPawChat {
     options: ChatRequestOptions & { includeAppOwned?: boolean } = {},
   ): Promise<ChatHistory> {
     return this.#client.chats.history(this.id, options);
+  }
+
+  actions(options: ChatListEvidenceOptions = {}) {
+    return this.#client.chats.actions(this.id, options);
+  }
+
+  artifacts(options: ChatListEvidenceOptions = {}) {
+    return this.#client.chats.artifacts(this.id, options);
+  }
+
+  artifactContent(
+    artifactId: string,
+    options: ChatArtifactContentOptions = {},
+  ): Promise<Response> {
+    return this.#client.chats.artifactContent(this.id, artifactId, options);
+  }
+
+  observations(options: ChatPageEvidenceOptions = {}) {
+    return this.#client.chats.observations(this.id, options);
+  }
+
+  trajectory(correlationId: string, options: ChatPageEvidenceOptions = {}) {
+    return this.#client.chats.trajectory(this.id, correlationId, options);
   }
 
   runtime(

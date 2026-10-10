@@ -72,6 +72,21 @@ const body = buildChatSubmission(
 await paw.chatControls.submit("chat-spec-id", body);
 ```
 
+Result inspection uses the same Chat identity and Host-owned evidence stores:
+
+```ts
+const artifacts = await paw.chats.artifacts("chat-spec-id");
+const actions = await paw.chats.actions("chat-spec-id");
+const trajectory = await paw.chats.trajectory(
+  "chat-spec-id",
+  correlationId,
+);
+const content = await paw.chats.artifactContent(
+  "chat-spec-id",
+  artifacts[0].artifact.artifact_id,
+);
+```
+
 Pass a custom `QwenPawTransport` instead of Fetch options to integrate another
 authentication, IPC or test transport. Completion, approval, recovery and
 artifact semantics remain owned by the Host; consumers should reconcile an

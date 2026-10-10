@@ -1,9 +1,13 @@
 import type {
+  ActionRecord,
+  ConversationArtifactRecord,
   ConversationExecutionChain,
   ChatForkRequest,
   ChatHistory,
   ChatSpec,
   ConversationRuntimeProjection,
+  ConversationTrajectoryPage,
+  ObservationPage,
 } from "../contracts/chats.js";
 import { QwenPawHttpError } from "../transport.js";
 
@@ -31,6 +35,18 @@ export interface FollowRuntimeOptions extends ChatRequestOptions {
 export interface FollowSubmissionOptions extends ChatRequestOptions {
   reconnectDelayMs?: number;
   maxReconnectAttempts?: number;
+}
+
+export interface ChatListEvidenceOptions extends ChatRequestOptions {
+  limit?: number;
+}
+
+export interface ChatPageEvidenceOptions extends ChatListEvidenceOptions {
+  cursor?: string;
+}
+
+export interface ChatArtifactContentOptions extends ChatRequestOptions {
+  disposition?: "inline" | "attachment";
 }
 
 const SETTLED_EXECUTION_STATES = new Set([
@@ -137,6 +153,22 @@ function nonNegativeInteger(name: string, value: number): number {
     throw new TypeError(`${name} must be a non-negative safe integer`);
   }
   return value;
+}
+
+function evidenceLimit(value: number | undefined): number {
+  const limit = value ?? 100;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) {
+    throw new TypeError("limit must be a safe integer between 1 and 1000");
+  }
+  return limit;
+}
+
+function evidenceQuery(options: ChatPageEvidenceOptions): string {
+  const query = new URLSearchParams({
+    limit: String(evidenceLimit(options.limit)),
+  });
+  if (options.cursor) query.set("cursor", options.cursor);
+  return query.toString();
 }
 
 function wait(milliseconds: number, signal?: AbortSignal): Promise<void> {
@@ -284,6 +316,68 @@ export function createChatClient(transport: ChatClientTransport) {
           method: "POST",
           body: JSON.stringify(body),
         }),
+      );
+    },
+    actions(
+      chatId: string,
+      options: ChatListEvidenceOptions = {},
+    ): Promise<ActionRecord[]> {
+      const query = evidenceQuery(options);
+      return transport.request<ActionRecord[]>(
+        `/chats/${encoded(chatId)}/actions?${query}`,
+        requestInit(options, {}, true),
+      );
+    },
+    artifacts(
+      chatId: string,
+      options: ChatListEvidenceOptions = {},
+    ): Promise<ConversationArtifactRecord[]> {
+      const query = evidenceQuery(options);
+      return transport.request<ConversationArtifactRecord[]>(
+        `/chats/${encoded(chatId)}/artifacts?${query}`,
+        requestInit(options, {}, true),
+      );
+    },
+    async artifactContent(
+      chatId: string,
+      artifactId: string,
+      options: ChatArtifactContentOptions = {},
+    ): Promise<Response> {
+      if (!artifactId.trim()) {
+        throw new TypeError("artifactId must not be empty");
+      }
+      const disposition = options.disposition ?? "inline";
+      const response = await transport.openStream(
+        `/chats/${encoded(chatId)}/artifacts/${encoded(artifactId)}` +
+          `/content?disposition=${disposition}`,
+        requestInit(options, {}, true),
+      );
+      if (!response.ok) throw await responseError(response);
+      return response;
+    },
+    observations(
+      chatId: string,
+      options: ChatPageEvidenceOptions = {},
+    ): Promise<ObservationPage> {
+      const query = evidenceQuery(options);
+      return transport.request<ObservationPage>(
+        `/chats/${encoded(chatId)}/observations/page?${query}`,
+        requestInit(options, {}, true),
+      );
+    },
+    trajectory(
+      chatId: string,
+      correlationId: string,
+      options: ChatPageEvidenceOptions = {},
+    ): Promise<ConversationTrajectoryPage> {
+      if (!correlationId.trim()) {
+        throw new TypeError("correlationId must not be empty");
+      }
+      const query = evidenceQuery(options);
+      return transport.request<ConversationTrajectoryPage>(
+        `/chats/${encoded(chatId)}/trajectories/` +
+          `${encoded(correlationId)}?${query}`,
+        requestInit(options, {}, true),
       );
     },
     runtime,

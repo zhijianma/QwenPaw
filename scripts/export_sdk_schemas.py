@@ -18,6 +18,7 @@ from qwenpaw.app.chats.models import (
 )
 from qwenpaw.app.task_http_contracts import TaskProjectionResponse
 from qwenpaw.kernel.host import HostHandshake
+from qwenpaw.kernel.artifacts import ConversationArtifactRecord
 from qwenpaw.kernel.interactions import (
     InteractionRequest,
     InteractionResolution,
@@ -25,6 +26,11 @@ from qwenpaw.kernel.interactions import (
 from qwenpaw.kernel.invocation_control import (
     ControlReceipt,
     QueueProjection,
+)
+from qwenpaw.kernel.models import ActionRecord
+from qwenpaw.kernel.observations import (
+    ConversationTrajectoryPage,
+    ObservationPage,
 )
 
 _CONTRACTS: tuple[tuple[str, type[BaseModel], bool], ...] = (
@@ -38,6 +44,10 @@ _CONTRACTS: tuple[tuple[str, type[BaseModel], bool], ...] = (
     ("control-receipt", ControlReceipt, True),
     ("queue-projection", QueueProjection, True),
     ("task-projection", TaskProjectionResponse, True),
+    ("action-record", ActionRecord, True),
+    ("conversation-artifact-record", ConversationArtifactRecord, True),
+    ("observation-page", ObservationPage, True),
+    ("conversation-trajectory-page", ConversationTrajectoryPage, True),
 )
 
 

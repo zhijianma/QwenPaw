@@ -80,6 +80,7 @@ from ...kernel import (
     RuntimeObservation,
     ConversationRuntimeProjection,
     ConversationTrajectoryPage,
+    ConversationArtifactRecord,
     ControlReceipt,
     QueueProjection,
     SubmissionInputEnvelope,
@@ -1921,6 +1922,14 @@ def _artifact_receipt_from_history(
     artifact_id: UUID,
 ) -> str | None:
     """Find the opaque receipt paired with an artifact in Chat history."""
+    return _artifact_receipts_from_history(history).get(str(artifact_id))
+
+
+def _artifact_receipts_from_history(
+    history: ChatHistory,
+) -> dict[str, str]:
+    """Return Artifact-to-receipt links visible in one Chat snapshot."""
+    receipts: dict[str, str] = {}
     for message in history.messages:
         for part in message.content:
             if isinstance(part, dict):
@@ -1931,12 +1940,10 @@ def _artifact_receipt_from_history(
                 raw_artifact = getattr(part, "artifact_ref", None)
                 receipt = getattr(part, "artifact_receipt", None)
                 data = getattr(part, "data", None)
-            if not isinstance(raw_artifact, dict) or not receipt:
-                raw_artifact = None
-            if raw_artifact is not None and str(
-                raw_artifact.get("artifact_id"),
-            ) == str(artifact_id):
-                return str(receipt)
+            if isinstance(raw_artifact, dict) and receipt:
+                artifact_id = raw_artifact.get("artifact_id")
+                if artifact_id:
+                    receipts[str(artifact_id)] = str(receipt)
             if not isinstance(data, dict):
                 continue
             links = data.get("artifact_links")
@@ -1947,14 +1954,46 @@ def _artifact_receipt_from_history(
                     continue
                 linked_artifact = link.get("artifact_ref")
                 linked_receipt = link.get("artifact_receipt")
-                if (
-                    isinstance(linked_artifact, dict)
-                    and linked_receipt
-                    and str(linked_artifact.get("artifact_id"))
-                    == str(artifact_id)
-                ):
-                    return str(linked_receipt)
-    return None
+                if not isinstance(linked_artifact, dict) or not linked_receipt:
+                    continue
+                artifact_id = linked_artifact.get("artifact_id")
+                if artifact_id:
+                    receipts[str(artifact_id)] = str(linked_receipt)
+    return receipts
+
+
+@router.get(
+    "/{chat_id}/artifacts",
+    response_model=list[ConversationArtifactRecord],
+)
+async def list_chat_artifacts(
+    chat_id: str,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    mgr: ChatManager = Depends(get_chat_manager),
+    session: SafeJSONSession = Depends(get_session),
+    workspace=Depends(get_workspace),
+) -> list[ConversationArtifactRecord]:
+    """List Artifact/Evidence records visible at this Chat fork boundary."""
+    history = await get_chat(chat_id, True, mgr, session, workspace)
+    visible_receipts = set(_artifact_receipts_from_history(history).values())
+    lineage_ids = await mgr.get_fork_lineage_ids(chat_id)
+    receipt_store = conversation_artifact_receipts(
+        Path(workspace.workspace_dir),
+    )
+    records: list[ConversationArtifactRecord] = []
+    for lineage_id in lineage_ids:
+        records.extend(
+            record
+            for record in await receipt_store.scan_for_conversation(
+                lineage_id,
+            )
+            if str(record.record_id) in visible_receipts
+        )
+    records.sort(
+        key=lambda item: (item.created_at, str(item.record_id)),
+        reverse=True,
+    )
+    return records[:limit]
 
 
 @router.get("/{chat_id}/artifacts/{artifact_id}/content")

@@ -15,6 +15,12 @@ function fakeClient() {
         calls.push(["runtime", ...args]);
         return { chat_id: args[0], cursor: "cursor-1" };
       },
+      actions: async (...args) => calls.push(["actions", ...args]),
+      artifacts: async (...args) => calls.push(["artifacts", ...args]),
+      artifactContent: async (...args) =>
+        calls.push(["artifactContent", ...args]),
+      observations: async (...args) => calls.push(["observations", ...args]),
+      trajectory: async (...args) => calls.push(["trajectory", ...args]),
       fork: async (...args) => {
         calls.push(["fork", ...args]);
         return { id: "child-chat" };
@@ -131,4 +137,26 @@ test("accepts ergonomic direct and lower-trust external inputs", async () => {
       source_id: "42",
     },
   });
+});
+
+test("delegates result and evidence reads to the shared Chat client", async () => {
+  const { calls, client } = fakeClient();
+  const chat = new QwenPawChat(client, "chat/one");
+
+  await chat.actions({ limit: 5 });
+  await chat.artifacts({ limit: 6 });
+  await chat.artifactContent("artifact-1", { disposition: "attachment" });
+  await chat.observations({ limit: 7 });
+  await chat.trajectory("correlation-1", { limit: 8 });
+
+  assert.deepEqual(
+    calls.map((call) => call.slice(0, 2)),
+    [
+      ["actions", "chat/one"],
+      ["artifacts", "chat/one"],
+      ["artifactContent", "chat/one"],
+      ["observations", "chat/one"],
+      ["trajectory", "chat/one"],
+    ],
+  );
 });

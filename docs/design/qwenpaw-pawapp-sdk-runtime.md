@@ -534,6 +534,18 @@ Verified on 2026-10-10 against the running Lite Host on port 8004:
   in an empty npm consumer. Both package entry points imported by public name;
   the SDK tarball contained only declarations, ESM output, metadata and its
   README.
+- `chat.send()` now accepts either the stable low-level submission contract,
+  direct text or an explicit lower-trust external input. The Host, rather than
+  the SDK, validates the trust/source pair, overwrites spoofable metadata,
+  protects model-visible external content and records it as `EXTERNAL` in the
+  Context Manifest. Issue, PR, email, webhook and agent content therefore do
+  not silently gain user authority.
+- Chat result inspection now reuses generated Kernel contracts for Actions,
+  Artifact/Evidence records, Observation pages and correlation Trajectories.
+  Both remote and managed clients read those Host-owned facts through
+  `ChatSpec.id`; Artifact bytes still pass through the shared safe renderer.
+  Forked Chats list only receipts visible in their persisted message snapshot,
+  so a parent Artifact created after the fork cannot leak into the child.
 
 ## 10. Explicit non-goals
 

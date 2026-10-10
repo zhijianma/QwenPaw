@@ -13,7 +13,11 @@ from agentscope.message import Msg, TextBlock
 from agentscope.state import AgentState
 from fastapi import HTTPException
 
-from qwenpaw.app.chats.api import fork_chat, get_chat_artifact_content
+from qwenpaw.app.chats.api import (
+    fork_chat,
+    get_chat_artifact_content,
+    list_chat_artifacts,
+)
 from qwenpaw.app.chats.manager import ChatManager
 from qwenpaw.app.chats.models import ChatForkRequest, ChatSpec
 from qwenpaw.app.chats.repo import JsonChatRepository
@@ -867,6 +871,42 @@ async def test_fork_inherits_artifact_without_sharing_child_writes(
         workspace,
     )
 
+    late_parent_artifact = await artifact_store.put(
+        kind="chat.attachment",
+        media_type="text/plain",
+        content=b"late parent version",
+        metadata={"name": "late-parent.txt"},
+    )
+    late_parent_evidence = EvidenceRef(
+        artifact_id=late_parent_artifact.artifact_id,
+        claim="Parent attachment created after fork",
+        producer="test.fork",
+    )
+    late_parent_receipt = await receipt_store.create(
+        late_parent_artifact,
+        late_parent_evidence,
+    )
+    await receipt_store.claim(
+        receipt_id=late_parent_receipt,
+        chat_id=parent.id,
+        artifact_id=late_parent_artifact.artifact_id,
+        evidence_id=late_parent_evidence.evidence_id,
+    )
+    parent_state.context.append(
+        _attachment_message(
+            "late-parent-file",
+            artifact=late_parent_artifact,
+            evidence=late_parent_evidence,
+            receipt_id=late_parent_receipt,
+        ),
+    )
+    await session.save_session_state(
+        parent.session_id,
+        parent.user_id,
+        parent.channel,
+        agent=_StateModule(parent_state),
+    )
+
     inherited = await get_chat_artifact_content(
         child.id,
         parent_artifact.artifact_id,
@@ -876,6 +916,26 @@ async def test_fork_inherits_artifact_without_sharing_child_writes(
         workspace,
     )
     assert inherited.body == b"parent version"
+    inherited_records = await list_chat_artifacts(
+        child.id,
+        100,
+        manager,
+        session,
+        workspace,
+    )
+    assert [record.artifact.artifact_id for record in inherited_records] == [
+        parent_artifact.artifact_id,
+    ]
+    with pytest.raises(HTTPException) as late_parent_read:
+        await get_chat_artifact_content(
+            child.id,
+            late_parent_artifact.artifact_id,
+            "inline",
+            manager,
+            session,
+            workspace,
+        )
+    assert late_parent_read.value.status_code == 404
 
     child_artifact = await artifact_store.put(
         kind="chat.attachment",
@@ -930,6 +990,17 @@ async def test_fork_inherits_artifact_without_sharing_child_writes(
     assert child_owned.body == b"child version"
     assert child_artifact.artifact_id != parent_artifact.artifact_id
     assert child_artifact.content_hash != parent_artifact.content_hash
+    child_records = await list_chat_artifacts(
+        child.id,
+        100,
+        manager,
+        session,
+        workspace,
+    )
+    assert {record.artifact.artifact_id for record in child_records} == {
+        parent_artifact.artifact_id,
+        child_artifact.artifact_id,
+    }
 
     with pytest.raises(HTTPException) as reverse_read:
         await get_chat_artifact_content(

@@ -1512,3 +1512,18 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
 - 旧前端 PawTask SSE 未收到 `done/error` 就 EOF 时不再解析成成功 `null`，而是抛出
   可识别的 `PAW_TASK_STREAM_INTERRUPTED`，明确结果未知。真正自动恢复仍等待统一
   Task Event cursor replay，未在兼容层伪造。
+
+## 13. 2026-10-10 公共 SDK Chat 成果与证据闭环
+
+- `@qwenpaw/client` 和 `@qwenpaw/sdk` 不再止于提交与等待；同一
+  `ChatSpec.id` handle 可读取 Action、Artifact/Evidence、Observation 与
+  correlation Trajectory，并通过 Host 的安全 Renderer 获取 Artifact 内容。
+- Action、Conversation Artifact、Observation Page 与 Trajectory Page 均由现有
+  Kernel Pydantic 模型导出 JSON Schema 后生成 TypeScript，不在 SDK 内复制领域模型。
+- Chat Artifact 列表由持久 ownership receipt 与当前 Chat 历史快照交集生成；Fork
+  可见创建分叉前的父 Artifact，但不可见分叉后新增的父 Artifact，子写入也不会反向
+  污染父 Chat。
+- 普通文本与显式 external 输入继续落入同一 durable submission。external 来源由
+  Host 校验并写入 Context Manifest 的 `EXTERNAL` trust level，SDK 不能通过本地包装
+  绕过安全边界。
+- Task Workbench 仍保持暂停；本切片只补 Chat-first 公共基础设施，不新增页面状态。

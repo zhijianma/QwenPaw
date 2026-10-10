@@ -1,0 +1,271 @@
+{
+  "$defs": {
+    "JsonValue": {},
+    "ObservationCategory": {
+      "description": "Stable semantic families shared by every runtime implementation.",
+      "enum": [
+        "model",
+        "action",
+        "control",
+        "guardrail",
+        "compaction",
+        "hitl",
+        "interrupt",
+        "verification",
+        "artifact",
+        "evidence",
+        "outcome"
+      ],
+      "title": "ObservationCategory",
+      "type": "string"
+    },
+    "ObservationSource": {
+      "additionalProperties": false,
+      "description": "Immutable pointer to the authoritative fact being projected.",
+      "properties": {
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "source_id": {
+          "minLength": 1,
+          "title": "Source Id",
+          "type": "string"
+        },
+        "source_type": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "title": "Source Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "source_type",
+        "source_id"
+      ],
+      "title": "ObservationSource",
+      "type": "object"
+    },
+    "ObservationStage": {
+      "description": "Responsibility boundary represented by one source fact.",
+      "enum": [
+        "intent",
+        "policy",
+        "execution",
+        "evidence"
+      ],
+      "title": "ObservationStage",
+      "type": "string"
+    },
+    "ObservationStatus": {
+      "description": "Presentation-neutral lifecycle state of one observation.",
+      "enum": [
+        "recorded",
+        "started",
+        "pending",
+        "running",
+        "succeeded",
+        "failed",
+        "partial",
+        "unknown",
+        "cancelled",
+        "denied",
+        "accepted",
+        "applied",
+        "rejected",
+        "conflict",
+        "resolved",
+        "expired",
+        "blocked"
+      ],
+      "title": "ObservationStatus",
+      "type": "string"
+    },
+    "RuntimeObservation": {
+      "additionalProperties": false,
+      "description": "Content-safe semantic projection over an authoritative runtime fact.",
+      "properties": {
+        "category": {
+          "$ref": "#/$defs/ObservationCategory"
+        },
+        "chat_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Owning ChatSpec.id when the observation is Chat-scoped",
+          "title": "Chat Id"
+        },
+        "correlation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correlation Id"
+        },
+        "facts": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Facts",
+          "type": "object"
+        },
+        "invocation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Invocation Id"
+        },
+        "observation_id": {
+          "format": "uuid",
+          "title": "Observation Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "registry_generation": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Registry Generation"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Id"
+        },
+        "schema": {
+          "const": "qwenpaw.runtime-observation.v1",
+          "default": "qwenpaw.runtime-observation.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/ObservationSource"
+        },
+        "stage": {
+          "$ref": "#/$defs/ObservationStage"
+        },
+        "status": {
+          "$ref": "#/$defs/ObservationStatus"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Task Id"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "observation_id",
+        "category",
+        "stage",
+        "status",
+        "source",
+        "task_id",
+        "run_id",
+        "chat_id",
+        "invocation_id",
+        "correlation_id",
+        "registry_generation",
+        "title",
+        "facts",
+        "occurred_at"
+      ],
+      "title": "RuntimeObservation",
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.qwenpaw.dev/sdk/observation-page.v1.json",
+  "additionalProperties": false,
+  "description": "Stable cursor page over a fixed semantic-observation snapshot.",
+  "properties": {
+    "items": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/RuntimeObservation"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "next_cursor": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Next Cursor"
+    },
+    "schema": {
+      "const": "qwenpaw.observation-page.v1",
+      "default": "qwenpaw.observation-page.v1",
+      "title": "Schema",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema",
+    "items",
+    "next_cursor"
+  ],
+  "title": "ObservationPage",
+  "type": "object"
+}

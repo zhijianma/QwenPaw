@@ -26,6 +26,10 @@ const contracts = [
   ["control-receipt", "controlReceipt.ts"],
   ["queue-projection", "queueProjection.ts"],
   ["task-projection", "taskProjection.ts"],
+  ["action-record", "actionRecord.ts"],
+  ["conversation-artifact-record", "conversationArtifactRecord.ts"],
+  ["observation-page", "observationPage.ts"],
+  ["conversation-trajectory-page", "conversationTrajectoryPage.ts"],
 ];
 const checkOnly = process.argv.includes("--check");
 const stale = [];

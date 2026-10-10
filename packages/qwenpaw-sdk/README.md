@@ -43,6 +43,19 @@ const external = await chat.send(
   { idempotencyKey: crypto.randomUUID() },
 );
 
+for (const record of await chat.artifacts()) {
+  console.log(record.artifact, record.evidence);
+  const response = await chat.artifactContent(record.artifact.artifact_id);
+  console.log(await response.text());
+}
+
+for (const action of await chat.actions()) {
+  console.log(action.request, action.result);
+}
+
+const trajectory = await chat.trajectory(settled.correlation_id);
+console.log(trajectory.items);
+
 const child = await chat.fork({
   source_message_id: "message-id",
   idempotency_key: crypto.randomUUID(),

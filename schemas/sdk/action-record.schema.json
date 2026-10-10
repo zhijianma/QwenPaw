@@ -1,0 +1,1124 @@
+{
+  "$defs": {
+    "ActionAdmission": {
+      "additionalProperties": false,
+      "description": "Truthful admission semantics shared by every Action executor.",
+      "properties": {
+        "authority": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "title": "Authority",
+          "type": "string"
+        },
+        "decision": {
+          "minLength": 1,
+          "title": "Decision",
+          "type": "string"
+        },
+        "evidence": {
+          "$ref": "#/$defs/ActionAdmissionEvidence"
+        },
+        "mode": {
+          "$ref": "#/$defs/ActionAdmissionMode"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "mode",
+        "authority",
+        "decision",
+        "evidence"
+      ],
+      "title": "ActionAdmission",
+      "type": "object"
+    },
+    "ActionAdmissionDecision": {
+      "additionalProperties": false,
+      "description": "Append-only executor policy decision linked to one Action.",
+      "properties": {
+        "action_id": {
+          "format": "uuid",
+          "title": "Action Id",
+          "type": "string"
+        },
+        "authority": {
+          "minLength": 1,
+          "title": "Authority",
+          "type": "string"
+        },
+        "chat_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Owning ChatSpec.id; null for an unscoped action",
+          "title": "Chat Id"
+        },
+        "decided_at": {
+          "format": "date-time",
+          "title": "Decided At",
+          "type": "string"
+        },
+        "decision": {
+          "enum": [
+            "allow",
+            "ask",
+            "deny"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "decision_id": {
+          "format": "uuid",
+          "title": "Decision Id",
+          "type": "string"
+        },
+        "evidence": {
+          "$ref": "#/$defs/ActionAdmissionEvidence"
+        },
+        "invocation_id": {
+          "format": "uuid",
+          "title": "Invocation Id",
+          "type": "string"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "chat_id",
+        "decision_id",
+        "action_id",
+        "invocation_id",
+        "authority",
+        "decision",
+        "evidence",
+        "decided_at"
+      ],
+      "title": "ActionAdmissionDecision",
+      "type": "object"
+    },
+    "ActionAdmissionEvidence": {
+      "description": "Durable evidence class supporting an Action admission claim.",
+      "enum": [
+        "policy_audit",
+        "action_intent",
+        "provider_event",
+        "legacy"
+      ],
+      "title": "ActionAdmissionEvidence",
+      "type": "string"
+    },
+    "ActionAdmissionMode": {
+      "description": "Where an executor's authority is established in its lifecycle.",
+      "enum": [
+        "host_pre_execution",
+        "executor_delegated",
+        "provider_observed",
+        "legacy_unobserved"
+      ],
+      "title": "ActionAdmissionMode",
+      "type": "string"
+    },
+    "ActionApprovalLink": {
+      "additionalProperties": false,
+      "description": "Immutable relation for approvals discovered during an action.",
+      "properties": {
+        "action_id": {
+          "format": "uuid",
+          "title": "Action Id",
+          "type": "string"
+        },
+        "approval_id": {
+          "format": "uuid",
+          "title": "Approval Id",
+          "type": "string"
+        },
+        "chat_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Owning ChatSpec.id; null for an unscoped action",
+          "title": "Chat Id"
+        },
+        "invocation_id": {
+          "format": "uuid",
+          "title": "Invocation Id",
+          "type": "string"
+        },
+        "linked_at": {
+          "format": "date-time",
+          "title": "Linked At",
+          "type": "string"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/ApprovalSource"
+        }
+      },
+      "required": [
+        "schema",
+        "chat_id",
+        "action_id",
+        "invocation_id",
+        "approval_id",
+        "source",
+        "linked_at"
+      ],
+      "title": "ActionApprovalLink",
+      "type": "object"
+    },
+    "ActionIdempotencyMode": {
+      "description": "Where an Action idempotency key is durably enforced.",
+      "enum": [
+        "undeclared",
+        "host_guarded",
+        "executor_enforced"
+      ],
+      "title": "ActionIdempotencyMode",
+      "type": "string"
+    },
+    "ActionKind": {
+      "description": "Executor family behind one observable Agent OS action.",
+      "enum": [
+        "tool",
+        "driver",
+        "driver",
+        "shell",
+        "browser",
+        "harness_remote"
+      ],
+      "title": "ActionKind",
+      "type": "string"
+    },
+    "ActionRequest": {
+      "additionalProperties": false,
+      "description": "Privacy-safe durable intent recorded before external execution.\n\n``arguments`` is available only to the in-memory executor. Durable\nstores serialize the redacted projection and its integrity hash.",
+      "properties": {
+        "action_id": {
+          "format": "uuid",
+          "title": "Action Id",
+          "type": "string"
+        },
+        "action_name": {
+          "minLength": 1,
+          "title": "Action Name",
+          "type": "string"
+        },
+        "admission": {
+          "$ref": "#/$defs/ActionAdmission"
+        },
+        "agent_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent Id"
+        },
+        "approval_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approval Id"
+        },
+        "arguments_hash": {
+          "description": "SHA256 of redacted_arguments; never a fingerprint of raw secret or omitted content",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Arguments Hash",
+          "type": "string"
+        },
+        "attempt": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Attempt",
+          "type": "integer"
+        },
+        "capability_id": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "title": "Capability Id",
+          "type": "string"
+        },
+        "chat_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Owning ChatSpec.id; null for an unscoped action",
+          "title": "Chat Id"
+        },
+        "correlation_id": {
+          "format": "uuid",
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "effect": {
+          "$ref": "#/$defs/ToolEffect",
+          "default": "none"
+        },
+        "environment_ref": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EnvironmentRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "executor_item_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Executor Item Id"
+        },
+        "idempotency_key": {
+          "minLength": 1,
+          "title": "Idempotency Key",
+          "type": "string"
+        },
+        "idempotency_mode": {
+          "$ref": "#/$defs/ActionIdempotencyMode",
+          "default": "undeclared"
+        },
+        "invocation_id": {
+          "format": "uuid",
+          "title": "Invocation Id",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ActionKind"
+        },
+        "policy_decision": {
+          "default": "allow",
+          "minLength": 1,
+          "title": "Policy Decision",
+          "type": "string"
+        },
+        "provider_execution_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider Execution Digest"
+        },
+        "redacted_arguments": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Redacted Arguments",
+          "type": "object"
+        },
+        "registry_generation": {
+          "minimum": 1,
+          "title": "Registry Generation",
+          "type": "integer"
+        },
+        "requested_at": {
+          "format": "date-time",
+          "title": "Requested At",
+          "type": "string"
+        },
+        "retry_of_action_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retry Of Action Id"
+        },
+        "retry_policy": {
+          "$ref": "#/$defs/ActionRetryPolicy"
+        },
+        "retry_root_action_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retry Root Action Id"
+        },
+        "reversible": {
+          "default": true,
+          "title": "Reversible",
+          "type": "boolean"
+        },
+        "risk": {
+          "$ref": "#/$defs/RiskLevel",
+          "default": "low"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "tool_selection": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolSelection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "schema",
+        "chat_id",
+        "action_id",
+        "invocation_id",
+        "correlation_id",
+        "agent_id",
+        "registry_generation",
+        "environment_ref",
+        "capability_id",
+        "tool_selection",
+        "provider_execution_digest",
+        "kind",
+        "action_name",
+        "redacted_arguments",
+        "arguments_hash",
+        "effect",
+        "risk",
+        "reversible",
+        "idempotency_mode",
+        "retry_policy",
+        "idempotency_key",
+        "executor_item_id",
+        "retry_root_action_id",
+        "retry_of_action_id",
+        "attempt",
+        "approval_id",
+        "admission",
+        "policy_decision",
+        "requested_at"
+      ],
+      "title": "ActionRequest",
+      "type": "object"
+    },
+    "ActionResult": {
+      "additionalProperties": false,
+      "description": "Content-minimal terminal evidence for one action request.",
+      "properties": {
+        "action_id": {
+          "format": "uuid",
+          "title": "Action Id",
+          "type": "string"
+        },
+        "approval_ids": {
+          "default": [],
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": "Approval Ids",
+          "type": "array"
+        },
+        "artifact_refs": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ArtifactRef"
+          },
+          "title": "Artifact Refs",
+          "type": "array"
+        },
+        "chat_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Owning ChatSpec.id; null for an unscoped action",
+          "title": "Chat Id"
+        },
+        "completed_at": {
+          "format": "date-time",
+          "title": "Completed At",
+          "type": "string"
+        },
+        "error_code": {
+          "default": "",
+          "title": "Error Code",
+          "type": "string"
+        },
+        "evidence_refs": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          },
+          "title": "Evidence Refs",
+          "type": "array"
+        },
+        "invocation_id": {
+          "format": "uuid",
+          "title": "Invocation Id",
+          "type": "string"
+        },
+        "observation_digest": {
+          "description": "SHA256 of content-free status and durable evidence references",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Observation Digest",
+          "type": "string"
+        },
+        "retry_decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ActionRetryDecision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "retryable": {
+          "default": false,
+          "title": "Retryable",
+          "type": "boolean"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "side_effect_status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SideEffectStatus"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "$ref": "#/$defs/ActionStatus"
+        }
+      },
+      "required": [
+        "schema",
+        "chat_id",
+        "action_id",
+        "invocation_id",
+        "status",
+        "observation_digest",
+        "artifact_refs",
+        "evidence_refs",
+        "approval_ids",
+        "error_code",
+        "retryable",
+        "retry_decision",
+        "side_effect_status",
+        "completed_at"
+      ],
+      "title": "ActionResult",
+      "type": "object"
+    },
+    "ActionRetryDecision": {
+      "additionalProperties": false,
+      "description": "Provider-neutral retry policy result for one immutable Action.",
+      "properties": {
+        "disposition": {
+          "$ref": "#/$defs/ActionRetryDisposition"
+        },
+        "input_checkpoint_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Checkpoint Id"
+        },
+        "max_attempts": {
+          "default": 2,
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Max Attempts",
+          "type": "integer"
+        },
+        "next_attempt": {
+          "anyOf": [
+            {
+              "minimum": 2,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Next Attempt"
+        },
+        "policy_id": {
+          "const": "qwenpaw.action-retry.v1",
+          "default": "qwenpaw.action-retry.v1",
+          "title": "Policy Id",
+          "type": "string"
+        },
+        "provider_retryable": {
+          "default": false,
+          "title": "Provider Retryable",
+          "type": "boolean"
+        },
+        "reason": {
+          "$ref": "#/$defs/ActionRetryReason"
+        },
+        "retry_after_seconds": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retry After Seconds"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "policy_id",
+        "disposition",
+        "reason",
+        "provider_retryable",
+        "max_attempts",
+        "next_attempt",
+        "retry_after_seconds",
+        "input_checkpoint_id"
+      ],
+      "title": "ActionRetryDecision",
+      "type": "object"
+    },
+    "ActionRetryDisposition": {
+      "description": "Host decision for a terminal Action failure.",
+      "enum": [
+        "not_applicable",
+        "forbidden",
+        "retry_from_new_action",
+        "reconcile_required"
+      ],
+      "title": "ActionRetryDisposition",
+      "type": "string"
+    },
+    "ActionRetryPolicy": {
+      "additionalProperties": false,
+      "description": "Host-owned bounded retry policy for immutable Action attempts.",
+      "properties": {
+        "backoff_multiplier": {
+          "default": 2,
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Backoff Multiplier",
+          "type": "number"
+        },
+        "initial_delay_seconds": {
+          "default": 0,
+          "maximum": 300,
+          "minimum": 0,
+          "title": "Initial Delay Seconds",
+          "type": "number"
+        },
+        "max_attempts": {
+          "default": 2,
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Max Attempts",
+          "type": "integer"
+        },
+        "max_delay_seconds": {
+          "default": 30,
+          "maximum": 3600,
+          "minimum": 0,
+          "title": "Max Delay Seconds",
+          "type": "number"
+        },
+        "policy_id": {
+          "const": "qwenpaw.action-retry-policy.v1",
+          "default": "qwenpaw.action-retry-policy.v1",
+          "title": "Policy Id",
+          "type": "string"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "policy_id",
+        "max_attempts",
+        "initial_delay_seconds",
+        "backoff_multiplier",
+        "max_delay_seconds"
+      ],
+      "title": "ActionRetryPolicy",
+      "type": "object"
+    },
+    "ActionRetryReason": {
+      "description": "Stable reason behind one Action retry decision.",
+      "enum": [
+        "status_not_failed",
+        "provider_not_retryable",
+        "side_effect_uncertain",
+        "effectful_retry_unsupported",
+        "executor_idempotent_failure",
+        "attempt_budget_exhausted",
+        "retry_input_unavailable",
+        "transient_failure"
+      ],
+      "title": "ActionRetryReason",
+      "type": "string"
+    },
+    "ActionStatus": {
+      "description": "Terminal outcome of an action at the verification boundary.",
+      "enum": [
+        "succeeded",
+        "failed",
+        "partial",
+        "unknown",
+        "cancelled",
+        "denied"
+      ],
+      "title": "ActionStatus",
+      "type": "string"
+    },
+    "ApprovalSource": {
+      "description": "Runtime boundary that originated an approval request.",
+      "enum": [
+        "tool",
+        "driver",
+        "harness",
+        "proposal",
+        "system"
+      ],
+      "title": "ApprovalSource",
+      "type": "string"
+    },
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "description": "Reference to data stored outside the execution ledger.",
+      "properties": {
+        "artifact_id": {
+          "format": "uuid",
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "content_hash": {
+          "pattern": "^(?:sha256:)?[0-9a-f]{64}$",
+          "title": "Content Hash",
+          "type": "string"
+        },
+        "kind": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "title": "Kind",
+          "type": "string"
+        },
+        "media_type": {
+          "minLength": 1,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Metadata",
+          "type": "object"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "size_bytes": {
+          "minimum": 0,
+          "title": "Size Bytes",
+          "type": "integer"
+        },
+        "uri": {
+          "minLength": 1,
+          "title": "Uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "artifact_id",
+        "kind",
+        "uri",
+        "media_type",
+        "content_hash",
+        "size_bytes",
+        "metadata"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    },
+    "EnvironmentRef": {
+      "additionalProperties": false,
+      "description": "Stable Action reference to its invocation environment evidence.",
+      "properties": {
+        "contract_id": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "title": "Contract Id",
+          "type": "string"
+        },
+        "contract_version": {
+          "minLength": 1,
+          "title": "Contract Version",
+          "type": "string"
+        },
+        "resolution_id": {
+          "format": "uuid",
+          "title": "Resolution Id",
+          "type": "string"
+        },
+        "resolver_id": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "title": "Resolver Id",
+          "type": "string"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "resolution_id",
+        "contract_id",
+        "contract_version",
+        "resolver_id"
+      ],
+      "title": "EnvironmentRef",
+      "type": "object"
+    },
+    "EvidenceRef": {
+      "additionalProperties": false,
+      "description": "Evidence claim backed by a durable artifact.",
+      "properties": {
+        "artifact_id": {
+          "format": "uuid",
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "captured_at": {
+          "format": "date-time",
+          "title": "Captured At",
+          "type": "string"
+        },
+        "claim": {
+          "minLength": 1,
+          "title": "Claim",
+          "type": "string"
+        },
+        "evidence_id": {
+          "format": "uuid",
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Metadata",
+          "type": "object"
+        },
+        "producer": {
+          "minLength": 1,
+          "title": "Producer",
+          "type": "string"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "evidence_id",
+        "artifact_id",
+        "claim",
+        "producer",
+        "captured_at",
+        "metadata"
+      ],
+      "title": "EvidenceRef",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "RiskLevel": {
+      "description": "Risk classification used by policy and approval contracts.",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "RiskLevel",
+      "type": "string"
+    },
+    "SideEffectStatus": {
+      "description": "Durable lifecycle for one potentially non-repeatable operation.",
+      "enum": [
+        "prepared",
+        "succeeded",
+        "failed",
+        "uncertain"
+      ],
+      "title": "SideEffectStatus",
+      "type": "string"
+    },
+    "ToolEffect": {
+      "description": "Observable effect class declared by a governed tool.",
+      "enum": [
+        "none",
+        "local_write",
+        "external_write",
+        "process"
+      ],
+      "title": "ToolEffect",
+      "type": "string"
+    },
+    "ToolSelection": {
+      "additionalProperties": false,
+      "description": "Stable filters supplied to one runtime tool provider.",
+      "properties": {
+        "active_modes": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+            "type": "string"
+          },
+          "title": "Active Modes",
+          "type": "array"
+        },
+        "active_skills": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Active Skills",
+          "type": "array"
+        },
+        "enabled_features": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+            "type": "string"
+          },
+          "title": "Enabled Features",
+          "type": "array"
+        },
+        "explicit_disabled": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Explicit Disabled",
+          "type": "array"
+        },
+        "explicit_enabled": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Explicit Enabled",
+          "type": "array"
+        },
+        "schema": {
+          "const": "qwenpaw.kernel-model.v1",
+          "default": "qwenpaw.kernel-model.v1",
+          "title": "Schema",
+          "type": "string"
+        },
+        "subagent_allowed_tools": {
+          "anyOf": [
+            {
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Subagent Allowed Tools"
+        }
+      },
+      "required": [
+        "schema",
+        "active_modes",
+        "active_skills",
+        "enabled_features",
+        "explicit_enabled",
+        "explicit_disabled",
+        "subagent_allowed_tools"
+      ],
+      "title": "ToolSelection",
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.qwenpaw.dev/sdk/action-record.v1.json",
+  "additionalProperties": false,
+  "description": "Queryable action projection with an optional terminal result.",
+  "properties": {
+    "admission_decisions": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ActionAdmissionDecision"
+      },
+      "title": "Admission Decisions",
+      "type": "array"
+    },
+    "approval_links": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ActionApprovalLink"
+      },
+      "title": "Approval Links",
+      "type": "array"
+    },
+    "request": {
+      "$ref": "#/$defs/ActionRequest"
+    },
+    "result": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ActionResult"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "schema": {
+      "const": "qwenpaw.kernel-model.v1",
+      "default": "qwenpaw.kernel-model.v1",
+      "title": "Schema",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema",
+    "request",
+    "admission_decisions",
+    "approval_links",
+    "result"
+  ],
+  "title": "ActionRecord",
+  "type": "object"
+}
