@@ -253,6 +253,11 @@ def _build_tc_spec(self: Any) -> ToolCallSpec:
             or request_ctx.get("os_invocation_id")
             or "",
         ),
+        chat_id=str(
+            request_ctx.get("os_chat_id")
+            or request_ctx.get("os_conversation_id")
+            or "",
+        ),
         tool_type=registry.get_type(tool_name),
         effect=registry.get_effect(tool_name),
     )
@@ -403,6 +408,7 @@ async def _policy_tool_check_permissions(
         )
 
     tc_spec = self._build_tc_spec()
+    _bind_policy_audit_identity(self, tc_spec)
 
     decision = governor.assert_policy(
         tc_spec,
@@ -496,6 +502,26 @@ def _runtime_action_kind(tool: Any, effect: ToolEffect) -> ActionKind:
     if effect is ToolEffect.PROCESS:
         return ActionKind.SHELL
     return ActionKind.TOOL
+
+
+def _bind_policy_audit_identity(tool: Any, spec: ToolCallSpec) -> None:
+    """Bind the future Action identity before policy audit persistence."""
+    from ..runtime.actions import RuntimeActionRecorder
+
+    request_context = getattr(tool, "_qp_request_context", {}) or {}
+    spec.chat_id = str(
+        request_context.get("os_chat_id")
+        or request_context.get("os_conversation_id")
+        or spec.chat_id
+        or "",
+    )
+    recorder = request_context.get("_action_recorder")
+    context = _active_tool_call_context()
+    if not isinstance(recorder, RuntimeActionRecorder) or context is None:
+        return
+    effect = ToolEffect(spec.effect)
+    kind = _runtime_action_kind(tool, effect)
+    spec.action_id = str(recorder.action_id(context, kind=kind))
 
 
 async def _begin_tool_action(tool: Any) -> None:

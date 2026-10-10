@@ -1344,7 +1344,16 @@ class AgentBuilder:
             rc.update(_payload_ctx)
         invocation = getattr(ctx, "invocation_scope", None)
         if invocation is not None:
-            rc["os_invocation_id"] = str(invocation.invocation_id)
+            rc.update(
+                {
+                    "os_invocation_id": str(invocation.invocation_id),
+                    **(
+                        {"os_chat_id": invocation.chat_id}
+                        if invocation.chat_id is not None
+                        else {}
+                    ),
+                },
+            )
             # Causal identities are runtime-owned. Request payloads are
             # untrusted and must not be able to forge an internal chain.
             rc["os_correlation_id"] = str(

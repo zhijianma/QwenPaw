@@ -249,7 +249,9 @@ class HarnessRuntime:
             **dict(settings.get("_request_context") or {}),
         }
         control = getattr(self._workspace, "invocation_control", None)
-        conversation_id = request_context.get("os_conversation_id")
+        conversation_id = request_context.get(
+            "os_chat_id",
+        ) or request_context.get("os_conversation_id")
         idempotency_key = request_context.get(
             "os_submission_idempotency_key",
         )
@@ -315,6 +317,8 @@ class HarnessRuntime:
                 "os_correlation_id": str(
                     lease.submission.correlation_id,
                 ),
+                "os_chat_id": str(conversation_id),
+                "os_conversation_id": str(conversation_id),
                 "_interaction_service": interaction_service,
             },
         )
@@ -742,7 +746,8 @@ class HarnessRuntime:
                 str(request_context["os_invocation_id"]),
             )
             conversation_id = str(
-                request_context["os_conversation_id"],
+                request_context.get("os_chat_id")
+                or request_context["os_conversation_id"],
             )
             source_submission_id = uuid.UUID(
                 str(request_context["os_submission_id"]),
@@ -860,7 +865,9 @@ class HarnessRuntime:
             raise ValueError(
                 "invalid Harness environment invocation identity",
             ) from exc
-        chat_id = request_context.get("os_conversation_id")
+        chat_id = request_context.get(
+            "os_chat_id",
+        ) or request_context.get("os_conversation_id")
         return await self._environment_manager.resolve(
             backend,
             cwd,

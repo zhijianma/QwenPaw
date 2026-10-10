@@ -1118,6 +1118,12 @@ Cron 不形成独立审批或产物事实源。
       `ACTION_KIND_SHELL_OK`，批量编排器完成两次时间工具；Action API 分别保存
       `shell/execute_shell_command` 与 `tool/run_tool_batch`，均为 succeeded，命令正文
       继续投影为 `[CONTENT OMITTED]`。
+    - [x] 受治理 Tool 的 Policy Audit 已在 Action intent 创建前绑定确定性的
+      `action_id`、`ChatSpec.id`、Invocation 与 correlation；同一 Invocation 内多次
+      同名调用可按 Action 精确查询，不再依赖时间或工具名猜测。旧 `audit.db` 原位增加
+      nullable-compatible 空字符串列和索引，历史记录无需改写。该切片不把 Driver/
+      Harness 的 Action Observation 冒充 Policy Audit，也尚未把审计写失败提升为所有
+      高风险入口的统一 fail-closed 门禁，因此“所有高风险执行可追溯”总项保持未完成。
     - [x] Action 公共合同统一使用 `chat_id = ChatSpec.id`：Request、Result、Approval
       Link、Execution Context、Retry Checkpoint 和 Committed Item 的新 JSON 不再公开
       `conversation_id`。历史 JSON 与旧 Python 调用仍通过只读兼容别名恢复，Store 的

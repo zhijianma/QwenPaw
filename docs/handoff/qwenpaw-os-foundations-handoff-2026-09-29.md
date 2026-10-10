@@ -1403,3 +1403,16 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
   monotonic timeout。恢复、断流、Resource Wait、跨进程重启和 Runner deadline 定点
   回归 `154 passed`。原生 cursor Provider 与 macOS/Linux/Windows suspend/time-jump
   实机矩阵继续作为独立发布验收，不能用本地单元测试伪造完成。
+
+## 10. 2026-10-10 Tool Policy Audit 因果闭合
+
+- Governance Audit 新增 `chat_id = ChatSpec.id` 与确定性 `action_id`；Policy 判断在
+  Action intent 落盘前使用与 RuntimeActionRecorder 完全相同的身份算法。允许执行的
+  调用可与单条 Tool Action 精确关联；拒绝执行的调用保留相同的确定性请求身份，但按
+  现有合同不会伪造一条未执行的 Action。
+- 旧 SQLite Audit 表原位补列并建立 Chat/Action 索引，历史行保持可读；Task、普通
+  Chat、Action Retry 与本地 Harness 请求上下文均优先传递 `os_chat_id`，旧
+  `os_conversation_id` 只作为兼容输入。
+- Audit/Policy/Approval/Action/Driver/Harness/Observation 定点回归共 227 项通过。
+  Driver/Harness 目前仍以 Action Observation 作为执行审计，并非同一 Policy Audit；
+  审计落盘失败也尚未对全部高风险入口统一 fail closed，因此总体验收门禁未关闭。

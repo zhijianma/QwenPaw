@@ -85,6 +85,8 @@ class ToolCallSpec:
         correlation_id: str = "",
         tool_type: str = "",
         effect: str = "none",
+        chat_id: str = "",
+        action_id: str = "",
     ) -> None:
         self.tool_name = tool_name
         self.target = target
@@ -93,6 +95,8 @@ class ToolCallSpec:
         self.raw_params = raw_params or {}
         self.invocation_id = invocation_id
         self.correlation_id = correlation_id or invocation_id
+        self.chat_id = chat_id
+        self.action_id = action_id
         self.tool_type = tool_type
         self.effect = effect
 

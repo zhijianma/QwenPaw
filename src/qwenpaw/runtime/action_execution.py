@@ -378,6 +378,7 @@ class RuntimeActionRetryRunner:
             "channel": "console",
             "os_invocation_id": str(plan.invocation_id),
             "os_correlation_id": str(plan.correlation_id),
+            "os_chat_id": plan.chat_id,
             "os_conversation_id": plan.chat_id,
             "os_registry_generation": plan.registry_generation,
             "_action_recorder": recorder,

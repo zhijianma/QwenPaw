@@ -765,6 +765,7 @@ def test_runtime_overwrites_spoofed_causal_identity() -> None:
             request_context={
                 "os_invocation_id": "spoofed",
                 "os_correlation_id": "spoofed",
+                "os_chat_id": "spoofed",
             },
         ),
         invocation_scope=scope,
@@ -780,6 +781,7 @@ def test_runtime_overwrites_spoofed_causal_identity() -> None:
 
     assert request_context["os_invocation_id"] == str(invocation_id)
     assert request_context["os_correlation_id"] == str(invocation_id)
+    assert request_context["os_chat_id"] == "chat-spec-1"
 
 
 def test_runtime_injects_trusted_interaction_broker() -> None:
@@ -800,6 +802,7 @@ def test_runtime_injects_trusted_interaction_broker() -> None:
         request=SimpleNamespace(
             request_context={
                 "os_conversation_id": "forged-chat",
+                "os_chat_id": "forged-chat",
                 "_interaction_service": "forged",
                 "_interaction_broker": "forged",
                 "_legacy_approval_compatibility": "forged",
@@ -857,3 +860,4 @@ def test_runtime_does_not_promote_session_to_conversation() -> None:
 
     assert scope.conversation_id is None
     assert "os_conversation_id" not in request_context
+    assert "os_chat_id" not in request_context

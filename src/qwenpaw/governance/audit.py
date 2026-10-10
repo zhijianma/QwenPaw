@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS audit_events (
     session_id    TEXT NOT NULL,
     invocation_id TEXT NOT NULL DEFAULT '',
     correlation_id TEXT NOT NULL DEFAULT '',
+    chat_id       TEXT NOT NULL DEFAULT '',
+    action_id     TEXT NOT NULL DEFAULT '',
     tool_name     TEXT NOT NULL,
     target        TEXT NOT NULL,
     decision      TEXT NOT NULL,
@@ -48,6 +50,11 @@ CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_events(ts);
 CREATE INDEX IF NOT EXISTS idx_audit_workspace ON audit_events(workspace_dir);
 CREATE INDEX IF NOT EXISTS idx_audit_agent ON audit_events(agent_id);
 CREATE INDEX IF NOT EXISTS idx_audit_tool ON audit_events(tool_name);
+"""
+
+_IDENTITY_INDEXES = """\
+CREATE INDEX IF NOT EXISTS idx_audit_chat ON audit_events(chat_id);
+CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_events(action_id);
 """
 
 
@@ -75,6 +82,8 @@ class AuditEvent:
     invocation_id: str = ""
     correlation_id: str = ""
     extra: dict = field(default_factory=dict)
+    chat_id: str = ""
+    action_id: str = ""
 
 
 def _event_from_row(row: sqlite3.Row) -> AuditEvent:
@@ -86,6 +95,8 @@ def _event_from_row(row: sqlite3.Row) -> AuditEvent:
         session_id=row["session_id"],
         invocation_id=row["invocation_id"],
         correlation_id=row["correlation_id"],
+        chat_id=row["chat_id"],
+        action_id=row["action_id"],
         tool_name=row["tool_name"],
         target=row["target"],
         decision=row["decision"],
@@ -170,6 +181,7 @@ class AuditLog:
         cls._migrate_legacy_schema(obj._conn)
         obj._conn.executescript(_SCHEMA)
         cls._migrate_identity_columns(obj._conn)
+        obj._conn.executescript(_IDENTITY_INDEXES)
         obj._conn.commit()
         obj._insert_count = 0
         obj._lock = threading.RLock()
@@ -192,7 +204,12 @@ class AuditLog:
         columns = {
             row[1] for row in conn.execute("PRAGMA table_info(audit_events)")
         }
-        for name in ("invocation_id", "correlation_id"):
+        for name in (
+            "invocation_id",
+            "correlation_id",
+            "chat_id",
+            "action_id",
+        ):
             if name not in columns:
                 conn.execute(
                     f"ALTER TABLE audit_events ADD COLUMN {name} "
@@ -248,9 +265,9 @@ class AuditLog:
                 conn.execute(
                     "INSERT INTO audit_events "
                     "(ts, workspace_dir, agent_id, session_id, "
-                    "invocation_id, correlation_id, "
+                    "invocation_id, correlation_id, chat_id, action_id, "
                     "tool_name, target, decision, reason, extra) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         _now_unix_ms(),
                         workspace_dir,
@@ -258,6 +275,8 @@ class AuditLog:
                         tc_spec.session_id,
                         tc_spec.invocation_id,
                         tc_spec.correlation_id,
+                        tc_spec.chat_id,
+                        tc_spec.action_id,
                         tc_spec.tool_name,
                         tc_spec.target,
                         str(decision.action.value),
@@ -292,6 +311,8 @@ class AuditLog:
         until: Optional[int] = None,
         limit: int = 100,
         offset: int = 0,
+        chat_id: Optional[str] = None,
+        action_id: Optional[str] = None,
     ) -> Tuple[List[AuditEvent], int]:
         """Query audit events with pagination.
 
@@ -304,6 +325,8 @@ class AuditLog:
             until: End time (unix ms, UTC), inclusive
             limit: Page size
             offset: Offset (for pagination)
+            chat_id: Filter by canonical ChatSpec identity
+            action_id: Filter by exact Action request identity
 
         Returns:
             (events, total) — event list and total count of matching
@@ -326,6 +349,12 @@ class AuditLog:
         if decision:
             clauses.append("decision = ?")
             params.append(decision)
+        if chat_id:
+            clauses.append("chat_id = ?")
+            params.append(chat_id)
+        if action_id:
+            clauses.append("action_id = ?")
+            params.append(action_id)
         if since:
             clauses.append("ts >= ?")
             params.append(since)

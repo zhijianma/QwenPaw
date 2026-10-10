@@ -205,6 +205,7 @@ def legacy_request_context(
         if iteration_limits:
             request_context["max_react_iterations"] = min(iteration_limits)
     if context.conversation_id is not None:
+        request_context["os_chat_id"] = context.conversation_id
         request_context["os_conversation_id"] = context.conversation_id
     if context.approval_level is not ApprovalLevel.AGENT_PROFILE:
         request_context["approval_level"] = context.approval_level.value

@@ -16,6 +16,10 @@ from agentscope.message import TextBlock, ToolResultState
 from agentscope.tool import ToolResponse
 
 from qwenpaw.governance.tool_adapter import PolicyGuardedTool
+from qwenpaw.governance.policy import (
+    GovernanceAction,
+    GovernanceDecision,
+)
 from qwenpaw.governance.tool_registry import (
     DEFAULT_REGISTRY,
     register_tool_governance,
@@ -1118,6 +1122,100 @@ async def test_plugin_executor_reads_only_active_action_identity(
     assert execution.idempotency_mode is ActionIdempotencyMode.HOST_GUARDED
     assert execution.attempt == 1
     assert current_action_execution() is None
+
+
+@pytest.mark.asyncio
+async def test_tool_policy_audit_uses_authoritative_action_identity(
+    tmp_path: Path,
+) -> None:
+    scope = _scope(tmp_path, conversation_id="chat-policy-audit")
+    store = FilesystemActionStore(tmp_path)
+    recorder = RuntimeActionRecorder(scope, store)
+
+    class Governor:
+        def __init__(self) -> None:
+            self.audits = []
+
+        def assert_policy(self, _spec, *, execution_level=None):
+            del execution_level
+            return GovernanceDecision(
+                action=GovernanceAction.ALLOW,
+                reason="contract test",
+            )
+
+        def audit(self, spec, decision):
+            self.audits.append((spec, decision))
+
+    governor = Governor()
+
+    async def governed_write(value: str):
+        return ToolResponse(
+            content=[TextBlock(type="text", text=value)],
+            id="call-policy-audit",
+            state=ToolResultState.SUCCESS,
+        )
+
+    owner = "test.action-pipeline.policy-audit"
+    register_tool_governance(
+        DEFAULT_REGISTRY,
+        python_name="governed_write",
+        tool_type="file",
+        effect="local_write",
+        owner=owner,
+    )
+    tool = PolicyGuardedTool(
+        governed_write,
+        governor=governor,
+        request_context={
+            "session_id": scope.session_id,
+            "agent_id": scope.agent_id,
+            "approval_level": "strict",
+            "os_chat_id": scope.chat_id,
+            "os_invocation_id": str(scope.invocation_id),
+            "os_correlation_id": str(
+                scope.correlation_id or scope.invocation_id,
+            ),
+            "_action_recorder": recorder,
+        },
+    )
+    coordinator = ToolCoordinator()
+    tool_call = type(
+        "ToolCall",
+        (),
+        {
+            "id": "call-policy-audit",
+            "name": "governed_write",
+            "input": {"value": "ok"},
+        },
+    )()
+
+    async def next_handler(tool_call):
+        await tool.check_permissions(tool_call.input)
+        yield await tool(  # pylint: disable=not-callable
+            value=tool_call.input["value"],
+        )
+
+    try:
+        async for _event in coordinator.execute(
+            tool_call=tool_call,
+            next_handler=next_handler,
+            session_id=scope.session_id,
+            agent_id=scope.agent_id,
+            root_session_id=scope.root_session_id,
+            result_processor=recorder.complete,
+        ):
+            pass
+    finally:
+        DEFAULT_REGISTRY.unregister_owner(owner)
+
+    [record] = await store.list_for_conversation(scope.chat_id)
+    [(audit_spec, _decision)] = governor.audits
+    assert audit_spec.chat_id == scope.chat_id
+    assert audit_spec.invocation_id == str(scope.invocation_id)
+    assert audit_spec.correlation_id == str(
+        scope.correlation_id or scope.invocation_id,
+    )
+    assert audit_spec.action_id == str(record.request.action_id)
 
 
 @pytest.mark.asyncio

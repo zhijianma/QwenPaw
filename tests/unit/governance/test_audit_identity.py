@@ -40,11 +40,16 @@ def test_audit_migration_preserves_rows_and_adds_identity(
         )
     }
 
-    assert {"invocation_id", "correlation_id"}.issubset(columns)
+    assert {
+        "invocation_id",
+        "correlation_id",
+        "chat_id",
+        "action_id",
+    }.issubset(columns)
     audit.close()
 
 
-def test_audit_round_trips_invocation_and_correlation_ids(
+def test_audit_round_trips_action_causal_identity(
     tmp_path: Path,
 ) -> None:
     audit = AuditLog._create(  # pylint: disable=protected-access
@@ -57,6 +62,8 @@ def test_audit_round_trips_invocation_and_correlation_ids(
         session_id="chat",
         invocation_id="invocation-1",
         correlation_id="correlation-1",
+        chat_id="chat-spec-1",
+        action_id="action-1",
     )
 
     audit.record(
@@ -67,11 +74,17 @@ def test_audit_round_trips_invocation_and_correlation_ids(
             reason="test",
         ),
     )
-    events, total = audit.query(limit=10)
+    events, total = audit.query(
+        chat_id="chat-spec-1",
+        action_id="action-1",
+        limit=10,
+    )
 
     assert total == 1
     assert events[0].invocation_id == "invocation-1"
     assert events[0].correlation_id == "correlation-1"
+    assert events[0].chat_id == "chat-spec-1"
+    assert events[0].action_id == "action-1"
     audit.close()
 
 

@@ -589,7 +589,7 @@ def _os_request() -> AgentRequest:
         session_id="chat-1",
         channel="console",
         request_context={
-            "os_conversation_id": "chat-spec-1",
+            "os_chat_id": "chat-spec-1",
             "os_submission_idempotency_key": "message-1",
         },
         input=[

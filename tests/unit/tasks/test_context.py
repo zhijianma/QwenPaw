@@ -94,6 +94,7 @@ def test_runtime_context_round_trip_and_legacy_adapter() -> None:
     assert legacy["os_registry_generation"] == 7
     assert legacy["os_invocation_id"] == str(invocation_id)
     assert legacy["os_correlation_id"] == str(correlation_id)
+    assert legacy["os_chat_id"] == "chat-7"
     assert legacy["os_conversation_id"] == "chat-7"
     assert legacy["approval_level"] == "strict"
     assert legacy["model_slot_override"] == {
@@ -151,7 +152,9 @@ def test_runtime_context_adapts_an_empty_legacy_order() -> None:
     assert context.invocation_id == run.run_id
     assert context.correlation_id == run.run_id
     assert context.conversation_id is None
-    assert "os_conversation_id" not in legacy_request_context(context)
+    legacy = legacy_request_context(context)
+    assert "os_chat_id" not in legacy
+    assert "os_conversation_id" not in legacy
 
 
 def test_legacy_context_applies_strictest_iteration_exit_condition() -> None:
