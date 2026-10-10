@@ -353,7 +353,8 @@ Workbench。前端只能提交命令、订阅事件和展示服务端投影；�
   projection、open Interaction 与 receipt/revision；过期 revision、跨 Chat target
   和幂等冲突由服务端关闭失败。SSE 使用完整快照 cursor 做 current-state recovery，
   不冒充不可丢审计日志。
-- [ ] 前端迁移为薄投影：移除本地发送者、跨标签锁和本地权威 runState；允许保留
+- [x] 前端迁移为薄投影：移除 QwenPaw 路径的本地发送者、跨标签锁和本地权威
+  runState；允许保留
   未提交输入草稿，但提交后的 Queue、Steer、Interrupt 状态只读服务端。
   - [x] 前置门禁：workspace-owned Submission Dispatcher 原子持久化版本化输入
     envelope，并能在无浏览器 subscriber 和服务重启后消费 queued Submission；
@@ -373,6 +374,13 @@ Workbench。前端只能提交命令、订阅事件和展示服务端投影；�
     兼容队列，不能因 Chat ID 映射尚未完成而短暂接管 QwenPaw admission。Chat
     页面在选择队列投影、恢复存储、获取 ownership 和 SDK ready 调度四个入口均按
     backend 边界关闭 QwenPaw 本地路径，避免陈旧 localStorage 项短暂闪现或发送。
+  - [x] 顶层薄投影门禁已闭环：`ChatSenderTabsPanel` 对 QwenPaw 禁用 legacy Queue，
+    稳定 Chat 只渲染 `RuntimeActivityPanel/ServerRuntimeQueue`；Runtime Store 共享
+    `agent_id + ChatSpec.id` SSE 订阅并以 GET snapshot 恢复。外部 Backend 与未提交
+    草稿仍可使用兼容 Web Lock/localStorage sender，但该代码不能成为 QwenPaw 的
+    admission 或 run-state 真相。相关 Console 定点回归 `203 passed`。2026-10-10
+    固定 Chat 的真实 Runtime/Queue API 均返回 revision 429、无 active/queued
+    Submission，页面未出现本地“排队”状态。
   - [ ] 外部 backend 仍使用本地兼容队列；待其公开 Conversation/Queue capability
     明确后删除跨标签发送状态机。
 - [x] Console 与 Channel `/stop` 已按 `ChatSpec.id` 优先使用统一 Interrupt，旧路径
