@@ -16,9 +16,11 @@ import {
   type ChatSteerRequest,
   type ChatSubmissionRequest,
   type ControlReceipt,
+  type ConversationExecutionChain,
   type ConversationRuntimeProjection,
   type FetchTransportOptions,
   type FollowRuntimeOptions,
+  type FollowSubmissionOptions,
   type QwenPawClient,
   type QueueProjection,
   type RuntimeFeature,
@@ -81,6 +83,57 @@ export interface QwenPawHostOptions {
   onOutput?: (output: ManagedHostOutput) => void;
 }
 
+export class QwenPawTurnError extends Error {
+  readonly code: "TURN_RECEIPT_INVALID";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "QwenPawTurnError";
+    this.code = "TURN_RECEIPT_INVALID";
+  }
+}
+
+export class QwenPawTurn {
+  readonly chatId: string;
+  readonly submissionId: string;
+  readonly receipt: ControlReceipt;
+
+  readonly #client: QwenPawClient;
+
+  constructor(client: QwenPawClient, chatId: string, receipt: ControlReceipt) {
+    const submissionId = receipt.submission_id?.trim();
+    if (!submissionId) {
+      throw new QwenPawTurnError(
+        "QwenPaw Host accepted a Chat turn without a submission identity",
+      );
+    }
+    this.#client = client;
+    this.chatId = chatId;
+    this.submissionId = submissionId;
+    this.receipt = receipt;
+  }
+
+  follow(
+    options: FollowSubmissionOptions = {},
+  ): AsyncGenerator<ConversationExecutionChain, ConversationExecutionChain> {
+    return this.#client.chats.followSubmission(
+      this.chatId,
+      this.submissionId,
+      options,
+    );
+  }
+
+  async wait(
+    options: FollowSubmissionOptions = {},
+  ): Promise<ConversationExecutionChain> {
+    const stream = this.follow(options);
+    while (true) {
+      const result = await stream.next();
+      if (result.done) return result.value;
+    }
+  }
+}
+
 export class QwenPawChat {
   readonly id: string;
   readonly spec?: ChatSpec;
@@ -117,6 +170,14 @@ export class QwenPawChat {
     options: ChatRequestOptions = {},
   ): Promise<ControlReceipt> {
     return this.#client.chatControls.submit(this.id, body, options);
+  }
+
+  async send(
+    body: ChatSubmissionRequest,
+    options: ChatRequestOptions = {},
+  ): Promise<QwenPawTurn> {
+    const receipt = await this.submit(body, options);
+    return new QwenPawTurn(this.#client, this.id, receipt);
   }
 
   queue(options: ChatRequestOptions = {}): Promise<QueueProjection> {

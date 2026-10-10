@@ -510,6 +510,13 @@ Verified on 2026-10-10 against the running Lite Host on port 8004:
   steer, interrupt, stop-and-clear, Interaction response and fork methods all
   delegate to that shared client. The handle owns no queue or completion state;
   stream EOF returns only the last cursor and never means task success.
+- Submission tracking now stays in the shared client: it locates the durable
+  execution chain by `submission_id`, emits `waiting_user` without inventing
+  completion, reconciles every EOF or transient disconnect against the latest
+  Host projection, and reconnects from its cursor. The managed SDK adds only a
+  thin `QwenPawTurn` wrapper. Mechanical `inactive` remains distinct from the
+  verified Outcome states `achieved`, `partial`, `not_achieved` and
+  `abandoned`; a truncated projection window fails closed instead of guessing.
 - Nine real child-process tests cover ready, missing feature, incompatible or
   malformed handshake, malformed launch or API root, early exit, spawn failure
   and launch timeout.

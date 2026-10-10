@@ -276,4 +276,121 @@ describe("public QwenPaw client", () => {
       }),
     );
   });
+
+  it("tracks a submission without treating inactive as achieved", async () => {
+    const chain = (state: string) => ({
+      chat_id: "chat-1",
+      correlation_id: "correlation-1",
+      state,
+      submission_ids: ["submission-1"],
+      invocation_ids: ["invocation-1"],
+      head_submission_id: "submission-1",
+      head_invocation_id: "invocation-1",
+      latest_submission_status: state === "inactive" ? "succeeded" : "running",
+      open_interaction_ids: state === "waiting_user" ? ["interaction-1"] : [],
+      accepted_at: "2026-10-10T00:00:00Z",
+      latest_submission_at: "2026-10-10T00:00:01Z",
+    });
+    const projection = (state: string, cursor: string) => ({
+      agent_id: "default",
+      chat_id: "chat-1",
+      queue: {},
+      interactions: [],
+      execution_chains: [chain(state)],
+      cursor,
+      observed_at: "2026-10-10T00:00:01Z",
+    });
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        for (const [state, cursor] of [
+          ["waiting_user", "cursor-2"],
+          ["inactive", "cursor-3"],
+        ]) {
+          controller.enqueue(
+            encoder.encode(
+              `id: ${cursor}\nevent: snapshot\ndata: ` +
+                `${JSON.stringify(projection(state, cursor))}\n\n`,
+            ),
+          );
+        }
+        controller.close();
+      },
+    });
+    const request = vi
+      .fn()
+      .mockResolvedValue(projection("running", "cursor-1"));
+    const client = createQwenPawClient({
+      request,
+      openStream: vi.fn().mockResolvedValue(new Response(stream)),
+    });
+    const updates = [];
+    const execution = client.chats.followSubmission("chat-1", "submission-1");
+    let result = await execution.next();
+    while (!result.done) {
+      updates.push(result.value.state);
+      result = await execution.next();
+    }
+
+    expect(updates).toEqual(["running", "waiting_user", "inactive"]);
+    expect(result.value.state).toBe("inactive");
+    expect(result.value.outcome).toBeUndefined();
+  });
+
+  it("reconciles stream EOF with an authoritative outcome", async () => {
+    const running = {
+      chat_id: "chat-1",
+      correlation_id: "correlation-1",
+      state: "running",
+      submission_ids: ["submission-1"],
+    };
+    const achieved = {
+      ...running,
+      state: "achieved",
+      latest_submission_status: "succeeded",
+      outcome: { status: "achieved" },
+    };
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        chat_id: "chat-1",
+        execution_chains: [running],
+        cursor: "cursor-1",
+      })
+      .mockResolvedValueOnce({
+        chat_id: "chat-1",
+        execution_chains: [achieved],
+        cursor: "cursor-2",
+      });
+    const client = createQwenPawClient({
+      request,
+      openStream: vi.fn().mockResolvedValue(new Response("")),
+    });
+    const execution = client.chats.followSubmission("chat-1", "submission-1", {
+      reconnectDelayMs: 0,
+    });
+
+    expect((await execution.next()).value.state).toBe("running");
+    const terminal = await execution.next();
+    expect(terminal.value.state).toBe("achieved");
+    expect((await execution.next()).value.state).toBe("achieved");
+  });
+
+  it("fails closed when a submission is outside a truncated window", async () => {
+    const client = createQwenPawClient({
+      request: vi.fn().mockResolvedValue({
+        chat_id: "chat-1",
+        execution_chains: [],
+        execution_window_truncated: true,
+        cursor: "cursor-oldest",
+      }),
+      openStream: vi.fn(),
+    });
+    const execution = client.chats.followSubmission("chat-1", "submission-old");
+
+    await expect(execution.next()).rejects.toMatchObject({
+      code: "SUBMISSION_OUTSIDE_EXECUTION_WINDOW",
+      submissionId: "submission-old",
+    });
+  });
 });

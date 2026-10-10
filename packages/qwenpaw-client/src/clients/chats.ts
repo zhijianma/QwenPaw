@@ -1,4 +1,5 @@
 import type {
+  ConversationExecutionChain,
   ChatForkRequest,
   ChatHistory,
   ChatSpec,
@@ -25,6 +26,50 @@ export interface ListChatsOptions extends ChatRequestOptions {
 
 export interface FollowRuntimeOptions extends ChatRequestOptions {
   afterCursor?: string;
+}
+
+export interface FollowSubmissionOptions extends ChatRequestOptions {
+  reconnectDelayMs?: number;
+  maxReconnectAttempts?: number;
+}
+
+const SETTLED_EXECUTION_STATES = new Set([
+  "inactive",
+  "failed",
+  "interrupted",
+  "cancelled",
+  "achieved",
+  "partial",
+  "not_achieved",
+  "abandoned",
+]);
+
+export class ChatExecutionError extends Error {
+  readonly code: string;
+  readonly chatId: string;
+  readonly submissionId: string;
+  readonly cursor?: string;
+
+  constructor(
+    code: string,
+    message: string,
+    context: {
+      chatId: string;
+      submissionId: string;
+      cursor?: string;
+      cause?: unknown;
+    },
+  ) {
+    super(message);
+    this.name = "ChatExecutionError";
+    this.code = code;
+    this.chatId = context.chatId;
+    this.submissionId = context.submissionId;
+    this.cursor = context.cursor;
+    if (context.cause !== undefined) {
+      (this as Error & { cause?: unknown }).cause = context.cause;
+    }
+  }
 }
 
 interface ServerSentEvent {
@@ -87,8 +132,108 @@ async function responseError(response: Response): Promise<QwenPawHttpError> {
   return new QwenPawHttpError(response.status, body);
 }
 
+function nonNegativeInteger(name: string, value: number): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new TypeError(`${name} must be a non-negative safe integer`);
+  }
+  return value;
+}
+
+function wait(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const finish = () => {
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    };
+    const timer = setTimeout(finish, milliseconds);
+    const abort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+      reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+    };
+    if (signal?.aborted) abort();
+    else signal?.addEventListener("abort", abort, { once: true });
+  });
+}
+
+function submissionChain(
+  projection: ConversationRuntimeProjection,
+  submissionId: string,
+): ConversationExecutionChain | undefined {
+  return projection.execution_chains?.find((chain) =>
+    chain.submission_ids.includes(submissionId),
+  );
+}
+
+export function isExecutionSettled(chain: ConversationExecutionChain): boolean {
+  return SETTLED_EXECUTION_STATES.has(chain.state);
+}
+
 export function createChatClient(transport: ChatClientTransport) {
   const encoded = encodeURIComponent;
+  const runtime = (
+    chatId: string,
+    options: ChatRequestOptions = {},
+  ): Promise<ConversationRuntimeProjection> =>
+    transport.request<ConversationRuntimeProjection>(
+      `/chats/${encoded(chatId)}/runtime`,
+      requestInit(options, {}, true),
+    );
+  const followRuntime = async function* (
+    chatId: string,
+    options: FollowRuntimeOptions = {},
+  ): AsyncGenerator<ConversationRuntimeProjection, string | undefined> {
+    const headers = new Headers({ Accept: "text/event-stream" });
+    if (options.agentId) headers.set("X-Agent-Id", options.agentId);
+    if (options.afterCursor) {
+      headers.set("Last-Event-ID", options.afterCursor);
+    }
+    const response = await transport.openStream(
+      `/chats/${encoded(chatId)}/runtime/stream`,
+      requestInit(options, { headers }),
+    );
+    if (!response.ok) throw await responseError(response);
+    if (!response.body) {
+      throw new Error("QwenPaw runtime stream has no response body");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let cursor = options.afterCursor;
+    try {
+      while (true) {
+        const result = await reader.read();
+        buffer += decoder.decode(result.value, { stream: !result.done });
+        buffer = buffer.split("\r\n").join("\n");
+        const [events, remainder] = eventBlocks(buffer);
+        buffer = remainder;
+        for (const event of events) {
+          if (event.id) cursor = event.id;
+          if (event.event !== "snapshot" || !event.data) continue;
+          const projection = JSON.parse(
+            event.data,
+          ) as ConversationRuntimeProjection;
+          cursor = projection.cursor || cursor;
+          yield projection;
+        }
+        if (result.done) {
+          const event = parseEvent(buffer);
+          if (event?.id) cursor = event.id;
+          if (event?.event === "snapshot" && event.data) {
+            const projection = JSON.parse(
+              event.data,
+            ) as ConversationRuntimeProjection;
+            cursor = projection.cursor || cursor;
+            yield projection;
+          }
+          return cursor;
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  };
   return {
     list(options: ListChatsOptions = {}) {
       const query = new URLSearchParams();
@@ -141,65 +286,110 @@ export function createChatClient(transport: ChatClientTransport) {
         }),
       );
     },
-    runtime(chatId: string, options: ChatRequestOptions = {}) {
-      return transport.request<ConversationRuntimeProjection>(
-        `/chats/${encoded(chatId)}/runtime`,
-        requestInit(options, {}, true),
-      );
-    },
-    async *followRuntime(
+    runtime,
+    followRuntime,
+    async *followSubmission(
       chatId: string,
-      options: FollowRuntimeOptions = {},
-    ): AsyncGenerator<ConversationRuntimeProjection, string | undefined> {
-      const headers = new Headers({ Accept: "text/event-stream" });
-      if (options.agentId) headers.set("X-Agent-Id", options.agentId);
-      if (options.afterCursor) {
-        headers.set("Last-Event-ID", options.afterCursor);
+      submissionId: string,
+      options: FollowSubmissionOptions = {},
+    ): AsyncGenerator<ConversationExecutionChain, ConversationExecutionChain> {
+      if (!submissionId.trim()) {
+        throw new TypeError("submissionId must not be empty");
       }
-      const response = await transport.openStream(
-        `/chats/${encoded(chatId)}/runtime/stream`,
-        requestInit(options, { headers }),
+      const maxReconnectAttempts = nonNegativeInteger(
+        "maxReconnectAttempts",
+        options.maxReconnectAttempts ?? 3,
       );
-      if (!response.ok) throw await responseError(response);
-      if (!response.body) {
-        throw new Error("QwenPaw runtime stream has no response body");
+      const reconnectDelayMs = nonNegativeInteger(
+        "reconnectDelayMs",
+        options.reconnectDelayMs ?? 250,
+      );
+      let cursor: string | undefined;
+      let lastValue = "";
+      let reconnectAttempts = 0;
+
+      const inspect = (
+        projection: ConversationRuntimeProjection,
+      ): { chain?: ConversationExecutionChain; changed: boolean } => {
+        cursor = projection.cursor || cursor;
+        const chain = submissionChain(projection, submissionId);
+        if (!chain && projection.execution_window_truncated) {
+          throw new ChatExecutionError(
+            "SUBMISSION_OUTSIDE_EXECUTION_WINDOW",
+            "Submission is outside the Host execution projection window",
+            { chatId, submissionId, cursor },
+          );
+        }
+        if (!chain) return { changed: false };
+        const value = JSON.stringify(chain);
+        const changed = value !== lastValue;
+        lastValue = value;
+        return { chain, changed };
+      };
+
+      let current = await runtime(chatId, options);
+      let observed = inspect(current);
+      if (observed.chain && observed.changed) yield observed.chain;
+      if (observed.chain && isExecutionSettled(observed.chain)) {
+        return observed.chain;
       }
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let cursor = options.afterCursor;
-      try {
-        while (true) {
-          const result = await reader.read();
-          buffer += decoder.decode(result.value, { stream: !result.done });
-          buffer = buffer.split("\r\n").join("\n");
-          const [events, remainder] = eventBlocks(buffer);
-          buffer = remainder;
-          for (const event of events) {
-            if (event.id) cursor = event.id;
-            if (event.event !== "snapshot" || !event.data) continue;
-            const projection = JSON.parse(
-              event.data,
-            ) as ConversationRuntimeProjection;
-            cursor = projection.cursor || cursor;
-            yield projection;
-          }
-          if (result.done) {
-            const event = parseEvent(buffer);
-            if (event?.id) cursor = event.id;
-            if (event?.event === "snapshot" && event.data) {
-              const projection = JSON.parse(
-                event.data,
-              ) as ConversationRuntimeProjection;
-              cursor = projection.cursor || cursor;
-              yield projection;
+      while (true) {
+        try {
+          const stream = followRuntime(chatId, {
+            agentId: options.agentId,
+            signal: options.signal,
+            afterCursor: cursor,
+          });
+          while (true) {
+            const result = await stream.next();
+            if (result.done) {
+              cursor = result.value || cursor;
+              break;
             }
-            return cursor;
+            reconnectAttempts = 0;
+            observed = inspect(result.value);
+            if (observed.chain && observed.changed) yield observed.chain;
+            if (observed.chain && isExecutionSettled(observed.chain)) {
+              return observed.chain;
+            }
           }
+        } catch (error) {
+          if (error instanceof ChatExecutionError) throw error;
+          if (options.signal?.aborted) throw error;
         }
-      } finally {
-        reader.releaseLock();
+
+        try {
+          current = await runtime(chatId, options);
+          observed = inspect(current);
+          if (observed.chain && observed.changed) yield observed.chain;
+          if (observed.chain && isExecutionSettled(observed.chain)) {
+            return observed.chain;
+          }
+        } catch (error) {
+          if (error instanceof ChatExecutionError) throw error;
+          if (options.signal?.aborted) throw error;
+          reconnectAttempts += 1;
+          if (reconnectAttempts > maxReconnectAttempts) {
+            throw new ChatExecutionError(
+              "RUNTIME_RECONNECT_EXHAUSTED",
+              "Unable to reconcile the submission with the QwenPaw Host",
+              { chatId, submissionId, cursor, cause: error },
+            );
+          }
+          await wait(reconnectDelayMs, options.signal);
+          continue;
+        }
+
+        reconnectAttempts += 1;
+        if (reconnectAttempts > maxReconnectAttempts) {
+          throw new ChatExecutionError(
+            "RUNTIME_STREAM_ENDED",
+            "Runtime stream ended without a settled execution state",
+            { chatId, submissionId, cursor },
+          );
+        }
+        await wait(reconnectDelayMs, options.signal);
       }
     },
   };

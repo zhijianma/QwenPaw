@@ -23,6 +23,13 @@ const chat = host.chats.open("chat-spec-id");
 const queue = await chat.queue();
 console.log(queue);
 
+const turn = await chat.send({
+  idempotency_key: crypto.randomUUID(),
+  content_parts: [{ type: "text", text: "Review the README" }],
+});
+const settled = await turn.wait();
+console.log(settled.state, settled.outcome);
+
 const child = await chat.fork({
   source_message_id: "message-id",
   idempotency_key: crypto.randomUUID(),
@@ -43,3 +50,8 @@ History, submission, queue, steer, interrupt, stop-and-clear, approvals, fork
 and runtime streams delegate to the same `@qwenpaw/client` used remotely. The
 handle stores no queue or completion state, and runtime stream EOF is never
 reported as successful completion.
+
+`chat.send()` returns a `QwenPawTurn` immediately after durable admission.
+`turn.follow()` streams the Host-owned execution chain and `turn.wait()`
+reconciles disconnects until execution settles. A settled `inactive` state is
+not promoted to `achieved`; verified goal outcomes remain explicit Host facts.

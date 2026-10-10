@@ -36,6 +36,19 @@ await paw.chatControls.steer("chat-spec-id", {
 for await (const snapshot of paw.chats.followRuntime("chat-spec-id")) {
   console.log(snapshot.cursor, snapshot.queue.revision);
 }
+
+const receipt = await paw.chatControls.submit("chat-spec-id", {
+  idempotency_key: crypto.randomUUID(),
+  content_parts: [{ type: "text", text: "Review the README" }],
+});
+if (receipt.submission_id) {
+  for await (const execution of paw.chats.followSubmission(
+    "chat-spec-id",
+    receipt.submission_id,
+  )) {
+    console.log(execution.state);
+  }
+}
 ```
 
 Pass a custom `QwenPawTransport` instead of Fetch options to integrate another
@@ -53,6 +66,10 @@ only at a Runtime safe point.
 snapshots. `followRuntime()` reconnects from `afterCursor` and returns the last
 observed cursor when the transport ends; EOF is not a successful turn. Read the
 latest runtime projection to determine queue, interaction and execution state.
+`followSubmission()` reconciles stream EOF and transient disconnects against
+that projection before reconnecting. An `inactive` execution means the
+submission stopped successfully but has no verified business Outcome; only
+`achieved`, `partial`, `not_achieved` or `abandoned` carry that meaning.
 
 ## 中文说明
 
