@@ -170,9 +170,16 @@ async def test_manager_persists_one_deterministic_owner_only_record(
         tmp_path,
         {"sandbox": "read-only"},
         invocation_id=invocation_id,
-        conversation_id="chat-spec-1",
+        chat_id="chat-spec-1",
     )
     second = await manager.resolve(
+        "codex",
+        tmp_path,
+        {"sandbox": "read-only"},
+        invocation_id=invocation_id,
+        chat_id="chat-spec-1",
+    )
+    legacy = await manager.resolve(
         "codex",
         tmp_path,
         {"sandbox": "read-only"},
@@ -181,6 +188,7 @@ async def test_manager_persists_one_deterministic_owner_only_record(
     )
 
     assert first.resolution_id == second.resolution_id
+    assert legacy.resolution_id == first.resolution_id
     records = list(
         (tmp_path / ".qwenpaw" / "lite" / "environments").rglob(
             "environment.json",
@@ -188,6 +196,16 @@ async def test_manager_persists_one_deterministic_owner_only_record(
     )
     assert len(records) == 1
     assert stat.S_IMODE(records[0].stat().st_mode) == 0o600
+
+    with pytest.raises(ValueError, match="must identify one Chat"):
+        await manager.resolve(
+            "codex",
+            tmp_path,
+            {"sandbox": "read-only"},
+            invocation_id=invocation_id,
+            chat_id="chat-spec-2",
+            conversation_id="chat-spec-1",
+        )
 
 
 @pytest.mark.asyncio
@@ -204,7 +222,7 @@ async def test_manager_records_then_rejects_unsatisfied_environment(
             tmp_path,
             {"sandbox": "unknown"},
             invocation_id=uuid4(),
-            conversation_id="chat-spec-1",
+            chat_id="chat-spec-1",
         )
 
     assert raised.value.resolution.status is (

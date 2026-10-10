@@ -1392,3 +1392,8 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
 - Action 核心/Provider/Governance/Harness/API 定点回归 `176 passed`。固定 Chat 的
   Action API 实测返回 18 条权威记录：Tool 8、Shell 5、Browser 3、Driver/MCP 2；
   16 条 succeeded、2 条 failed，失败记录仍保留诊断 Artifact 引用。
+- Lite Environment Plane 的 Workspace、Action Sandbox 与本地 Harness 三条路径已
+  统一到同一 Contract/Resolution/Ref/Store。`EnvironmentStore` Port 和所有新调用
+  使用 `chat_id = ChatSpec.id`；文件存储仍读取旧 `conversation_id` 关键字，但会拒绝
+  两者冲突。环境定点回归 `112 passed`；Workstation/Hub attestation 仍是独立未完成
+  门禁，不影响 Lite 基建完成状态。

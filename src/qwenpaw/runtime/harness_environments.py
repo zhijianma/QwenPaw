@@ -291,9 +291,21 @@ class RuntimeHarnessEnvironmentManager:
         settings: dict[str, object],
         *,
         invocation_id: UUID,
-        conversation_id: str | None,
+        chat_id: str | None = None,
+        conversation_id: str | None = None,
     ) -> EnvironmentResolution:
-        """Persist declared and resolved facts before provider dispatch."""
+        """Persist facts under ChatSpec.id before provider dispatch."""
+        if (
+            chat_id is not None
+            and conversation_id is not None
+            and chat_id != conversation_id
+        ):
+            raise ValueError(
+                "chat_id and conversation_id must identify one Chat",
+            )
+        resolved_chat_id = chat_id if chat_id is not None else conversation_id
+        if resolved_chat_id is not None and not resolved_chat_id.strip():
+            raise ValueError("chat_id cannot be empty")
         contract, resolution = await self._resolver.resolve(
             backend,
             cwd,
@@ -302,7 +314,7 @@ class RuntimeHarnessEnvironmentManager:
         )
         await self._store.record(
             EnvironmentRecord(contract=contract, resolution=resolution),
-            conversation_id=conversation_id,
+            chat_id=resolved_chat_id,
         )
         if resolution.status is EnvironmentResolutionStatus.UNSATISFIED:
             raise EnvironmentContractUnsatisfiedError(resolution)

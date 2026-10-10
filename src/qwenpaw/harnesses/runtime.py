@@ -783,8 +783,7 @@ class HarnessRuntime:
             provider_item_ids = {
                 item.item_id
                 for item in history
-                if item.kind is HarnessHistoryKind.TOOL_OUTPUT
-                and item.item_id
+                if item.kind is HarnessHistoryKind.TOOL_OUTPUT and item.item_id
             }
             session_items = await self._session_bridge.committed_items(
                 session_id=session_id,
@@ -861,15 +860,13 @@ class HarnessRuntime:
             raise ValueError(
                 "invalid Harness environment invocation identity",
             ) from exc
-        conversation_id = request_context.get("os_conversation_id")
+        chat_id = request_context.get("os_conversation_id")
         return await self._environment_manager.resolve(
             backend,
             cwd,
             settings,
             invocation_id=invocation_id,
-            conversation_id=(
-                str(conversation_id) if conversation_id is not None else None
-            ),
+            chat_id=str(chat_id) if chat_id is not None else None,
         )
 
     async def stop(self) -> None:

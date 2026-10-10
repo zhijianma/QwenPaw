@@ -568,10 +568,13 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
   `ContextManifest`。真实 Chat 验收覆盖 generation 11、93 个 Fragment 和
   70 个 Tool Schema；Manifest 不含用户原文、Secret 或隐藏推理指纹，文件权限
   为 `0600`，Conversation 目录键与 Manifest SHA256 均独立复算一致。
-- [ ] 完成统一 Environment Plane：
+- [x] 完成 Lite 统一 Environment Plane；Workstation/Hub 的真实约束兑现与
+  attestation 保留为独立路线门禁：
   - [x] 冻结 `EnvironmentContract` / `EnvironmentResolution` /
     `EnvironmentRef` 与 host-owned Resolver/Store；Lite Chat 在 Agent 建立前解析，
-    把不可变证据绑定到 Invocation，并由 Action 保存 resolution 引用。
+    把不可变证据绑定到 Invocation，并由 Action 保存 resolution 引用。Store Port
+    统一以 `chat_id = ChatSpec.id` 表达所有权，旧 `conversation_id` 仅保留为具体存储
+    的冲突校验兼容入口。
   - [x] Lite 对 Workspace/Mount、OS/架构和依赖做真实校验；对不能兑现的隔离、
     网络、Secret、资源、超时、并发、快照和清理约束在执行前失败关闭。
     固定 Chat 已在 `/clear` 后以真实 `read_file` 验证环境 Resolution 与 Tool

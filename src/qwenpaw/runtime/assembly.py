@@ -239,9 +239,7 @@ class RuntimeAssemblyFactory:
             raise ValueError("chat_id cannot be empty")
         if conversation_id is not None and not conversation_id.strip():
             raise ValueError("conversation_id cannot be empty")
-        resolved_chat_id = (
-            chat_id if chat_id is not None else conversation_id
-        )
+        resolved_chat_id = chat_id if chat_id is not None else conversation_id
         if selection is not None and selection_overrides is not None:
             raise ValueError(
                 "selection and selection_overrides are mutually exclusive",
@@ -338,7 +336,7 @@ class RuntimeAssemblyFactory:
                         contract=contract,
                         resolution=resolution,
                     ),
-                    conversation_id=resolved_chat_id,
+                    chat_id=resolved_chat_id,
                 )
             if resolution.status is EnvironmentResolutionStatus.UNSATISFIED:
                 raise EnvironmentContractUnsatisfiedError(resolution)

@@ -1172,11 +1172,14 @@ Cron 不形成独立审批或产物事实源。
     Action/Environment Adapter；现有 Task `SideEffectRecord` 继续作为 Task 防重放
     权威，不迁移为第二状态机。仅有 TOOL_STARTED 的 Provider 事件属于 observed
     boundary，不宣称宿主已在实际执行前拦截。
-  - [ ] `EnvironmentContract` 冻结 Workspace、Sandbox、Harness 和 Hub runtime
-    共同需要的挂载、网络、凭据引用、依赖、资源、快照与清理语义。
+  - [x] Lite `EnvironmentContract` 已冻结 Workspace、Sandbox 与本地 Harness
+    共同需要的挂载、网络、凭据引用、依赖、资源、快照与清理语义；Workstation /
+    Hub runner 的真实约束与 attestation 作为独立门禁保留。
     - [x] Kernel 已冻结 Contract、Resolution、Ref 与 Resolver/Store Port；Lite
       Chat 在 Agent 建立前解析并持久化 Invocation 环境事实，Action 通过 Ref
       关联，环境不满足时不会进入模型或工具执行，generation lease 正常释放。
+      `EnvironmentStore` 的公共所有权参数已统一为 `chat_id = ChatSpec.id`；旧
+      `conversation_id` 仅由文件存储实现作为显式兼容关键字接受，并拒绝冲突身份。
     - [x] Lite 只报告能证明的 Host、继承网络、Workspace/Mount 访问与依赖；
       隔离网络、Secret、硬资源、超时/并发、快照和清理要求均显式失败关闭。
       Plugin SDK 仅公开稳定数据模型，不公开 host-owned Resolver/Store。
@@ -1195,8 +1198,8 @@ Cron 不形成独立审批或产物事实源。
       Queue lease 正常结算。Resolution 分开保存宿主验证的 Workspace/依赖和
       Provider 声明的 sandbox/permission，Secret 值不进入 Contract。Harness、
       Environment、Sandbox、Action 与 SDK 共 120 项定点测试通过。
-    - [ ] Harness Remote、Workstation 与 Hub runner 仍需实现等价 Adapter、真实
-      约束兑现和可验证 attestation；完成前父项保持未完成。
+  - [ ] Harness Remote、Workstation 与 Hub runner 仍需实现等价 Adapter、真实
+    约束兑现和可验证 attestation；不以 Provider 声明替代宿主证明。
   - [x] 语义观测统一 `MODEL`、`ACTION`、`CONTROL`、`GUARDRAIL`、
     `COMPACTION`、`HITL`、`INTERRUPT` 与 `VERIFICATION`；模型意图、策略判定、实际执行和
     Runtime 独立 Evidence 使用稳定因果 ID 关联，不把 Agent 自报结果当作事实。

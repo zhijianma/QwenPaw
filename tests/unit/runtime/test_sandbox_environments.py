@@ -126,7 +126,7 @@ async def test_manager_persists_action_scoped_environment(
     )
     scope = InvocationScope(
         agent_id="default",
-        conversation_id="chat-1",
+        chat_id="chat-1",
         session_id="transport",
         root_agent_id="default",
         root_session_id="transport",

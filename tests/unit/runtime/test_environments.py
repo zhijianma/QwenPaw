@@ -50,7 +50,7 @@ async def test_default_lite_environment_is_satisfied_and_private(
 
     store = FilesystemEnvironmentStore(tmp_path)
     record = EnvironmentRecord(contract=contract, resolution=resolution)
-    await store.record(record, conversation_id="chat-1")
+    await store.record(record, chat_id="chat-1")
     [path] = list(
         (tmp_path / ".qwenpaw" / "lite" / "environments").glob(
             "*/*/environment.json",
@@ -178,7 +178,7 @@ async def test_environment_store_rejects_conflicting_evidence(
     store = FilesystemEnvironmentStore(tmp_path)
     await store.record(
         EnvironmentRecord(contract=contract, resolution=resolution),
-        conversation_id="chat-1",
+        chat_id="chat-1",
     )
     conflicting = resolution.model_copy(
         update={"architecture": "different-architecture"},
@@ -187,5 +187,34 @@ async def test_environment_store_rejects_conflicting_evidence(
     with pytest.raises(EnvironmentContractConflictError):
         await store.record(
             EnvironmentRecord(contract=contract, resolution=conflicting),
-            conversation_id="chat-1",
+            chat_id="chat-1",
+        )
+
+
+@pytest.mark.asyncio
+async def test_environment_store_normalizes_legacy_chat_keyword(
+    tmp_path: Path,
+) -> None:
+    invocation_id = uuid4()
+    contract = default_lite_environment_contract(tmp_path)
+    resolution = await LiteEnvironmentResolver().resolve(
+        contract,
+        invocation_id=invocation_id,
+        workspace_dir=str(tmp_path),
+    )
+    store = FilesystemEnvironmentStore(tmp_path)
+    record = EnvironmentRecord(contract=contract, resolution=resolution)
+
+    await store.record(record, conversation_id="chat-legacy")
+    await store.record(
+        record,
+        chat_id="chat-legacy",
+        conversation_id="chat-legacy",
+    )
+
+    with pytest.raises(ValueError, match="must identify one Chat"):
+        await store.record(
+            record,
+            chat_id="chat-new",
+            conversation_id="chat-legacy",
         )

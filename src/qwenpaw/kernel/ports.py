@@ -154,7 +154,7 @@ class EnvironmentStore(Protocol):
         self,
         record: EnvironmentRecord,
         *,
-        conversation_id: str | None,
+        chat_id: str | None,
     ) -> None:
         """Persist one contract and its concrete resolution exactly once."""
 

@@ -36,7 +36,7 @@ async def test_approval_creates_action_before_provider_completion(
     scope = InvocationScope(
         invocation_id=invocation_id,
         agent_id="default",
-        conversation_id="chat-spec-1",
+        chat_id="chat-spec-1",
         session_id="chat-1",
         root_agent_id="default",
         root_session_id="chat-1",
@@ -145,7 +145,7 @@ async def test_provider_retry_hint_is_constrained_by_host_policy(
     scope = InvocationScope(
         invocation_id=invocation_id,
         agent_id="default",
-        conversation_id=conversation_id,
+        chat_id=conversation_id,
         session_id="chat-1",
         root_agent_id="default",
         root_session_id="chat-1",

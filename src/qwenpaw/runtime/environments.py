@@ -293,10 +293,10 @@ class FilesystemEnvironmentStore:
     def _record_path(
         self,
         record: EnvironmentRecord,
-        conversation_id: str | None,
+        chat_id: str | None,
     ) -> Path:
         invocation_id = record.resolution.invocation_id
-        owner = conversation_id or f"invocation:{invocation_id}"
+        owner = chat_id or f"invocation:{invocation_id}"
         invocation_root = (
             self._root / self._owner_key(owner) / str(invocation_id)
         )
@@ -313,10 +313,22 @@ class FilesystemEnvironmentStore:
         self,
         record: EnvironmentRecord,
         *,
-        conversation_id: str | None,
+        chat_id: str | None = None,
+        conversation_id: str | None = None,
     ) -> None:
-        """Persist immutable evidence and reject identity reuse."""
-        path = self._record_path(record, conversation_id)
+        """Persist evidence under ChatSpec.id with a legacy keyword shim."""
+        if (
+            chat_id is not None
+            and conversation_id is not None
+            and chat_id != conversation_id
+        ):
+            raise ValueError(
+                "chat_id and conversation_id must identify one Chat",
+            )
+        resolved_chat_id = chat_id if chat_id is not None else conversation_id
+        if resolved_chat_id is not None and not resolved_chat_id.strip():
+            raise ValueError("chat_id cannot be empty")
+        path = self._record_path(record, resolved_chat_id)
         async with get_path_lock(path):
             try:
                 existing_payload = await read_json_async(path)
