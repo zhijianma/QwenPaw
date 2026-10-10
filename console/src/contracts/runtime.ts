@@ -1,4 +1,1 @@
-import type { HostHandshake } from "./generated/hostHandshake";
-
-export type RuntimeHandshake = HostHandshake;
-export type RuntimeFeature = HostHandshake["features"][number];
+export * from "../../../packages/qwenpaw-client/src/contracts/runtime";

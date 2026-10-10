@@ -9,7 +9,12 @@ export type Schema = "qwenpaw.kernel-model.v1";
  * Type of actor responsible for a domain action.
  */
 export type ActorType =
-  "user" | "system" | "agent" | "plugin" | "runner" | "sensor";
+  | "user"
+  | "system"
+  | "agent"
+  | "plugin"
+  | "runner"
+  | "sensor";
 export type ExpectedRevision = number;
 export type IdempotencyKey = string;
 export type InteractionId1 = string;

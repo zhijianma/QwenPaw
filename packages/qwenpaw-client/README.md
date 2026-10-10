@@ -1,0 +1,39 @@
+# `@qwenpaw/client`
+
+Dependency-free TypeScript client for a running QwenPaw Host. It uses the
+same generated Kernel contracts and transport-neutral clients as the QwenPaw
+Console and PawApp SDK; it does not embed or reimplement the Agent runtime.
+
+```ts
+import { createQwenPawClient } from "@qwenpaw/client";
+
+const paw = createQwenPawClient({
+  baseUrl: "http://localhost:8004/api",
+  token: process.env.QWENPAW_TOKEN,
+});
+
+const host = await paw.runtime.handshake();
+const task = await paw.tasks.create(
+  {
+    objective: "Review README installation instructions",
+    acceptance_criteria: ["Produce an Italian translation artifact"],
+  },
+  { idempotencyKey: crypto.randomUUID() },
+);
+await paw.tasks.start(task.task_id);
+
+for await (const event of paw.tasks.follow(task.task_id)) {
+  console.log(event.sequence, event.event_type);
+}
+```
+
+Pass a custom `QwenPawTransport` instead of Fetch options to integrate another
+authentication, IPC or test transport. Completion, approval, recovery and
+artifact semantics remain owned by the Host; consumers should reconcile an
+ended stream with `paw.tasks.projection(taskId)`.
+
+## 中文说明
+
+该包用于让外部 TypeScript/JavaScript 程序连接正在运行的 QwenPaw Host。
+Console、PawApp 和第三方程序复用同一套生成契约与客户端实现，SDK 不会另起
+一套任务状态、审批队列或 Agent Loop。`baseUrl` 应指向 Host 的 `/api` 根路径。

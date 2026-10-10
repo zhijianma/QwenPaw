@@ -1,0 +1,41 @@
+{
+  "name": "@qwenpaw/client",
+  "version": "0.1.0",
+  "description": "Transport-neutral client for the QwenPaw Host runtime",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "prepack": "npm run build"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agentscope-ai/QwenPaw.git",
+    "directory": "packages/qwenpaw-client"
+  },
+  "devDependencies": {
+    "typescript": "~5.8.3"
+  },
+  "license": "Apache-2.0"
+}

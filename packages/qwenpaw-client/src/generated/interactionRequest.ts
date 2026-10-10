@@ -10,7 +10,9 @@ export type ContinuationCheckpointId = string | null;
  * How execution can continue after a condition becomes satisfied.
  */
 export type ContinuationMode =
-  "live_invocation" | "checkpoint" | "conversation_turn";
+  | "live_invocation"
+  | "checkpoint"
+  | "conversation_turn";
 export type CorrelationId = string;
 export type CreatedAt = string;
 export type ExpiresAt = string | null;

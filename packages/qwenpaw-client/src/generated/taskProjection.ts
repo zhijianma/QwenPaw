@@ -125,14 +125,22 @@ export type Schema10 = "qwenpaw.kernel-model.v1";
  * Type of actor responsible for a domain action.
  */
 export type ActorType =
-  "user" | "system" | "agent" | "plugin" | "runner" | "sensor";
+  | "user"
+  | "system"
+  | "agent"
+  | "plugin"
+  | "runner"
+  | "sensor";
 export type ApprovalId1 = string;
 export type DecidedAt = string;
 /**
  * Final choices accepted by an approval decision.
  */
 export type ApprovalDecisionValue =
-  "approved" | "denied" | "expired" | "cancelled";
+  | "approved"
+  | "denied"
+  | "expired"
+  | "cancelled";
 export type Reason1 = string;
 export type Schema11 = "qwenpaw.kernel-model.v1";
 export type Scope = string;
@@ -154,12 +162,20 @@ export type Schema13 = "qwenpaw.kernel-model.v1";
  * Runtime boundary that originated an approval request.
  */
 export type ApprovalSource =
-  "tool" | "driver" | "harness" | "proposal" | "system";
+  | "tool"
+  | "driver"
+  | "harness"
+  | "proposal"
+  | "system";
 /**
  * Lifecycle state of an approval request.
  */
 export type ApprovalStatus =
-  "pending" | "approved" | "denied" | "expired" | "cancelled";
+  | "pending"
+  | "approved"
+  | "denied"
+  | "expired"
+  | "cancelled";
 export type TaskId5 = string;
 export type PendingApprovals = TaskApprovalResponse[];
 export type RecentDecisions = TaskApprovalResponse[];
@@ -211,7 +227,10 @@ export type OnRecoveryRequired = "fail" | "pause" | "inbox";
 export type Schema18 = "qwenpaw.kernel-model.v1";
 export type ConditionId = string;
 export type Kind2 =
-  "acceptance_met" | "artifact_emitted" | "max_iterations" | "explicit_signal";
+  | "acceptance_met"
+  | "artifact_emitted"
+  | "max_iterations"
+  | "explicit_signal";
 export type Required = boolean;
 export type Schema19 = "qwenpaw.kernel-model.v1";
 export type ExitConditions = ExitCondition[];

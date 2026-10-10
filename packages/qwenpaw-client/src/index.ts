@@ -1,0 +1,30 @@
+import { createInteractionClient } from "./clients/interactions.js";
+import { createRuntimeClient } from "./clients/runtime.js";
+import { createTaskClient } from "./clients/tasks.js";
+import {
+  createFetchTransport,
+  type FetchTransportOptions,
+  type QwenPawTransport,
+} from "./transport.js";
+
+export function createQwenPawClient(
+  options: FetchTransportOptions | QwenPawTransport,
+) {
+  const transport =
+    "baseUrl" in options ? createFetchTransport(options) : options;
+  return {
+    runtime: createRuntimeClient(transport),
+    tasks: createTaskClient(transport),
+    interactions: createInteractionClient(transport),
+  };
+}
+
+export type QwenPawClient = ReturnType<typeof createQwenPawClient>;
+
+export * from "./clients/interactions.js";
+export * from "./clients/runtime.js";
+export * from "./clients/tasks.js";
+export * from "./contracts/interactions.js";
+export * from "./contracts/runtime.js";
+export * from "./contracts/tasks.js";
+export * from "./transport.js";

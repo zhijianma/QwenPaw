@@ -113,7 +113,7 @@ that is a packaging mode, not a second domain implementation.
 
 Kernel Pydantic models are the contract source of truth. The repository
 exports deterministic JSON Schema under `schemas/sdk` and generates frontend
-TypeScript declarations under `console/src/contracts/generated`. Stable
+TypeScript declarations under `packages/qwenpaw-client/src/generated`. Stable
 frontend names are compatibility aliases over those generated declarations;
 they are not parallel handwritten models.
 
@@ -123,6 +123,13 @@ checks fail when either the committed JSON Schema or generated TypeScript is
 stale. Capability identifiers in the Host handshake remain open strings so
 an older SDK accepts optional features introduced by a newer Host; protocol
 version and required feature checks still provide the compatibility gate.
+
+The publishable `@qwenpaw/client` package owns the generated declarations,
+transport-neutral Runtime, Task and Interaction clients, and a zero-dependency
+Fetch transport. Console and PawApp retain their existing import paths as
+compatibility re-exports of that package source. An external consumer can use
+`createQwenPawClient()` against a Lite, Workstation or Hub `/api` endpoint;
+the package never starts a second runtime or stores authoritative Task state.
 
 ### 5.3 Developer-facing execution
 
@@ -322,6 +329,12 @@ Verified on 2026-10-10 against the running Lite Host on port 8004:
   models as deterministic JSON Schema and compiled into TypeScript. Console
   and PawApp SDK compatibility modules now alias those generated types, while
   drift checks cover both publication stages.
+- The same contracts and transport-neutral clients now live in the publishable
+  `@qwenpaw/client` package. A prepack-built tarball was installed into an
+  empty temporary npm consumer, imported by its public package name and used
+  to negotiate successfully with the running Lite Host on port 8004. The
+  package contained only declarations, ESM output, metadata and the developer
+  README.
 
 ## 10. Explicit non-goals
 
