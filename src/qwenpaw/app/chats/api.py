@@ -111,6 +111,7 @@ from ...tasks.artifacts import (
     lite_artifact_store,
 )
 from ...tasks.verification_history import lite_task_result_history
+from ...schemas import Message, RunStatus, TextContent
 from ...tasks.conversation_artifacts import (
     ConversationArtifactReceiptError,
     conversation_artifact_receipts,
@@ -534,10 +535,16 @@ async def fork_chat(
     workspace=Depends(get_workspace),
 ):
     """Fork persisted history through one stable source message."""
+    workspace_dir = getattr(workspace, "workspace_dir", None)
     adapter = LiteConversationForkAdapter(
         agent_id=workspace.agent_id,
         manager=mgr,
         session=session,
+        task_history=(
+            lite_task_result_history(Path(workspace_dir))
+            if workspace_dir is not None
+            else None
+        ),
     )
     try:
         result = await adapter.fork(
@@ -663,6 +670,69 @@ def _conversation_outcome_store(workspace):
         )
         setattr(workspace, "conversation_outcome_store", store)
     return store
+
+
+async def _task_chat_messages(workspace, chat_id: str) -> list[Message]:
+    """Project Task-owned messages into the stable Chat envelope."""
+    transcript = await lite_task_result_history(
+        Path(workspace.workspace_dir),
+    ).read_messages_for_conversation(chat_id)
+    messages: list[Message] = []
+    for record in transcript.messages:
+        message = Message(
+            id=record.message_id,
+            source_message_id=record.message_id,
+            role=record.role,
+            status=(
+                RunStatus.Completed
+                if record.status == "completed"
+                else RunStatus.InProgress
+            ),
+            metadata={
+                "source": "task_ledger",
+                "task_id": str(record.task_id),
+                "run_id": (
+                    str(record.run_id) if record.run_id is not None else None
+                ),
+                "timestamp": record.created_at.isoformat(),
+                "finished_at": record.completed_at.isoformat(),
+            },
+            artifact_refs=list(record.artifact_refs),
+            evidence_refs=list(record.evidence_refs),
+        )
+        message.add_content(
+            new_content=TextContent(
+                text=record.text,
+                status=message.status,
+            ),
+        )
+        messages.append(message)
+    return messages
+
+
+def _merge_chat_messages(
+    session_messages: list[Message],
+    task_messages: list[Message],
+) -> list[Message]:
+    """Merge independent histories without making either source mutable."""
+    merged: list[tuple[int, Message]] = []
+    source_ids: set[str] = set()
+    for message in (*session_messages, *task_messages):
+        source_id = message.source_message_id
+        if source_id is not None and source_id in source_ids:
+            continue
+        if source_id is not None:
+            source_ids.add(source_id)
+        merged.append((len(merged), message))
+
+    def sort_key(item: tuple[int, Message]) -> tuple[str, int]:
+        index, message = item
+        metadata = message.metadata or {}
+        timestamp = metadata.get("timestamp")
+        return (timestamp if isinstance(timestamp, str) else "", index)
+
+    merged.sort(key=sort_key)
+    return [message for _, message in merged]
 
 
 async def _apply_chat_control(
@@ -1932,8 +2002,9 @@ async def get_chat(
                 exc_info=True,
             )
     status = await workspace.task_tracker.get_status(chat_id)
+    task_messages = await _task_chat_messages(workspace, chat_id)
     if not state:
-        return ChatHistory(messages=[], status=status)
+        return ChatHistory(messages=task_messages, status=status)
 
     agent_raw = state.get("agent", {})
     memories: list[Msg] = []
@@ -1955,7 +2026,10 @@ async def get_chat(
         if memory_raw:
             memories, _summary = parse_legacy_memory_state(memory_raw)
 
-    messages = agentscope_msg_to_message(memories)
+    messages = _merge_chat_messages(
+        agentscope_msg_to_message(memories),
+        task_messages,
+    )
     return ChatHistory(messages=messages, status=status)
 
 

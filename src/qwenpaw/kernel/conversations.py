@@ -5,16 +5,68 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from enum import Enum
+from typing import Literal
+from uuid import UUID
 
 from pydantic import AliasChoices, AwareDatetime, Field, model_validator
 
-from .models import KernelModel, NonEmptyStr, utc_now
+from .models import (
+    ArtifactRef,
+    EvidenceRef,
+    JsonObject,
+    KernelModel,
+    NonEmptyStr,
+    utc_now,
+)
 
 
 class ConversationForkBoundary(str, Enum):
     """Stable message boundary selected for a Conversation fork."""
 
     AFTER_RESPONSE = "after_response"
+
+
+class ConversationMessageRecord(KernelModel):
+    """One public Chat message projected from committed Task events."""
+
+    message_id: NonEmptyStr
+    task_id: UUID
+    run_id: UUID | None = None
+    role: Literal["user", "assistant"]
+    status: Literal["in_progress", "completed"] = "completed"
+    text: str
+    content: tuple[JsonObject, ...] = ()
+    artifact_refs: tuple[ArtifactRef, ...] = ()
+    evidence_refs: tuple[EvidenceRef, ...] = ()
+    created_at: AwareDatetime
+    completed_at: AwareDatetime
+
+
+class ConversationTaskTranscript(KernelModel):
+    """Task-owned public messages associated with one ChatSpec identity."""
+
+    chat_id: NonEmptyStr = Field(
+        validation_alias=AliasChoices("chat_id", "conversation_id"),
+        description="Owning ChatSpec.id",
+    )
+    messages: tuple[ConversationMessageRecord, ...] = ()
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_chat_identity(cls, value: object) -> object:
+        """Reject ambiguous canonical and deprecated Chat identities."""
+        if isinstance(value, Mapping):
+            _canonical_chat_id(
+                value.get("chat_id"),
+                value.get("conversation_id"),
+                field_name="Task transcript",
+            )
+        return value
+
+    @property
+    def conversation_id(self) -> str:
+        """Return the deprecated Python alias during migration."""
+        return self.chat_id
 
 
 def _canonical_chat_id(
@@ -172,4 +224,6 @@ __all__ = [
     "ConversationForkNotFoundError",
     "ConversationForkOrigin",
     "ConversationForkResult",
+    "ConversationMessageRecord",
+    "ConversationTaskTranscript",
 ]

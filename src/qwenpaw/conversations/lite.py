@@ -5,6 +5,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from agentscope.message import Msg, TextBlock
+from agentscope.state import AgentState
+
 from ..kernel import (
     ConversationForkCommand,
     ConversationForkConflictError,
@@ -12,6 +15,7 @@ from ..kernel import (
     ConversationForkNotFoundError,
     ConversationForkOrigin,
     ConversationForkResult,
+    TaskConversationHistoryPort,
 )
 
 if TYPE_CHECKING:
@@ -29,10 +33,91 @@ class LiteConversationForkAdapter:
         agent_id: str,
         manager: ChatManager,
         session: SafeJSONSession,
+        task_history: TaskConversationHistoryPort | None = None,
     ) -> None:
         self._agent_id = agent_id
         self._manager = manager
         self._session = session
+        self._task_history = task_history
+
+    async def _fork_combined_history(
+        self,
+        *,
+        parent: ChatSpec,
+        child: ChatSpec,
+        source_message_id: str,
+    ) -> None:
+        """Fork a merged Session and Task transcript through one anchor."""
+        if self._task_history is None:
+            raise ConversationForkNotFoundError(source_message_id)
+        transcript = await self._task_history.read_messages_for_conversation(
+            parent.id,
+        )
+        task_messages = [
+            Msg(
+                id=record.message_id,
+                name=record.role,
+                role=record.role,
+                content=[TextBlock(type="text", text=record.text)],
+                metadata={
+                    "source": "task_ledger",
+                    "task_id": str(record.task_id),
+                    "run_id": (
+                        str(record.run_id)
+                        if record.run_id is not None
+                        else None
+                    ),
+                    "artifact_refs": [
+                        item.model_dump(mode="json")
+                        for item in record.artifact_refs
+                    ],
+                    "evidence_refs": [
+                        item.model_dump(mode="json")
+                        for item in record.evidence_refs
+                    ],
+                },
+                created_at=record.created_at.isoformat(),
+                finished_at=(
+                    record.completed_at.isoformat()
+                    if record.status == "completed"
+                    else None
+                ),
+            )
+            for record in transcript.messages
+        ]
+        raw_state = await self._session.get_session_state_dict(
+            parent.session_id,
+            parent.user_id,
+            parent.channel,
+        )
+        session_messages: list[Msg] = []
+        summary = None
+        agent_raw = raw_state.get("agent") if raw_state else None
+        state_raw = (
+            agent_raw.get("state") if isinstance(agent_raw, dict) else None
+        )
+        if isinstance(state_raw, dict):
+            parent_state = AgentState.model_validate(state_raw)
+            session_messages = list(parent_state.context)
+            summary = parent_state.summary
+        merged: dict[str, Msg] = {
+            message.id: message
+            for message in (*session_messages, *task_messages)
+        }
+        messages = sorted(
+            merged.values(),
+            key=lambda message: (message.created_at, message.id),
+        )
+        if not any(message.id == source_message_id for message in messages):
+            raise ConversationForkNotFoundError(source_message_id)
+        await self._session.fork_message_history(
+            messages=messages,
+            summary=summary,
+            destination_session_id=child.session_id,
+            destination_user_id=child.user_id,
+            destination_channel=child.channel,
+            source_message_id=source_message_id,
+        )
 
     async def fork(
         self,
@@ -58,15 +143,25 @@ class LiteConversationForkAdapter:
             child: ChatSpec,
             source_message_id: str,
         ) -> None:
-            await self._session.fork_session_state(
-                source_session_id=parent.session_id,
-                source_user_id=parent.user_id,
-                source_channel=parent.channel,
-                destination_session_id=child.session_id,
-                destination_user_id=child.user_id,
-                destination_channel=child.channel,
-                source_message_id=source_message_id,
-            )
+            try:
+                await self._session.fork_session_state(
+                    source_session_id=parent.session_id,
+                    source_user_id=parent.user_id,
+                    source_channel=parent.channel,
+                    destination_session_id=child.session_id,
+                    destination_user_id=child.user_id,
+                    destination_channel=child.channel,
+                    source_message_id=source_message_id,
+                )
+            except (
+                SessionForkAnchorNotFoundError,
+                SessionForkSourceNotFoundError,
+            ):
+                await self._fork_combined_history(
+                    parent=parent,
+                    child=child,
+                    source_message_id=source_message_id,
+                )
 
         async def rollback_snapshot(child: ChatSpec) -> None:
             await self._session.delete_session_state(

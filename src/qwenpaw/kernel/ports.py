@@ -117,6 +117,7 @@ from .scheduling import (
 from .conversations import (
     ConversationForkCommand,
     ConversationForkResult,
+    ConversationTaskTranscript,
 )
 from .delivery import DeliveryAttempt, DeliveryReceipt, DeliveryRequest
 from .inbox import InboxItem
@@ -1742,6 +1743,17 @@ class TaskResultHistoryPort(Protocol):
         conversation_id: str,
     ) -> ConversationTaskResultRecords:
         """Return one consistent result snapshot from matching Task ledgers."""
+
+
+@runtime_checkable
+class TaskConversationHistoryPort(Protocol):
+    """Read Task-owned messages associated with one ChatSpec identity."""
+
+    async def read_messages_for_conversation(
+        self,
+        conversation_id: str,
+    ) -> ConversationTaskTranscript:
+        """Return public messages derived from committed Task events."""
 
 
 @runtime_checkable

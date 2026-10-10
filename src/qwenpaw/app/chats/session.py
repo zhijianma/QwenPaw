@@ -609,6 +609,71 @@ class SafeJSONSession:
             )
         return len(inherited_context)
 
+    async def fork_message_history(
+        self,
+        *,
+        messages: Sequence[object],
+        summary: str | None,
+        destination_session_id: str,
+        destination_user_id: str,
+        destination_channel: str,
+        source_message_id: str,
+    ) -> int:
+        """Create a child snapshot from an application-composed history."""
+        from agentscope.message import Msg
+        from agentscope.state import AgentState
+
+        context = [
+            (
+                message
+                if isinstance(message, Msg)
+                else Msg.model_validate(message)
+            )
+            for message in messages
+        ]
+        anchor_index = next(
+            (
+                index
+                for index, message in enumerate(context)
+                if message.id == source_message_id
+            ),
+            None,
+        )
+        if anchor_index is None:
+            raise SessionForkAnchorNotFoundError(source_message_id)
+        if not _is_completed_turn_anchor(context, anchor_index):
+            raise SessionForkInvalidAnchorError(
+                "fork anchor must be a completed assistant reply: "
+                f"{source_message_id}",
+            )
+        destination_path = await run_sync_io(
+            self._get_save_path,
+            destination_session_id,
+            destination_user_id,
+            destination_channel,
+        )
+        async with get_path_lock(destination_path):
+            if await run_sync_io(os.path.exists, destination_path):
+                raise SessionForkDestinationExistsError(
+                    "fork destination session already exists",
+                )
+            inherited_context = context[: anchor_index + 1]
+            child_state = AgentState(
+                session_id=destination_session_id,
+                summary=summary or "",
+                context=inherited_context,
+            )
+            await write_json_atomic_async(
+                destination_path,
+                {
+                    "agent": {
+                        "state": child_state.model_dump(mode="json"),
+                    },
+                },
+                indent=None,
+            )
+        return len(inherited_context)
+
     async def delete_session_state(
         self,
         session_id: str,

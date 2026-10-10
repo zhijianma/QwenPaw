@@ -917,7 +917,8 @@ Invocation，新 Invocation 自动使用新 generation。
     提交 retry Cursor 后强制终止，再由第二进程打开同一 SQLite：冷却前不触发，到期
     后仍处理原 occurrence 并清零 retry 状态，证明恢复不依赖进程内对象或 sleep。
   - [x] `CronManager` 已启动独立 durable trigger polling lifecycle；判定为 migrated
-    的 final/silent Agent Cron 同步 catalog 后不再注册 APScheduler job，暂停、恢复、
+    的 final/silent 与 Console stream Agent Cron 同步 catalog 后不再注册 APScheduler
+    job，暂停、恢复、
     更新、删除与重启均复用 Cursor。handler 明确区分“失败事实已记账后 handled”与
     “Scheduler/记账暂态故障 retry”，misfire 写回既有 Cron history，next-run 从
     Cursor outcome 投影。Heartbeat 也已通过同一 worker 路由完整
@@ -928,14 +929,14 @@ Invocation，新 Invocation 自动使用新 generation。
     可续租 Fire Lease，成功写互斥 `completion_ref`，异常或进程过期保留失败事实且
     不重放不确定副作用；callback registry 在重启时从声明重建。text-only job 也已
     迁为 `work_kind=delivery`：Fire 先绑定稳定 Delivery ID，再执行独立 DeliveryAttempt，
-    重启可恢复且不创建伪 Task。stream job 暂时继续走 APScheduler，因此父项保持
-    未完成。
+    重启可恢复且不创建伪 Task。外部媒体 Channel 的 stream job 暂时继续走
+    APScheduler，因此父项保持未完成。
   - [x] APScheduler Trigger Adapter 为已迁移 Cron 与 Heartbeat 保存真实
     `scheduled_for` 并生成稳定 Fire 幂等键；手动触发使用独立操作键，不与定时槽
     竞争。尚未迁移的 Cron 类型继续走显式兼容路径。
-  - [ ] 先实现 `Task Event → Delivery Projection → Channel Adapter`，再迁移
-    `dispatch.mode=stream/final`；迁移前旧 Agent Cron 继续作为显式兼容路径，避免
-    统一执行后丢失外部频道实时回复。
+  - [ ] 以 `Task Event → Delivery Projection → Channel Adapter` 迁移
+    `dispatch.mode=stream/final`；Console 与 final 已完成，未通过媒体等价验收的外部
+    Channel 继续作为显式兼容路径，避免统一执行后丢失外部频道实时回复。
     - [x] final/silent 已迁移；stream 已冻结 completed Reply 与 Tool Activity 公共
       事件：Console/Harness 在终态提交 `conversation.assistant.completed`，Projector
       不外发 reasoning/token delta，Channel Adapter 输出 completed function call/
@@ -946,8 +947,13 @@ Invocation，新 Invocation 自动使用新 generation。
     - [x] 持久化 Ledger → Worker → generation Registry → System Adapter → 实际
       ConsoleChannel 串联通过；修复 Adapter Message 缺少 `object="message"` 导致
       Channel 静默丢弃但 Receipt 误报 delivered，并验证后台 Cron 不写 Console push。
-    - [ ] 完成浏览器与至少一个外部媒体 Channel 的等价验收后，才允许
-      `LiteCronTaskRuntime.supports(stream)`；当前仍显式回退旧 Executor。
+    - [x] Console stream 已切换 Scheduler → Task → Delivery。Chat API 通过稳定
+      `ConversationTaskTranscript` 从 Task Ledger 投影用户与助手消息，不把结果反向
+      双写到 AgentScope Session；刷新后仍可见，并支持从 Task 助手消息创建完整子
+      Session。真实浏览器已验证消息、Artifact/Evidence 活动和分叉子 Chat。
+    - [ ] 至少完成一个外部媒体 Channel 的上传/展示等价验收后，才允许外部
+      stream 离开旧 Executor；`STREAM_DELIVERY_UNVERIFIED` 现在只约束非 Console
+      Channel。
   - [x] Heartbeat 默认复用同一 Dispatcher；`HEARTBEAT_OK` 由
     `DeliveryPolicy.suppress_exact_text` 表达为不生成投影，Task 结果仍完整留在 Ledger。
     `target=last` 使用 Channel Adapter，`target=inbox` 使用 system Inbox Adapter，

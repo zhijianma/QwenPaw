@@ -172,7 +172,9 @@ def test_lite_cron_runtime_explains_each_compatibility_path(
     migrated = make_cron_job_spec(job_id="migrated")
     migrated.dispatch.mode = "final"
     text = make_cron_job_spec(job_id="text", task_type="text")
-    stream = make_cron_job_spec(job_id="stream")
+    console_stream = make_cron_job_spec(job_id="console-stream")
+    external_stream = make_cron_job_spec(job_id="external-stream")
+    external_stream.dispatch.channel = "dingtalk"
     repeating = make_cron_job_spec(job_id="repeating")
     repeating.dispatch.mode = "final"
     repeating.schedule = ScheduleSpec(
@@ -195,7 +197,7 @@ def test_lite_cron_runtime_explains_each_compatibility_path(
 
     expected = {
         CronRuntimeDecisionCode.MIGRATED: migrated,
-        CronRuntimeDecisionCode.STREAM_DELIVERY_UNVERIFIED: stream,
+        CronRuntimeDecisionCode.STREAM_DELIVERY_UNVERIFIED: external_stream,
         CronRuntimeDecisionCode.AGENT_REQUEST_MISSING: missing_request,
         CronRuntimeDecisionCode.MODEL_SELECTION_INVALID: invalid_model,
     }
@@ -214,6 +216,12 @@ def test_lite_cron_runtime_explains_each_compatibility_path(
     assert text_decision.reason_code is CronRuntimeDecisionCode.MIGRATED
     assert text_decision.path is CronRuntimePath.DURABLE_DELIVERY
     assert runtime.supports(text)
+    console_stream_decision = runtime.decision(console_stream)
+    assert (
+        console_stream_decision.reason_code is CronRuntimeDecisionCode.MIGRATED
+    )
+    assert console_stream_decision.path is CronRuntimePath.DURABLE_TASK
+    assert runtime.supports(console_stream)
     repeating_decision = runtime.decision(repeating)
     assert repeating_decision.reason_code is CronRuntimeDecisionCode.MIGRATED
     assert repeating_decision.uses_durable_runtime
@@ -262,9 +270,17 @@ async def test_lite_cron_runtime_synchronizes_catalog_before_first_fire(
     assert disabled_cursor is not None
     assert disabled_cursor.next_fire_at is None
 
-    legacy_stream = job.model_copy(deep=True)
-    legacy_stream.dispatch.mode = "stream"
-    await runtime.synchronize(legacy_stream)
+    console_stream = job.model_copy(deep=True)
+    console_stream.enabled = True
+    console_stream.dispatch.mode = "stream"
+    await runtime.synchronize(console_stream)
+    [stream_definition] = await store.list_definitions(agent_id="default")
+    assert stream_definition.metadata["delivery_policy"]["mode"] == "stream"
+
+    external_stream = job.model_copy(deep=True)
+    external_stream.dispatch.mode = "stream"
+    external_stream.dispatch.channel = "dingtalk"
+    await runtime.synchronize(external_stream)
     assert await store.list_definitions(agent_id="default") == ()
     assert (
         await store.get_cursor(
@@ -532,3 +548,42 @@ async def test_lite_cron_runtime_waits_for_task_and_delivery(
         limit=200,
     )
     assert events_after == events_before
+
+
+@pytest.mark.asyncio
+async def test_console_stream_cron_uses_durable_task_delivery(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Console stream Cron consumes committed Task events exactly once."""
+    monkeypatch.setattr("qwenpaw.constant.WORKING_DIR", tmp_path)
+    channels = _ChannelManager()
+    workspace = SimpleNamespace(
+        agent_id="default",
+        workspace_dir=tmp_path,
+        capability_registry=GenerationRegistry(),
+        channel_manager=channels,
+        chat_manager=_ChatManager(),
+    )
+    job = make_cron_job_spec(job_id="console-stream")
+    job.dispatch.mode = "stream"
+    job.save_result_to_inbox = False
+    scheduled_for = datetime(2030, 1, 1, tzinfo=timezone.utc)
+    runtime = LiteCronTaskRuntime(workspace)
+
+    decision = runtime.decision(job)
+    result = await runtime.execute(
+        job,
+        trigger="manual",
+        scheduled_for=scheduled_for,
+    )
+
+    assert decision.path is CronRuntimePath.DURABLE_TASK
+    assert decision.reason_code is CronRuntimeDecisionCode.MIGRATED
+    assert result["task_id"]
+    assert result["run_id"]
+    assert result["delivery_status"] == "success"
+    assert len(channels.deliveries) == 1
+    delivered = channels.deliveries[0]["event"]
+    assert delivered.metadata["delivery_kind"] == "reply"
+    assert delivered.content[0].text == "Scheduled result"

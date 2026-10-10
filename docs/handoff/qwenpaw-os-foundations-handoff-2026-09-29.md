@@ -1639,3 +1639,28 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
   7 项与两个包的 TypeScript check 通过。
 - Codex 仅作为 thread/turn 可恢复性的产品参考；本实现只使用 QwenPaw
   Host、Client 和自身领域模型，不依赖或复用 Codex SDK。
+
+## 18. 2026-10-10 Console stream Cron 与 Task Chat 投影
+
+- Console `dispatch.mode=stream` 已从旧 Cron Executor 切换为
+  Scheduler → `TaskSource.SCHEDULE` → generation-pinned Runtime → Delivery；外部
+  媒体 Channel 仍由 `STREAM_DELIVERY_UNVERIFIED` 显式留在兼容路径，不能从 Console
+  验收外推为外部 Channel 已完成。
+- Kernel 新增 `ConversationMessageRecord`、`ConversationTaskTranscript` 与
+  `TaskConversationHistoryPort`。Chat API 在服务端合并 AgentScope Session 与 Task
+  Ledger 读模型；耐久 Task 消息不反向双写 Session，前端也不根据 Timeline 猜消息。
+- Task transcript 以 completed response 覆盖流式草稿，保留稳定消息 ID、Task/Run、
+  Artifact/Evidence 与时间边界。页面刷新后仍返回用户与助手消息；普通 Session 与
+  Task Ledger 各自保持权威。
+- Task 投影消息的分叉入口已闭合：若旧 Session 找不到锚点，Lite Fork Adapter 合并
+  Session 与 Task transcript，在选定的 completed assistant 边界物化隔离子 Session；
+  后续嵌套分叉继续走既有 Session 契约。
+- 真实 Host 证据：Cron Chat `2ce49886-fedc-4914-aeb0-c881fe2537f8` 的 Task
+  `542a6df2-c17f-45cc-8b48-7e72a5cb4fc4`、Run
+  `eb63c664-7beb-4d02-9e88-204097c68cc6` 在刷新后显示请求与
+  `CRON_STREAM_DURABLE_OK`，并展示 Artifact/Evidence 活动。真实分叉子 Chat
+  `5d7568c5-9f75-467e-ad2d-d0ebd2de2ad3` 同样在浏览器刷新后保留两条消息。
+- 本轮创建的测试 Cron Job 已删除；两个同名 E2E 子 Chat 已归档，可恢复；原 Cron
+  Chat、Task、Artifact 与 Evidence 保留为验收证据。相关定点回归 65 项通过，全部
+  Python 变更文件的 AST、mypy、Black、flake8、pylint 与密钥检查通过。
+- Codex 仍只作为产品和 Harness 机制参考；本切片没有引入或复用 Codex SDK。

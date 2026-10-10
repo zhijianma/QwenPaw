@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import uuid4
 
+from ..channels.schema import DEFAULT_CHANNEL
 from .conversation_binding import CronConversationBinder
 from .contracts import ScheduleOccurrenceExecutor
 from .executor import cron_session_id_for_job
@@ -72,11 +73,14 @@ class LiteCronTaskRuntime:
                 "The agent Cron declaration has no executable request.",
                 "Persist a validated agent request before migration.",
             )
-        if not job.dispatch.silent and job.dispatch.mode != "final":
+        if (
+            not job.dispatch.silent
+            and job.dispatch.mode != "final"
+            and job.dispatch.channel != DEFAULT_CHANNEL
+        ):
             return self._legacy_decision(
                 CronRuntimeDecisionCode.STREAM_DELIVERY_UNVERIFIED,
-                "Stream Delivery has not passed the external Channel gate.",
-                "Pass browser stream equivalence validation.",
+                "External stream Delivery has not passed its Channel gate.",
                 "Pass one live external media Channel validation.",
             )
         try:

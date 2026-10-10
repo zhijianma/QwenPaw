@@ -305,6 +305,8 @@ from .conversations import (
     ConversationForkNotFoundError,
     ConversationForkOrigin,
     ConversationForkResult,
+    ConversationMessageRecord,
+    ConversationTaskTranscript,
 )
 from .delivery import (
     DeliveryAttempt,
@@ -452,6 +454,7 @@ from .ports import (
     SchedulerHost,
     SchedulerProvider,
     SubmissionHistoryPort,
+    TaskConversationHistoryPort,
     TaskResultHistoryPort,
 )
 
@@ -739,6 +742,8 @@ __all__ = [
     "OutcomeProducerRegistration",
     "ConversationArtifactHistoryPort",
     "ConversationArtifactRecord",
+    "ConversationMessageRecord",
+    "ConversationTaskTranscript",
     "ConversationTaskResultRecords",
     "DriverApprovalRejectedError",
     "DriverCredentialUnavailableError",
@@ -845,6 +850,7 @@ __all__ = [
     "VerificationStatus",
     "VerificationPolicy",
     "VerificationHistoryPort",
+    "TaskConversationHistoryPort",
     "TaskResultHistoryPort",
     "ExitCondition",
     "validate_run_transition",

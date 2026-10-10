@@ -2,7 +2,8 @@
 
 - 状态：Kernel API、公开 SDK、Lite SQLite Store、system Contribution、
   Task/Service/Delivery Dispatcher，以及 Cron/Heartbeat/Service Cron 的可无损
-  Trigger/Delivery 迁移已实现；其余旧 Cron 类型保留显式兼容路径
+  Trigger/Delivery 迁移已实现；Console stream 已迁移，外部媒体 stream 保留显式
+  兼容路径
 - 产品基线：OS / Chat-first；Task Workbench 页面继续后置
 - 非目标：在 Scheduler 中复制 Task Budget、Approval、Artifact 或 Delivery 状态机
 
@@ -136,10 +137,11 @@ Cursor Store 是 Host-only Port，不从 Plugin SDK 导出；Scheduler Provider 
 4. [已完成：兼容层] APScheduler Trigger Adapter 为 Heartbeat 与 legacy Cron 回调
    捕获真实 `scheduled_for`；migrated final/silent Cron 已在后续切换到 Cursor Worker。
    手动触发始终使用独立键。
-5. [已完成：final/silent] Agent Cron 将 Fire 转成 `TaskSource.SCHEDULE` 的
+5. [已完成：final/silent/Console stream] Agent Cron 将 Fire 转成
+   `TaskSource.SCHEDULE` 的
    Task/Run，不再调用 `workspace.stream_query()`。创建、更新、暂停、恢复、删除与
-   Workspace 启动恢复也会在首次 Fire 前同步 durable catalog；stream 仍属于具名
-   兼容路径。
+   Workspace 启动恢复也会在首次 Fire 前同步 durable catalog；外部媒体 stream 仍
+   属于具名兼容路径。
 6. [已完成] Heartbeat 使用同一 Port；`DeliveryPolicy.suppress_exact_text` 将
    `HEARTBEAT_OK` 表达为“保留 Task 事实但不产生 Delivery/Inbox”。
 7. [已完成：基础设施] Host-owned durable trigger worker 按 Agent 有界读取 due
@@ -166,11 +168,12 @@ HTTP Task、Cron 与 Heartbeat 在同一进程中按 Capability Registry 复用�
 Supervisor；Host 在 generation 更新后刷新新事件使用的 generation，但已固定的 Run
 仍由各自 lease 保持原版本。
 
-当前 final/silent agent Cron（包含 per-job model）、text-only、repeating-once 与 Heartbeat
-已切换到 Dispatcher。repeating-once 映射为带 `start_at/end_at` 的 interval；
+当前 final/silent/Console stream agent Cron（包含 per-job model）、text-only、
+repeating-once 与 Heartbeat 已切换到 Dispatcher。repeating-once 映射为带
+`start_at/end_at` 的 interval；
 `repeat_end_type=count/until/never` 均保留原语义。`tool_safety=True` 也已进入
 Dispatcher：Definition 使用 AUTO Approval，审批 deadline 明确短于 attempt deadline，
-审批请求和异常进入 Delivery/Inbox，silent job 不投递普通 Result。旧 Cron
+审批请求和异常进入 Delivery/Inbox，silent job 不投递普通 Result。非 Console 的
 `dispatch.mode=stream` 仍走兼容路径。其余类型只有在公共契约能无损
 表达后才能迁移，禁止为了消除旧入口而丢失实时投递或审批语义。
 
@@ -190,10 +193,13 @@ stream 迁移已具备第一层公共事件基础：Console 与 Harness Runner �
 image/audio/video/file 已在代码层完成“内联字节 → ArtifactRef → 所有权/完整性校验
 → Channel Message”的转换，Ledger 不保存 base64，嵌入媒体也不会重复产生 Artifact
 Ready。进程内持久化 Ledger 到实际 ConsoleChannel 的链路已经通过；该验收还修复了
-缺失 `object="message"` 造成 Channel 静默忽略的协议缺陷。浏览器和外部媒体
-Channel 的上传/展示等价验收尚未完成，所以
-`LiteCronTaskRuntime.supports(stream)` 仍为 false。这是显式迁移门禁，不是能力
-探测遗漏。每次实际 fallback 都继续写带结构化 decision 的 Cron history；同一
+缺失 `object="message"` 造成 Channel 静默忽略的协议缺陷。Console stream 已通过
+真实 Scheduler → Task → Delivery、Chat API、浏览器刷新与 Task 消息分叉验收，
+`LiteCronTaskRuntime.supports(stream)` 对 Console 返回 true。Chat 历史通过
+`ConversationTaskTranscript` 读取 Task Ledger，不复制到 Session；分叉时才将选定
+边界物化为隔离的子 Session。外部媒体 Channel 的上传/展示等价验收尚未完成，因此
+非 Console stream 仍以 `STREAM_DELIVERY_UNVERIFIED` 回退。这是显式迁移门禁，不是
+能力探测遗漏。每次实际 fallback 都继续写带结构化 decision 的 Cron history；同一
 Job/decision/trigger 的首次使用还会通过幂等 Operational Event 投影持久化警告、
 稳定原因码和 removal gates。告警投影失败不会阻止旧生产执行，但会留下错误日志。
 
@@ -204,7 +210,7 @@ disabled 并移除 APScheduler job。切换到 legacy path 时会主动删除确
 schedule definition，但不会删除既有 Fire/Lease 历史。final/silent Agent Cron、
 text-only、Heartbeat 与 service Cron 已由
 独立 durable polling lifecycle 消费 Cursor，不再向 APScheduler 注册同名 job；
-stream job 仍保留原 APScheduler 兼容路径，因此父
+外部媒体 stream job 仍保留原 APScheduler 兼容路径，因此父
 迁移项尚未完成。
 
 ## 5. 验收门禁
@@ -219,6 +225,8 @@ stream job 仍保留原 APScheduler 兼容路径，因此父
   Worker 返回 `recovered`，其他 Worker 回放同一 Run。
 - 插件热替换后，已 claim Fire 保持原 generation，新 Fire 使用新 generation。
 - Cron 与 Heartbeat 均产生 `TaskSource.SCHEDULE` 和统一 Runtime Projection。
+- Console stream 的 Task 消息在 Chat 刷新后仍可见，并可从完成的助手消息分叉；
+  Session 与 Task Ledger 不互相双写。
 - Service Cron 不创建伪 Task；并发 occurrence 复用同一 Fire Lease，成功绑定
   `completion_ref`，失败与过期保留终态证据。
 - Text Cron 不创建伪 Task；Fire 绑定稳定 Delivery，重启和重复触发不会重复发送，

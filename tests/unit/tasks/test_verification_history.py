@@ -220,3 +220,72 @@ async def test_result_history_reads_artifact_evidence_and_verification_once():
     assert len(snapshot.verifications) == 1
     assert snapshot.artifacts[0].event_id == result_event.event_id
     assert snapshot.evidence[0].event_id == result_event.event_id
+
+
+@pytest.mark.asyncio
+async def test_task_transcript_prefers_completed_response_and_stable_ids():
+    now = datetime.now(timezone.utc)
+    task = Task(
+        objective="Answer from Scheduler",
+        source=TaskSource.SCHEDULE,
+        agent_id="default",
+        metadata={"conversation_id": "chat-scheduled"},
+    )
+    run_id = uuid4()
+
+    def event(sequence: int, event_type: str, role: str, text: str):
+        return ExecutionEvent(
+            task_id=task.task_id,
+            run_id=run_id,
+            sequence=sequence,
+            event_type=event_type,
+            occurred_at=now + timedelta(seconds=sequence),
+            invocation_id=uuid4(),
+            correlation_id=uuid4(),
+            registry_generation=7,
+            actor=ActorRef(type=ActorType.RUNNER, id="runner"),
+            source="qwenpaw.runner.tests",
+            payload={"role": role, "text": text},
+        )
+
+    user = event(1, "conversation.user", "user", "Scheduled prompt")
+    delta_a = event(
+        2,
+        "conversation.assistant.delta",
+        "assistant",
+        "Partial ",
+    )
+    delta_b = event(
+        3,
+        "conversation.assistant.delta",
+        "assistant",
+        "draft",
+    )
+    completed = event(
+        4,
+        "conversation.assistant.completed",
+        "assistant",
+        "Final answer",
+    )
+    ledger = _TaskLedger(
+        (task,),
+        {task.task_id: (user, delta_a, delta_b, completed)},
+    )
+
+    transcript = await TaskResultHistory(
+        ledger,
+        ledger,
+    ).read_messages_for_conversation("chat-scheduled")
+
+    assert transcript.chat_id == "chat-scheduled"
+    assert [message.text for message in transcript.messages] == [
+        "Scheduled prompt",
+        "Final answer",
+    ]
+    assert transcript.messages[0].message_id == str(user.event_id)
+    assert transcript.messages[1].message_id == str(delta_a.event_id)
+    assert transcript.messages[1].status == "completed"
+    assert transcript.messages[1].completed_at == completed.occurred_at
+    payload = transcript.model_dump(mode="json")
+    assert payload["chat_id"] == "chat-scheduled"
+    assert "conversation_id" not in payload

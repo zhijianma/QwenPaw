@@ -180,6 +180,79 @@ async def test_get_chat_status_treats_unknown_run_key_as_idle():
 
 
 @pytest.mark.asyncio
+async def test_get_chat_projects_task_messages_when_session_is_empty(
+    tmp_path,
+):
+    chat_id = "chat-scheduled"
+    chat = _chat(chat_id)
+    manager = SimpleNamespace(get_chat=AsyncMock(return_value=chat))
+    session = SimpleNamespace(
+        get_session_state_dict=AsyncMock(return_value={}),
+    )
+    tracker = SimpleNamespace(get_status=AsyncMock(return_value="idle"))
+    ledger = SQLiteExecutionLedger(
+        tmp_path / ".qwenpaw" / "lite" / "tasks.db",
+    )
+    await ledger.initialize()
+    service = TaskService(store=ledger, registry_generation=7)
+    task = await service.create_task(
+        objective="Scheduled prompt",
+        agent_id="default",
+        metadata={"conversation_id": chat_id},
+    )
+    await service.plan_task(
+        task.task_id,
+        steps=(PlanStep(title="Answer", objective="Scheduled prompt"),),
+    )
+    _, run = await service.start_task(
+        task.task_id,
+        runner_id="qwenpaw.runner.tests",
+    )
+    await service.record_runner_signal(
+        task.task_id,
+        run.run_id,
+        RunnerSignal(
+            event_type="conversation.user",
+            payload={"role": "user", "text": "Scheduled prompt"},
+        ),
+    )
+    await service.record_runner_signal(
+        task.task_id,
+        run.run_id,
+        RunnerSignal(
+            event_type="conversation.assistant.completed",
+            payload={"role": "assistant", "text": "Scheduled answer"},
+        ),
+    )
+
+    history = await get_chat(
+        chat_id=chat_id,
+        include_app_owned=True,
+        mgr=manager,
+        session=session,
+        workspace=SimpleNamespace(
+            workspace_dir=tmp_path,
+            config=SimpleNamespace(backend="qwenpaw"),
+            task_tracker=tracker,
+        ),
+    )
+
+    assert [message.role.value for message in history.messages] == [
+        "user",
+        "assistant",
+    ]
+    assert [message.content[0].text for message in history.messages] == [
+        "Scheduled prompt",
+        "Scheduled answer",
+    ]
+    assert all(
+        message.metadata["source"] == "task_ledger"
+        for message in history.messages
+    )
+    assert history.messages[1].status.value == "completed"
+
+
+@pytest.mark.asyncio
 async def test_list_chat_actions_returns_privacy_safe_records(tmp_path):
     chat_id = "chat-actions"
     manager = SimpleNamespace(

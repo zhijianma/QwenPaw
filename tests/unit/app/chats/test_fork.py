@@ -44,12 +44,16 @@ from qwenpaw.kernel import (
     InteractionResponse,
     SteerSafePoint,
     SubmissionStatus,
+    PlanStep,
+    RunnerSignal,
     TurnSubmissionRequest,
 )
 from qwenpaw.plugins.generations import GenerationRegistry
 from qwenpaw.constant import QWENPAW_USER_CONTENT_KEY
 from qwenpaw.schemas import FileContent
 from qwenpaw.tasks.artifacts import lite_artifact_store
+from qwenpaw.tasks.ledger import SQLiteExecutionLedger
+from qwenpaw.tasks.service import TaskService
 from qwenpaw.tasks.conversation_artifacts import (
     conversation_artifact_receipts,
 )
@@ -451,6 +455,96 @@ async def test_fork_api_allows_completed_anchor_while_parent_running(
             workspace,
         )
     assert conflict.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_fork_api_branches_task_transcript_without_session_state(
+    tmp_path,
+) -> None:
+    manager = ChatManager(
+        repo=JsonChatRepository(tmp_path / "chats.json"),
+    )
+    session = SafeJSONSession(str(tmp_path / "sessions"))
+    parent = await manager.create_chat(
+        ChatSpec(
+            id="scheduled-parent",
+            name="Scheduled parent",
+            session_id="console:scheduled-parent",
+            user_id="local-user",
+            channel="console",
+        ),
+    )
+    ledger = SQLiteExecutionLedger(
+        tmp_path / ".qwenpaw" / "lite" / "tasks.db",
+    )
+    await ledger.initialize()
+    service = TaskService(store=ledger, registry_generation=7)
+    task = await service.create_task(
+        objective="Scheduled prompt",
+        agent_id="default",
+        metadata={"conversation_id": parent.id},
+    )
+    await service.plan_task(
+        task.task_id,
+        steps=(PlanStep(title="Answer", objective=task.objective),),
+    )
+    _, run = await service.start_task(
+        task.task_id,
+        runner_id="qwenpaw.runner.tests",
+    )
+    await service.record_runner_signal(
+        task.task_id,
+        run.run_id,
+        RunnerSignal(
+            event_type="conversation.user",
+            payload={"role": "user", "text": task.objective},
+        ),
+    )
+    await service.record_runner_signal(
+        task.task_id,
+        run.run_id,
+        RunnerSignal(
+            event_type="conversation.assistant.completed",
+            payload={"role": "assistant", "text": "Scheduled answer"},
+        ),
+    )
+    events = await ledger.list_events(task.task_id, limit=200)
+    assistant = next(
+        event
+        for event in events
+        if event.event_type == "conversation.assistant.completed"
+    )
+    workspace = SimpleNamespace(
+        agent_id="default",
+        workspace_dir=tmp_path,
+    )
+
+    child = await fork_chat(
+        parent.id,
+        ChatForkRequest(
+            source_message_id=str(assistant.event_id),
+            idempotency_key="fork-task-transcript",
+        ),
+        manager,
+        session,
+        workspace,
+    )
+
+    raw = await session.get_session_state_dict(
+        child.session_id,
+        child.user_id,
+        child.channel,
+    )
+    child_state = AgentState.model_validate(raw["agent"]["state"])
+    assert [message.role for message in child_state.context] == [
+        "user",
+        "assistant",
+    ]
+    assert [message.content[0].text for message in child_state.context] == [
+        "Scheduled prompt",
+        "Scheduled answer",
+    ]
+    assert child_state.context[-1].id == str(assistant.event_id)
 
 
 @pytest.mark.asyncio
