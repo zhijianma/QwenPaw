@@ -43,6 +43,7 @@ from qwenpaw.drivers.handler import DriverHandler
 from qwenpaw.kernel import (
     ACTION_RETRY_DECISION_METADATA_KEY,
     ACTION_RETRY_HINT_METADATA_KEY,
+    TOOL_ERROR_CODE_METADATA_KEY,
     COMMITTED_ACTION_ITEM_METADATA_KEY,
     ActionAdmissionDecision,
     ActionAdmissionEvidence,
@@ -212,10 +213,13 @@ def _action_record(
 def test_model_step_reconciliation_classifies_action_evidence() -> None:
     invocation_id = uuid4()
     unrelated = _action_record(uuid4(), suffix="unrelated")
-    assert assess_model_step_reconciliation(
-        [unrelated],
-        invocation_id,
-    ) is None
+    assert (
+        assess_model_step_reconciliation(
+            [unrelated],
+            invocation_id,
+        )
+        is None
+    )
 
     pending = _action_record(invocation_id, suffix="pending")
     assessment = assess_model_step_reconciliation(
@@ -306,10 +310,13 @@ def test_model_step_action_evidence_requires_stable_executor_call_id() -> None:
     assert committed_item.observation_digest == (
         record.result.observation_digest
     )
-    assert model_step_action_call_ids(
-        [_action_record(invocation_id, suffix="legacy")],
-        invocation_id,
-    ) is None
+    assert (
+        model_step_action_call_ids(
+            [_action_record(invocation_id, suffix="legacy")],
+            invocation_id,
+        )
+        is None
+    )
 
 
 def test_uncertain_action_has_exact_reconciliation_digest() -> None:
@@ -600,9 +607,7 @@ async def test_background_snapshot_is_prepared_before_result_commit(
         [record] = await store.list_for_conversation("chat-1")
         observed_result_states.append(record.result is None)
 
-    context.extra["_prepare_background_action_context"] = (
-        prepare_background
-    )
+    context.extra["_prepare_background_action_context"] = prepare_background
     response = ToolResponse(
         content=[TextBlock(type="text", text="background result")],
         id=context.tool_call_id,
@@ -850,7 +855,10 @@ async def test_read_failure_requires_provider_hint_for_new_action_retry(
         content=[TextBlock(type="text", text="temporarily unavailable")],
         id=context.tool_call_id,
         state=ToolResultState.ERROR,
-        metadata={ACTION_RETRY_HINT_METADATA_KEY: True},
+        metadata={
+            ACTION_RETRY_HINT_METADATA_KEY: True,
+            TOOL_ERROR_CODE_METADATA_KEY: "dependency_unavailable",
+        },
     )
 
     await recorder.complete(response, context)
@@ -858,6 +866,7 @@ async def test_read_failure_requires_provider_hint_for_new_action_retry(
     [record] = await store.list_for_conversation("chat-retry-read")
     assert record.result is not None
     assert record.result.retryable is True
+    assert record.result.error_code == "dependency_unavailable"
     assert record.result.side_effect_status is None
     assert record.result.retry_decision is not None
     assert record.result.retry_decision.disposition is (
@@ -869,6 +878,35 @@ async def test_read_failure_requires_provider_hint_for_new_action_retry(
     assert response.metadata[ACTION_RETRY_DECISION_METADATA_KEY] == (
         record.result.retry_decision.model_dump(mode="json")
     )
+
+
+@pytest.mark.asyncio
+async def test_action_rejects_unbounded_provider_error_code(
+    tmp_path: Path,
+) -> None:
+    scope = _scope(tmp_path, conversation_id="chat-error-code")
+    store = FilesystemActionStore(tmp_path)
+    recorder = RuntimeActionRecorder(scope, store)
+    context = _context("read_file", "call-error-code")
+    await recorder.begin(
+        context,
+        effect=ToolEffect.NONE,
+        policy_decision="allow",
+    )
+
+    await recorder.complete(
+        ToolResponse(
+            content=[TextBlock(type="text", text="failed")],
+            id=context.tool_call_id,
+            state=ToolResultState.ERROR,
+            metadata={TOOL_ERROR_CODE_METADATA_KEY: "unsafe error text"},
+        ),
+        context,
+    )
+
+    [record] = await store.list_for_conversation("chat-error-code")
+    assert record.result is not None
+    assert record.result.error_code == "error"
 
 
 @pytest.mark.asyncio
@@ -917,9 +955,7 @@ async def test_executor_idempotency_admits_new_attempt_with_lineage(
     assert retry.retry_of_action_id == previous.request.action_id
     assert retry.attempt == 2
     assert retry.idempotency_key == previous.request.idempotency_key
-    assert retry.idempotency_mode is (
-        ActionIdempotencyMode.EXECUTOR_ENFORCED
-    )
+    assert retry.idempotency_mode is (ActionIdempotencyMode.EXECUTOR_ENFORCED)
     assert previous.result.retry_decision.max_attempts == 2
     assert previous.result.retry_decision.next_attempt == 2
     assert previous.result.retry_decision.retry_after_seconds == 0
@@ -1172,7 +1208,8 @@ async def test_action_retry_budget_is_persisted_and_exhausted(
     )
     records = await store.scan_for_conversation(conversation_id)
     exhausted = next(
-        record for record in records
+        record
+        for record in records
         if record.request.action_id == retry.action_id
     )
 
@@ -1418,9 +1455,7 @@ async def test_tool_policy_audit_uses_authoritative_action_identity(
     assert record.request.admission.mode is (
         ActionAdmissionMode.HOST_PRE_EXECUTION
     )
-    assert record.request.admission.authority == (
-        "qwenpaw.system.governance"
-    )
+    assert record.request.admission.authority == ("qwenpaw.system.governance")
     assert record.request.admission.decision == "allow"
     assert record.request.admission.evidence is (
         ActionAdmissionEvidence.POLICY_AUDIT

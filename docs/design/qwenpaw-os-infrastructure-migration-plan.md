@@ -555,8 +555,8 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     `failed` 且带瞬时失败 hint 的 Action 才允许以新 Action 重试；写入、进程和外部
     调用的 ERROR 默认进入 `uncertain -> reconcile_required`，不会因错误返回而推断
     “肯定未执行”。裁决随 `ActionResult` 持久化并进入统一 Observation；原 Action
-    保持不可变。自动 dispatcher 仍须等待 executor 级幂等能力声明和 attempt lineage，
-    因此本阶段不把 `retryable` 误报成“已自动重试”。
+    保持不可变。该决策只表示 admission；实际执行仍须经过下述自动 dispatcher、
+    executor 级幂等能力和 attempt lineage 门禁，不能把 `retryable` 单独当成已执行。
   - [x] Executor 幂等和 retry lineage 已进入稳定 Action 契约：
     `undeclared`、`host_guarded`、`executor_enforced` 明确区分 key 的真实执行边界；
     `ToolDefinition`、`DriverToolDefinition`、插件 SDK 和 Legacy Driver metadata 共用
@@ -565,7 +565,7 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     Action，并同时用显式 `executor_item_id` 维持模型上下文绑定，不再从幂等 key 猜
     Tool call ID。Host 会校验参数摘要、correlation、固定 generation 和当前环境契约；
     只有 executor 持久防重承诺可以让 effectful uncertain failure 进入安全 retry
-    admission。自动 dispatcher 尚未接入，不能把 admission 当作已执行。
+    admission；下述自动 dispatcher 只消费具备完整 lineage 的 admission。
   - [x] Task SideEffect Ledger 已降级为 Action attempt 的兼容投影：Action Recorder
     存在时，SideEffect record 使用 `action:<action_id>` 作为本地防重身份，并直接继承
     Action 的安全参数摘要、Invocation、correlation、Approval 和 Policy；不再从
@@ -644,6 +644,17 @@ Interrupt 能终止模型、工具与子运行，保存部分消息、解除审�
     写入 Submission 终态并唤醒下一轮 outbox。该路径没有模型或流式输出边界，attempt
     budget 已固化在 checkpoint；重复调度只复用同一 dispatch binding。DISPATCHED
     outbox 仅保留审计关联，执行状态以 Submission/Invocation/Action 为权威。
+  - [x] 插件 Tool 不再需要导入 AgentScope 才能报告失败：公共 SDK 冻结
+    `ToolExecutionResult / ToolExecutionStatus`，Host Adapter 转换终态、稳定错误码与
+    retry hint；Host 仍独立裁决是否重试。固定 Native Chat 使用只依赖公共 SDK 的临时
+    `tool.provider` 完成真实自动重试：attempt 1 Action
+    `7531b578-379e-5556-b658-b7da4d3afdfb` 以 `probe_transient_failure` 失败并生成
+    input checkpoint；dispatcher 创建 Submission
+    `16dc2a07-ab5d-4183-b53d-e0fd8cb04b26` 和新 Invocation
+    `e127f731-c087-519e-8dc4-1fbfbefc4a65`，attempt 2 Action
+    `395809e0-e1eb-5656-a032-7350187207d5` 成功。两次 attempt 共用 root、correlation、
+    generation 12 与 Provider digest；retry Invocation 的 Model Call 数为 0，证明不是
+    模型手动重试。验收后插件已热卸载，Registry 恢复为空。
   - [x] Provider resource availability 已冻结为 `ModelResourceRecoveryPort`：新
     quota wait 固定 Provider/Model identity；同 Workspace 的真实成功调用或现有 live
     model probe 只释放精确匹配的 external-event wait，并唤醒 durable dispatcher。
@@ -1683,6 +1694,10 @@ Cron 不形成独立审批或产物事实源。
     可观测等待窗；Steer receipt 最终精确记录 `before_tool_batch`，Action Observation
     为 0，最终回复 `STEER_BEFORE_TOOL_BATCH_OK`。验收同时修复旧 StopHandler 空
     `TERMINATE` 隐藏后续插件 Gate 的兼容缺陷，并补充 Router 回归测试。
+  - [x] 公开 `tool.provider` 通过框架无关 `ToolExecutionResult` 在真实 Chat 返回
+    transient failure；Host 保存稳定错误码与 input checkpoint，自动 dispatcher
+    使用新 Submission/Invocation 执行 attempt 2 并成功。retry Invocation 无 Model
+    Call，root/correlation/generation/Provider digest 与 attempt 1 对齐；临时插件已卸载。
 - [ ] 架构文档、API 规范、迁移表和未覆盖边界同步更新。
 - [ ] 完成主要功能 Code Review，Blocking finding 为零。
 - [ ] 达到门禁后再恢复 Task Workbench 开发。

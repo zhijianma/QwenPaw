@@ -118,7 +118,7 @@ Model Call Plane 和可派生的 Budget Lease 是 Handbook 比对后确认的增
 | Tool Guard | `security/tool_guard/*` | Runtime policy adapter | 保留，禁止 Kernel 依赖具体实现 | Agent Profile 策略与 Task 审批桥已实现 |
 | Environment / Sandbox | `kernel/models.py`、`runtime/environments.py`、`sandbox/*` | Kernel contract + Edition adapter | Invocation 前解析；Edition 只能承诺可证明的约束 | Lite Chat 已接本地证据与失败关闭；隔离型 Adapter 待接 |
 | Approval / Ask User | `interactions/*`、`app/approvals/*` | OS substrate + Application adapter | Interaction 是权威事实，WaitCondition 是内容最小化投影 | Task Approval checkpoint continuation 已实现；Chat Ask User 待迁移 |
-| Checkpoint | `checkpoints/*`、`tasks/replay.py` | Infrastructure adapter | 保留旧快照，实现安全恢复契约 | Task 安全 checkpoint 已实现；运行时快照待接 |
+| Checkpoint | `checkpoints/*`、`tasks/replay.py`、`runtime/*recovery*` | Infrastructure adapter | Git Workspace 快照独立保留；Task 安全 checkpoint 与 Chat 内容最小化 continuation 分层恢复，不序列化 Python 调用栈 | Task checkpoint、Interaction/Model/Action/Harness continuation 已接入；Workspace restore 不冒充运行时续跑 |
 | Memory | `agents/memory/*`、`memory/*` | `memory.provider` Contribution | 核心只定义 port/session，后端外迁 | 已接入 Chat 固定 generation |
 | Proactive cognition | `agents/memory/proactive/*` | `sensor` + Proposal producer | 只能产生 Proposal，审批后进入 TaskOrder | 已实现门禁路径 |
 | Cron / Heartbeat | `app/crons/*` | Scheduler adapter | 保留调度，触发 `TaskSource.SCHEDULE` | 已有能力待接 Task |
@@ -293,7 +293,7 @@ tenant-aware adapters 实现 Kernel ports。
 | `hook.provider` | backend | Chat lifecycle router | hot | 固定 snapshot、依赖排序、短路与清理已接入 |
 | `loop.gate.provider` | backend | ReAct loop router | hot | 固定 snapshot、scope 选择、继续/终止与延迟停止已接入 |
 | `tool` | backend | Tool registry | hot | 已声明，legacy bridge 存在 |
-| `tool.provider` | backend | Chat Toolkit assembly | hot | 系统与插件 Provider 已统一治理 |
+| `tool.provider` | backend | Chat Toolkit assembly | hot | 系统与插件 Provider 已统一治理；插件用框架无关 `ToolExecutionResult` 返回终态与 retry hint |
 | `runner` | backend | Task coordinator | hot | 已支持 Task 从 pinned generation 选择并执行；示例插件覆盖 |
 | `memory` | backend | Legacy memory assembly | scoped | 兼容别名，停止扩展 |
 | `memory.provider` | backend | Chat memory session | hot | 现有 memory 已作为系统适配器接入 |

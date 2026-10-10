@@ -33,6 +33,15 @@ NamespacedId = Annotated[
         pattern=r"^[a-z0-9][a-z0-9_.-]*$",
     ),
 ]
+ToolErrorCode = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=128,
+        pattern=r"^[a-z0-9][a-z0-9_.-]*$",
+    ),
+]
 HmacSha256Digest = Annotated[
     str,
     StringConstraints(pattern=r"^hmac-sha256:[0-9a-f]{64}$"),
@@ -42,6 +51,7 @@ TOOL_ARTIFACT_OUTPUTS_METADATA_KEY = "qwenpaw_artifact_outputs"
 COMMITTED_ACTION_ITEM_METADATA_KEY = "qwenpaw_committed_action_item"
 ACTION_RETRY_HINT_METADATA_KEY = "qwenpaw_action_retry_hint"
 ACTION_RETRY_DECISION_METADATA_KEY = "qwenpaw_action_retry_decision"
+TOOL_ERROR_CODE_METADATA_KEY = "qwenpaw_tool_error_code"
 
 
 def utc_now() -> datetime:
@@ -226,6 +236,35 @@ class ActionRetryPolicy(KernelModel):
             self.backoff_multiplier ** (attempt - 2)
         )
         return min(delay, self.max_delay_seconds)
+
+
+class ToolExecutionStatus(str, Enum):
+    """Framework-independent terminal state returned by a plugin tool."""
+
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class ToolExecutionResult(KernelModel):
+    """Bounded plugin tool result translated by the Host runtime adapter."""
+
+    status: ToolExecutionStatus
+    content: NonEmptyStr
+    error_code: ToolErrorCode | Literal[""] = ""
+    retryable: bool = False
+
+    @model_validator(mode="after")
+    def validate_terminal_result(self) -> Self:
+        """Keep success and retry claims internally consistent."""
+        if self.status is ToolExecutionStatus.SUCCEEDED:
+            if self.error_code or self.retryable:
+                raise ValueError(
+                    "successful tool result cannot declare an error",
+                )
+            return self
+        if not self.error_code:
+            raise ValueError("failed tool result requires an error code")
+        return self
 
 
 class ModelRouteReason(str, Enum):

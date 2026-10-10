@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -18,6 +19,7 @@ from agentscope.tool import ToolResponse
 from ..kernel import (
     ACTION_RETRY_DECISION_METADATA_KEY,
     ACTION_RETRY_HINT_METADATA_KEY,
+    TOOL_ERROR_CODE_METADATA_KEY,
     ActionAdmission,
     ActionAdmissionDecision,
     ActionAdmissionEvidence,
@@ -88,6 +90,7 @@ _BULK_ARGUMENT_NAMES = frozenset(
         "text",
     },
 )
+_TOOL_ERROR_CODE_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,127}$")
 
 
 class ActionConflictError(RuntimeError):
@@ -199,13 +202,9 @@ def assess_model_step_reconciliation(
     if not owned:
         return None
 
-    pending_result_count = sum(
-        record.result is None for record in owned
-    )
+    pending_result_count = sum(record.result is None for record in owned)
     terminal_results = [
-        record.result
-        for record in owned
-        if record.result is not None
+        record.result for record in owned if record.result is not None
     ]
     uncertain_side_effect_count = sum(
         result.status in {ActionStatus.PARTIAL, ActionStatus.UNKNOWN}
@@ -457,8 +456,7 @@ def _action_retry_decision(
             max_attempts=policy.max_attempts,
         )
     executor_enforced = (
-        request.idempotency_mode
-        is ActionIdempotencyMode.EXECUTOR_ENFORCED
+        request.idempotency_mode is ActionIdempotencyMode.EXECUTOR_ENFORCED
     )
     if (
         side_effect_status is SideEffectStatus.UNCERTAIN
@@ -482,10 +480,7 @@ def _action_retry_decision(
             reason=ActionRetryReason.PROVIDER_NOT_RETRYABLE,
             max_attempts=policy.max_attempts,
         )
-    if (
-        request.effect is not ToolEffect.NONE
-        and not executor_enforced
-    ):
+    if request.effect is not ToolEffect.NONE and not executor_enforced:
         return ActionRetryDecision(
             disposition=ActionRetryDisposition.FORBIDDEN,
             reason=ActionRetryReason.EFFECTFUL_RETRY_UNSUPPORTED,
@@ -825,9 +820,7 @@ class RuntimeActionRecorder:
         tool_owners: dict[str, str] | None = None,
         retry_policy: ActionRetryPolicy | None = None,
         retry_input_store: ActionRetryInputStore | None = None,
-        retry_continuation_store: (
-            ActionRetryContinuationStore | None
-        ) = None,
+        retry_continuation_store: (ActionRetryContinuationStore | None) = None,
         retry_of: ActionRecord | None = None,
         tool_selection: ToolSelection | None = None,
         provider_execution_digests: dict[str, str] | None = None,
@@ -981,8 +974,7 @@ class RuntimeActionRecorder:
             idempotency_key=(
                 retry_of.idempotency_key
                 if retry_of is not None
-                and idempotency_mode
-                is ActionIdempotencyMode.EXECUTOR_ENFORCED
+                and idempotency_mode is ActionIdempotencyMode.EXECUTOR_ENFORCED
                 else generated_idempotency_key
             ),
             executor_item_id=context.tool_call_id,
@@ -1207,10 +1199,7 @@ class RuntimeActionRecorder:
         current_resolution = self._scope.environment_resolution
         if (previous_environment is None) != (current_resolution is None):
             raise ActionConflictError("retry action environment mismatch")
-        if (
-            previous_environment is not None
-            and current_resolution is not None
-        ):
+        if previous_environment is not None and current_resolution is not None:
             previous_contract = (
                 previous_environment.contract_id,
                 previous_environment.contract_version,
@@ -1454,9 +1443,7 @@ class RuntimeActionRecorder:
         """Publish retry work only after immutable result persistence."""
         decision = result.retry_decision
         checkpoint_id = (
-            decision.input_checkpoint_id
-            if decision is not None
-            else None
+            decision.input_checkpoint_id if decision is not None else None
         )
         if (
             checkpoint_id is None
@@ -1511,11 +1498,17 @@ class RuntimeActionRecorder:
             request,
             retry_decision,
         )
-        response.metadata[ACTION_RETRY_DECISION_METADATA_KEY] = (
-            retry_decision.model_dump(mode="json")
+        response.metadata[
+            ACTION_RETRY_DECISION_METADATA_KEY
+        ] = retry_decision.model_dump(mode="json")
+        error_code = (
+            ""
+            if status is ActionStatus.SUCCEEDED
+            else self._error_code(response)
         )
         safe_observation = {
             "state": response.state.value,
+            "error_code": error_code,
             "retry_decision": retry_decision.model_dump(mode="json"),
             "artifact_refs": [
                 {
@@ -1552,15 +1545,7 @@ class RuntimeActionRecorder:
                     [],
                 )
             ),
-            error_code=(
-                ""
-                if status is ActionStatus.SUCCEEDED
-                else (
-                    "artifact_capture_partial"
-                    if status is ActionStatus.PARTIAL
-                    else response.state.value
-                )
-            ),
+            error_code=error_code,
             retryable=(
                 retry_decision.disposition
                 is ActionRetryDisposition.RETRY_FROM_NEW_ACTION
@@ -1576,9 +1561,9 @@ class RuntimeActionRecorder:
             executor_item_id=context.tool_call_id,
             observation_digest=result.observation_digest,
         )
-        response.metadata[COMMITTED_ACTION_ITEM_METADATA_KEY] = (
-            committed_item.model_dump(mode="json")
-        )
+        response.metadata[
+            COMMITTED_ACTION_ITEM_METADATA_KEY
+        ] = committed_item.model_dump(mode="json")
         prepare_background = context.extra.get(
             "_prepare_background_action_context",
         )
@@ -1596,6 +1581,18 @@ class RuntimeActionRecorder:
             ) from exc
         await self._publish_retry_continuation(result)
         return response
+
+    @staticmethod
+    def _error_code(response: ToolResponse) -> str:
+        """Return a bounded provider code or the existing Host fallback."""
+        if RuntimeActionRecorder._status(response) is ActionStatus.PARTIAL:
+            return "artifact_capture_partial"
+        value = (response.metadata or {}).get(
+            TOOL_ERROR_CODE_METADATA_KEY,
+        )
+        if isinstance(value, str) and _TOOL_ERROR_CODE_RE.fullmatch(value):
+            return value
+        return response.state.value
 
     async def complete_harness_remote(
         self,

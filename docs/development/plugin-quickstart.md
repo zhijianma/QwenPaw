@@ -245,6 +245,34 @@ Lite stores exact retry input in an owner-only Host checkpoint only after
 admission. Plugins receive the Action execution context, never the checkpoint
 store or another provider's raw arguments.
 
+Do not import AgentScope `ToolChunk` or `ToolResponse` to report a terminal
+failure. Return the framework-independent SDK result instead:
+
+```python
+from qwenpaw.plugins.sdk import (
+    ToolExecutionResult,
+    ToolExecutionStatus,
+)
+
+
+async def read_dependency() -> ToolExecutionResult:
+    return ToolExecutionResult(
+        status=ToolExecutionStatus.FAILED,
+        content="The dependency is temporarily unavailable.",
+        error_code="dependency_unavailable",
+        retryable=True,
+    )
+```
+
+The Host translates this value at the Tool Provider boundary, records the
+stable `error_code`, and treats `retryable` only as a provider hint. A retry is
+admitted only when Host policy, effect classification, attempt budget,
+idempotency contract, immutable input checkpoint, pinned generation, and
+current control fences all agree. Successful tools may continue returning a
+plain string, or return `ToolExecutionResult(status=SUCCEEDED, ...)` when they
+need an explicit terminal contract. Successful results cannot declare an
+error code or retry hint; failed results must declare a namespaced error code.
+
 The process-wide governance registry is used for discovery, conflict checks,
 and deferred unload cleanup. Each guarded invocation tool also captures its
 own governance snapshot. A hot replacement may change the same tool's type,

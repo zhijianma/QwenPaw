@@ -8,6 +8,8 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from agentscope.message import ToolResultState
+from pydantic import ValidationError
 
 from qwenpaw.capabilities.system_tools import WorkspaceToolProvider
 from qwenpaw.governance.tool_registry import DEFAULT_REGISTRY
@@ -17,6 +19,8 @@ from qwenpaw.plugins.generations import GenerationRegistry
 from qwenpaw.plugins.sdk import (
     ActionIdempotencyMode,
     ToolDefinition,
+    ToolExecutionResult,
+    ToolExecutionStatus,
     ToolHost,
     ToolProvider,
     ToolSelection,
@@ -199,10 +203,13 @@ async def test_plugin_tool_flows_through_pinned_governed_builder(
         by_name = {tool.name: tool for tool in tools}
         assert "_system_contract_tool" in by_name
         assert "describe_qwenpaw_invocation" in by_name
-        assert getattr(
-            by_name["describe_qwenpaw_invocation"],
-            "_qp_action_idempotency",
-        ) is ActionIdempotencyMode.HOST_GUARDED
+        assert (
+            getattr(
+                by_name["describe_qwenpaw_invocation"],
+                "_qp_action_idempotency",
+            )
+            is ActionIdempotencyMode.HOST_GUARDED
+        )
         assert all(
             callable(getattr(tool, "check_permissions", None))
             for tool in tools
@@ -218,3 +225,59 @@ async def test_plugin_tool_flows_through_pinned_governed_builder(
     finally:
         DEFAULT_REGISTRY.unregister_owner(provider_id)
         await assembly.close()
+
+
+@pytest.mark.asyncio
+async def test_plugin_tool_uses_stable_terminal_result() -> None:
+    async def retryable_read() -> ToolExecutionResult:
+        return ToolExecutionResult(
+            status=ToolExecutionStatus.FAILED,
+            content="The dependency is temporarily unavailable.",
+            error_code="dependency_unavailable",
+            retryable=True,
+        )
+
+    definition = ToolDefinition(
+        function=retryable_read,
+        name="retryable_read",
+        tool_type="internal",
+    )
+    # pylint: disable=protected-access
+    tool = AgentBuilder._ensure_governed_provider_tool(
+        definition,
+        provider_id="example.retry-tools",
+        governor=None,
+        request_context={},
+    )
+    # pylint: enable=protected-access
+
+    result = await tool.call()
+
+    assert result.state is ToolResultState.ERROR
+    assert result.is_last is True
+    assert result.metadata["qwenpaw_action_retry_hint"] is True
+    assert result.metadata["qwenpaw_tool_error_code"] == (
+        "dependency_unavailable"
+    )
+    assert tool.name == "retryable_read"
+
+
+def test_plugin_tool_result_rejects_retryable_success() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="successful tool result cannot declare an error",
+    ):
+        ToolExecutionResult(
+            status=ToolExecutionStatus.SUCCEEDED,
+            content="done",
+            retryable=True,
+        )
+
+
+def test_plugin_tool_result_rejects_unpersistable_error_code() -> None:
+    with pytest.raises(ValidationError, match="at most 128 characters"):
+        ToolExecutionResult(
+            status=ToolExecutionStatus.FAILED,
+            content="failed",
+            error_code=f"dependency_{'x' * 128}",
+        )

@@ -228,6 +228,8 @@ def test_public_sdk_exports_runtime_interaction_contract() -> None:
         sdk.ActionAdmissionMode.EXECUTOR_DELEGATED.value
         == "executor_delegated"
     )
+    assert sdk.ToolExecutionResult is not None
+    assert sdk.ToolExecutionStatus.FAILED.value == "failed"
     assert sdk.ScheduleDefinition is not None
     assert sdk.ScheduleDefinitionNotFoundError is not None
     assert sdk.ScheduleFire is not None

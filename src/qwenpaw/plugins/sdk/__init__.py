@@ -185,6 +185,8 @@ from ...kernel.models import (
     ToolArtifactOutput,
     TOOL_ARTIFACT_OUTPUTS_METADATA_KEY,
     ToolDefinition,
+    ToolExecutionResult,
+    ToolExecutionStatus,
     ToolSelection,
 )
 from ...kernel.waits import (
@@ -483,6 +485,8 @@ __all__ = [
     "TOOL_ARTIFACT_OUTPUTS_METADATA_KEY",
     "ToolHost",
     "ToolDefinition",
+    "ToolExecutionResult",
+    "ToolExecutionStatus",
     "ToolProvider",
     "ToolSelection",
 ]

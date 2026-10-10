@@ -1475,3 +1475,25 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
   解析后 Provider 返回 HTTP 200，Action 为 succeeded，cwd、`ask` Decision、Approval
   Link、Result 的 Action/Invocation/Chat 身份一致，开放 Interaction 为 0。Codex 的
   无审批执行、审批拒绝、审批通过及 Chat cwd 继承四条真实路径均已闭环。
+
+## 11. 2026-10-10 插件 Tool 稳定终态与真实 Action Retry
+
+- 公共 SDK 新增框架无关 `ToolExecutionResult / ToolExecutionStatus`。插件可报告
+  success/failure、内容安全错误码和 retry hint，不再导入 AgentScope
+  `ToolChunk / ToolResponse`；Runtime Adapter 保留函数签名并转换为当前工具框架。
+- `retryable` 仍只是 Provider hint。Host 继续结合 Action effect、幂等模式、attempt
+  budget、私有输入 checkpoint、固定 generation、Provider digest 和控制 fence 独立
+  裁决；成功结果不能携带错误或 retry hint，失败结果必须携带 namespaced error code。
+- 固定 Native Chat `1ee31988-b37a-48b9-b6ce-423c52f6a3a9` 在 `/clear` 后热安装
+  只依赖公共 SDK 的临时 Tool Provider。attempt 1 Action
+  `7531b578-379e-5556-b658-b7da4d3afdfb` 以 `probe_transient_failure` 失败，Host
+  生成 `retry_from_new_action` 裁决和 input checkpoint。
+- 自动 dispatcher 随后创建 Submission
+  `16dc2a07-ab5d-4183-b53d-e0fd8cb04b26`、Invocation
+  `e127f731-c087-519e-8dc4-1fbfbefc4a65` 与 attempt 2 Action
+  `395809e0-e1eb-5656-a032-7350187207d5`；第二次执行 succeeded。两个 attempt 共用
+  root Action、correlation、generation 12 和 Provider execution digest，Queue 最终
+  idle，Interaction 为空。
+- retry Invocation 的 Model Call 记录为 0；原 Invocation 有 2 次真实 Model Call。
+  这证明第二次执行来自 model-independent Action dispatcher，不是模型手动重试。
+  临时插件已按精确 release hash 热卸载，`/api/plugins` 恢复为空，仓库探针已删除。

@@ -560,7 +560,9 @@ class AgentBuilder:
             )
             action_kind = tool.action_kind
             action_idempotency = tool.idempotency_mode
-            tool = tool.function
+            from .tool_results import adapt_tool_execution_results
+
+            tool = adapt_tool_execution_results(tool.function)
         if not callable(tool):
             raise TypeError(
                 "tool providers must return callables or governed tools",
@@ -801,8 +803,7 @@ class AgentBuilder:
                     invocation_id=invocation.invocation_id,
                     conversation_id=invocation.chat_id,
                     correlation_id=(
-                        invocation.correlation_id
-                        or invocation.invocation_id
+                        invocation.correlation_id or invocation.invocation_id
                     ),
                     agent_id=invocation.agent_id,
                     recovery_cycle=prior_cycle + 1,
@@ -988,9 +989,11 @@ class AgentBuilder:
             request_context["_model_call_store"] = lite_model_call_store(
                 Path(workspace_dir),
             )
-            request_context[
-                "_model_resource_wait_service"
-            ] = getattr(ctx, "extras", {}).get(
+            request_context["_model_resource_wait_service"] = getattr(
+                ctx,
+                "extras",
+                {},
+            ).get(
                 "model_resource_wait_service",
             )
             request_context[
