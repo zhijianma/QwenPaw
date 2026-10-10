@@ -184,6 +184,11 @@ dependency without changing legacy handler execution.
 
 Implemented in the frontend SDK:
 
+- `/api/version` now returns the versioned
+  `qwenpaw.host-handshake.v1` contract while preserving the existing product
+  `version`; clients negotiate protocol version and stable feature IDs before
+  starting a Task, while dynamic capability availability remains in the
+  generation-aware catalog;
 - `paw.tasks.run()` creates and starts a real Kernel Task;
 - explicitly requested `runner` and `strategy` capabilities are checked
   against the current Host registry before Task creation;
@@ -292,6 +297,10 @@ Verified on 2026-10-10 against the running Lite Host on port 8004:
   `createInteractionClient()` for ChatSpec-scoped routes, ID encoding and
   decision payloads. The PawApp facade retains ChatSpec defaulting, typed
   errors and idempotent retry/conflict behavior.
+- Console `rootApi` and `paw.runtime` now reuse one transport-injected runtime
+  client for Host negotiation. PawApps can inspect or require stable Host
+  features without treating plugin capability discovery as protocol
+  compatibility.
 
 ## 10. Explicit non-goals
 

@@ -27,6 +27,7 @@ import {
 import { createUiNamespace } from "./ui";
 import { createDependenciesNamespace } from "./dependencies";
 import { createRuntimeTasksNamespace } from "./runtimeTasks";
+import { createHostRuntimeNamespace } from "./runtime";
 import type { PawSdk, PawSdkFactory } from "./types";
 import { getActivePawAppId } from "./context";
 import { normalizeAppId } from "./scope";
@@ -45,6 +46,7 @@ export const paw: PawSdk = {
   },
   api: apiNamespace,
   tasks: createRuntimeTasksNamespace(),
+  runtime: createHostRuntimeNamespace(),
   host: hostNamespace,
   ui: createUiNamespace(getActivePawAppId),
   dependencies: createDependenciesNamespace(apiNamespace),
@@ -72,6 +74,7 @@ export function forApp(appId: string): PawSdk {
     appId: normalized,
     api: createApiNamespace(appIdProvider),
     tasks: createRuntimeTasksNamespace(),
+    runtime: createHostRuntimeNamespace(),
     host,
     ui: createUiNamespace(normalized),
     dependencies: createDependenciesNamespace(
@@ -129,6 +132,9 @@ export type {
   PawRuntimeTaskRequest,
   PawRuntimeTaskRunOptions,
   PawRuntimeTasksNamespace,
+  PawRuntimeFeature,
+  PawHostHandshake,
+  PawHostRuntimeNamespace,
   PawSseEvent,
   PawSseOptions,
   PawChatOptions,
@@ -154,6 +160,7 @@ export {
   createRuntimeTasksNamespace,
   PawRuntimeTaskError,
 } from "./runtimeTasks";
+export { createHostRuntimeNamespace, PawHostRuntimeError } from "./runtime";
 export { createDependenciesNamespace } from "./dependencies";
 export { PawApiError } from "./api";
 export { PawChatStreamError } from "./host";

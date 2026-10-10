@@ -1,8 +1,10 @@
 import { request } from "../request";
+import { createRuntimeClient } from "../../clients/runtimeClient";
+
+const runtimeClient = createRuntimeClient({ request });
 
 // Root API
 export const rootApi = {
   readRoot: () => request<unknown>("/"),
-  getVersion: (signal?: AbortSignal) =>
-    request<{ version: string }>("/version", { signal }),
+  getVersion: runtimeClient.handshake,
 };

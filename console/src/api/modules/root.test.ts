@@ -28,9 +28,17 @@ describe("rootApi", () => {
     await expect(rootApi.readRoot()).resolves.toEqual({ ok: true });
   });
 
-  it("getVersion returns the { version } payload", async () => {
-    vi.mocked(request).mockResolvedValue({ version: "1.2.3" });
-    await expect(rootApi.getVersion()).resolves.toEqual({ version: "1.2.3" });
+  it("getVersion returns the Host handshake", async () => {
+    const handshake = {
+      schema: "qwenpaw.host-handshake.v1",
+      product: "qwenpaw",
+      version: "1.2.3",
+      protocol_version: 1,
+      features: ["task.runtime"],
+    };
+    vi.mocked(request).mockResolvedValue(handshake);
+
+    await expect(rootApi.getVersion()).resolves.toEqual(handshake);
   });
 
   it("propagates request errors", async () => {

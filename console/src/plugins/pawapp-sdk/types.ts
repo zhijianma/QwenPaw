@@ -20,6 +20,7 @@ import type {
   InteractionStatus,
   UserInputReason,
 } from "../../contracts/interactions";
+import type { RuntimeFeature, RuntimeHandshake } from "../../contracts/runtime";
 
 export interface PawDisposable {
   dispose(): void;
@@ -580,12 +581,29 @@ export interface PawRuntimeTasksNamespace {
   ): Promise<PawRuntimeTaskHandle>;
 }
 
+export type PawRuntimeFeature = RuntimeFeature;
+export type PawHostHandshake = RuntimeHandshake;
+
+export interface PawHostRuntimeNamespace {
+  handshake(options?: { signal?: AbortSignal }): Promise<PawHostHandshake>;
+  supports(
+    feature: PawRuntimeFeature,
+    options?: { signal?: AbortSignal },
+  ): Promise<boolean>;
+  require(
+    features: readonly PawRuntimeFeature[],
+    options?: { signal?: AbortSignal },
+  ): Promise<PawHostHandshake>;
+}
+
 /** The top-level paw SDK object. */
 export interface PawSdk {
   readonly appId: string;
   api: PawApiNamespace;
   /** Durable Agent OS tasks backed by Kernel projections and event cursors. */
   tasks: PawRuntimeTasksNamespace;
+  /** Host protocol and stable feature negotiation. */
+  runtime: PawHostRuntimeNamespace;
   host: PawHostNamespace;
   ui: PawUiNamespace;
   dependencies: PawDependenciesNamespace;

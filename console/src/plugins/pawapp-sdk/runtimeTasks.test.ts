@@ -62,6 +62,22 @@ function jsonResponse(value: unknown): Response {
   });
 }
 
+function handshakeResponse(): Response {
+  return jsonResponse({
+    schema: "qwenpaw.host-handshake.v1",
+    product: "qwenpaw",
+    version: "2.2.2b1",
+    protocol_version: 1,
+    features: [
+      "artifact.references",
+      "capability.catalog",
+      "chat.interactions",
+      "task.event-cursor",
+      "task.runtime",
+    ],
+  });
+}
+
 function sseResponse(events: PawRuntimeTaskEvent[]): Response {
   const body = events
     .map((event) => `id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`)
@@ -93,6 +109,7 @@ describe("PawApp runtime tasks", () => {
 
   it("negotiates the runner and resolves from a terminal projection", async () => {
     mockedHostFetch
+      .mockResolvedValueOnce(handshakeResponse())
       .mockResolvedValueOnce(
         jsonResponse({
           registry_generation: 4,
@@ -122,11 +139,11 @@ describe("PawApp runtime tasks", () => {
     expect(handle.lastSequence).toBe(2);
     expect(received).toHaveBeenCalledTimes(2);
     expect(mockedHostFetch).toHaveBeenNthCalledWith(
-      1,
+      2,
       "/tasks/capabilities?slot=runner",
     );
     expect(mockedHostFetch).toHaveBeenNthCalledWith(
-      2,
+      3,
       "/tasks",
       expect.objectContaining({
         method: "POST",
@@ -141,6 +158,7 @@ describe("PawApp runtime tasks", () => {
 
   it("reconnects from the committed sequence after a non-terminal EOF", async () => {
     mockedHostFetch
+      .mockResolvedValueOnce(handshakeResponse())
       .mockResolvedValueOnce(jsonResponse(task("created")))
       .mockResolvedValueOnce(jsonResponse({ task: task(), run: {} }))
       .mockResolvedValueOnce(sseResponse([event(3)]))
@@ -154,7 +172,7 @@ describe("PawApp runtime tasks", () => {
     );
     await expect(handle.result).resolves.toMatchObject({ last_sequence: 4 });
     expect(mockedHostFetch).toHaveBeenNthCalledWith(
-      5,
+      6,
       "/tasks/task-1/stream",
       expect.objectContaining({
         headers: {
@@ -166,9 +184,11 @@ describe("PawApp runtime tasks", () => {
   });
 
   it("rejects before creation when a requested runner is not active", async () => {
-    mockedHostFetch.mockResolvedValueOnce(
-      jsonResponse({ registry_generation: 4, items: [] }),
-    );
+    mockedHostFetch
+      .mockResolvedValueOnce(handshakeResponse())
+      .mockResolvedValueOnce(
+        jsonResponse({ registry_generation: 4, items: [] }),
+      );
 
     await expect(
       createRuntimeTasksNamespace().run({
@@ -178,11 +198,12 @@ describe("PawApp runtime tasks", () => {
     ).rejects.toMatchObject({
       code: "RUNNER_CAPABILITY_UNAVAILABLE",
     });
-    expect(mockedHostFetch).toHaveBeenCalledTimes(1);
+    expect(mockedHostFetch).toHaveBeenCalledTimes(2);
   });
 
   it("returns the durable cancellation command receipt", async () => {
     mockedHostFetch.mockImplementation(async (path, init) => {
+      if (path === "/version") return handshakeResponse();
       if (path === "/tasks" && init?.method === "POST") {
         return jsonResponse(task("created"));
       }
@@ -223,6 +244,7 @@ describe("PawApp runtime tasks", () => {
 
   it("submits one idempotent direct approval decision", async () => {
     mockedHostFetch.mockImplementation(async (path, init) => {
+      if (path === "/version") return handshakeResponse();
       if (path === "/tasks" && init?.method === "POST") {
         return jsonResponse(task("created"));
       }

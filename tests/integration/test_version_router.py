@@ -34,6 +34,10 @@ def test_version_endpoint(app_server) -> None:
     assert resp.status_code == 200, app_server.logs_tail()
     payload = resp.json()
     assert "version" in payload or "qwenpaw_version" in payload
+    assert payload["schema"] == "qwenpaw.host-handshake.v1"
+    assert payload["product"] == "qwenpaw"
+    assert payload["protocol_version"] == 1
+    assert "task.runtime" in payload["features"]
 
 
 @pytest.mark.integration

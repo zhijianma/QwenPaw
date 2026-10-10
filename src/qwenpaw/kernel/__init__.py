@@ -244,6 +244,12 @@ from .interactions import (
     UserInputReason,
     validate_interaction_admission,
 )
+from .host import (
+    HOST_FEATURES,
+    HOST_PROTOCOL_VERSION,
+    HostFeature,
+    HostHandshake,
+)
 from .waits import (
     ActionRetryContinuation,
     ActionRetryContinuationStatus,
@@ -655,6 +661,10 @@ __all__ = [
     "InteractionStatus",
     "UserInputReason",
     "validate_interaction_admission",
+    "HOST_FEATURES",
+    "HOST_PROTOCOL_VERSION",
+    "HostFeature",
+    "HostHandshake",
     "ContinuationAvailability",
     "ContinuationDispatchStatus",
     "ContinuationMode",

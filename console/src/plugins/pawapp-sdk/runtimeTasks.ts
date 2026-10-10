@@ -1,5 +1,6 @@
 import { hostFetch } from "../hostSdk/fetch";
 import { createTaskClient } from "../../clients/taskClient";
+import { createHostRuntimeNamespace } from "./runtime";
 import type {
   PawRuntimeTaskApprovalDecision,
   PawRuntimeTaskCancelReceipt,
@@ -320,5 +321,32 @@ async function runTask(
 }
 
 export function createRuntimeTasksNamespace(): PawRuntimeTasksNamespace {
-  return { run: runTask };
+  const hostRuntime = createHostRuntimeNamespace();
+  return {
+    async run(request, options) {
+      try {
+        await hostRuntime.require(
+          [
+            "artifact.references",
+            "capability.catalog",
+            "chat.interactions",
+            "task.event-cursor",
+            "task.runtime",
+          ],
+          { signal: options?.signal },
+        );
+      } catch (error) {
+        const detail = error as { code?: unknown; message?: unknown };
+        throw new PawRuntimeTaskError(
+          typeof detail.code === "string"
+            ? detail.code
+            : "HOST_PROTOCOL_INCOMPATIBLE",
+          typeof detail.message === "string"
+            ? detail.message
+            : "QwenPaw Host protocol negotiation failed",
+        );
+      }
+      return runTask(request, options);
+    },
+  };
 }

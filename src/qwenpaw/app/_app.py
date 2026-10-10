@@ -30,6 +30,7 @@ from ..constant import (
 )
 from ..envs import load_envs_into_environ
 from ..local_models.manager import LocalModelManager
+from ..kernel import HostHandshake
 from ..providers.provider_manager import ProviderManager
 from ..utils.daily_telemetry import start_daily_telemetry
 from ..utils.io_utils import run_sync_io
@@ -864,10 +865,8 @@ def read_root():
 
 @app.get("/api/version")
 def get_version():
-    """Return the current application version (public-safe payload)."""
-    return {
-        "version": __version__,
-    }
+    """Return the public-safe Host protocol handshake."""
+    return HostHandshake(version=__version__).model_dump(mode="json")
 
 
 @app.get("/api/doctor/runtime")
