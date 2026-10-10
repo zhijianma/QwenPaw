@@ -126,10 +126,126 @@ not discovered only after the first developer call.
 Primary references used for this decision:
 
 - [OpenAI Codex SDK](https://github.com/openai/codex/tree/main/sdk/typescript)
+- [OpenAI Codex Python SDK](https://github.com/openai/codex/tree/main/sdk/python)
 - [Gemini CLI SDK design](https://github.com/google-gemini/gemini-cli/blob/main/packages/sdk/SDK_DESIGN.md)
 - [OpenCode remote client](https://docs.opencode.ai/docs/sdk/)
 - [OpenCode embedded SDK](https://opencode.ai/v2/docs/build/sdk)
 - [Claude SDK and agent-runtime distinction](https://platform.claude.com/docs/en/cli-sdks-libraries/overview)
+
+#### 5.1.1 Coding-agent SDK comparison update
+
+The 2026-10-10 review distinguishes an API client from an agent-runtime SDK.
+Calling both products an SDK hides lifecycle, compatibility and trust
+boundaries that developers need to understand.
+
+| Product | Runtime ownership | Public working object | Reusable lesson | Boundary not to copy |
+| --- | --- | --- | --- | --- |
+| Codex TypeScript | SDK spawns packaged CLI and reads JSONL | `Thread` / turn | Buffered and streamed calls share one thread identity | Early wrapper exposes only the subset supported by `exec` |
+| Codex Python | SDK owns an exactly pinned CLI runtime and app-server client | `Thread`, `TurnHandle`, notifications | Explicit start/resume/fork, sync/async parity, steer/interrupt, approvals and close | Runtime and SDK version drift must not be left to first-call failure |
+| GitHub Copilot | CLI owns the loop; SDK is JSON-RPC transport | Session | SDK forwards typed events and does not reimplement orchestration | Mechanical idle must not be presented as semantic task completion |
+| OpenCode | Remote client or embedded Host share one generated API | Session and event groups | Embedded and remote modes return the same values, errors and streams | Embedded mode must not create a second domain model |
+| Gemini CLI | SDK composes the existing configurable Agent core | Agent / Session | Session context, resume, tools and skills are composable primitives | Unfinished approval and policy surfaces are not a stable template |
+| Claude | Agent SDK owns the loop; API SDK only calls the model | Query / session stream | Product naming makes runtime ownership explicit | A model client is not an agent SDK |
+
+The comparison changes the QwenPaw recommendation in four concrete ways:
+
+1. `@qwenpaw/client` remains the remote, zero-runtime client. It connects to an
+   already running Lite, Workstation or Hub and contains no process manager,
+   Agent Loop, Registry or authoritative queue.
+2. `qwenpaw.plugins.sdk` remains the Python extension-author contract. It
+   declares Contributions and capability-scoped Host services; it is not the
+   API for embedding or remotely controlling QwenPaw.
+3. A local-host SDK is useful, but its first implementation should reuse the
+   installed QwenPaw distribution and existing Host application. A future
+   `@qwenpaw/sdk` owns a managed local Host process and delegates every call to
+   `@qwenpaw/client`; a Python `qwenpaw.sdk` facade may own the same Host
+   lifecycle without exporting App, Registry, Store or AgentScope internals.
+4. Exact runtime compatibility is an install/startup concern. A managed SDK
+   must either ship an exactly pinned runtime or require an explicit executable
+   and reject an incompatible Host during handshake before accepting work.
+   Silently selecting any executable on `PATH` is not acceptable.
+
+The public developer vocabulary is therefore:
+
+```text
+Extension authoring: qwenpaw.plugins.sdk -> Contribution / Capability
+Remote integration: @qwenpaw/client     -> QwenPawClient
+Managed local use:  @qwenpaw/sdk        -> QwenPawHost + same QwenPawClient
+Application UI:     PawApp facade       -> host-scoped UI conveniences
+```
+
+The managed SDK should expose explicit lifecycle rather than another global
+singleton:
+
+```ts
+await using host = await QwenPawHost.create({ workspace, runtime })
+const chat = await host.chats.open({ chatId })
+for await (const event of chat.sendStream(input, { signal })) {
+  // The same versioned Host events returned by @qwenpaw/client.
+}
+```
+
+This is an ergonomic handle, not a new source of truth. `chatId` remains
+`ChatSpec.id`; Queue, Interaction, Action, Artifact and token-usage facts remain
+Host-owned. `send()` may buffer the same stream, but stream EOF is never a
+successful turn without an authoritative terminal receipt. Fork, resume,
+steer, interrupt and approval are thin methods over existing Host commands.
+
+The minimum viable managed SDK is intentionally small:
+
+- discover or start one compatible local Host and wait for readiness;
+- negotiate protocol and required features before creating a Chat handle;
+- return the existing `QwenPawClient` surface plus scoped Chat handles;
+- propagate cancellation and close child resources deterministically;
+- preserve typed Host errors and events without translating them into a
+  second SDK-only lifecycle;
+- accept untrusted external messages through an explicitly lower-trust input
+  type rather than treating every string as a user instruction.
+
+Deferred until those guarantees pass conformance tests: runtime bundling for
+every platform, in-process Node embedding, SDK-only tool loops, SDK-owned
+checkpoints and SDK-specific Task state. The existing Python application has
+substantial process-global lifecycle, so an isolated managed Host process is
+the safer first implementation than pretending it is already an embeddable
+library.
+
+#### 5.1.2 Codex Harness reuse decision
+
+QwenPaw already declares `openai-codex` as its optional Codex dependency, but
+the current Harness still owns a private `CodexAppServerClient`. That client
+duplicates process startup, JSON-RPC correlation, notification routing,
+shutdown and error handling now provided by the official Python SDK. It is a
+migration liability and must not become the foundation of the QwenPaw SDK.
+
+The official SDK is the target implementation, but an immediate wholesale
+replacement is not yet safe. QwenPaw approval requests are durable,
+asynchronous Interactions that may wait for a human. The current official SDK
+surface does not yet provide a proven deferred/asynchronous server-request
+handler for this flow, and its default approval behavior has an open safety
+report. QwenPaw must never trade durable HITL semantics for transport reuse.
+The official async stream also has a recently reported cancellation cleanup
+edge that must pass QwenPaw's cancellation conformance before adoption.
+
+The migration rule is therefore:
+
+- freeze the private client's scope; do not add SDK, product or domain
+  semantics to it;
+- keep approval fail-closed and asynchronous in the current adapter until the
+  official SDK can wait for QwenPaw's Interaction resolution without blocking
+  or auto-accepting;
+- test the pinned official SDK version, not only its `main` branch, against
+  thread start/resume/fork, stream completion, steer, interrupt, history,
+  login, model discovery, cancellation and approval conformance;
+- switch the entire Codex transport boundary to `AsyncCodex` once those gates
+  pass, leaving only typed conversion from Codex notifications to
+  `HarnessEvent` and from QwenPaw approval decisions to Codex decisions;
+- remove `CodexAppServerClient` and its subprocess/JSON-RPC tests in that same
+  migration instead of maintaining two live transports indefinitely.
+
+Until then, the private client is a quarantined compatibility adapter, not a
+public SDK. The public QwenPaw client and future managed Host SDK depend only
+on QwenPaw Host contracts and therefore remain independent of this temporary
+Codex implementation detail.
 
 ### 5.2 Contract publication
 
@@ -381,6 +497,12 @@ Verified on 2026-10-10 against the running Lite Host on port 8004:
 
 - [OpenAI Codex app-server](https://developers.openai.com/siwc/token-sharing-open-source/codex-app-server)
 - [OpenAI Codex as a platform](https://developers.openai.com/blog/codex-as-a-platform)
+- [OpenAI Codex TypeScript SDK](https://github.com/openai/codex/blob/main/sdk/typescript/README.md)
+- [OpenAI Codex Python SDK](https://github.com/openai/codex/blob/main/sdk/python/README.md)
+- [OpenAI Codex Python SDK FAQ](https://github.com/openai/codex/blob/main/sdk/python/docs/faq.md)
+- [Codex Python SDK deferred approval request](https://github.com/openai/codex/issues/42219)
+- [Codex Python SDK approval default report](https://github.com/openai/codex/issues/27277)
+- [Codex Python SDK async cancellation report](https://github.com/openai/codex/issues/51542)
 - [GitHub Copilot SDK agent loop](https://github.com/github/copilot-sdk/blob/main/docs/features/agent-loop.md)
 - [GitHub Copilot SDK streaming events](https://docs.github.com/en/copilot/how-tos/copilot-sdk/use-copilot-sdk/streaming-events)
 - [Claude Agent SDK TypeScript](https://github.com/anthropics/claude-agent-sdk-typescript)

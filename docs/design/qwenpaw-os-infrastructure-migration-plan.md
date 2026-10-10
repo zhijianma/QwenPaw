@@ -1101,9 +1101,37 @@ PawApp / SDK 的运行所有权迁移见
     仍返回 `PLUGIN_HOT_V2`；卸载后 `/api/plugins` 恢复为空。
 - [x] SDK 文档与所有参考插件只使用 `qwenpaw.plugins.sdk` 稳定导入路径，并由 AST
   契约测试防止示例回退到 App、Loader、Registry 或 Store 内部模块。
+- [x] `@qwenpaw/client` 已从 Console/PawApp 抽取为零运行时、可发布的远程 Host
+  客户端；Chat 控制、Task、Interaction、Host negotiation 复用生成契约和同一实现，
+  不拥有 Agent Loop、Queue 或生命周期事实。
+- [ ] 按 coding-agent SDK 对比结论交付最小 managed-local SDK，不再造执行内核：
+  - [ ] 首版只负责发现或启动隔离的本地 QwenPaw Host、等待 readiness、完成版本与
+    feature handshake，并在不兼容时于接收工作前失败；不得静默使用任意 `PATH`
+    可执行文件。
+  - [ ] managed-local SDK 直接组合 `@qwenpaw/client`，remote 与 managed 模式必须
+    返回相同值、错误和事件；`send()` 仅聚合同一事件流，EOF 不得替代 terminal
+    receipt。
+  - [ ] 提供显式 `create/close` 生命周期和 ChatSpec-scoped handle；resume、fork、
+    steer、interrupt、approval 全部委托已有 Host 命令，身份统一使用
+    `ChatSpec.id`。
+  - [ ] 引入低信任 external-message 输入类型，外部 Agent、Tool 或应用消息不得自动
+    获得 user instruction 或 approval 权限。
+  - [ ] conformance 同时覆盖 remote Host 与 managed Host；进程退出、启动超时、
+    版本不匹配、取消传播和重复 close 均有定点测试。
+- [ ] Codex Harness 从私有 app-server 传输迁移到已声明的官方
+  `openai-codex` SDK，但以审批安全为硬门禁：
+  - [ ] 对仓库实际固定版本验证 thread start/resume/fork、stream、steer、
+    interrupt、history、login、models 与 cancellation，不以 `main` 分支能力代替。
+  - [ ] 官方 SDK 必须支持 QwenPaw 持久化 Interaction 所需的延迟/异步审批响应，
+    且无 handler 时 fail-closed；门禁未通过前冻结私有客户端范围，不继续添加领域
+    能力。
+  - [ ] 门禁通过后一次性替换 transport，保留的 QwenPaw 代码只做 typed Codex
+    notification -> `HarnessEvent` 和审批决策映射；删除私有 subprocess、JSON-RPC、
+    reader/router 实现及其专属测试，不长期维护双传输。
 
 验收：新开发者不阅读内部源码即可完成插件开发、校验、安装、热替换和卸载；
-错误插件不会污染当前 generation。
+错误插件不会污染当前 generation。外部应用可选择连接现有 Host 或托管本地 Host，
+两种模式不产生第二套 Agent Loop、Chat 身份、事件或错误模型。
 
 ### I8：基建完成门禁
 
