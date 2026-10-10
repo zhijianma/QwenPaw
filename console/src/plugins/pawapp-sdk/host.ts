@@ -16,6 +16,7 @@ import type {
 } from "./types";
 import { getActivePawAppId } from "./context";
 import { createApiNamespace } from "./api";
+import { createInteractionsNamespace } from "./interactions";
 import type { PawHostNamespace } from "./types";
 
 /** Structured failure raised when a PawApp chat stream terminates in error. */
@@ -354,6 +355,7 @@ export function createHostNamespace(
   appIdProvider: () => string,
 ): PawHostNamespace {
   const api = createApiNamespace(appIdProvider);
+  const currentChatId = () => window.QwenPaw.host?.getCurrentChatId?.() ?? null;
   const scopedStorage: PawStorageApi = {
     get: async <T = unknown>(key: string, defaultValue?: T) => {
       try {
@@ -394,11 +396,11 @@ export function createHostNamespace(
       return readChatHistory(api, options);
     },
     chatSessions: createChatSessionsApi(api),
+    interactions: createInteractionsNamespace(currentChatId),
     storage: scopedStorage,
     getSelectedAgentId: () =>
       window.QwenPaw.host?.getSelectedAgentId?.() ?? "default",
-    getCurrentChatId: () =>
-      window.QwenPaw.host?.getCurrentChatId?.() ?? null,
+    getCurrentChatId: currentChatId,
     getCurrentSessionId: () =>
       window.QwenPaw.host?.getCurrentSessionId?.() ?? null,
     async toast(message, kind = "info") {
@@ -423,11 +425,13 @@ export const hostNamespace = {
   chatStream,
   getChatHistory,
   chatSessions,
+  interactions: createInteractionsNamespace(
+    () => window.QwenPaw.host?.getCurrentChatId?.() ?? null,
+  ),
   storage,
   getSelectedAgentId: () =>
     window.QwenPaw.host?.getSelectedAgentId?.() ?? "default",
-  getCurrentChatId: () =>
-    window.QwenPaw.host?.getCurrentChatId?.() ?? null,
+  getCurrentChatId: () => window.QwenPaw.host?.getCurrentChatId?.() ?? null,
   getCurrentSessionId: () =>
     window.QwenPaw.host?.getCurrentSessionId?.() ?? null,
   toast,

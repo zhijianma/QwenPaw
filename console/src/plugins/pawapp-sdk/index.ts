@@ -54,6 +54,7 @@ export const paw: PawSdk = {
   chatStream,
   getChatHistory,
   chatSessions,
+  interactions: hostNamespace.interactions,
   storage,
   toast,
   notify,
@@ -80,6 +81,7 @@ export function forApp(appId: string): PawSdk {
     chatStream: host.chatStream,
     getChatHistory: host.getChatHistory,
     chatSessions: host.chatSessions,
+    interactions: host.interactions,
     storage: host.storage,
     toast: host.toast,
     notify: host.notify,
@@ -95,6 +97,16 @@ export type {
   PawApiNamespace,
   PawApiResponse,
   PawHostNamespace,
+  PawInteraction,
+  PawInteractionContinuationMode,
+  PawInteractionKind,
+  PawInteractionMode,
+  PawInteractionOption,
+  PawInteractionResolution,
+  PawInteractionResponseRequest,
+  PawInteractionsNamespace,
+  PawInteractionStatus,
+  PawUserInputReason,
   PawPageRegistration,
   PawDisposable,
   PawDependenciesNamespace,
@@ -143,4 +155,8 @@ export {
 export { createDependenciesNamespace } from "./dependencies";
 export { PawApiError } from "./api";
 export { PawChatStreamError } from "./host";
+export {
+  createInteractionsNamespace,
+  PawInteractionError,
+} from "./interactions";
 export { apiNamespace, hostNamespace, createApiNamespace, createHostNamespace };

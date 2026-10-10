@@ -126,6 +126,95 @@ export interface PawChatSessionsApi {
   delete(chatId: string, options?: PawChatSessionScope): Promise<void>;
 }
 
+export type PawInteractionKind = "approval" | "user_input" | "suggestion";
+export type PawInteractionMode = "blocking" | "non_blocking";
+export type PawInteractionStatus =
+  | "open"
+  | "resolved"
+  | "expired"
+  | "cancelled";
+export type PawInteractionContinuationMode =
+  | "live_invocation"
+  | "checkpoint"
+  | "conversation_turn";
+export type PawUserInputReason =
+  | "missing_required_fact"
+  | "material_preference"
+  | "scope_authorization"
+  | "high_impact_decision";
+
+export interface PawInteractionOption {
+  option_id: string;
+  label: string;
+  description: string;
+  value: Record<string, unknown>;
+}
+
+export interface PawInteraction {
+  interaction_id: string;
+  kind: PawInteractionKind;
+  mode: PawInteractionMode;
+  agent_id: string;
+  chat_id: string;
+  invocation_id: string;
+  correlation_id: string;
+  task_id?: string | null;
+  source_id?: string | null;
+  user_input_reason?: PawUserInputReason | null;
+  continuation_mode: PawInteractionContinuationMode;
+  continuation_checkpoint_id?: string | null;
+  title: string;
+  prompt: string;
+  options: PawInteractionOption[];
+  response_schema: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  status: PawInteractionStatus;
+  revision: number;
+  created_at: string;
+  expires_at?: string | null;
+}
+
+export interface PawInteractionResponseRequest {
+  interactionId: string;
+  expectedRevision: number;
+  chatId?: string;
+  selectedOptionIds?: string[];
+  text?: string;
+  values?: Record<string, unknown>;
+  idempotencyKey?: string;
+}
+
+export interface PawInteractionResolution {
+  interaction_id: string;
+  status: PawInteractionStatus;
+  revision: number;
+  response?: {
+    interaction_id: string;
+    idempotency_key: string;
+    expected_revision: number;
+    actor: {
+      type: string;
+      id: string;
+    };
+    selected_option_ids: string[];
+    text: string;
+    values: Record<string, unknown>;
+    responded_at: string;
+  } | null;
+  detail: string;
+  resolved_at: string;
+}
+
+export interface PawInteractionsNamespace {
+  list(options?: {
+    chatId?: string;
+    signal?: AbortSignal;
+  }): Promise<PawInteraction[]>;
+  respond(
+    request: PawInteractionResponseRequest,
+  ): Promise<PawInteractionResolution>;
+}
+
 /** PawTask event handler. */
 export type PawTaskEventHandler<T = unknown> = (data: T) => void;
 
@@ -190,6 +279,7 @@ export interface PawHostNamespace {
   ): AsyncGenerator<PawChatStreamEvent>;
   getChatHistory(options?: PawChatOptions): Promise<PawChatHistory>;
   chatSessions: PawChatSessionsApi;
+  interactions: PawInteractionsNamespace;
   storage: PawStorageApi;
   getSelectedAgentId(): string;
   getCurrentChatId(): string | null;
@@ -582,6 +672,7 @@ export interface PawSdk {
   ): AsyncGenerator<PawChatStreamEvent>;
   getChatHistory(options?: PawChatOptions): Promise<PawChatHistory>;
   chatSessions: PawChatSessionsApi;
+  interactions: PawInteractionsNamespace;
   storage: PawStorageApi;
   toast(
     message: string,

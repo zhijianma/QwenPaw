@@ -18,16 +18,16 @@ contracts and receive no new product semantics.
 
 ## 2. Current-state findings
 
-| Concern | Current PawApp path | Problem |
-|---|---|---|
-| execution identity | random `task_id` also used as Invocation UUID | identity is local to a process and does not bind a Task/Run |
-| lifecycle | module singleton `TaskManager._tasks` | restart loses running and terminal facts |
-| event delivery | one in-memory `asyncio.Queue` | no durable cursor, replay or multi-consumer contract |
-| frontend completion | closed stream without terminal event resolves `null` | transport loss can be mistaken for successful completion |
-| user input | durable Interaction plus PawApp SSE event | durable fact exists, but the delivery adapter was incorrectly mandatory |
-| cancellation | direct cancellation of one Python task | no common control receipt, checkpoint or recovery decision |
-| artifacts | arbitrary event payloads | no ownership, digest, renderer or Evidence contract |
-| plugin replacement | live handler closure | no explicit capability generation pin or fallback evidence |
+| Concern             | Current PawApp path                                  | Problem                                                                 |
+| ------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------- |
+| execution identity  | random `task_id` also used as Invocation UUID        | identity is local to a process and does not bind a Task/Run             |
+| lifecycle           | module singleton `TaskManager._tasks`                | restart loses running and terminal facts                                |
+| event delivery      | one in-memory `asyncio.Queue`                        | no durable cursor, replay or multi-consumer contract                    |
+| frontend completion | closed stream without terminal event resolves `null` | transport loss can be mistaken for successful completion                |
+| user input          | durable Interaction plus PawApp SSE event            | durable fact exists, but the delivery adapter was incorrectly mandatory |
+| cancellation        | direct cancellation of one Python task               | no common control receipt, checkpoint or recovery decision              |
+| artifacts           | arbitrary event payloads                             | no ownership, digest, renderer or Evidence contract                     |
+| plugin replacement  | live handler closure                                 | no explicit capability generation pin or fallback evidence              |
 
 ## 3. Target ownership
 
@@ -54,17 +54,17 @@ whether an Action can retry, or whether an Artifact is trusted.
 New PawApp development uses existing public slots rather than PawApp-specific
 backend interfaces:
 
-| Developer intent | Stable slot / contract |
-|---|---|
-| model-facing operation | `tool.provider` |
-| external system operation | `driver.provider` |
-| long-running task strategy | `runner` |
-| external agent harness | `harness.runner` |
-| stored memory | `memory.provider` |
-| scheduled trigger | `scheduler` |
-| outbound notification | `delivery.adapter` |
-| artifact preview | `artifact.renderer` |
-| frontend panel or card | `ui.page`, `ui.panel`, `ui.card`, `ui.settings` |
+| Developer intent           | Stable slot / contract                          |
+| -------------------------- | ----------------------------------------------- |
+| model-facing operation     | `tool.provider`                                 |
+| external system operation  | `driver.provider`                               |
+| long-running task strategy | `runner`                                        |
+| external agent harness     | `harness.runner`                                |
+| stored memory              | `memory.provider`                               |
+| scheduled trigger          | `scheduler`                                     |
+| outbound notification      | `delivery.adapter`                              |
+| artifact preview           | `artifact.renderer`                             |
+| frontend panel or card     | `ui.page`, `ui.panel`, `ui.card`, `ui.settings` |
 
 The Host creates and owns Task, Run, Invocation, Action, Interaction,
 Artifact, Evidence and Verification identities. A plugin never invents a
@@ -154,11 +154,20 @@ Implemented in the frontend SDK:
   Projection;
 - repeated `cancel()` calls share one command Promise and return the
   Host-acknowledged Task plus the idempotency key.
+- `paw.interactions` and `paw.host.interactions` expose one ChatSpec-scoped
+  list/respond contract for approval, required user input and non-blocking
+  suggestions;
+- Interaction responses require the expected revision, reuse one idempotency
+  key across transport retries and reject conflicting local responses before
+  a second request is sent;
+- a Chat-delivered Task approval is submitted only through the Interaction
+  response route; the Host bridge reconciles its linked Approval fact, so SDK
+  clients never dual-write both records.
 
 Still pending in P2:
 
-- expose approval and general Interaction response commands in the new Task
-  namespace;
+- expose the Task-centric direct approval command for clients that do not use
+  a Chat delivery adapter;
 - replace the current structural Projection fields with generated or shared
   schema types so frontend API modules and PawApp SDK cannot drift;
 - add a browser disconnect test against the running Host rather than only
@@ -215,8 +224,12 @@ Verified on 2026-10-10 against the running Lite Host on port 8004:
 - its terminal Projection reported `last_sequence = 7` and pinned both the
   runner and default strategy to registry generation 11;
 - reconnecting with `Last-Event-ID: 5` replayed exactly sequence 6 and 7;
+- querying the current ChatSpec through the real Interaction route returned an
+  authoritative empty open-interaction projection rather than a transport or
+  PawApp-local queue;
 - PawApp SDK targeted tests cover terminal reconciliation, cursor reconnect,
-  missing runner rejection, listener timing and idempotent cancellation.
+  missing runner rejection, listener timing, idempotent cancellation,
+  revision conflicts and idempotent Interaction transport retries.
 
 ## 10. Explicit non-goals
 
