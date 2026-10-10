@@ -18,7 +18,7 @@ function mountedComponent(
       const cleanup = mount(ref.current);
       return () => {
         if (typeof cleanup === "function") cleanup();
-        else cleanup?.dispose();
+        else if (cleanup) cleanup.dispose();
       };
     }, []);
     return <div ref={ref} style={{ width: "100%", height: "100%" }} />;
