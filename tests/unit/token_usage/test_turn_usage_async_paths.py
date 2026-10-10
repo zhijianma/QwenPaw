@@ -5,11 +5,12 @@ Complements ``test_turn_usage.py`` (pure helpers) by covering the
 context-stats snapshot builder, the turn/ctx resolver, and the
 session-persistence writer.
 """
+
 # pylint: disable=protected-access,redefined-outer-name,unused-argument
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -199,6 +200,44 @@ class TestResolveTurnUsage:
         assert got_turn is None
         assert ctx is None
         assert state is None
+
+    async def test_chat_owner_and_transport_session_are_separate(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        pop = MagicMock(return_value={"prompt_tokens": 3})
+        load_state = AsyncMock(return_value=None)
+        monkeypatch.setattr(
+            turn_usage.get_turn_usage_accumulator(),
+            "pop",
+            pop,
+        )
+        monkeypatch.setattr(turn_usage, "_load_agent_state", load_state)
+        session = SimpleNamespace()
+
+        got_turn, ctx, state = await turn_usage.resolve_turn_usage(
+            chat_id="chat-spec-1",
+            session_id="transport-session-1",
+            agent_id="agent-1",
+            session=session,
+            user_id="user-1",
+            channel="console",
+            invocation_id="invocation-1",
+        )
+
+        assert got_turn == {"prompt_tokens": 3}
+        assert ctx is None
+        assert state is None
+        pop.assert_called_once_with(
+            "chat-spec-1",
+            invocation_id="invocation-1",
+        )
+        load_state.assert_awaited_once_with(
+            session=session,
+            chat_id="transport-session-1",
+            user_id="user-1",
+            channel="console",
+        )
 
     async def test_stats_missing_returns_state_without_ctx(
         self,

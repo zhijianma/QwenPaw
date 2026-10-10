@@ -663,6 +663,12 @@ Runner → Artifact/Evidence 由同一固定 generation 的 Orchestrator 串联�
     `session_relative_paths()` 映射回 `ChatSpec.id`，因此本地 Codex/Qoder Harness
     即使没有 Model Call 投影也不会漏掉对话；该兼容展示不回写或污染全局 Provider
     事实投影。
+  - [x] Chat Turn usage 的所有权与存储寻址已分离：进程内 Provider usage 只用
+    `ChatSpec.id + invocation_id` 读取和清理，Session Adapter 继续使用 transport
+    `session_id + user_id + channel` 加载/持久化消息。固定 Native Chat 曾因二者混用而
+    丢失真实 ModelCall usage、错误降级为空路由估算；修复后真实回复直接保存
+    DashScope `qwen3.8-max-0902` 的 provider-reported input 34,123 / output 63，且
+    Chat/Invocation 身份与 ModelCall 事实一致。
 - [x] 将 Chat 运行模型从隐含的一问一答升级为 Conversation Execution Chain：
   `Submission` 是输入，`Invocation` 是一次运行尝试，`correlation_id` 贯穿同一意图
   的多次等待与恢复；短问答继续使用单 Invocation 快速路径。

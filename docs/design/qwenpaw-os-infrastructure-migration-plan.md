@@ -1676,6 +1676,10 @@ Cron 不形成独立审批或产物事实源。
     提交不可变结果，回执再以 `after_tool_batch` 转为 `applied`，Chat 写入可见
     Steer 消息并继续生成 `STEER_AFTER_TOOL_BATCH_OK`。已 offload 的后台工具没有
     active Invocation 时明确拒绝 Steer，不混淆两种取消语义。
+  - [x] 固定 Native Chat 在 Queue 首次出现 active Submission 后提交 Steer；权威
+    receipt 精确记录 `before_reasoning`，Chat 持久消息携带同一 command identity，
+    最终只回复 `STEER_SAFE_POINT_OK`。`before_tool_batch` 的真实可观测时序验收仍保留
+    为独立门禁，不以随机竞争窗口冒充完成。
 - [ ] 架构文档、API 规范、迁移表和未覆盖边界同步更新。
 - [ ] 完成主要功能 Code Review，Blocking finding 为零。
 - [ ] 达到门禁后再恢复 Task Workbench 开发。

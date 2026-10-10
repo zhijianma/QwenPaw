@@ -1386,6 +1386,15 @@ HTML 原文件随代码快照保存在 Git 中；钉钉以对应 Markdown 作为
   固定 Agent `KcWGdf` 的真实 API 已返回 “Harness approval E2E”：input 578、output
   24、2 个已记录 Turn。Token Usage Settings 仍不展示 Chat/Turn，Turn 只供 Chat
   ResponseCard 使用。后端相关定点测试 107 项、前端两个页面 11 项通过。
+- Native Turn usage 修复了 `ChatSpec.id` 与 transport `session_id` 混用：Provider
+  累加器按 `ChatSpec.id + invocation_id` 读写，Session 加载和消息落盘仍使用 transport
+  identity。固定 Chat 真实回复 `NATIVE_TURN_USAGE_OK` 后，消息直接保存 DashScope
+  `qwen3.8-max-0902` provider-reported input 34,123 / output 63、cache read 33,792，
+  不再错误降级为空路由的本地估算；相关后端定点测试 142 项通过。
+- 同一固定 Native Chat 已新增真实 `BEFORE_REASONING` Steer 证据：Control intent 与
+  receipt 同一身份，最终 receipt 为 `applied / before_reasoning`，持久消息带 command
+  ID，最终只回复 `STEER_SAFE_POINT_OK`。`BEFORE_TOOL_BATCH` 仍是未完成的真实时序
+  门禁，不能用随机竞争窗口或组件存在替代。
 
 ## 9. 2026-10-10 Lite Action Plane 门禁收敛
 

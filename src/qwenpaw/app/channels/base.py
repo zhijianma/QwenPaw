@@ -915,7 +915,7 @@ class BaseChannel(ABC):
 
         to_handle = self.get_to_handle_from_request(request)
         session_id = getattr(request, "session_id", "") or ""
-        self._clear_session_turn_usage(session_id)
+        self._clear_session_turn_usage(session_id, request)
 
         await self._before_consume_process(request)
 
@@ -1000,7 +1000,7 @@ class BaseChannel(ABC):
 
             err_msg = self._get_response_error_message(last_response)
             if err_msg:
-                self._clear_session_turn_usage(session_id)
+                self._clear_session_turn_usage(session_id, request)
                 await self._on_consume_error(
                     request,
                     to_handle,
@@ -1029,7 +1029,7 @@ class BaseChannel(ABC):
                 "channel task cancelled: session="
                 f"{sanitize_log_value(raw_session)[:34]}",
             )
-            self._clear_session_turn_usage(session_id)
+            self._clear_session_turn_usage(session_id, request)
             if process_iterator is not None:
                 await process_iterator.aclose()
             raise
@@ -1040,7 +1040,7 @@ class BaseChannel(ABC):
                 f"session={getattr(request, 'session_id', 'N/A')[:30]}, "
                 f"agent={to_handle}",
             )
-            self._clear_session_turn_usage(session_id)
+            self._clear_session_turn_usage(session_id, request)
             await self._on_consume_error(
                 request,
                 to_handle,
@@ -1555,7 +1555,7 @@ class BaseChannel(ABC):
         """
         last_response = None
         session_id = getattr(request, "session_id", "") or ""
-        self._clear_session_turn_usage(session_id)
+        self._clear_session_turn_usage(session_id, request)
         try:
             async for event in self._process(request):
                 obj = getattr(event, "object", None)
@@ -1585,7 +1585,7 @@ class BaseChannel(ABC):
                     await self.on_event_response(request, event)
             err_msg = self._get_response_error_message(last_response)
             if err_msg:
-                self._clear_session_turn_usage(session_id)
+                self._clear_session_turn_usage(session_id, request)
                 await self._on_consume_error(
                     request,
                     to_handle,
@@ -1610,11 +1610,11 @@ class BaseChannel(ABC):
                 "channel task cancelled: session=%s",
                 getattr(request, "session_id", "")[:30],
             )
-            self._clear_session_turn_usage(session_id)
+            self._clear_session_turn_usage(session_id, request)
             raise
         except Exception:
             logger.exception("channel consume_one failed")
-            self._clear_session_turn_usage(session_id)
+            self._clear_session_turn_usage(session_id, request)
             await self._on_consume_error(
                 request,
                 to_handle,
@@ -1908,15 +1908,36 @@ class BaseChannel(ABC):
             )
 
     @staticmethod
-    def _clear_session_turn_usage(session_id: str) -> None:
-        """Drop staged usage for one Chat (turn start / cancel / error)."""
-        if not session_id:
+    def _turn_usage_chat_id(
+        request: "AgentRequest",
+        session_id: str,
+    ) -> str:
+        """Return canonical ChatSpec identity, with protocol fallback."""
+        request_context = dict(
+            getattr(request, "request_context", None) or {},
+        )
+        return str(
+            request_context.get("os_chat_id")
+            or request_context.get("os_conversation_id")
+            or session_id
+            or "",
+        )
+
+    @classmethod
+    def _clear_session_turn_usage(
+        cls,
+        session_id: str,
+        request: "AgentRequest",
+    ) -> None:
+        """Drop staged usage for one canonical ChatSpec identity."""
+        chat_id = cls._turn_usage_chat_id(request, session_id)
+        if not chat_id:
             return
         from ...token_usage.turn_accumulator import (
             get_turn_usage_accumulator,
         )
 
-        get_turn_usage_accumulator().discard_chat(session_id)
+        get_turn_usage_accumulator().discard_chat(chat_id)
 
     async def _commit_turn_usage(
         self,
@@ -1951,6 +1972,8 @@ class BaseChannel(ABC):
             channel = getattr(request, "channel", "") or self.channel
             from ...app.agent_context import get_current_invocation_id
 
+            turn_chat_id = self._turn_usage_chat_id(request, session_id)
+
             estimated_provider_id = ""
             estimated_model_name = ""
             config = getattr(workspace, "config", None)
@@ -1971,7 +1994,8 @@ class BaseChannel(ABC):
                 )
 
             turn, ctx, agent_state = await turn_usage.resolve_turn_usage(
-                chat_id=session_id,
+                chat_id=turn_chat_id,
+                session_id=session_id,
                 agent_id=agent_id,
                 session=session,
                 user_id=user_id,

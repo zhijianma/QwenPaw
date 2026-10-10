@@ -426,6 +426,26 @@ Invocation 已结束，Steer 会明确返回 `conversation has no active invocat
 steer`，不会错误命中后台任务。若用户需要停止后台工具，应使用 Tool Coordinator
 的取消能力，而不是伪装为 Invocation Steer。
 
+### 6.11 真实 BEFORE_REASONING Steer 验收记录
+
+2026-10-10 在固定 Native Chat
+`1ee31988-b37a-48b9-b6ce-423c52f6a3a9` 先执行 `/clear`，再提交一个要求长回答且
+禁止工具的普通 Turn。监控器在 Queue 首次出现 active Submission 后立即按当前
+revision 提交 Steer：
+
+1. 初始 Control receipt 为 durable `accepted`，目标 Invocation 为
+   `3d4b4f15-874f-4102-bc99-ec9976ccce03`，没有由前端预判安全点。
+2. 最终权威 receipt 为 `applied`，`applied_at_safe_point=before_reasoning`；CONTROL
+   intent/evidence 使用同一 command、Chat、Invocation 和 correlation identity。
+3. Chat 持久化的 Steer 用户消息携带同一 command ID 和 `before_reasoning` metadata；
+   模型最终只回复 `STEER_SAFE_POINT_OK`，原长回答没有执行。
+4. Queue 最终无 active/queued Submission，Interaction 为空；页面刷新后消息仍从
+   Session 历史恢复。
+
+该结果证明服务端可以在首次模型请求前应用已接受 Steer。`BEFORE_TOOL_BATCH` 仍需
+用可观测的 reasoning→tool admission 栅栏完成真实时序验收，不能靠随机竞争窗口
+或仅以单元测试替代。
+
 ## 7. 验收
 
 - 在 reasoning 前、reasoning 流中、reasoning 后、工具批次前和工具批次运行中分别

@@ -167,6 +167,7 @@ async def snapshot_context_usage_for_state(
 async def resolve_turn_usage(
     *,
     chat_id: str,
+    session_id: str | None = None,
     agent_id: str,
     session: Any,
     user_id: str,
@@ -185,7 +186,7 @@ async def resolve_turn_usage(
 
     agent_state = await _load_agent_state(
         session=session,
-        chat_id=chat_id,
+        chat_id=session_id or chat_id,
         user_id=user_id,
         channel=channel,
     )

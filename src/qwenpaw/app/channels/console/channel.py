@@ -399,7 +399,7 @@ class ConsoleChannel(BaseChannel):
                 if merged and hasattr(request.input[0], "content"):
                     request.input[0].content = merged
         session_id = getattr(request, "session_id", "") or session_id
-        self._clear_session_turn_usage(session_id)
+        self._clear_session_turn_usage(session_id, request)
         user_id = getattr(request, "user_id", "") or ""
         channel_name = getattr(request, "channel", "") or self.channel
 
@@ -493,7 +493,7 @@ class ConsoleChannel(BaseChannel):
 
             err_msg = self._get_response_error_message(last_response)
             if err_msg:
-                self._clear_session_turn_usage(session_id)
+                self._clear_session_turn_usage(session_id, request)
                 self._print_error(err_msg)
             else:
                 for sse in await self._commit_turn_usage(
@@ -518,10 +518,10 @@ class ConsoleChannel(BaseChannel):
                 )
 
         except asyncio.CancelledError:
-            self._clear_session_turn_usage(session_id)
+            self._clear_session_turn_usage(session_id, request)
             raise
         except ModelQuotaExceededException as e:
-            self._clear_session_turn_usage(session_id)
+            self._clear_session_turn_usage(session_id, request)
             logger.warning("rate limit hit: %s", e)
             alternatives = self._get_free_model_alternatives()
             rl_event = _json.dumps(
@@ -534,7 +534,7 @@ class ConsoleChannel(BaseChannel):
             yield f"data: {rl_event}\n\n"
             self._print_error(str(e).strip())
         except Exception as e:
-            self._clear_session_turn_usage(session_id)
+            self._clear_session_turn_usage(session_id, request)
             logger.exception("console process/reply failed")
             err_msg = str(e).strip() or "An error occurred while processing."
             self._print_error(err_msg)

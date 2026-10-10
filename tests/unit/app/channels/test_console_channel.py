@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -77,6 +78,29 @@ class TestResolveSessionId:
 
     def test_empty_sender(self, console_channel):
         assert console_channel.resolve_session_id("") == "console:"
+
+
+class TestTurnUsageIdentity:
+    def test_prefers_canonical_chat_identity(self, console_channel):
+        request = SimpleNamespace(
+            request_context={
+                "os_chat_id": "chat-spec-new",
+                "os_conversation_id": "chat-spec-legacy",
+            },
+        )
+
+        assert console_channel._turn_usage_chat_id(
+            request,
+            "transport-session",
+        ) == "chat-spec-new"
+
+    def test_falls_back_to_transport_session(self, console_channel):
+        request = SimpleNamespace(request_context={})
+
+        assert console_channel._turn_usage_chat_id(
+            request,
+            "transport-session",
+        ) == "transport-session"
 
 
 # ---------------------------------------------------------------------------
