@@ -1252,7 +1252,8 @@ Cron 不形成独立审批或产物事实源。
       新增或后补 Evidence 不污染旧快照，畸形、不可用锚点和跨 Chat 游标失败关闭。
       各权威源提供 Lite 全量索引重建入口，不再截断每类 1000 条；同时间戳跨来源、
       翻页期间完成 Model Result、1001 条历史及 API 400 映射由 79 项定点测试覆盖。
-  - [ ] 完成 Model Call Plane 全部路由与成本能力：
+  - [x] 完成 Lite Model Call Plane 的事实、确定性路由、恢复、用量、成本与
+    Context Window 能力；Workstation/Hub 动态路由作为独立门禁保留：
     - [x] 冻结 `RouteDecision` / `ModelCallAttempt` / `ModelCallResult` / Store Port，
       并在 `TokenRecordingModelWrapper` 的真实 Provider 网络边界留证。每个实际请求
       发送前记录 Provider/Model、generation、ContextManifest、策略版本、选择原因和
@@ -1346,8 +1347,8 @@ Cron 不形成独立审批或产物事实源。
       并为 global/Agent/Chat/turn/date/model 输出加权利用率、峰值、可观测调用和临近
       压缩调用。水位前 shadow 只覆盖 Context 字段，Token/Calls 仍取 legacy JSON，
       因而不会双算；旧 SQLite 自动增加 nullable context columns。
-    - [ ] Workstation / Hub 的健康度、成本和数据边界动态路由仍待实现。Lite 当前
-      继续使用确定性主模型与显式 fallback 顺序，不静默切换。
+  - [ ] Workstation / Hub 的健康度、成本和数据边界动态路由仍待实现。Lite 当前
+    继续使用确定性主模型与显式 fallback 顺序，不静默切换。
   - [x] Run Completion、Verification 与业务 Outcome 分层；当前已阻止 Invocation
     success 被投影成业务完成，本阶段不建设完整 Evaluation UI。
     - [x] Kernel 已冻结 `ConversationOutcome` 与 Store Port；Lite SQLite 以具名 producer、
