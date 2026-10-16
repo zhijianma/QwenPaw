@@ -542,7 +542,6 @@ vi.mock("./utils", async () => {
     getActiveSenderTextarea: vi.fn(() => null),
     getSenderTextareaFromTarget: vi.fn(() => null),
     setTextareaValue: vi.fn(),
-    clearSubmittedSenderInput: vi.fn(),
   };
 });
 
@@ -1939,8 +1938,8 @@ describe("ChatPage coverage", () => {
     }
   });
 
-  // ── customFetch: non-ok response discards last user message ────────────
-  it("customFetch discards last user message on non-ok response", async () => {
+  // ── customFetch: non-ok response passthrough ────────────────────────────
+  it("customFetch returns a non-ok response", async () => {
     const mockResponse = { ok: false, status: 500, body: null };
     global.fetch = vi.fn().mockResolvedValue(mockResponse) as any;
 

@@ -197,6 +197,9 @@ def _assert_agent_config_unchanged(
 # ============================================================================
 
 
+ModelType = Literal["chat", "decision"]
+
+
 class ModelSlotConfig(BaseModel):
     """Model slot configuration for LLM routing."""
 
@@ -208,6 +211,9 @@ class ActiveModelsInfo(BaseModel):
     """Active models information for provider manager."""
 
     active_llm: ModelSlotConfig | None
+    default_models: Dict[ModelType, ModelSlotConfig | None] = Field(
+        default_factory=dict,
+    )
     effective_max_input_length: int | None = None
 
 
@@ -2368,13 +2374,19 @@ class AgentProfileConfig(BaseModel):
         default=None,
         description="Active model for this agent (provider_id + model)",
     )
+    decision_model: Optional["ModelSlotConfig"] = Field(
+        default=None,
+        description=(
+            "Decision model for this agent; None disables it by default"
+        ),
+    )
     fallback_models: List["ModelSlotConfig"] = Field(
         default_factory=list,
-        description="Ordered model fallback chain for transient failures",
+        description="Ordered chat model fallback chain for transient failures",
     )
     fallback_policy: FallbackPolicyConfig = Field(
         default_factory=FallbackPolicyConfig,
-        description="Cross-model fallback policy",
+        description="Chat model fallback policy",
     )
     subagent_model: Optional["ModelSlotConfig"] = Field(
         default=None,

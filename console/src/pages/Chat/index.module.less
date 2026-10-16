@@ -106,6 +106,13 @@
       height: var(--app-icon-default);
     }
 
+    // The SDK stop square occupies only a quarter of its SVG canvas.
+    [class$="-sender-actions-btn-loading-icon"] rect {
+      transform-box: fill-box;
+      transform-origin: center;
+      transform: scale(2);
+    }
+
     [class$="-sender-prefix"] button [data-spark-icon],
     [class$="-sender-actions-list"] button [data-spark-icon],
     [class$="-sender-actions-btn"] [data-spark-icon] {

@@ -57,6 +57,10 @@
     "advancedSettings": "高级",
     "done": "完成",
     "autoSaveFailed": "未能保存改动",
+    "discardChangesTitle": "放弃未保存的改动？",
+    "discardChangesContent": "部分改动尚未保存。你可以继续编辑，或放弃未保存的改动并关闭。",
+    "discardAndClose": "放弃并关闭",
+    "keepEditing": "继续编辑",
     "configure": "配置",
     "all": "全部",
     "decrease": "减少",
@@ -2372,6 +2376,7 @@
     "configuredModels": "已配置模型",
     "freeModelsOnly": "仅免费模型",
     "chooseFallback": "备用模型",
+    "noFallback": "不使用",
     "moveFallbackUp": "上移 {{model}}",
     "moveFallbackDown": "下移 {{model}}",
     "removeFallback": "移除 {{model}}",
@@ -2384,6 +2389,10 @@
     "searchCandidates": "搜索候选模型..."
   },
   "models": {
+    "modelType": "模型类型",
+    "modelTypeChat": "聊天",
+    "modelTypeDecision": "决策",
+    "decisionModelHint": "在此配置决策模型，供后续自动化功能接入；不能用于聊天。",
     "connectProviderTitle": "连接你的第一个模型",
     "cardStatus": {
       "configured": "已配置",
@@ -2408,6 +2417,9 @@
     "providersTitle": "提供商",
     "providersDescription": "为每个提供商配置 API 密钥和端点。",
     "llmTitle": "模型",
+    "defaultModels": "默认模型",
+    "defaultChatModel": "对话模型",
+    "defaultDecisionModel": "决策模型",
     "defaultLlm": "默认LLM",
     "notConfiguredYet": "尚未配置",
     "llmDescription": "在这里设置全局默认的 LLM 模型。你也可以在聊天页面为具体 Agent 单独选择使用的模型。",
@@ -3878,6 +3890,10 @@
   },
   "chat": {
     "sessionLoadFailed": "会话加载失败，请重新打开此会话。",
+    "sessionSettings": {
+      "advanced": "高级选项",
+      "decisionEnabled": "使用决策模型"
+    },
     "longTextPaste": {
       "title": "粘贴长文本",
       "asText": "粘贴为文本",
@@ -4007,6 +4023,10 @@
       "moveToGroup": "移动到分组",
       "copyId": "复制对话 ID",
       "delete": "删除"
+    },
+    "pluginSubmission": {
+      "staleConversation": "请回到原来的对话后再提交。",
+      "notReady": "对话尚未就绪，请打开原来的对话后重试。"
     },
     "queue": {
       "title": "消息队列",

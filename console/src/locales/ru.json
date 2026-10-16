@@ -33,6 +33,12 @@
     "total": "Всего {{count}}",
     "clear": "Очистить",
     "paste": "Вставить",
+    "done": "Готово",
+    "autoSaveFailed": "Не удалось сохранить изменения",
+    "discardChangesTitle": "Отменить несохранённые изменения?",
+    "discardChangesContent": "Некоторые изменения не удалось сохранить. Вы можете продолжить редактирование или отменить несохранённые изменения и закрыть окно.",
+    "discardAndClose": "Отменить и закрыть",
+    "keepEditing": "Продолжить редактирование",
     "configure": "Настроить",
     "all": "Все",
     "decrease": "Уменьшить",
@@ -1853,6 +1859,7 @@
     "retry": "Повторить"
   },
   "modelSelector": {
+    "noFallback": "Не использовать",
     "selectModel": "Выбрать модель",
     "noConfiguredModels": "Нет настроенных моделей",
     "noFreeModels": "Нет доступных бесплатных моделей",
@@ -1887,6 +1894,10 @@
     "searchCandidates": "Search candidate models..."
   },
   "models": {
+    "modelType": "Тип модели",
+    "modelTypeChat": "Чат",
+    "modelTypeDecision": "Решения",
+    "decisionModelHint": "Модели решений настраиваются для будущих функций автоматизации и недоступны для чата.",
     "discoveryOriginApi": "Обнаружено через API",
     "discoveryOriginCatalog": "Официальный каталог",
     "discoveryOriginBoth": "API + каталог",
@@ -1902,6 +1913,9 @@
     "providersTitle": "Провайдеры",
     "providersDescription": "Настройте API-ключи и endpoints для каждого провайдера.",
     "llmTitle": "Модели",
+    "defaultModels": "Модели по умолчанию",
+    "defaultChatModel": "Модель чата",
+    "defaultDecisionModel": "Модель решений",
     "defaultLlm": "LLM по умолчанию",
     "llmDescription": "Здесь задается глобальная модель LLM по умолчанию у авторизованного провайдера. Для конкретного Agent модель можно выбрать отдельно на странице Chat.",
     "configureProvider": "Настроить {{name}}",
