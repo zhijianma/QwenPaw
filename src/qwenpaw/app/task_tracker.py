@@ -5,6 +5,7 @@
 folded replay store. Reconnects get replay + new events. Cleanup when task
 completes.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -22,11 +23,12 @@ from typing import (
     Optional,
 )
 
-from .replay_store import ReplayStore
+from .replay_store import RECONNECT_REQUIRED_SSE, ReplayStore
 
 logger = logging.getLogger(__name__)
 
 _SENTINEL = None
+_DEFAULT_SUBSCRIBER_QUEUE_MAX = 256
 
 # Indirection so tests can simulate a failing task creation without
 # patching the process-wide ``asyncio`` module.
@@ -54,16 +56,75 @@ class TaskTracker:
     """Per-agent tracker: run_key -> RunState.
 
     All mutations to _runs under _lock. Producer broadcasts under lock.
-    Subscribers use unbounded per-connection queues; disconnect removes them
-    via :meth:`detach_subscriber`. A workspace reload reuses the same tracker
-    so active runs remain reconnectable.
+    Subscribers use bounded per-connection queues; a slow subscriber receives
+    an explicit reconnect marker and is detached without delaying the run.
+    A workspace reload reuses the same tracker so active runs remain
+    reconnectable.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        subscriber_queue_max: int = _DEFAULT_SUBSCRIBER_QUEUE_MAX,
+    ) -> None:
+        if subscriber_queue_max < 2:
+            raise ValueError("subscriber queue limit must be at least 2")
         self._lock = asyncio.Lock()
         self._runs: dict[str, _RunState] = {}
+        self._subscriber_queue_max = subscriber_queue_max
         self._global_last_run_at: Optional[datetime] = None
         self._global_last_finish_at: Optional[datetime] = None
+
+    def _reconnect_queue(self) -> asyncio.Queue:
+        """Return a terminal queue instructing the client to resync."""
+        queue: asyncio.Queue = asyncio.Queue(
+            maxsize=self._subscriber_queue_max,
+        )
+        queue.put_nowait(RECONNECT_REQUIRED_SSE)
+        queue.put_nowait(_SENTINEL)
+        return queue
+
+    def _attach_queue(
+        self,
+        state: _RunState,
+        *,
+        include_replay_end: bool,
+    ) -> asyncio.Queue:
+        """Create a bounded subscriber from the replay snapshot."""
+        replay = list(state.replay.replay())
+        marker_count = 1 if include_replay_end else 0
+        if state.replay.requires_resync or (
+            len(replay) + marker_count > self._subscriber_queue_max
+        ):
+            return self._reconnect_queue()
+        queue: asyncio.Queue = asyncio.Queue(
+            maxsize=self._subscriber_queue_max,
+        )
+        for sse in replay:
+            queue.put_nowait(sse)
+        if include_replay_end:
+            queue.put_nowait(REPLAY_END_SSE)
+        state.queues.append(queue)
+        return queue
+
+    @staticmethod
+    def _reset_slow_subscriber(queue: asyncio.Queue) -> None:
+        """Replace queued events with a reconnect marker and EOF."""
+        while not queue.empty():
+            queue.get_nowait()
+        queue.put_nowait(RECONNECT_REQUIRED_SSE)
+        queue.put_nowait(_SENTINEL)
+
+    def _broadcast(self, state: _RunState, event: str | None) -> None:
+        """Offer one event without allowing subscribers to block the run."""
+        retained: list[asyncio.Queue] = []
+        for queue in state.queues:
+            if queue.full():
+                self._reset_slow_subscriber(queue)
+                continue
+            queue.put_nowait(event)
+            retained.append(queue)
+        state.queues = retained
 
     @property
     def lock(self) -> asyncio.Lock:
@@ -201,12 +262,7 @@ class TaskTracker:
             state = self._runs.get(run_key)
             if state is None or state.task.done():
                 return None
-            q: asyncio.Queue = asyncio.Queue()
-            for sse in state.replay.replay():
-                q.put_nowait(sse)
-            q.put_nowait(REPLAY_END_SSE)
-            state.queues.append(q)
-            return q
+            return self._attach_queue(state, include_replay_end=True)
 
     async def detach_subscriber(
         self,
@@ -276,13 +332,17 @@ class TaskTracker:
         async with self._lock:
             state = self._runs.get(run_key)
             if state is not None and not state.task.done():
-                q: asyncio.Queue = asyncio.Queue()
-                for sse in state.replay.replay():
-                    q.put_nowait(sse)
-                state.queues.append(q)
-                return q, False
+                return (
+                    self._attach_queue(
+                        state,
+                        include_replay_end=False,
+                    ),
+                    False,
+                )
 
-            my_queue: asyncio.Queue = asyncio.Queue()
+            my_queue: asyncio.Queue = asyncio.Queue(
+                maxsize=self._subscriber_queue_max,
+            )
             run = _RunState(
                 task=asyncio.Future(),  # placeholder, replaced below
                 queues=[my_queue],
@@ -308,8 +368,7 @@ class TaskTracker:
                             return
                         async with tracker.lock:
                             run.replay.append(sse)
-                            for q in run.queues:
-                                q.put_nowait(sse)
+                            tracker._broadcast(run, sse)
                 except asyncio.CancelledError:
                     logger.debug("run cancelled run_key=%s", run_key)
                 except Exception:
@@ -322,8 +381,7 @@ class TaskTracker:
                     if tracker is not None:
                         async with tracker.lock:
                             run.replay.append(err_sse)
-                            for q in run.queues:
-                                q.put_nowait(err_sse)
+                            tracker._broadcast(run, err_sse)
                 finally:
                     finish_time = datetime.now(timezone.utc)
                     if on_finished is not None:
@@ -340,8 +398,7 @@ class TaskTracker:
                             run.finish_time = finish_time
                             # pylint: disable=protected-access
                             tracker._global_last_finish_at = finish_time
-                            for q in run.queues:
-                                q.put_nowait(_SENTINEL)
+                            tracker._broadcast(run, _SENTINEL)
                             # pylint: disable=protected-access
                             tracker._runs.pop(
                                 run_key,

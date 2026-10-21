@@ -992,6 +992,22 @@ describe("ChatPage coverage", () => {
     }
   });
 
+  it("responseParser maps reconnect_required to heartbeat", async () => {
+    renderWithProviders(<ChatPage />, {
+      initialEntries: ["/chat/test-session"],
+    });
+    await screen.findByTestId("chat-ui");
+    await act(async () => {});
+
+    if (capturedOptions?.api?.responseParser) {
+      const parsed = capturedOptions.api.responseParser(
+        JSON.stringify({ type: "reconnect_required" }),
+      );
+      expect(parsed).toBeTruthy();
+      expect(parsed.type).toBe("heartbeat");
+    }
+  });
+
   // ── responseParser: rate_limited → null ────────────────────────────────
   it("responseParser handles rate_limited payload", async () => {
     renderWithProviders(<ChatPage />, {

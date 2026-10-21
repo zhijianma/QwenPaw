@@ -4386,6 +4386,19 @@ export default function ChatPage() {
             return null;
           }
 
+          if (payload.type === "reconnect_required") {
+            console.warn(
+              "Chat stream buffer overflow; history resync required",
+            );
+            return { object: "message", type: "heartbeat" } as ReturnType<
+              NonNullable<
+                NonNullable<
+                  IAgentScopeRuntimeWebUIOptions["api"]
+                >["responseParser"]
+              >
+            >;
+          }
+
           // Replay boundary marker from the reconnect stream. The
           // fast-forward wrapper strips it at the byte level; if one
           // still slips through, map it to the SDK's heartbeat no-op —

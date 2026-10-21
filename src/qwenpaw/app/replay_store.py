@@ -30,6 +30,7 @@ idealized protocol:
     snapshot overwrites finished output with a stale one and duplicates
     the tool card (spec revision M-2).
 """
+
 from __future__ import annotations
 
 import json
@@ -40,6 +41,12 @@ from typing import Any, Iterator, Optional, Union
 
 _SSE_PREFIX = "data: "
 _SSE_SUFFIX = "\n\n"
+RECONNECT_REQUIRED_SSE = (
+    'data: {"type":"reconnect_required","reason":"buffer_overflow"}\n\n'
+)
+
+_DEFAULT_MAX_BYTES = 8 * 1024 * 1024
+_DEFAULT_MAX_SLOTS = 2048
 
 # Classification reads a bounded prefix, never the whole payload.
 # ``_ContentBase`` declares ``type, delta, index, status, object,
@@ -308,49 +315,64 @@ class ReplayStore:
     is still rendering.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        max_bytes: int = _DEFAULT_MAX_BYTES,
+        max_slots: int = _DEFAULT_MAX_SLOTS,
+    ) -> None:
+        if max_bytes < 1 or max_slots < 1:
+            raise ValueError("replay limits must be positive")
         self._slots: OrderedDict[int, _Slot] = OrderedDict()
         self._owners: dict[Any, int] = {}
         self._next_slot = 0
+        self._max_bytes = max_bytes
+        self._max_slots = max_slots
+        self._retained_bytes = 0
+        self._requires_resync = False
+
+    @property
+    def requires_resync(self) -> bool:
+        """Return whether this run can no longer be replayed safely."""
+        return self._requires_resync
 
     def append(self, sse: str) -> None:
         """Fold one SSE line into the replay copy."""
+        if self._requires_resync:
+            return
         head = _head(sse)
         if head is None:
             self._push(_RawSlot(sse))
-            return
-        found = _classify(head)
-        if found.kind == _MERGE:
-            self._merge(found.key, sse)
-        elif found.kind == _REPLACE:
-            self._replace(found.key, sse)
-        elif found.kind == _PASSTHROUGH:
-            self._push(_RawSlot(sse))
+        else:
+            found = _classify(head)
+            if found.kind == _MERGE:
+                self._merge(found.key, sse)
+            elif found.kind == _REPLACE:
+                self._replace(found.key, sse)
+            elif found.kind == _PASSTHROUGH:
+                self._push(_RawSlot(sse))
         # _DROP retains nothing: the builder cannot apply these events on
         # the live path either, so the replay copy simply omits them.
+        self._enforce_limits()
 
     def replay(self) -> Iterator[str]:
         """Yield the folded SSE lines in last-occurrence order."""
+        if self._requires_resync:
+            yield RECONNECT_REQUIRED_SSE
+            return
         for slot in self._slots.values():
             yield slot.render()
 
     def approx_bytes(self) -> int:
-        """Estimate the retained replay size, for measurement only.
-
-        Nothing is ever evicted on this figure, and it is not a bound in
-        either direction. ``len`` counts code points, so UTF-8 CJK makes it
-        under-count the real byte cost (spec N6); a merged slot renders
-        compact while its base may have arrived spaced, which makes it
-        over-count the rendered characters by a couple of bytes per slot
-        (spec revision F7). Both errors are well under a percent.
-        """
-        return sum(slot.approx_len() for slot in self._slots.values())
+        """Estimate retained characters after folding and limit checks."""
+        return self._retained_bytes
 
     def _push(self, slot: _Slot) -> int:
         """Append ``slot`` at the end and return its id."""
         slot_id = self._next_slot
         self._next_slot += 1
         self._slots[slot_id] = slot
+        self._retained_bytes += slot.approx_len()
         return slot_id
 
     def _replace(self, key: Any, sse: str) -> None:
@@ -359,7 +381,12 @@ class ReplayStore:
         if slot_id is None:
             self._owners[key] = self._push(_RawSlot(sse))
             return
-        self._slots[slot_id] = _RawSlot(sse)
+        previous = self._slots[slot_id]
+        replacement = _RawSlot(sse)
+        self._retained_bytes += (
+            replacement.approx_len() - previous.approx_len()
+        )
+        self._slots[slot_id] = replacement
         self._slots.move_to_end(slot_id)
 
     def _merge(self, key: Any, sse: str) -> None:
@@ -368,7 +395,9 @@ class ReplayStore:
         if slot_id is not None:
             slot = self._slots[slot_id]
             if isinstance(slot, _MergeSlot):
+                previous_len = slot.approx_len()
                 if _extend(slot, sse):
+                    self._retained_bytes += slot.approx_len() - previous_len
                     self._slots.move_to_end(slot_id)
                     return
                 del self._owners[key]
@@ -384,3 +413,15 @@ class ReplayStore:
             self._push(_RawSlot(sse))
             return
         self._owners[key] = self._push(created)
+
+    def _enforce_limits(self) -> None:
+        """Drop unsafe partial replay state once either limit is exceeded."""
+        if (
+            self._retained_bytes <= self._max_bytes
+            and len(self._slots) <= self._max_slots
+        ):
+            return
+        self._slots.clear()
+        self._owners.clear()
+        self._retained_bytes = 0
+        self._requires_resync = True

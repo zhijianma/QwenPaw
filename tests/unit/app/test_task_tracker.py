@@ -12,6 +12,7 @@ Covers:
 - wait_all_done() returns True when idle, False on timeout
 - global status counters update via run lifecycle
 """
+
 # pylint: disable=protected-access,redefined-outer-name,unused-argument
 from __future__ import annotations
 
@@ -20,8 +21,8 @@ import json
 
 import pytest
 
+from qwenpaw.app.replay_store import RECONNECT_REQUIRED_SSE
 from qwenpaw.app.task_tracker import TaskTracker
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -564,3 +565,21 @@ async def test_attach_appends_replay_end_marker_after_buffer():
     # The original (non-reconnect) subscriber never sees the marker.
     rest_a = await _drain(queue_a, 3)
     assert rest_a == ["data: first\n\n", "data: second\n\n", None]
+
+
+@pytest.mark.asyncio
+async def test_slow_subscriber_is_bounded_and_told_to_reconnect():
+    """A stalled client cannot retain an unbounded live event backlog."""
+    tracker = TaskTracker(subscriber_queue_max=2)
+    events = [f"data: {index}\n\n" for index in range(3)]
+
+    queue, _ = await tracker.attach_or_start(
+        "run-slow",
+        payload=None,
+        stream_fn=_make_stream(events),
+    )
+    while await tracker.get_status("run-slow") == "running":
+        await asyncio.sleep(0)
+
+    assert queue.maxsize == 2
+    assert await _drain(queue, 2) == [RECONNECT_REQUIRED_SSE, None]

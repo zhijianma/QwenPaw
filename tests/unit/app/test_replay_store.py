@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Functional tests for ``qwenpaw.app.replay_store.ReplayStore``."""
+
 from __future__ import annotations
 
 import json
@@ -7,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from qwenpaw.app.replay_store import ReplayStore
+from qwenpaw.app.replay_store import RECONNECT_REQUIRED_SSE, ReplayStore
 from qwenpaw.schemas import ContentType, TextContent
 
 
@@ -259,3 +260,14 @@ def test_replay_is_repeatable() -> None:
     store.append(_content("message-a", "text"))
 
     assert list(store.replay()) == list(store.replay())
+
+
+def test_replay_limit_requires_history_resync() -> None:
+    """An oversized replay is released instead of growing without bound."""
+    store = ReplayStore(max_bytes=8, max_slots=10)
+
+    store.append("unframed replay payload")
+
+    assert store.requires_resync is True
+    assert store.approx_bytes() == 0
+    assert list(store.replay()) == [RECONNECT_REQUIRED_SSE]
