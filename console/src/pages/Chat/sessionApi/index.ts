@@ -762,6 +762,7 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
         const nextPage: ChatHistoryMetadata = {
           has_more: result.has_more,
           next_before: result.next_before,
+          snapshot: result.snapshot,
         };
         this.setHistoryPage(backendId, nextPage);
         if (entry) entry.historyPage = nextPage;
@@ -1598,6 +1599,7 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     const historyPage = chatHistory.history ?? {
       has_more: false,
       next_before: null,
+      snapshot: null,
     };
     if (
       signal?.aborted ||

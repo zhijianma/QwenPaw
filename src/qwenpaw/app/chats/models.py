@@ -268,6 +268,7 @@ class ChatHistoryMetadata(BaseModel):
 
     has_more: bool = False
     next_before: Optional[str] = None
+    snapshot: Optional[str] = None
 
 
 class ChatMessagePage(ChatHistoryMetadata):

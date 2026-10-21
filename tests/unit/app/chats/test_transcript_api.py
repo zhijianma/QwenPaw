@@ -189,9 +189,12 @@ async def test_message_pages_use_opaque_item_cursor(tmp_path: Path) -> None:
         "turn 2",
         "turn 3",
     ]
-    assert newest.next_before == "2:0"
+    assert newest.next_before
+    assert ":" not in newest.next_before
+    assert newest.snapshot
     assert newest.has_more is True
     assert [item.content[0].text for item in older.messages] == ["turn 1"]
+    assert older.snapshot == newest.snapshot
     assert older.next_before is None
     assert older.has_more is False
 
@@ -257,10 +260,13 @@ async def test_message_pages_continue_within_oversized_turn(
     )
 
     assert [item.id for item in newest.messages] == ["large-1"]
-    assert newest.next_before == "2:1"
+    assert newest.next_before
     assert [item.id for item in middle.messages] == ["large-0"]
-    assert middle.next_before == "2:0"
+    assert middle.next_before
+    assert middle.next_before != newest.next_before
+    assert middle.snapshot == newest.snapshot
     assert [item.id for item in older.messages] == ["message-1"]
+    assert older.snapshot == newest.snapshot
     assert older.has_more is False
     store.close()
 
@@ -270,7 +276,11 @@ async def test_message_pages_continue_within_oversized_turn(
     "cursor",
     ("turn:2", "1:2:3", "2", "0:0", "2:-1"),
 )
-async def test_message_page_rejects_invalid_cursor(cursor: str) -> None:
+async def test_message_page_rejects_invalid_cursor(
+    cursor: str,
+    tmp_path: Path,
+) -> None:
+    store = TranscriptStore(tmp_path / "session.db")
     with pytest.raises(HTTPException) as raised:
         await get_chat_messages(
             chat_id="chat-1",
@@ -278,10 +288,55 @@ async def test_message_page_rejects_invalid_cursor(cursor: str) -> None:
             limit=50,
             include_app_owned=True,
             mgr=SimpleNamespace(get_chat=AsyncMock(return_value=_chat())),
-            workspace=_workspace(None),
+            workspace=_workspace(store),
         )
 
     assert raised.value.status_code == 400
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_message_pages_keep_a_stable_turn_snapshot(
+    tmp_path: Path,
+) -> None:
+    store = TranscriptStore(tmp_path / "session.db")
+    for number in range(1, 4):
+        _append_turn(store, number, f"turn {number}")
+    manager = SimpleNamespace(get_chat=AsyncMock(return_value=_chat()))
+    workspace = _workspace(store)
+
+    newest = await get_chat_messages(
+        chat_id="chat-1",
+        before=None,
+        limit=1,
+        include_app_owned=True,
+        mgr=manager,
+        workspace=workspace,
+    )
+    _append_turn(store, 4, "turn 4")
+    older = await get_chat_messages(
+        chat_id="chat-1",
+        before=newest.next_before,
+        limit=1,
+        include_app_owned=True,
+        mgr=manager,
+        workspace=workspace,
+    )
+    refreshed = await get_chat_messages(
+        chat_id="chat-1",
+        before=None,
+        limit=1,
+        include_app_owned=True,
+        mgr=manager,
+        workspace=workspace,
+    )
+
+    assert [item.content[0].text for item in newest.messages] == ["turn 3"]
+    assert [item.content[0].text for item in older.messages] == ["turn 2"]
+    assert older.snapshot == newest.snapshot
+    assert [item.content[0].text for item in refreshed.messages] == ["turn 4"]
+    assert refreshed.snapshot != newest.snapshot
+    store.close()
 
 
 @pytest.mark.asyncio

@@ -43,6 +43,7 @@ from .local_workspace import QwenPawLocalWorkspace
 from ..task_tracker import TaskTracker
 from ..chats.session import DatabaseSession
 from ..chats.transcript_catalog import TranscriptCatalog
+from ..chats.history_store import TranscriptHistoryStore
 from ..chats.transcript_recorder import (
     TRANSCRIPT_TURN_ID_CONTEXT_KEY,
     TranscriptRecorder,
@@ -224,6 +225,14 @@ class Workspace:  # pylint: disable=too-many-public-methods
     def transcript_store(self) -> Optional[TranscriptCatalog]:
         """Get the durable transcript store, when available."""
         return self._service_manager.services.get("transcript_store")
+
+    @property
+    def history_store(self) -> Optional[TranscriptHistoryStore]:
+        """Get the storage-independent conversation history reader."""
+        transcript = self.transcript_store
+        if transcript is None:
+            return None
+        return TranscriptHistoryStore(transcript)
 
     @property
     def channel_manager(self):

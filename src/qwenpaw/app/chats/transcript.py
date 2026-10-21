@@ -8,7 +8,7 @@ import sqlite3
 import tempfile
 import threading
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, Literal
@@ -38,6 +38,7 @@ class TranscriptCursor:
 
     turn_seq: int
     ordinal: int
+    snapshot_turn_seq: int | None = field(default=None, compare=False)
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,7 @@ class TranscriptPage:
     messages: list[Message]
     next_before: TranscriptCursor | None
     has_more: bool
+    snapshot_turn_seq: int
 
 
 @dataclass(frozen=True)
@@ -1149,9 +1151,14 @@ class TranscriptStore:
                 user_id=user_id,
                 channel=channel,
             )
+            snapshot_turn_seq = (
+                before.snapshot_turn_seq
+                if before is not None and before.snapshot_turn_seq is not None
+                else max(0, int(session["next_turn_seq"]) - 1)
+            )
             turn_sql = "SELECT t.turn_seq FROM transcript_turns t "
-            turn_sql += "WHERE t.session_id = ? "
-            params: list[Any] = [session_id]
+            turn_sql += "WHERE t.session_id = ? AND t.turn_seq <= ? "
+            params: list[Any] = [session_id, snapshot_turn_seq]
             if before is not None:
                 operator = "<" if before.ordinal == 0 else "<="
                 turn_sql += f"AND t.turn_seq {operator} ? "
@@ -1174,6 +1181,7 @@ class TranscriptStore:
                     messages=[],
                     next_before=None,
                     has_more=False,
+                    snapshot_turn_seq=snapshot_turn_seq,
                 )
 
             placeholders = ",".join("?" for _ in selected_turns)
@@ -1213,6 +1221,7 @@ class TranscriptStore:
                 oldest_position = TranscriptCursor(
                     turn_seq=int(row["turn_seq"]),
                     ordinal=int(row["ordinal"]),
+                    snapshot_turn_seq=snapshot_turn_seq,
                 )
 
             if selected_count == 0:
@@ -1220,6 +1229,7 @@ class TranscriptStore:
                     messages=[],
                     next_before=None,
                     has_more=False,
+                    snapshot_turn_seq=snapshot_turn_seq,
                 )
 
             message_sql = (
@@ -1240,6 +1250,7 @@ class TranscriptStore:
                 messages=[self._message_from_row(row) for row in rows],
                 next_before=oldest_position if has_more else None,
                 has_more=has_more,
+                snapshot_turn_seq=snapshot_turn_seq,
             )
 
     @staticmethod

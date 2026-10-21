@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sqlite3
 from pathlib import Path
 from typing import Annotated, Literal, Optional
 from uuid import uuid4
@@ -35,7 +34,11 @@ from .models import (
     ChatHistoryMetadata,
     ChatMessagePage,
 )
-from .transcript import TranscriptCursor, TranscriptPage
+from .history_store import (
+    ConversationHistoryError,
+    ConversationHistoryPage,
+    TranscriptHistoryStore,
+)
 from .utils import session_state_to_messages
 from .resolver import (
     ChatResolution,
@@ -64,44 +67,34 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chats", tags=["chats"])
 
 
-def _encode_transcript_cursor(value: TranscriptCursor | None) -> str | None:
-    if value is None:
-        return None
-    return f"{value.turn_seq}:{value.ordinal}"
-
-
-def _decode_transcript_cursor(value: str | None) -> TranscriptCursor | None:
-    if value is None:
-        return None
-    try:
-        turn_seq, ordinal = (int(part) for part in value.split(":"))
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid history cursor",
-        ) from exc
-    if turn_seq < 1 or ordinal < 0:
-        raise HTTPException(status_code=400, detail="Invalid history cursor")
-    return TranscriptCursor(turn_seq=turn_seq, ordinal=ordinal)
-
-
-def _history_metadata(page: TranscriptPage) -> ChatHistoryMetadata:
+def _history_metadata(page: ConversationHistoryPage) -> ChatHistoryMetadata:
     return ChatHistoryMetadata(
         has_more=page.has_more,
-        next_before=_encode_transcript_cursor(page.next_before),
+        next_before=page.next_before,
+        snapshot=page.snapshot,
     )
 
 
-async def _read_transcript_page(
+def _history_store(workspace):
+    store = getattr(workspace, "history_store", None)
+    if store is not None:
+        return store
+    transcript = getattr(workspace, "transcript_store", None)
+    if transcript is None:
+        return None
+    return TranscriptHistoryStore(transcript)
+
+
+async def _read_history_page(
     workspace,
     chat: ChatSpec,
     *,
-    before: TranscriptCursor | None = None,
+    before: str | None = None,
     limit: int = 20,
     max_bytes: int = 2 * 1024 * 1024,
-) -> TranscriptPage | None:
-    """Read one transcript page without blocking the event loop."""
-    store = getattr(workspace, "transcript_store", None)
+) -> ConversationHistoryPage | None:
+    """Read one history page without blocking the event loop."""
+    store = _history_store(workspace)
     if store is None:
         return None
     try:
@@ -114,9 +107,9 @@ async def _read_transcript_page(
             limit=limit,
             max_bytes=max_bytes,
         )
-    except (OSError, sqlite3.Error, ValueError, TypeError):
+    except ConversationHistoryError:
         logger.warning(
-            "Failed to read transcript for session %s",
+            "Failed to read conversation history for session %s",
             chat.session_id,
             exc_info=True,
         )
@@ -638,7 +631,11 @@ async def batch_delete_chats(
     """
     catalog = await mgr.list_chats(archived=None)
     chats = {chat.id: chat for chat in catalog}
-    targets = [chat for chat_id in chat_ids if (chat := chats.get(chat_id)) is not None]
+    targets = [
+        chat
+        for chat_id in chat_ids
+        if (chat := chats.get(chat_id)) is not None
+    ]
     data_targets = _unshared_chat_data_targets(targets, catalog)
     # Stop any live run first: a deleted chat must not leave a run behind
     # in the tracker, or it inflates the aggregate running count forever.
@@ -849,7 +846,9 @@ async def set_chat_project_dirs(
             (str(path) for path, _label in entries if not path.is_dir()),
             None,
         )
-        stored = [{"path": str(path), "label": label} for path, label in entries]
+        stored = [
+            {"path": str(path), "label": label} for path, label in entries
+        ]
         return stored, missing, len(entries)
 
     stored, missing, count = await asyncio.to_thread(_normalize)
@@ -1058,13 +1057,19 @@ async def get_chat_messages(
             status_code=404,
             detail=f"Chat not found: {chat_id}",
         )
-    page = await _read_transcript_page(
-        workspace,
-        chat,
-        before=_decode_transcript_cursor(before),
-        limit=limit,
-        max_bytes=max_bytes,
-    )
+    try:
+        page = await _read_history_page(
+            workspace,
+            chat,
+            before=before,
+            limit=limit,
+            max_bytes=max_bytes,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid history cursor",
+        ) from exc
     if page is None:
         return ChatMessagePage()
     metadata = _history_metadata(page)
@@ -1120,7 +1125,7 @@ async def get_chat(
     backend = workspace.config.backend
 
     if backend == "qwenpaw":
-        transcript_page = await _read_transcript_page(
+        transcript_page = await _read_history_page(
             workspace,
             chat_spec,
         )
