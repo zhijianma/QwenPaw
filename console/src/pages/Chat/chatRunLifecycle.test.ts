@@ -14,6 +14,7 @@ import {
   awaitQueueAcceptance,
   recoverSendingQueueHead,
   waitForChatIdle,
+  waitForChatStatusIdle,
 } from "./chatRunLifecycle";
 import {
   clearBackgroundAbortIfCurrent,
@@ -97,6 +98,34 @@ describe("chat scope cancellation", () => {
     expect(remove).toHaveBeenCalledWith("abort", add.mock.calls[1][1]);
     add.mockRestore();
     remove.mockRestore();
+  });
+});
+
+describe("lightweight chat status polling", () => {
+  it("returns on idle without loading conversation history", async () => {
+    const controller = new AbortController();
+    vi.mocked(request).mockResolvedValue({ status: "idle" });
+
+    await expect(
+      waitForChatStatusIdle("chat/a", controller.signal, "agent-a"),
+    ).resolves.toBe(true);
+    expect(request).toHaveBeenCalledExactlyOnceWith("/chats/chat%2Fa/status", {
+      headers: { "X-Agent-Id": "agent-a" },
+      signal: controller.signal,
+    });
+  });
+
+  it("stops after an in-flight status request is aborted", async () => {
+    const controller = new AbortController();
+    vi.mocked(request).mockImplementation(async () => {
+      controller.abort();
+      return { status: "running" };
+    });
+
+    await expect(
+      waitForChatStatusIdle("chat-a", controller.signal, "agent-a"),
+    ).resolves.toBe(false);
+    expect(request).toHaveBeenCalledTimes(1);
   });
 });
 

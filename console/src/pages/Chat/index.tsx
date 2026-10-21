@@ -141,6 +141,7 @@ import {
   awaitQueueAcceptance,
   recoverSendingQueueHead,
   waitForChatIdle,
+  waitForChatStatusIdle,
 } from "./chatRunLifecycle";
 import { applyChatPayloadTransforms } from "./chatPayload";
 import { createSdkSessionAdapter } from "./sdkSessionAdapter";
@@ -3497,12 +3498,16 @@ export default function ChatPage() {
   const chatMessagesAreaRef = useRef<HTMLDivElement>(null);
   const historyLoadRef = useRef<Promise<void> | null>(null);
   const historyLoadSessionRef = useRef(chatId);
+  const replayRecoveryRef = useRef<AbortController | null>(null);
   const [historyLoadFailed, setHistoryLoadFailed] = useState(false);
   historyLoadSessionRef.current = chatId;
 
   useEffect(() => {
+    replayRecoveryRef.current?.abort();
+    replayRecoveryRef.current = null;
     setHistoryLoadFailed(false);
-  }, [chatId]);
+    return () => replayRecoveryRef.current?.abort();
+  }, [chatId, selectedAgent]);
 
   const loadOlderHistory = useCallback(
     (target: HTMLElement) => {
@@ -3566,6 +3571,58 @@ export default function ChatPage() {
       historyLoadRef.current = load;
     },
     [chatId, message, t],
+  );
+
+  const recoverReplayOverflow = useCallback(
+    (displayChatId: string, canonicalChatId: string, agentId: string) => {
+      replayRecoveryRef.current?.abort();
+      const controller = new AbortController();
+      replayRecoveryRef.current = controller;
+
+      void waitForChatStatusIdle(canonicalChatId, controller.signal, agentId)
+        .then(async (idle) => {
+          if (
+            !idle ||
+            controller.signal.aborted ||
+            chatIdRef.current !== displayChatId ||
+            selectedAgentRef.current !== agentId ||
+            !isOwnerRef.current
+          ) {
+            return;
+          }
+          const recovered = await sessionApi.refreshSession(
+            displayChatId,
+            controller.signal,
+          );
+          if (
+            !recovered ||
+            recovered.generating ||
+            controller.signal.aborted ||
+            chatIdRef.current !== displayChatId ||
+            selectedAgentRef.current !== agentId ||
+            !isOwnerRef.current
+          ) {
+            return;
+          }
+          chatRef.current?.messages.setSessionMessages(
+            displayChatId,
+            recovered.messages,
+          );
+        })
+        .catch((error) => {
+          if (controller.signal.aborted) return;
+          console.error("Failed to recover chat history:", error);
+          message.error(
+            t("chat.historyLoadFailed", "Failed to load chat history"),
+          );
+        })
+        .finally(() => {
+          if (replayRecoveryRef.current === controller) {
+            replayRecoveryRef.current = null;
+          }
+        });
+    },
+    [message, t],
   );
 
   const handleHistoryScroll = useCallback(
@@ -4502,10 +4559,23 @@ export default function ChatPage() {
             signal: data.signal,
           });
 
+          const displayChatId = chatIdRef.current;
+          const canonicalChatId = displayChatId
+            ? sessionApi.getRealIdForSession(displayChatId) || displayChatId
+            : null;
+
           // Fast-forward the replayed section: render the already
           // generated part instantly instead of re-animating it.
           return wrapChatResponseUsageStream(
-            wrapReplayFastForward(response),
+            wrapReplayFastForward(response, undefined, () => {
+              if (displayChatId && canonicalChatId) {
+                recoverReplayOverflow(
+                  displayChatId,
+                  canonicalChatId,
+                  snapshot.agentId,
+                );
+              }
+            }),
             chatRef,
             usageTurn,
           );
@@ -4649,6 +4719,7 @@ export default function ChatPage() {
     sdkSessionAdapter,
     isSessionTransition,
     queueKey,
+    recoverReplayOverflow,
   ]);
 
   const filesDrawerClass =
