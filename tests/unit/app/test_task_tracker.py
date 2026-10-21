@@ -127,9 +127,31 @@ async def test_attach_or_start_streams_events_and_marks_completion():
     assert [a, b] == events
     assert sentinel is None
 
-    # After completion the tracker cleans up the run.
+    # Completion is idle immediately, while terminal replay remains available
+    # for a reconnect that started from a concurrent history request.
     assert await tracker.get_status("run-1") == "idle"
-    assert "run-1" not in tracker._runs
+    replay = await tracker.attach("run-1")
+    assert replay is not None
+    assert await _drain(replay, 4) == [
+        *events,
+        'data: {"type": "replay_end"}\n\n',
+        None,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_completed_replay_can_expire_immediately():
+    tracker = TaskTracker(reconnect_grace_seconds=0)
+
+    queue, _ = await tracker.attach_or_start(
+        "run-expire",
+        payload=None,
+        stream_fn=_make_stream(["data: done\n\n"]),
+    )
+    assert await _drain(queue, 2) == ["data: done\n\n", None]
+
+    assert await tracker.attach("run-expire") is None
+    assert "run-expire" not in tracker._runs
 
 
 @pytest.mark.asyncio

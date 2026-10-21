@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Functional integration tests for folded TaskTracker replay."""
+
 # pylint: disable=protected-access
 from __future__ import annotations
 
@@ -119,7 +120,7 @@ async def test_reconnect_gets_fold_then_marker_and_live_tail() -> None:
     assert REPLAY_END_SSE not in replayed
 
 
-async def test_error_event_is_broadcast_replayed_and_cleaned_up() -> None:
+async def test_error_replays_after_completion() -> None:
     """A producer failure reaches live and reconnect subscribers once."""
     first = _content("before failure")
     reached = asyncio.Event()
@@ -149,4 +150,10 @@ async def test_error_event_is_broadcast_replayed_and_cleaned_up() -> None:
         REPLAY_END_SSE,
         error,
     ]
-    assert not tracker._runs
+    terminal = await tracker.attach("run-error")
+    assert terminal is not None
+    assert await _collect(terminal) == [
+        first,
+        error,
+        REPLAY_END_SSE,
+    ]
