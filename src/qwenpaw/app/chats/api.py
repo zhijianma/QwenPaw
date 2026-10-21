@@ -37,6 +37,13 @@ from .models import (
 )
 from .transcript import TranscriptCursor, TranscriptPage
 from .utils import session_state_to_messages
+from .resolver import (
+    ChatResolution,
+    find_chat_matches,
+    is_app_owned_chat as _is_app_owned_chat,
+)
+from ...config.utils import load_config
+from ...utils.io_utils import run_sync_io
 from ...services.project_directory import (
     agent_project_dirs_from_config,
     resolve_effective_project_dirs,
@@ -214,12 +221,6 @@ def _unshared_chat_data_targets(
         seen.add(identity)
         result.append(chat)
     return result
-
-
-def _is_app_owned_chat(chat: ChatSpec) -> bool:
-    """Return whether a chat belongs to a PawApp-owned dialogue surface."""
-    owner = chat.meta.get("pawapp") if isinstance(chat.meta, dict) else None
-    return isinstance(owner, dict) and bool(owner.get("app_id"))
 
 
 async def get_workspace(request: Request):
@@ -457,6 +458,21 @@ async def _project_dirs_response(chat: ChatSpec, workspace) -> dict:
     return await asyncio.to_thread(_build)
 
 
+@router.get(f"/resolve", response_model=ChatResolution)
+async def resolve_chat(
+    chat_id: str = Query(..., min_length=1),
+    current_agent_id: Optional[str] = Query(None),
+):
+    """Resolve a Console deep link using only persisted Chat metadata."""
+    config = await run_sync_io(load_config)
+    matches = await find_chat_matches(config, chat_id, current_agent_id)
+    if not matches:
+        raise HTTPException(404, f"Chat not found: {chat_id}")
+    if len(matches) != 1:
+        raise HTTPException(409, f"Chat reference is ambiguous: {chat_id}")
+    return matches[0]
+
+
 @router.get("", response_model=list[ChatSpec])
 async def list_chats(
     user_id: Optional[str] = Query(None, description="Filter by user ID"),
@@ -622,11 +638,7 @@ async def batch_delete_chats(
     """
     catalog = await mgr.list_chats(archived=None)
     chats = {chat.id: chat for chat in catalog}
-    targets = [
-        chat
-        for chat_id in chat_ids
-        if (chat := chats.get(chat_id)) is not None
-    ]
+    targets = [chat for chat_id in chat_ids if (chat := chats.get(chat_id)) is not None]
     data_targets = _unshared_chat_data_targets(targets, catalog)
     # Stop any live run first: a deleted chat must not leave a run behind
     # in the tracker, or it inflates the aggregate running count forever.
@@ -837,9 +849,7 @@ async def set_chat_project_dirs(
             (str(path) for path, _label in entries if not path.is_dir()),
             None,
         )
-        stored = [
-            {"path": str(path), "label": label} for path, label in entries
-        ]
+        stored = [{"path": str(path), "label": label} for path, label in entries]
         return stored, missing, len(entries)
 
     stored, missing, count = await asyncio.to_thread(_normalize)

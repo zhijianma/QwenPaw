@@ -68,6 +68,11 @@ export interface ChatMessagePage extends ChatHistoryMetadata {
   messages: Message[];
 }
 
+export interface ChatResolution {
+  agent_id: string;
+  chat: ChatSpec;
+}
+
 export interface ChatUpdateRequest {
   name?: string;
   pinned?: boolean;

@@ -5,6 +5,7 @@ import type {
   ChatSpec,
   ChatHistory,
   ChatMessagePage,
+  ChatResolution,
   ChatDeleteResponse,
   ChatUpdateRequest,
   ChatGroup,
@@ -26,6 +27,18 @@ export interface ChatStatusResponse {
 const FILES_PREVIEW = "/files/preview";
 
 export const chatApi = {
+  resolveChat: (
+    chatId: string,
+    options?: { currentAgentId?: string; signal?: AbortSignal },
+  ) => {
+    const params = new URLSearchParams({ chat_id: chatId });
+    if (options?.currentAgentId)
+      params.set("current_agent_id", options.currentAgentId);
+    return request<ChatResolution>(`/chats/resolve?${params}`, {
+      signal: options?.signal,
+    });
+  },
+
   /** Upload a file for chat attachment. Returns URL path for content. */
   uploadFile: async (file: File): Promise<ChatUploadResponse> => {
     const formData = new FormData();
