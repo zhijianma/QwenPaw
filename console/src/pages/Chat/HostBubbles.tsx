@@ -16,7 +16,13 @@
  * replaces individual Markdown/media/tool rendering rather than only framing
  * the default response bubble.
  */
-import React, { useMemo, useSyncExternalStore } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import VendorRequestCard from "@agentscope-ai/chat/lib/AgentScopeRuntimeWebUI/core/AgentScopeRuntime/Request/Card";
 import AgentScopeRuntimeResponseBuilder from "@agentscope-ai/chat/lib/AgentScopeRuntimeWebUI/core/AgentScopeRuntime/Response/Builder";
 import ResponseActions from "@agentscope-ai/chat/lib/AgentScopeRuntimeWebUI/core/AgentScopeRuntime/Response/Actions";
@@ -71,11 +77,105 @@ import {
   subscribeChatDisplayPreference,
   type AssistantMessageDisplayPreference,
 } from "../../utils/chatDisplayPreference";
+import { splitHistoryMarkdown } from "./historyMarkdownChunks";
 
 function sortByOrder<T extends { item: { order?: number } }>(arr: T[]): T[] {
   return arr
     .slice()
     .sort((a, b) => (a.item.order ?? 100) - (b.item.order ?? 100));
+}
+
+const DeferHistoryContentContext = React.createContext(true);
+
+export function EagerHistoryContent({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <DeferHistoryContentContext.Provider value={false}>
+      {children}
+    </DeferHistoryContentContext.Provider>
+  );
+}
+
+export function DeferredHistoryContent({
+  children,
+  enabled,
+}: {
+  children: React.ReactNode;
+  enabled: boolean;
+}) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [nearViewport, setNearViewport] = useState(
+    () => !enabled || typeof IntersectionObserver === "undefined",
+  );
+
+  useEffect(() => {
+    if (!enabled || nearViewport || !rootRef.current) return undefined;
+    const root = rootRef.current.closest<HTMLElement>(
+      '[data-history-message-window="true"], ' +
+        '[class*="chat-anywhere-message-list-bubble-scroll"]',
+    );
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        setNearViewport(true);
+        observer.disconnect();
+      },
+      { root, rootMargin: "300px 0px" },
+    );
+    observer.observe(rootRef.current);
+    return () => observer.disconnect();
+  }, [enabled, nearViewport]);
+
+  return (
+    <div
+      ref={rootRef}
+      className={nearViewport ? undefined : styles.deferredHistoryContent}
+    >
+      {nearViewport ? children : null}
+    </div>
+  );
+}
+
+function HistoryMarkdown({
+  content,
+  messageId,
+}: {
+  content: string;
+  messageId: string;
+}) {
+  const { t } = useTranslation();
+  const chunks = useMemo(() => splitHistoryMarkdown(content), [content]);
+  const [visibleCount, setVisibleCount] = useState(1);
+  const firstVisible = Math.max(0, chunks.length - visibleCount);
+
+  useEffect(() => setVisibleCount(1), [content]);
+
+  return (
+    <div className={styles.historyMarkdown}>
+      {firstVisible > 0 ? (
+        <button
+          className={styles.loadOlderMarkdown}
+          data-history-markdown-load-older="true"
+          type="button"
+          onClick={() => setVisibleCount((count) => count + 1)}
+        >
+          {t("common.loadMore")}
+        </button>
+      ) : null}
+      {chunks.slice(firstVisible).map((chunk, index) => (
+        <AssistantMarkdown
+          key={`${messageId}:chunk:${firstVisible + index}`}
+          messageId={`${messageId}:chunk:${firstVisible + index}`}
+          content={chunk}
+          cursor={false}
+          isStreaming={false}
+        />
+      ))}
+    </div>
+  );
 }
 
 const HostMessage = React.memo(function HostMessage({
@@ -92,6 +192,13 @@ const HostMessage = React.memo(function HostMessage({
   const formatMediaURL = (url?: string) =>
     url ? replaceMediaURL?.(url) || url : url;
   const baseFontSize = useEffectiveFontSize();
+  const metadata = (
+    data as IAgentScopeRuntimeMessage & {
+      metadata?: Record<string, unknown> | null;
+    }
+  ).metadata;
+  const history = Boolean(metadata?.qwenpaw_history);
+  const deferHistoryContent = React.useContext(DeferHistoryContentContext);
 
   if (!data.content?.length) return null;
 
@@ -101,18 +208,31 @@ const HostMessage = React.memo(function HostMessage({
         switch (item.type) {
           case AgentScopeRuntimeContentType.TEXT:
             return (
-              <AssistantMarkdown
+              <DeferredHistoryContent
                 key={index}
-                messageId={`${data.id}:${index}`}
-                content={item.text}
-                cursor={item.status === AgentScopeRuntimeRunStatus.InProgress}
-                // Native text deltas omit content.status; the message owns
-                // their lifecycle. Keep the legacy Markdown cursor separate.
-                isStreaming={
-                  (item.status ?? data.status) ===
-                  AgentScopeRuntimeRunStatus.InProgress
-                }
-              />
+                enabled={history && deferHistoryContent}
+              >
+                {history ? (
+                  <HistoryMarkdown
+                    messageId={`${data.id}:${index}`}
+                    content={item.text}
+                  />
+                ) : (
+                  <AssistantMarkdown
+                    messageId={`${data.id}:${index}`}
+                    content={item.text}
+                    cursor={
+                      item.status === AgentScopeRuntimeRunStatus.InProgress
+                    }
+                    // Native text deltas omit content.status; the message owns
+                    // their lifecycle. Keep the legacy cursor separate.
+                    isStreaming={
+                      (item.status ?? data.status) ===
+                      AgentScopeRuntimeRunStatus.InProgress
+                    }
+                  />
+                )}
+              </DeferredHistoryContent>
             );
           case AgentScopeRuntimeContentType.REFUSAL:
             return (
@@ -183,7 +303,30 @@ function renderResponseMessage(item: IAgentScopeRuntimeMessage) {
     case AgentScopeRuntimeMessageType.MCP_APPROVAL_REQUEST:
       return <ResponseTool key={item.id} data={item} isApproval />;
     case AgentScopeRuntimeMessageType.REASONING:
-      return <ResponseReasoning key={item.id} data={item} />;
+      return (
+        <ResponseReasoning
+          key={item.id}
+          data={
+            item.content.length > 1
+              ? {
+                  ...item,
+                  content: [
+                    {
+                      type: AgentScopeRuntimeContentType.TEXT,
+                      text: item.content
+                        .filter(
+                          (part) =>
+                            part.type === AgentScopeRuntimeContentType.TEXT,
+                        )
+                        .map((part) => part.text)
+                        .join("\n\n"),
+                    },
+                  ],
+                }
+              : item
+          }
+        />
+      );
     case AgentScopeRuntimeMessageType.ERROR:
       return <ResponseError key={item.id} data={item} />;
     case AgentScopeRuntimeMessageType.HEARTBEAT:

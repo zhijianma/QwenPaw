@@ -277,6 +277,22 @@ class ChatMessagePage(ChatHistoryMetadata):
     messages: list[Message] = Field(default_factory=list)
 
 
+class ChatUserMessage(BaseModel):
+    """One lightweight user-message navigation entry."""
+
+    message_id: str
+    client_message_id: str | None = None
+    preview: str
+    created_at: str
+    anchor: str
+
+
+class ChatUserMessagePage(ChatHistoryMetadata):
+    """One stable page of user-message navigation entries."""
+
+    items: list[ChatUserMessage] = Field(default_factory=list)
+
+
 class BatchFailure(BaseModel):
     """A single failure entry in a batch operation."""
 

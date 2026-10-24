@@ -3577,6 +3577,9 @@
     "modelSelectTooltip": "Selecionar Modelo",
     "chatHistoryTooltip": "Chat history",
     "olderHistoryLoadFailed": "Falha ao carregar mensagens anteriores",
+    "messageNavigation": {
+      "title": "Navegação ({{count}})"
+    },
     "messageDisplay": {
       "stepsRunning": "Em execução… · {{count}} etapas",
       "stepsCanceled": "Cancelado · {{count}} etapas",

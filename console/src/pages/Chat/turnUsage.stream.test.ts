@@ -114,6 +114,27 @@ describe("wrapChatResponseUsageStream", () => {
     useTurnUsageStore.getState().invalidateTurn();
   });
 
+  it("keeps displayed usage without charging a context-only command", async () => {
+    useTurnUsageStore.getState().setSnapshot(snapshot);
+    const turn = useTurnUsageStore.getState().beginTurn("a", "s");
+    const { ref, updateMessage } = makeRef([assistantCard({})]);
+    const next = {
+      usage: null,
+      context_usage: { ...ctx, estimated_tokens: 200 },
+    };
+    await wrapChatResponseUsageStream(
+      sseResponse(
+        `data: ${JSON.stringify({ type: "turn_usage", ...next })}\n\n`,
+      ),
+      ref,
+      turn,
+    ).text();
+    expect(useTurnUsageStore.getState().snapshot).toEqual({ ...next, usage });
+    expect(JSON.stringify(updateMessage.mock.calls)).not.toContain(
+      '"total_tokens":42',
+    );
+  });
+
   it("publishes usage before EOF and accumulates cache across calls", async () => {
     useTurnUsageStore.getState().setSnapshot({
       usage: {

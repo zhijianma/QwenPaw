@@ -33,6 +33,8 @@ from .models import (
     ChatContextState,
     ChatHistoryMetadata,
     ChatMessagePage,
+    ChatUserMessage,
+    ChatUserMessagePage,
 )
 from .history_store import (
     ConversationHistoryError,
@@ -90,8 +92,9 @@ async def _read_history_page(
     chat: ChatSpec,
     *,
     before: str | None = None,
-    limit: int = 20,
+    limit: int = 5,
     max_bytes: int = 2 * 1024 * 1024,
+    max_content_blocks: int = 40,
 ) -> ConversationHistoryPage | None:
     """Read one history page without blocking the event loop."""
     store = _history_store(workspace)
@@ -106,10 +109,40 @@ async def _read_history_page(
             before=before,
             limit=limit,
             max_bytes=max_bytes,
+            max_content_blocks=max_content_blocks,
         )
     except ConversationHistoryError:
         logger.warning(
             "Failed to read conversation history for session %s",
+            chat.session_id,
+            exc_info=True,
+        )
+        return None
+
+
+async def _read_user_message_page(
+    workspace,
+    chat: ChatSpec,
+    *,
+    before: str | None = None,
+    limit: int = 200,
+):
+    """Read one user-message index page without blocking the event loop."""
+    store = _history_store(workspace)
+    if store is None:
+        return None
+    try:
+        return await asyncio.to_thread(
+            store.get_user_message_page,
+            session_id=chat.session_id,
+            user_id=chat.user_id,
+            channel=chat.channel,
+            before=before,
+            limit=limit,
+        )
+    except ConversationHistoryError:
+        logger.warning(
+            "Failed to read user-message index for session %s",
             chat.session_id,
             exc_info=True,
         )
@@ -1028,7 +1061,7 @@ async def get_chat_status(
 async def get_chat_messages(
     chat_id: str,
     before: Optional[str] = Query(None),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(5, ge=1, le=100),
     max_bytes: Annotated[
         int,
         Query(ge=1024, le=4 * 1024 * 1024),
@@ -1076,6 +1109,56 @@ async def get_chat_messages(
     return ChatMessagePage(
         messages=page.messages,
         **metadata.model_dump(),
+    )
+
+
+@router.get(
+    "/{chat_id}/user-messages",
+    response_model=ChatUserMessagePage,
+)
+async def get_chat_user_messages(
+    chat_id: str,
+    before: Optional[str] = Query(None),
+    limit: int = Query(200, ge=1, le=1000),
+    include_app_owned: bool = Query(True),
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+) -> ChatUserMessagePage:
+    """Return lightweight user-message entries for history navigation."""
+    chat = await mgr.get_chat(chat_id)
+    if chat is None or (not include_app_owned and _is_app_owned_chat(chat)):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Chat not found: {chat_id}",
+        )
+    try:
+        page = await _read_user_message_page(
+            workspace,
+            chat,
+            before=before,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid history cursor",
+        ) from exc
+    if page is None:
+        return ChatUserMessagePage()
+    return ChatUserMessagePage(
+        items=[
+            ChatUserMessage(
+                message_id=item.message_id,
+                client_message_id=item.client_message_id,
+                preview=item.preview,
+                created_at=item.created_at,
+                anchor=item.anchor,
+            )
+            for item in page.items
+        ],
+        has_more=page.has_more,
+        next_before=page.next_before,
+        snapshot=page.snapshot,
     )
 
 

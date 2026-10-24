@@ -1,4 +1,10 @@
-import { act, cleanup, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import ComposedProvider from "@agentscope-ai/chat/lib/AgentScopeRuntimeWebUI/core/ChatAnywhere/ComposedProvider";
@@ -6,7 +12,11 @@ import {
   AgentScopeRuntimeMessageType,
   AgentScopeRuntimeRunStatus,
 } from "@agentscope-ai/chat";
-import { HostRequestCard, HostResponseCard } from "./HostBubbles";
+import {
+  DeferredHistoryContent,
+  HostRequestCard,
+  HostResponseCard,
+} from "./HostBubbles";
 import * as assistantMarkdown from "./AssistantMarkdown";
 import { ChatScalar, ChatList } from "../../plugins/registry/slotKeys";
 import {
@@ -71,7 +81,11 @@ vi.mock(
 );
 vi.mock(
   "@agentscope-ai/chat/lib/AgentScopeRuntimeWebUI/core/AgentScopeRuntime/Response/Reasoning",
-  () => ({ default: () => <span>reasoning content</span> }),
+  () => ({
+    default: ({ data }: { data: { content: Array<{ text?: string }> } }) => (
+      <span>{data.content[0]?.text ?? "reasoning content"}</span>
+    ),
+  }),
 );
 vi.mock(
   "@agentscope-ai/chat/lib/AgentScopeRuntimeWebUI/core/AgentScopeRuntime/Response/Tool",
@@ -137,9 +151,47 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  vi.unstubAllGlobals();
 });
 
 describe("merged host bubbles behavior", () => {
+  it("defers historical content until it approaches the viewport", () => {
+    let notify: IntersectionObserverCallback | undefined;
+    const disconnect = vi.fn();
+    const observe = vi.fn();
+    class IntersectionObserverStub {
+      constructor(callback: IntersectionObserverCallback) {
+        notify = callback;
+      }
+
+      disconnect = disconnect;
+      observe = observe;
+      unobserve = vi.fn();
+      takeRecords = () => [];
+      root = null;
+      rootMargin = "300px 0px";
+      thresholds = [0];
+    }
+    vi.stubGlobal("IntersectionObserver", IntersectionObserverStub);
+
+    render(
+      <DeferredHistoryContent enabled>
+        <span>historical markdown</span>
+      </DeferredHistoryContent>,
+    );
+
+    expect(screen.queryByText("historical markdown")).not.toBeInTheDocument();
+    expect(observe).toHaveBeenCalledTimes(1);
+    act(() => {
+      notify?.(
+        [{ isIntersecting: true } as IntersectionObserverEntry],
+        {} as IntersectionObserver,
+      );
+    });
+    expect(screen.getByText("historical markdown")).toBeInTheDocument();
+    expect(disconnect).toHaveBeenCalled();
+  });
+
   it.each([
     [undefined, AgentScopeRuntimeRunStatus.InProgress, true],
     [null, AgentScopeRuntimeRunStatus.InProgress, true],
@@ -196,6 +248,64 @@ describe("merged host bubbles behavior", () => {
     },
   );
 
+  it("reveals persisted oversized Markdown in bounded chunks", async () => {
+    vi.stubGlobal("IntersectionObserver", undefined);
+    const content = Array.from(
+      { length: 3000 },
+      (_, index) => `## Finding ${index}\n\n${"x".repeat(32)}\n\n`,
+    ).join("");
+    const markdown = vi
+      .spyOn(assistantMarkdown, "AssistantMarkdown")
+      .mockImplementation(({ content: chunk }) => (
+        <span data-testid="history-markdown-chunk">{chunk}</span>
+      ));
+    try {
+      setAssistantMessageDisplayPreference("expanded");
+      render(
+        provider(
+          <HostResponseCard
+            id="history-message"
+            data={{
+              id: "history-response",
+              status: AgentScopeRuntimeRunStatus.Completed,
+              output: [
+                {
+                  id: "large-history-message",
+                  type: AgentScopeRuntimeMessageType.MESSAGE,
+                  role: "assistant",
+                  status: AgentScopeRuntimeRunStatus.Completed,
+                  metadata: { qwenpaw_history: true },
+                  content: [{ type: "text", text: content }],
+                },
+              ],
+            }}
+          />,
+        ),
+      );
+
+      expect(screen.getAllByTestId("history-markdown-chunk")).toHaveLength(1);
+      expect(
+        screen.getByTestId("history-markdown-chunk").textContent?.length,
+      ).toBeLessThanOrEqual(32 * 1024);
+
+      while (screen.queryByRole("button", { name: "common.loadMore" })) {
+        await act(async () => {
+          fireEvent.click(
+            screen.getByRole("button", { name: "common.loadMore" }),
+          );
+        });
+      }
+      expect(
+        screen
+          .getAllByTestId("history-markdown-chunk")
+          .map((node) => node.textContent)
+          .join(""),
+      ).toBe(content);
+    } finally {
+      markdown.mockRestore();
+    }
+  });
+
   it("delegates response actions without injecting regenerate", async () => {
     setAssistantMessageDisplayPreference("expanded");
     const output = [
@@ -244,6 +354,36 @@ describe("merged host bubbles behavior", () => {
     expect(
       screen.queryByRole("button", { name: "chat.regenerate" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("renders every text block in a multi-block reasoning message", () => {
+    setAssistantMessageDisplayPreference("expanded");
+    render(
+      provider(
+        <HostResponseCard
+          id="multi-reasoning"
+          data={{
+            id: "response",
+            status: AgentScopeRuntimeRunStatus.Completed,
+            output: [
+              {
+                id: "reasoning",
+                role: "assistant",
+                type: AgentScopeRuntimeMessageType.REASONING,
+                status: AgentScopeRuntimeRunStatus.Completed,
+                content: [
+                  { type: "text", text: "reasoning first" },
+                  { type: "text", text: "reasoning last" },
+                ],
+              },
+            ],
+          }}
+        />,
+      ),
+    );
+    expect(
+      screen.getByText("reasoning first reasoning last"),
+    ).toHaveTextContent("reasoning first reasoning last");
   });
 
   it("retains the original request card's content and ordered prepend/append fallback", () => {

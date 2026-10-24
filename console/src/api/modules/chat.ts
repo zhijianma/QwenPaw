@@ -5,6 +5,7 @@ import type {
   ChatSpec,
   ChatHistory,
   ChatMessagePage,
+  ChatUserMessagePage,
   ChatResolution,
   ChatDeleteResponse,
   ChatUpdateRequest,
@@ -63,7 +64,7 @@ export const chatApi = {
     if (!filename) return "";
     if (filename.startsWith("http://") || filename.startsWith("https://"))
       return filename;
-    let cleaned = filename.replace(/^\/+/, "");
+    const cleaned = filename.replace(/^\/+/, "");
     const path = `${FILES_PREVIEW}/${cleaned}`;
     const url = getApiUrl(path);
 
@@ -161,6 +162,35 @@ export const chatApi = {
     const query = searchParams.toString();
     return request<ChatMessagePage>(
       `/chats/${encodeURIComponent(chatId)}/messages${
+        query ? `?${query}` : ""
+      }`,
+      { signal: options?.signal },
+    );
+  },
+
+  getChatUserMessages: (
+    chatId: string,
+    options?: {
+      before?: string;
+      limit?: number;
+      signal?: AbortSignal;
+      include_app_owned?: boolean;
+    },
+  ) => {
+    const searchParams = new URLSearchParams();
+    if (options?.before) searchParams.append("before", options.before);
+    if (options?.limit !== undefined) {
+      searchParams.append("limit", String(options.limit));
+    }
+    if (options?.include_app_owned !== undefined) {
+      searchParams.append(
+        "include_app_owned",
+        String(options.include_app_owned),
+      );
+    }
+    const query = searchParams.toString();
+    return request<ChatUserMessagePage>(
+      `/chats/${encodeURIComponent(chatId)}/user-messages${
         query ? `?${query}` : ""
       }`,
       { signal: options?.signal },

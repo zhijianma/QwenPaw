@@ -673,6 +673,7 @@ class TestConsoleStreaming:
                 ] = {
                     f"total_tokens": count * 100,
                     f"last_prompt_tokens": count * 40,
+                    f"context_tokens": count * 10,
                     f"context_size": 1000,
                 }
                 yield _FakeDumpEvent(
@@ -697,7 +698,7 @@ class TestConsoleStreaming:
                 assert event[f"type"] == f"turn_usage"
                 assert event[f"usage"][f"total_tokens"] == count * 100
                 assert event[f"context_usage"][f"estimated_tokens"] == (
-                    count * 40
+                    count * 10
                 )
                 assert (
                     TokenRecordingModelWrapper.peek_usage_for_session(

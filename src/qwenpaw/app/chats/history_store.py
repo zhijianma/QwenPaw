@@ -12,7 +12,7 @@ from typing import Protocol
 from ...schemas import Message
 from .transcript import TranscriptCursor
 
-_CURSOR = struct.Struct(">QQQ")
+_CURSOR = struct.Struct(">QQQQQ")
 _SNAPSHOT = struct.Struct(">Q")
 
 
@@ -21,6 +21,27 @@ class ConversationHistoryPage:
     """One stable, byte-bounded page in chronological display order."""
 
     messages: list[Message]
+    next_before: str | None
+    has_more: bool
+    snapshot: str
+
+
+@dataclass(frozen=True)
+class ConversationUserMessage:
+    """One lightweight user-message navigation entry."""
+
+    message_id: str
+    preview: str
+    created_at: str
+    anchor: str
+    client_message_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ConversationUserMessagePage:
+    """One stable page of user-message navigation entries."""
+
+    items: list[ConversationUserMessage]
     next_before: str | None
     has_more: bool
     snapshot: str
@@ -36,10 +57,22 @@ class ConversationHistoryStore(Protocol):
         user_id: str,
         channel: str,
         before: str | None = None,
-        limit: int = 20,
+        limit: int = 5,
         max_bytes: int = 2 * 1024 * 1024,
+        max_content_blocks: int = 40,
     ) -> ConversationHistoryPage | None:
         """Read one stable page using an opaque continuation cursor."""
+
+    def get_user_message_page(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        channel: str,
+        before: str | None = None,
+        limit: int = 200,
+    ) -> ConversationUserMessagePage | None:
+        """Read one stable page of lightweight navigation entries."""
 
 
 class ConversationHistoryError(RuntimeError):
@@ -68,7 +101,15 @@ def _encode_cursor(value: TranscriptCursor | None) -> str | None:
     snapshot = value.snapshot_turn_seq
     if snapshot is None:
         raise ValueError("history cursor is missing its snapshot")
-    return _encode(_CURSOR.pack(snapshot, value.turn_seq, value.ordinal))
+    return _encode(
+        _CURSOR.pack(
+            snapshot,
+            value.turn_seq,
+            value.ordinal,
+            value.content_before,
+            value.text_before,
+        ),
+    )
 
 
 def _decode_cursor(value: str | None) -> TranscriptCursor | None:
@@ -77,12 +118,19 @@ def _decode_cursor(value: str | None) -> TranscriptCursor | None:
     raw = _decode(value)
     if len(raw) != _CURSOR.size:
         raise ValueError("invalid history cursor")
-    snapshot, turn_seq, ordinal = _CURSOR.unpack(raw)
-    if snapshot < 1 or turn_seq < 1 or turn_seq > snapshot:
+    snapshot, turn_seq, ordinal, content_before, text_before = _CURSOR.unpack(
+        raw,
+    )
+    # A user-message anchor points at the exclusive start of the next turn.
+    # The newest visible turn therefore needs one virtual boundary immediately
+    # after the snapshot watermark.
+    if snapshot < 1 or turn_seq < 1 or turn_seq > snapshot + 1:
         raise ValueError("invalid history cursor")
     return TranscriptCursor(
         turn_seq=turn_seq,
         ordinal=ordinal,
+        content_before=content_before,
+        text_before=text_before,
         snapshot_turn_seq=snapshot,
     )
 
@@ -100,8 +148,9 @@ class TranscriptHistoryStore:
         user_id: str,
         channel: str,
         before: str | None = None,
-        limit: int = 20,
+        limit: int = 5,
         max_bytes: int = 2 * 1024 * 1024,
+        max_content_blocks: int = 40,
     ) -> ConversationHistoryPage | None:
         cursor = _decode_cursor(before)
         try:
@@ -112,6 +161,7 @@ class TranscriptHistoryStore:
                 before=cursor,
                 limit=limit,
                 max_bytes=max_bytes,
+                max_content_blocks=max_content_blocks,
             )
         except (OSError, sqlite3.Error, TypeError) as exc:
             raise ConversationHistoryError("history read failed") from exc
@@ -124,9 +174,49 @@ class TranscriptHistoryStore:
             snapshot=_encode(_SNAPSHOT.pack(page.snapshot_turn_seq)),
         )
 
+    def get_user_message_page(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        channel: str,
+        before: str | None = None,
+        limit: int = 200,
+    ) -> ConversationUserMessagePage | None:
+        cursor = _decode_cursor(before)
+        try:
+            page = self._transcript_store.get_user_message_page(
+                session_id=session_id,
+                user_id=user_id,
+                channel=channel,
+                before=cursor,
+                limit=limit,
+            )
+        except (OSError, sqlite3.Error, TypeError) as exc:
+            raise ConversationHistoryError("history read failed") from exc
+        if page is None:
+            return None
+        return ConversationUserMessagePage(
+            items=[
+                ConversationUserMessage(
+                    message_id=item.message_id,
+                    client_message_id=item.client_message_id,
+                    preview=item.preview,
+                    created_at=item.created_at,
+                    anchor=_encode_cursor(item.anchor) or "",
+                )
+                for item in page.items
+            ],
+            next_before=_encode_cursor(page.next_before),
+            has_more=page.has_more,
+            snapshot=_encode(_SNAPSHOT.pack(page.snapshot_turn_seq)),
+        )
+
 
 __all__ = [
     "ConversationHistoryPage",
+    "ConversationUserMessage",
+    "ConversationUserMessagePage",
     "ConversationHistoryError",
     "ConversationHistoryStore",
     "TranscriptHistoryStore",

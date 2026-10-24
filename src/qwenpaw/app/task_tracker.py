@@ -24,6 +24,7 @@ from typing import (
 )
 
 from .replay_store import RECONNECT_REQUIRED_SSE, ReplayStore
+from .replay_snapshot import materialize_replay
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +190,7 @@ class TaskTracker:
         def expire() -> None:
             tracker = tracker_ref()
             if tracker is not None:
+                # pylint: disable-next=protected-access
                 _create_task(tracker._expire_completed(run_key, state))
 
         asyncio.get_running_loop().call_later(
@@ -337,6 +339,38 @@ class TaskTracker:
                 return self._completed_queue(state)
             return self._attach_queue(state, include_replay_end=True)
 
+    async def attach_materialized(
+        self,
+        run_key: str,
+    ) -> tuple[list[str], asyncio.Queue] | None:
+        """Atomically subscribe, then materialize the fixed replay prefix.
+
+        Future events enter a bounded queue while the captured prefix is
+        folded off the event loop. The caller must publish the returned
+        prefix and ``REPLAY_END_SSE`` before consuming that queue.
+        """
+        async with self._lock:
+            state = self._runs.get(run_key)
+            if state is None:
+                return None
+            if state.replay.requires_resync:
+                return [], self._reconnect_queue()
+            replay = list(state.replay.replay())
+            queue: asyncio.Queue = asyncio.Queue(
+                maxsize=self._subscriber_queue_max,
+            )
+            if self._is_running(state):
+                state.queues.append(queue)
+            else:
+                queue.put_nowait(_SENTINEL)
+
+        try:
+            snapshot = await asyncio.to_thread(materialize_replay, replay)
+        except BaseException:
+            await self.detach_subscriber(run_key, queue)
+            raise
+        return snapshot, queue
+
     async def detach_subscriber(
         self,
         run_key: str,
@@ -441,6 +475,7 @@ class TaskTracker:
                             return
                         async with tracker.lock:
                             run.replay.append(sse)
+                            # pylint: disable-next=protected-access
                             tracker._broadcast(run, sse)
                 except asyncio.CancelledError:
                     logger.debug("run cancelled run_key=%s", run_key)
@@ -454,6 +489,7 @@ class TaskTracker:
                     if tracker is not None:
                         async with tracker.lock:
                             run.replay.append(err_sse)
+                            # pylint: disable-next=protected-access
                             tracker._broadcast(run, err_sse)
                 finally:
                     finish_time = datetime.now(timezone.utc)

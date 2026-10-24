@@ -26,7 +26,10 @@ from typing import (
 from ...config.timezone import normalize_tz
 from ...config.utils import load_config
 from ...constant import WORKING_DIR
-from ...token_usage.turn_usage import resolve_turn_usage
+from ...token_usage.turn_usage import (
+    add_session_cache_usage,
+    resolve_turn_usage,
+)
 from ...utils.io_utils import run_async_to_completion
 
 from .service_manager import ServiceDescriptor, ServiceManager
@@ -557,13 +560,30 @@ class Workspace:  # pylint: disable=too-many-public-methods
         session_id = str(getattr(request, "session_id", "") or "")
         user_id = str(getattr(request, "user_id", "") or "")
         channel = str(getattr(request, "channel", "") or "console")
+        is_command = bool(request_context.get(f"conversation_command"))
         turn, context_usage, _agent_state = await resolve_turn_usage(
             session_id=session_id,
             agent_id=self.agent_id,
             session=self.session,
             user_id=user_id,
             channel=channel,
+            estimate_missing_usage=not is_command,
         )
+        session = self.session
+        previous_usage = None
+        if session is not None and (turn is not None or is_command):
+            _, previous = await session.get_current_usage(
+                session_id=session_id,
+                user_id=user_id,
+                channel=channel,
+            )
+            previous_usage = (previous or {}).get(f"usage")
+            if isinstance(previous_usage, dict) and turn is not None:
+                turn = add_session_cache_usage(
+                    turn,
+                    None,
+                    previous_usage=previous_usage,
+                )
         request_context[_TURN_USAGE_SNAPSHOT_CONTEXT_KEY] = {
             "resolved": True,
             "usage": turn,
@@ -577,7 +597,9 @@ class Workspace:  # pylint: disable=too-many-public-methods
             try:
                 await session.set_current_usage(
                     session_id=session_id,
-                    usage=turn,
+                    usage=(
+                        previous_usage if is_command and turn is None else turn
+                    ),
                     context_usage=context_usage,
                 )
             except Exception:

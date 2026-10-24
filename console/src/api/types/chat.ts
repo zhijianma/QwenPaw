@@ -69,6 +69,18 @@ export interface ChatMessagePage extends ChatHistoryMetadata {
   messages: Message[];
 }
 
+export interface ChatUserMessage {
+  client_message_id?: string | null;
+  message_id: string;
+  preview: string;
+  created_at: string;
+  anchor: string;
+}
+
+export interface ChatUserMessagePage extends ChatHistoryMetadata {
+  items: ChatUserMessage[];
+}
+
 export interface ChatResolution {
   agent_id: string;
   chat: ChatSpec;

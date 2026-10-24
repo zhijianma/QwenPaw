@@ -18,6 +18,7 @@ from qwenpaw.app.chats.api import (
     delete_chat,
     get_chat,
     get_chat_messages,
+    get_chat_user_messages,
 )
 from qwenpaw.app.chats.models import ChatSpec
 from qwenpaw.app.chats.session import DatabaseSession, SafeJSONSession
@@ -100,6 +101,84 @@ async def test_get_chat_prefers_transcript_page(tmp_path: Path) -> None:
     assert history.history is not None
     assert history.history.has_more is False
     session.get_session_state_dict.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_chat_returns_at_most_five_turns(tmp_path: Path) -> None:
+    store = TranscriptStore(tmp_path / "session.db")
+    for number in range(1, 7):
+        _append_turn(store, number, f"turn {number}")
+
+    history = await get_chat(
+        chat_id="chat-1",
+        background_tasks=BackgroundTasks(),
+        include_app_owned=True,
+        mgr=SimpleNamespace(get_chat=AsyncMock(return_value=_chat())),
+        session=SimpleNamespace(get_session_state_dict=AsyncMock()),
+        workspace=_workspace(store),
+    )
+
+    assert [item.content[0].text for item in history.messages] == [
+        "turn 2",
+        "turn 3",
+        "turn 4",
+        "turn 5",
+        "turn 6",
+    ]
+    assert history.history is not None
+    assert history.history.has_more is True
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_user_message_index_anchor_locates_unloaded_turn(
+    tmp_path: Path,
+) -> None:
+    store = TranscriptStore(tmp_path / "session.db")
+    for number in range(1, 8):
+        _append_turn(store, number, f"turn {number}")
+    manager = SimpleNamespace(get_chat=AsyncMock(return_value=_chat()))
+    workspace = _workspace(store)
+
+    index = await get_chat_user_messages(
+        chat_id="chat-1",
+        before=None,
+        limit=200,
+        include_app_owned=True,
+        mgr=manager,
+        workspace=workspace,
+    )
+    target = next(
+        item for item in index.items if item.message_id == "message-2"
+    )
+    page = await get_chat_messages(
+        chat_id="chat-1",
+        before=target.anchor,
+        limit=5,
+        max_bytes=2 * 1024 * 1024,
+        include_app_owned=True,
+        mgr=manager,
+        workspace=workspace,
+    )
+
+    assert [message.id for message in page.messages] == [
+        "message-1",
+        "message-2",
+    ]
+
+    newest = index.items[-1]
+    newest_page = await get_chat_messages(
+        chat_id="chat-1",
+        before=newest.anchor,
+        limit=5,
+        max_bytes=2 * 1024 * 1024,
+        include_app_owned=True,
+        mgr=manager,
+        workspace=workspace,
+    )
+
+    assert [message.id for message in newest_page.messages][-1] == "message-7"
+    store.close()
 
 
 @pytest.mark.asyncio
@@ -235,7 +314,7 @@ async def test_message_pages_continue_within_oversized_turn(
         chat_id="chat-1",
         before=None,
         limit=20,
-        max_bytes=100,
+        max_bytes=3_500,
         include_app_owned=True,
         mgr=manager,
         workspace=workspace,
@@ -244,7 +323,7 @@ async def test_message_pages_continue_within_oversized_turn(
         chat_id="chat-1",
         before=newest.next_before,
         limit=20,
-        max_bytes=100,
+        max_bytes=3_500,
         include_app_owned=True,
         mgr=manager,
         workspace=workspace,
@@ -253,7 +332,7 @@ async def test_message_pages_continue_within_oversized_turn(
         chat_id="chat-1",
         before=middle.next_before,
         limit=20,
-        max_bytes=100,
+        max_bytes=3_500,
         include_app_owned=True,
         mgr=manager,
         workspace=workspace,
@@ -268,6 +347,46 @@ async def test_message_pages_continue_within_oversized_turn(
     assert [item.id for item in older.messages] == ["message-1"]
     assert older.snapshot == newest.snapshot
     assert older.has_more is False
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_message_pages_restore_one_oversized_text_block(
+    tmp_path: Path,
+) -> None:
+    store = TranscriptStore(tmp_path / "session.db")
+    text = "历史内容" * 3_000
+    _append_turn(store, 1, text)
+    manager = SimpleNamespace(get_chat=AsyncMock(return_value=_chat()))
+    workspace = _workspace(store)
+
+    fragments = []
+    before = None
+    snapshot = None
+    while True:
+        page = await get_chat_messages(
+            chat_id="chat-1",
+            before=before,
+            limit=20,
+            max_bytes=4_096,
+            include_app_owned=True,
+            mgr=manager,
+            workspace=workspace,
+        )
+        assert len(page.messages) == 1
+        assert len(page.model_dump_json().encode("utf-8")) <= 4_096
+        if snapshot is None:
+            snapshot = page.snapshot
+        assert page.snapshot == snapshot
+        fragments.append(page.messages[0].content[0].text)
+        if not page.has_more:
+            break
+        assert page.next_before
+        assert ":" not in page.next_before
+        before = page.next_before
+
+    assert len(fragments) > 1
+    assert "".join(reversed(fragments)) == text
     store.close()
 
 

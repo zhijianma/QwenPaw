@@ -204,6 +204,7 @@ vi.mock("@/contexts/ThemeContext", () => ({
 
 vi.mock("./sessionApi", () => ({
   default: {
+    loadUserMessageIndex: vi.fn(async () => []),
     onSessionIdResolved: null,
     onSessionRemoved: null,
     onSessionSelected: null,
@@ -235,6 +236,9 @@ vi.mock("./sessionApi", () => ({
       messages: [],
       noMore: true,
     })),
+    loadNewerHistory: vi.fn(() => null),
+    showLatestHistory: vi.fn(() => null),
+    syncVisibleHistory: vi.fn(),
     setVisibleSession: vi.fn(),
     getSession: vi.fn(async (id: string) => ({ id, messages: [] })),
     lastActiveChatId: "last-chat-1",
@@ -1382,7 +1386,7 @@ describe("ChatPage coverage", () => {
         signal: undefined,
       });
       expect(fetch).toHaveBeenCalledWith(
-        expect.stringContaining("/console/chat"),
+        expect.stringContaining("/console/chat?materialized_replay=1"),
         expect.objectContaining({
           method: "POST",
         }),

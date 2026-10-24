@@ -274,6 +274,22 @@ describe("chatApi CRUD", () => {
     );
   });
 
+  it("getChatUserMessages encodes cursor, limit, and signal", async () => {
+    const controller = new AbortController();
+
+    await chatApi.getChatUserMessages("chat/1", {
+      before: "cursor",
+      limit: 500,
+      signal: controller.signal,
+      include_app_owned: false,
+    });
+
+    expect(request).toHaveBeenCalledWith(
+      "/chats/chat%2F1/user-messages?before=cursor&limit=500&include_app_owned=false",
+      expect.objectContaining({ signal: controller.signal }),
+    );
+  });
+
   it("updateChat sends PUT to the correct path", async () => {
     await chatApi.updateChat("chat-1", { name: "New Name" });
     expect(request).toHaveBeenCalledWith(

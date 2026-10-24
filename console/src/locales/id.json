@@ -1144,6 +1144,9 @@
     "modelSelectTooltip": "Pilih model",
     "chatHistoryTooltip": "Riwayat chat",
     "olderHistoryLoadFailed": "Gagal memuat pesan sebelumnya",
+    "messageNavigation": {
+      "title": "Navigasi ({{count}})"
+    },
     "messageDisplay": {
       "stepsRunning": "Berjalan… · {{count}} langkah",
       "stepsCanceled": "Dibatalkan · {{count}} langkah",

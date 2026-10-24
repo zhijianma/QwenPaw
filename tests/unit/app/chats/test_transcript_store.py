@@ -8,6 +8,7 @@ import pytest
 
 from qwenpaw.app.chats.transcript import TranscriptCursor, TranscriptStore
 from qwenpaw.schemas import (
+    DataContent,
     FileContent,
     Message,
     MessageType,
@@ -142,6 +143,130 @@ def test_runtime_snapshot_reset_advances_context_generation(tmp_path):
             "context_usage_ratio": 0,
         },
     }
+    store.close()
+
+
+def test_runtime_reset_keeps_durable_transcript_history(tmp_path):
+    store = TranscriptStore(tmp_path / "session.db")
+    _start(store, "turn-1")
+    store.upsert_message(
+        session_id="session-1",
+        turn_id="turn-1",
+        message=_message("message-1", "visible before compact"),
+        ordinal=0,
+    )
+    store.finish_turn(
+        session_id="session-1",
+        turn_id="turn-1",
+        status="completed",
+    )
+    store.write_runtime_state(
+        session_id="session-1",
+        user_id="user-1",
+        channel="console",
+        state={"agent": {"state": {"context": ["old"]}}},
+    )
+
+    generation, _ = store.write_runtime_state(
+        session_id="session-1",
+        user_id="user-1",
+        channel="console",
+        state={"agent": {"state": {"context": ["summary"]}}},
+        reset_context=True,
+    )
+    page = store.get_page(
+        session_id="session-1",
+        user_id="user-1",
+        channel="console",
+    )
+
+    assert generation == 1
+    assert page is not None
+    assert [message.id for message in page.messages] == ["message-1"]
+    assert page.messages[0].content[0].text == "visible before compact"
+    store.close()
+
+
+def test_user_message_index_anchor_reads_target_turn(tmp_path):
+    store = TranscriptStore(tmp_path / "session.db")
+    for number in range(1, 8):
+        turn_id = f"turn-{number}"
+        _start(store, turn_id)
+        store.upsert_message(
+            session_id="session-1",
+            turn_id=turn_id,
+            message=_message(
+                f"message-{number}",
+                f"  user   message {number}  ",
+            ).model_copy(
+                update={
+                    "metadata": {
+                        "qwenpaw_client_message_id": f"client-{number}",
+                    },
+                },
+            ),
+            ordinal=0,
+        )
+        store.upsert_message(
+            session_id="session-1",
+            turn_id=turn_id,
+            message=_message(
+                f"assistant-{number}",
+                f"assistant response {number}",
+                role="assistant",
+            ),
+            ordinal=1,
+        )
+        store.finish_turn(
+            session_id="session-1",
+            turn_id=turn_id,
+            status="completed",
+        )
+
+    index = store.get_user_message_page(
+        session_id="session-1",
+        user_id="user-1",
+        channel="console",
+    )
+
+    assert index is not None
+    assert [item.message_id for item in index.items] == [
+        f"message-{number}" for number in range(1, 8)
+    ]
+    assert index.items[2].preview == "user message 3"
+    assert index.items[2].client_message_id == "client-3"
+
+    page = store.get_page(
+        session_id="session-1",
+        user_id="user-1",
+        channel="console",
+        before=index.items[2].anchor,
+        limit=5,
+    )
+
+    assert page is not None
+    assert [message.id for message in page.messages] == [
+        "message-1",
+        "assistant-1",
+        "message-2",
+        "assistant-2",
+        "message-3",
+        "assistant-3",
+    ]
+
+    newest_page = store.get_page(
+        session_id="session-1",
+        user_id="user-1",
+        channel="console",
+        before=index.items[-1].anchor,
+        limit=5,
+    )
+
+    assert newest_page is not None
+    assert [message.id for message in newest_page.messages][-2:] == [
+        "message-7",
+        "assistant-7",
+    ]
     store.close()
 
 
@@ -498,7 +623,7 @@ def test_page_byte_limit_splits_one_oversized_turn(tmp_path):
         user_id="user-1",
         channel="console",
         limit=50,
-        max_bytes=100,
+        max_bytes=3_500,
     )
 
     assert page is not None
@@ -512,7 +637,7 @@ def test_page_byte_limit_splits_one_oversized_turn(tmp_path):
         channel="console",
         before=page.next_before,
         limit=50,
-        max_bytes=100,
+        max_bytes=3_500,
     )
     assert middle is not None
     assert [message.id for message in middle.messages] == ["message-0"]
@@ -525,11 +650,242 @@ def test_page_byte_limit_splits_one_oversized_turn(tmp_path):
         channel="console",
         before=middle.next_before,
         limit=50,
-        max_bytes=100,
+        max_bytes=3_500,
     )
     assert older is not None
     assert [message.id for message in older.messages] == ["old-user"]
     assert older.has_more is False
+    store.close()
+
+
+def test_page_byte_limit_splits_one_message_by_content_block(tmp_path):
+    store = TranscriptStore(tmp_path / "session.db")
+    _start(store, "turn-1")
+    store.upsert_message(
+        session_id="session-1",
+        turn_id="turn-1",
+        message=Message(
+            id="large-user",
+            role="user",
+            content=[
+                TextContent(text=f"{label}:" + "x" * 1_000)
+                for label in ("first", "second", "third")
+            ],
+        ).completed(),
+        ordinal=0,
+    )
+    store.finish_turn(
+        session_id="session-1",
+        turn_id="turn-1",
+        status="completed",
+    )
+
+    pages = []
+    before = None
+    max_bytes = 2_500
+    while True:
+        page = store.get_page(
+            session_id="session-1",
+            user_id="user-1",
+            channel="console",
+            before=before,
+            limit=20,
+            max_bytes=max_bytes,
+        )
+        assert page is not None
+        message_bytes = sum(
+            len(message.model_dump_json().encode("utf-8"))
+            for message in page.messages
+        )
+        assert message_bytes + 1_024 <= max_bytes
+        pages.append(page)
+        if not page.has_more:
+            break
+        before = page.next_before
+
+    assert len(pages) == 3
+    assert [page.messages[0].content[0].text[:5] for page in pages] == [
+        "third",
+        "secon",
+        "first",
+    ]
+    assert pages[0].next_before == TranscriptCursor(
+        turn_seq=1,
+        ordinal=0,
+        content_before=2,
+    )
+    assert pages[1].next_before == TranscriptCursor(
+        turn_seq=1,
+        ordinal=0,
+        content_before=1,
+    )
+    assert pages[2].has_more is False
+    store.close()
+
+
+def test_page_byte_limit_splits_one_oversized_text_block(tmp_path):
+    store = TranscriptStore(tmp_path / "session.db")
+    text = "历史内容" * 3_000
+    _start(store, "turn-1")
+    store.upsert_message(
+        session_id="session-1",
+        turn_id="turn-1",
+        message=Message(
+            id="large-text",
+            role="assistant",
+            content=[TextContent(text=text)],
+        ).completed(),
+        ordinal=0,
+    )
+    store.finish_turn(
+        session_id="session-1",
+        turn_id="turn-1",
+        status="completed",
+    )
+
+    pages = []
+    before = None
+    max_bytes = 4_096
+    while True:
+        page = store.get_page(
+            session_id="session-1",
+            user_id="user-1",
+            channel="console",
+            before=before,
+            max_bytes=max_bytes,
+        )
+        assert page is not None
+        assert len(page.messages) == 1
+        message_bytes = len(
+            page.messages[0].model_dump_json().encode("utf-8"),
+        )
+        assert message_bytes + 1_024 <= max_bytes
+        pages.append(page)
+        if not page.has_more:
+            break
+        before = page.next_before
+
+    assert len(pages) > 1
+    restored = "".join(
+        page.messages[0].content[0].text for page in reversed(pages)
+    )
+    assert restored == text
+    assert pages[-1].has_more is False
+    store.close()
+
+
+def test_page_byte_limit_splits_one_oversized_tool_result(tmp_path):
+    store = TranscriptStore(tmp_path / "session.db")
+    output = "tool-result-工具输出" * 1_000
+    _start(store, "turn-1")
+    store.upsert_message(
+        session_id="session-1",
+        turn_id="turn-1",
+        message=Message(
+            id="large-tool-result",
+            type=MessageType.PLUGIN_CALL_OUTPUT,
+            role="tool",
+            content=[
+                DataContent(
+                    data={
+                        "call_id": "call-1",
+                        "name": "large_tool",
+                        "output": output,
+                    },
+                ),
+            ],
+        ).completed(),
+        ordinal=0,
+    )
+    store.finish_turn(
+        session_id="session-1",
+        turn_id="turn-1",
+        status="completed",
+    )
+
+    serialized_fragments = []
+    before = None
+    max_bytes = 4_096
+    while True:
+        page = store.get_page(
+            session_id="session-1",
+            user_id="user-1",
+            channel="console",
+            before=before,
+            max_bytes=max_bytes,
+        )
+        assert page is not None
+        assert len(page.messages) == 1
+        assert page.messages[0].content == []
+        message_bytes = len(
+            page.messages[0].model_dump_json().encode("utf-8"),
+        )
+        assert message_bytes + 1_024 <= max_bytes
+        fragment = page.messages[0].metadata["qwenpaw_history_fragment"]
+        serialized_fragments.append(fragment["serialized_fragment"])
+        if not page.has_more:
+            break
+        before = page.next_before
+
+    restored = "".join(reversed(serialized_fragments))
+    content = DataContent.model_validate_json(restored)
+    assert content.data["output"] == output
+    store.close()
+
+
+def test_default_page_block_limit_splits_one_high_fanout_message(tmp_path):
+    store = TranscriptStore(tmp_path / "session.db")
+    _start(store, "turn-1")
+    store.upsert_message(
+        session_id="session-1",
+        turn_id="turn-1",
+        message=Message(
+            id="high-fanout",
+            role="assistant",
+            content=[
+                TextContent(text=f"block-{index:03d}") for index in range(250)
+            ],
+        ).completed(),
+        ordinal=0,
+    )
+    store.finish_turn(
+        session_id="session-1",
+        turn_id="turn-1",
+        status="completed",
+    )
+
+    pages = []
+    before = None
+    while True:
+        page = store.get_page(
+            session_id="session-1",
+            user_id="user-1",
+            channel="console",
+            before=before,
+        )
+        assert page is not None
+        assert sum(len(message.content) for message in page.messages) <= 40
+        pages.append(page)
+        if not page.has_more:
+            break
+        before = page.next_before
+
+    assert [len(page.messages[0].content) for page in pages] == [
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        10,
+    ]
+    restored = [
+        content.text
+        for page in reversed(pages)
+        for content in page.messages[0].content
+    ]
+    assert restored == [f"block-{index:03d}" for index in range(250)]
+    assert pages[-1].has_more is False
     store.close()
 
 

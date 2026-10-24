@@ -17,6 +17,7 @@ from .transcript import (
     TranscriptCursor,
     TranscriptPage,
     TranscriptStore,
+    TranscriptUserMessagePage,
 )
 
 logger = logging.getLogger(__name__)
@@ -456,6 +457,7 @@ class TranscriptCatalog:
         before: TranscriptCursor | None = None,
         limit: int = 20,
         max_bytes: int = 2 * 1024 * 1024,
+        max_content_blocks: int = 40,
     ) -> TranscriptPage | None:
         """Read one page without holding a workspace-wide message lock."""
         with self._lease(
@@ -473,6 +475,33 @@ class TranscriptCatalog:
                 before=before,
                 limit=limit,
                 max_bytes=max_bytes,
+                max_content_blocks=max_content_blocks,
+            )
+
+    def get_user_message_page(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        channel: str,
+        before: TranscriptCursor | None = None,
+        limit: int = 200,
+    ) -> TranscriptUserMessagePage | None:
+        """Read one lightweight user-message navigation page."""
+        with self._lease(
+            session_id=session_id,
+            user_id=user_id,
+            channel=channel,
+            create=False,
+        ) as handle:
+            if handle is None:
+                return None
+            return handle.store.get_user_message_page(
+                session_id=session_id,
+                user_id=user_id,
+                channel=channel,
+                before=before,
+                limit=limit,
             )
 
     def clone_session(

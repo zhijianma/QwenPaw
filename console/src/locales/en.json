@@ -4115,6 +4115,9 @@
     "newChat": "New chat",
     "chatHistoryTooltip": "Chat history",
     "olderHistoryLoadFailed": "Failed to load older messages",
+    "messageNavigation": {
+      "title": "Navigation ({{count}})"
+    },
     "messageDisplay": {
       "stepsRunning": "Running… · {{count}} steps",
       "stepsCanceled": "Canceled · {{count}} steps",

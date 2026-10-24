@@ -1,14 +1,38 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   captureMessageScrollAnchor,
+  getMessageScroller,
+  getUnscrollableHistoryTarget,
+  getUnscrollableNewerHistoryTarget,
   getNextReverseScrollTop,
   isOldestLoadedMessageVisible,
+  needsHistoryFill,
   restoreMessageScrollAnchor,
   scrollReverseMessageList,
 } from "./messageScroll";
 
 afterEach(() => {
   document.body.innerHTML = "";
+});
+
+describe("history viewport fill", () => {
+  it("finds the runtime scroller and fills only a non-scrollable viewport", () => {
+    const { root, scroller } = createReverseScroller();
+    setElementMetrics(scroller, 500, 500);
+
+    expect(getMessageScroller(root)).toBe(scroller);
+    expect(needsHistoryFill(scroller)).toBe(true);
+
+    setElementMetrics(scroller, 501.5, 500);
+    expect(needsHistoryFill(scroller)).toBe(false);
+  });
+
+  it("does not fill a hidden zero-height viewport", () => {
+    const scroller = document.createElement("div");
+    setElementMetrics(scroller, 0, 0);
+
+    expect(needsHistoryFill(scroller)).toBe(false);
+  });
 });
 
 describe("getNextReverseScrollTop", () => {
@@ -171,5 +195,82 @@ describe("scrollReverseMessageList", () => {
 
     expect(scrollReverseMessageList(root, outside, 100, 0)).toBe(false);
     expect(scroller.scrollTop).toBe(-420);
+  });
+});
+
+describe("getUnscrollableHistoryTarget", () => {
+  it("loads one older page when the visible history cannot scroll", () => {
+    const { content, root, scroller } = createReverseScroller();
+    const oldest = document.createElement("div");
+    scroller.append(oldest);
+    setElementMetrics(scroller, 500, 500);
+    scroller.getBoundingClientRect = () => ({ top: 0, bottom: 500 }) as DOMRect;
+    oldest.getBoundingClientRect = () => ({ top: 100, bottom: 200 }) as DOMRect;
+
+    expect(getUnscrollableHistoryTarget(root, content, oldest, -120)).toBe(
+      scroller,
+    );
+  });
+
+  it("ignores the newest direction and an already scrollable list", () => {
+    const { content, root, scroller } = createReverseScroller();
+    const oldest = document.createElement("div");
+    scroller.append(oldest);
+    scroller.getBoundingClientRect = () => ({ top: 0, bottom: 500 }) as DOMRect;
+    oldest.getBoundingClientRect = () => ({ top: 100, bottom: 200 }) as DOMRect;
+
+    expect(getUnscrollableHistoryTarget(root, content, oldest, 120)).toBeNull();
+    expect(
+      getUnscrollableHistoryTarget(root, content, oldest, -120),
+    ).toBeNull();
+  });
+
+  it("lets a nested scroller consume the history-direction wheel", () => {
+    const { content, root, scroller } = createReverseScroller();
+    const nestedScroller = document.createElement("div");
+    const oldest = document.createElement("div");
+    nestedScroller.style.overflowY = "auto";
+    nestedScroller.append(content);
+    scroller.append(nestedScroller, oldest);
+    setElementMetrics(scroller, 500, 500);
+    setElementMetrics(nestedScroller, 400, 200);
+    nestedScroller.scrollTop = 50;
+    scroller.getBoundingClientRect = () => ({ top: 0, bottom: 500 }) as DOMRect;
+    oldest.getBoundingClientRect = () => ({ top: 100, bottom: 200 }) as DOMRect;
+
+    expect(
+      getUnscrollableHistoryTarget(root, content, oldest, -120),
+    ).toBeNull();
+  });
+});
+
+describe("getUnscrollableNewerHistoryTarget", () => {
+  it("detects the newest edge of a reverse message list", () => {
+    const { content, root, scroller } = createReverseScroller();
+    const newest = document.createElement("div");
+    scroller.append(newest);
+    scroller.scrollTop = 0;
+    scroller.getBoundingClientRect = () => ({ top: 0, bottom: 500 }) as DOMRect;
+    newest.getBoundingClientRect = () => ({ top: 300, bottom: 400 }) as DOMRect;
+
+    expect(getUnscrollableNewerHistoryTarget(root, content, newest, 120)).toBe(
+      scroller,
+    );
+  });
+
+  it("waits until the list reaches the newest edge", () => {
+    const { content, root, scroller } = createReverseScroller();
+    const newest = document.createElement("div");
+    scroller.append(newest);
+    scroller.scrollTop = -50;
+    scroller.getBoundingClientRect = () => ({ top: 0, bottom: 500 }) as DOMRect;
+    newest.getBoundingClientRect = () => ({ top: 300, bottom: 400 }) as DOMRect;
+
+    expect(
+      getUnscrollableNewerHistoryTarget(root, content, newest, 120),
+    ).toBeNull();
+    expect(
+      getUnscrollableNewerHistoryTarget(root, content, newest, -120),
+    ).toBeNull();
   });
 });

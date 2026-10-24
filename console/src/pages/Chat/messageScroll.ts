@@ -1,9 +1,20 @@
-const REVERSE_MESSAGE_SCROLL_SELECTOR =
-  '[class*="chat-anywhere-message-list-bubble-scroll"]' +
-  '[class*="bubble-list-order-desc"]';
+const MESSAGE_SCROLL_SELECTOR =
+  '[class*="chat-anywhere-message-list-bubble-scroll"]';
+const REVERSE_MESSAGE_SCROLL_SELECTOR = `${MESSAGE_SCROLL_SELECTOR}[class*="bubble-list-order-desc"]`;
 
 const LINE_HEIGHT_PX = 16;
 const SCROLL_TOLERANCE_PX = 1;
+
+export function getMessageScroller(root: HTMLElement): HTMLElement | null {
+  return root.querySelector<HTMLElement>(MESSAGE_SCROLL_SELECTOR);
+}
+
+export function needsHistoryFill(scroller: HTMLElement): boolean {
+  return (
+    scroller.clientHeight > 0 &&
+    scroller.scrollHeight <= scroller.clientHeight + SCROLL_TOLERANCE_PX
+  );
+}
 
 export interface MessageScrollAnchor {
   id: string;
@@ -139,4 +150,46 @@ export function scrollReverseMessageList(
 
   scroller.scrollTop = nextScrollTop;
   return true;
+}
+
+export function getUnscrollableHistoryTarget(
+  root: HTMLElement,
+  target: EventTarget | null,
+  oldestLoadedMessage: HTMLElement | null,
+  deltaY: number,
+): HTMLElement | null {
+  if (!(target instanceof Element) || deltaY >= 0) return null;
+
+  const scroller = target.closest<HTMLElement>(REVERSE_MESSAGE_SCROLL_SELECTOR);
+  if (!scroller || !root.contains(scroller)) return null;
+  if (
+    scroller.scrollHeight - scroller.clientHeight > SCROLL_TOLERANCE_PX ||
+    hasScrollableChildBeforeScroller(target, scroller, deltaY) ||
+    !isOldestLoadedMessageVisible(scroller, oldestLoadedMessage)
+  ) {
+    return null;
+  }
+
+  return scroller;
+}
+
+export function getUnscrollableNewerHistoryTarget(
+  root: HTMLElement,
+  target: EventTarget | null,
+  newestLoadedMessage: HTMLElement | null,
+  deltaY: number,
+): HTMLElement | null {
+  if (!(target instanceof Element) || deltaY <= 0) return null;
+
+  const scroller = target.closest<HTMLElement>(REVERSE_MESSAGE_SCROLL_SELECTOR);
+  if (!scroller || !root.contains(scroller)) return null;
+  if (
+    scroller.scrollTop < -SCROLL_TOLERANCE_PX ||
+    hasScrollableChildBeforeScroller(target, scroller, deltaY) ||
+    !isOldestLoadedMessageVisible(scroller, newestLoadedMessage)
+  ) {
+    return null;
+  }
+
+  return scroller;
 }

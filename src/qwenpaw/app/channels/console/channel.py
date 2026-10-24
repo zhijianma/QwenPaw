@@ -48,7 +48,6 @@ from ..base import (
 )
 from ..utils import file_url_to_local_path
 
-
 logger = logging.getLogger(__name__)
 
 # ANSI colour helpers (degrade gracefully if not a tty)
@@ -438,19 +437,25 @@ class ConsoleChannel(BaseChannel):
                 )
                 if usage is not None and usage is not last_usage:
                     last_usage = usage
-                    tokens = usage.get(f"last_prompt_tokens", 0)
+                    tokens = usage.get(f"context_tokens")
                     limit = usage.get(f"context_size", 0)
                     payload = {
                         f"type": f"turn_usage",
                         f"session_id": session_id,
                         f"usage": usage,
-                        f"context_usage": {
-                            f"estimated_tokens": tokens,
-                            f"max_input_length": limit,
-                            f"context_usage_ratio": (
-                                min(tokens / limit * 100, 100) if limit else 0
-                            ),
-                        },
+                        f"context_usage": (
+                            {
+                                f"estimated_tokens": tokens,
+                                f"max_input_length": limit,
+                                f"context_usage_ratio": (
+                                    min(tokens / limit * 100, 100)
+                                    if limit
+                                    else 0
+                                ),
+                            }
+                            if tokens is not None
+                            else None
+                        ),
                     }
                     yield f"data: {_json.dumps(payload)}\n\n"
                 event_count += 1

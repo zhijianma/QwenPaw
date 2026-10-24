@@ -20,6 +20,7 @@ import {
   extractLatestSnapshotFromCards,
   type TurnUsageSnapshot,
 } from "../turnUsage";
+import { takeChatHistoryPrefetch } from "../chatRoutePrefetch";
 import { useTurnUsageStore } from "../turnUsageStore";
 import { useMessageQueueStore } from "../../../stores/messageQueueStore";
 import { syncSessionsGlobal } from "../../../stores/sessionListStore";
@@ -36,6 +37,7 @@ const ROLE_USER = "user";
 const ROLE_ASSISTANT = "assistant";
 const TYPE_PLUGIN_CALL_OUTPUT = "plugin_call_output";
 const CARD_RESPONSE = "AgentScopeRuntimeResponseCard";
+const HISTORY_PAGE_TURN_LIMIT = 5;
 
 function hydrateTurnUsageFromMessages(
   messages: IAgentScopeRuntimeWebUIMessage[],
@@ -82,6 +84,176 @@ const getTranscriptPosition = (
     return undefined;
   }
   return candidate as TranscriptPosition;
+};
+
+interface HistoryContentFragment {
+  content_start: number;
+  content_end: number;
+  content_total: number;
+  text_content_index?: number;
+  text_start?: number;
+  text_end?: number;
+  text_total?: number;
+  serialized_start?: number;
+  serialized_end?: number;
+  serialized_total?: number;
+  serialized_fragment?: string;
+  serialized_fragments?: string[];
+}
+
+type FragmentedMessage = {
+  content?: unknown;
+  metadata?: unknown;
+};
+
+const getHistoryContentFragment = (
+  message: FragmentedMessage,
+): HistoryContentFragment | undefined => {
+  const metadata = message.metadata as Record<string, unknown> | undefined;
+  const value = metadata?.qwenpaw_history_fragment;
+  if (!value || typeof value !== "object") return undefined;
+  const fragment = value as Partial<HistoryContentFragment>;
+  if (
+    typeof fragment.content_start !== "number" ||
+    typeof fragment.content_end !== "number" ||
+    typeof fragment.content_total !== "number"
+  ) {
+    return undefined;
+  }
+  return fragment as HistoryContentFragment;
+};
+
+const mergeContentFragments = <T extends FragmentedMessage>(
+  older: T,
+  newer: T,
+): T | null => {
+  const olderFragment = getHistoryContentFragment(older);
+  const newerFragment = getHistoryContentFragment(newer);
+  if (
+    !olderFragment ||
+    !newerFragment ||
+    olderFragment.content_total !== newerFragment.content_total
+  ) {
+    return null;
+  }
+
+  const serializedParts = (fragment: HistoryContentFragment) => {
+    if (
+      Array.isArray(fragment.serialized_fragments) &&
+      fragment.serialized_fragments.every((part) => typeof part === "string")
+    ) {
+      return fragment.serialized_fragments;
+    }
+    return typeof fragment.serialized_fragment === "string"
+      ? [fragment.serialized_fragment]
+      : null;
+  };
+  const olderSerialized = serializedParts(olderFragment);
+  const newerSerialized = serializedParts(newerFragment);
+  const serializedFragment =
+    olderSerialized !== null &&
+    newerSerialized !== null &&
+    olderFragment.serialized_total === newerFragment.serialized_total &&
+    olderFragment.serialized_end === newerFragment.serialized_start &&
+    olderFragment.content_start === newerFragment.content_start &&
+    olderFragment.content_end === newerFragment.content_end;
+  if (serializedFragment) {
+    const fragments = [...olderSerialized, ...newerSerialized];
+    const position: HistoryContentFragment = {
+      ...newerFragment,
+      serialized_start: olderFragment.serialized_start,
+      serialized_fragments: fragments,
+    };
+    delete position.serialized_fragment;
+    let content: unknown[] = [];
+    if (
+      position.serialized_start === 0 &&
+      position.serialized_end === position.serialized_total
+    ) {
+      try {
+        content = [JSON.parse(fragments.join(""))];
+      } catch {
+        return null;
+      }
+      delete position.serialized_start;
+      delete position.serialized_end;
+      delete position.serialized_total;
+      delete position.serialized_fragment;
+      delete position.serialized_fragments;
+    }
+    return {
+      ...newer,
+      content,
+      metadata: {
+        ...((newer.metadata as Record<string, unknown> | null) ?? {}),
+        qwenpaw_history_fragment: position,
+      },
+    };
+  }
+
+  const olderContent = Array.isArray(older.content) ? older.content : null;
+  const newerContent = Array.isArray(newer.content) ? newer.content : null;
+  if (!olderContent || !newerContent) return null;
+
+  const textFragment =
+    olderFragment.text_content_index === newerFragment.text_content_index &&
+    olderFragment.text_total === newerFragment.text_total &&
+    olderFragment.text_end === newerFragment.text_start &&
+    olderFragment.content_start === newerFragment.content_start &&
+    olderFragment.content_end === newerFragment.content_end &&
+    olderContent.length === 1 &&
+    newerContent.length === 1;
+  if (textFragment) {
+    const olderBlock = olderContent[0] as Record<string, unknown>;
+    const newerBlock = newerContent[0] as Record<string, unknown>;
+    if (
+      typeof olderBlock?.text !== "string" ||
+      typeof newerBlock?.text !== "string"
+    ) {
+      return null;
+    }
+    const position = {
+      ...newerFragment,
+      text_start: olderFragment.text_start,
+    };
+    if (
+      position.text_start === 0 &&
+      position.text_end === position.text_total
+    ) {
+      delete position.text_content_index;
+      delete position.text_start;
+      delete position.text_end;
+      delete position.text_total;
+    }
+    return {
+      ...newer,
+      content: [
+        {
+          ...newerBlock,
+          text: olderBlock.text + newerBlock.text,
+        },
+      ],
+      metadata: {
+        ...((newer.metadata as Record<string, unknown> | null) ?? {}),
+        qwenpaw_history_fragment: position,
+      },
+    };
+  }
+
+  if (olderFragment.content_end !== newerFragment.content_start) return null;
+  const metadata = {
+    ...((newer.metadata as Record<string, unknown> | null) ?? {}),
+    qwenpaw_history_fragment: {
+      content_start: olderFragment.content_start,
+      content_end: newerFragment.content_end,
+      content_total: newerFragment.content_total,
+    },
+  };
+  return {
+    ...newer,
+    content: [...olderContent, ...newerContent],
+    metadata,
+  };
 };
 
 /**
@@ -351,29 +523,54 @@ const buildResponseCard = (
  */
 const convertMessages = (
   messages: Message[],
+  history = false,
 ): IAgentScopeRuntimeWebUIMessage[] => {
+  const sourceMessages = history
+    ? messages.map((message) => {
+        const metadata =
+          message.metadata &&
+          typeof message.metadata === "object" &&
+          !Array.isArray(message.metadata)
+            ? (message.metadata as Record<string, unknown>)
+            : {};
+        return {
+          ...message,
+          metadata: {
+            ...metadata,
+            qwenpaw_history: true,
+          },
+        };
+      })
+    : messages;
   const result: IAgentScopeRuntimeWebUIMessage[] = [];
-  const len = messages.length;
+  const len = sourceMessages.length;
   let i = 0;
 
   while (i < len) {
     let terminal: { status?: string; error?: unknown } | undefined;
     let turnId: string | undefined;
-    if (messages[i].role === ROLE_USER) {
-      const user = messages[i++];
-      const meta = user.metadata as Record<string, any> | undefined;
-      terminal = (meta?.metadata ?? meta)?.qwenpaw_turn_state;
+    if (sourceMessages[i].role === ROLE_USER) {
+      const user = sourceMessages[i++];
+      const meta = user.metadata as Record<string, unknown> | undefined;
+      const nested = meta?.metadata;
+      const stateMetadata =
+        nested && typeof nested === "object"
+          ? (nested as Record<string, unknown>)
+          : meta;
+      terminal = stateMetadata?.qwenpaw_turn_state as
+        | { status?: string; error?: unknown }
+        | undefined;
       turnId = getTranscriptPosition(user)?.turn_id;
       result.push(buildUserCard(user));
     }
     const startIdx = i;
-    turnId ??= getTranscriptPosition(messages[i])?.turn_id;
-    while (i < len && messages[i].role !== ROLE_USER) {
-      const candidateTurnId = getTranscriptPosition(messages[i])?.turn_id;
+    turnId ??= getTranscriptPosition(sourceMessages[i])?.turn_id;
+    while (i < len && sourceMessages[i].role !== ROLE_USER) {
+      const candidateTurnId = getTranscriptPosition(sourceMessages[i])?.turn_id;
       if (turnId && candidateTurnId && candidateTurnId !== turnId) break;
       i++;
     }
-    const outputMsgs = messages.slice(startIdx, i).map(toOutputMessage);
+    const outputMsgs = sourceMessages.slice(startIdx, i).map(toOutputMessage);
     if (
       outputMsgs.length ||
       terminal?.status === "failed" ||
@@ -383,7 +580,9 @@ const convertMessages = (
     }
   }
 
-  return result;
+  return history
+    ? result.map((message) => ({ ...message, history: true }))
+    : result;
 };
 
 type ResponseCardData = Record<string, unknown> & {
@@ -399,6 +598,58 @@ const responseCardData = (
     | Array<{ code?: string; data?: ResponseCardData }>
     | undefined;
   return cards?.find((card) => card.code === CARD_RESPONSE)?.data;
+};
+
+type RequestCardData = Record<string, unknown> & {
+  input?: FragmentedMessage[];
+};
+
+const requestCardData = (
+  message: IAgentScopeRuntimeWebUIMessage,
+): RequestCardData | undefined => {
+  const cards = message.cards as
+    | Array<{ code?: string; data?: RequestCardData }>
+    | undefined;
+  return cards?.find((card) => card.code === "AgentScopeRuntimeRequestCard")
+    ?.data;
+};
+
+const mergeRequestMessages = (
+  older: IAgentScopeRuntimeWebUIMessage,
+  newer: IAgentScopeRuntimeWebUIMessage,
+): IAgentScopeRuntimeWebUIMessage => {
+  const olderData = requestCardData(older);
+  const newerData = requestCardData(newer);
+  const olderInput = olderData?.input?.[0];
+  const newerInput = newerData?.input?.[0];
+  if (!olderData || !newerData || !olderInput || !newerInput) return newer;
+  const mergedInput = mergeContentFragments(olderInput, newerInput);
+  if (!mergedInput) return newer;
+  const cards = (
+    newer.cards as Array<{ code: string; data?: RequestCardData }>
+  ).map((card) =>
+    card.code === "AgentScopeRuntimeRequestCard"
+      ? {
+          ...card,
+          data: {
+            ...olderData,
+            ...newerData,
+            created_at: Math.min(
+              Number(olderData.created_at ?? Number.MAX_SAFE_INTEGER),
+              Number(newerData.created_at ?? Number.MAX_SAFE_INTEGER),
+            ),
+            input: [mergedInput],
+          },
+        }
+      : card,
+  );
+  return {
+    ...newer,
+    cards,
+    history:
+      (older as { history?: boolean }).history ||
+      (newer as { history?: boolean }).history,
+  } as IAgentScopeRuntimeWebUIMessage & { history?: boolean };
 };
 
 const outputIdentity = (message: OutputMessage): string => {
@@ -420,7 +671,12 @@ const mergeResponseMessages = (
     ...(olderData.output ?? []),
     ...(newerData.output ?? []),
   ]) {
-    output.set(outputIdentity(message), message);
+    const identity = outputIdentity(message);
+    const previous = output.get(identity);
+    output.set(
+      identity,
+      (previous && mergeContentFragments(previous, message)) || message,
+    );
   }
   const sortedOutput = [...output.values()].sort((left, right) => {
     const leftPosition = getTranscriptPosition(left);
@@ -487,6 +743,8 @@ export const mergeHistoryMessages = (
       merged.push(message);
     } else if (message.role === ROLE_ASSISTANT) {
       merged[index] = mergeResponseMessages(merged[index], message);
+    } else if (message.role === ROLE_USER) {
+      merged[index] = mergeRequestMessages(merged[index], message);
     }
   }
   return merged;
@@ -502,6 +760,7 @@ const chatSpecToSession = (chat: ChatSpec): ExtendedSession =>
     messages: [],
     meta: chat.meta || {},
     status: chat.status ?? "idle",
+    generating: chat.status === "running",
     createdAt: chat.created_at ?? null,
     updatedAt: chat.updated_at ?? null,
     lastFinishedAt: chat.last_finished_at ?? null,
@@ -672,8 +931,97 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     Promise<{ messages: IAgentScopeRuntimeWebUIMessage[]; noMore: boolean }>
   >();
 
+  /** Loaded transcript pages, newest first. Only adjacent pages are exposed
+   *  to the SDK so durable history can grow without growing the message DOM. */
+  private historyWindows = new Map<
+    string,
+    {
+      pages: IAgentScopeRuntimeWebUIMessage[][];
+      activeIndex: number;
+      latestBeforeAnchor?: {
+        messages: IAgentScopeRuntimeWebUIMessage[];
+        page: ChatHistoryMetadata | undefined;
+      };
+    }
+  >();
+
   private setHistoryPage(backendId: string, page: ChatHistoryMetadata): void {
     this.historyPages.set(backendId, page);
+  }
+
+  private getHistoryBackendId(sessionId: string): string {
+    return this.findSession(sessionId)?.realId ?? sessionId;
+  }
+
+  private renderHistoryWindow(
+    backendId: string,
+  ): IAgentScopeRuntimeWebUIMessage[] {
+    const state = this.historyWindows.get(backendId);
+    if (!state) return [];
+    const current = state.pages[state.activeIndex] ?? [];
+    const newer = state.pages[state.activeIndex - 1] ?? [];
+    // Keep only the adjoining boundary message for scroll anchoring and a
+    // turn fragment that crosses the cursor. Mounting the whole newer page
+    // would double the DOM budget for every history step.
+    return mergeHistoryMessages(current, newer.slice(0, 1));
+  }
+
+  private resetHistoryWindow(
+    backendId: string,
+    messages: IAgentScopeRuntimeWebUIMessage[],
+  ): void {
+    this.historyWindows.set(backendId, {
+      pages: [messages],
+      activeIndex: 0,
+    });
+  }
+
+  /** Capture live additions before leaving the newest history page. */
+  syncVisibleHistory(
+    sessionId: string,
+    messages: IAgentScopeRuntimeWebUIMessage[],
+  ): void {
+    const backendId = this.getHistoryBackendId(sessionId);
+    const state = this.historyWindows.get(backendId);
+    if (!state || state.activeIndex !== 0) return;
+    state.pages[0] = messages;
+  }
+
+  /** Move one loaded page towards the newest messages without a request. */
+  loadNewerHistory(sessionId: string): {
+    messages: IAgentScopeRuntimeWebUIMessage[];
+    atLatest: boolean;
+    canLoadOlder: boolean;
+  } | null {
+    const backendId = this.getHistoryBackendId(sessionId);
+    const state = this.historyWindows.get(backendId);
+    if (!state || state.activeIndex === 0) return null;
+    state.activeIndex--;
+    const page = this.historyPages.get(backendId);
+    return {
+      messages: this.renderHistoryWindow(backendId),
+      atLatest: state.activeIndex === 0,
+      canLoadOlder:
+        state.activeIndex + 1 < state.pages.length || Boolean(page?.has_more),
+    };
+  }
+
+  /** Restore the newest loaded page before starting or reconnecting a run. */
+  showLatestHistory(
+    sessionId: string,
+  ): IAgentScopeRuntimeWebUIMessage[] | null {
+    const backendId = this.getHistoryBackendId(sessionId);
+    const state = this.historyWindows.get(backendId);
+    if (!state) return null;
+    if (state.latestBeforeAnchor) {
+      const { messages, page } = state.latestBeforeAnchor;
+      this.resetHistoryWindow(backendId, messages);
+      if (page) this.setHistoryPage(backendId, page);
+      else this.historyPages.delete(backendId);
+      return messages;
+    }
+    state.activeIndex = 0;
+    return this.renderHistoryWindow(backendId);
   }
 
   private getCachedConvertedSession(
@@ -684,6 +1032,8 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     if (!entry) return null;
     if (Date.now() - entry.timestamp > SessionApi.CONVERTED_CACHE_TTL) {
       this.convertedSessionCache.delete(backendId);
+      this.historyPages.delete(backendId);
+      this.historyWindows.delete(backendId);
       return null;
     }
     // Staleness check against the chat's backend updated_at: when a new
@@ -698,6 +1048,8 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
       (!entry.updatedAt || currentUpdatedAt > entry.updatedAt)
     ) {
       this.convertedSessionCache.delete(backendId);
+      this.historyPages.delete(backendId);
+      this.historyWindows.delete(backendId);
       return null;
     }
     // LRU: move to end
@@ -714,7 +1066,11 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     if (this.convertedSessionCache.size >= SessionApi.CONVERTED_CACHE_MAX) {
       // Evict oldest (first entry in Map iteration order)
       const oldestKey = this.convertedSessionCache.keys().next().value;
-      if (oldestKey) this.convertedSessionCache.delete(oldestKey);
+      if (oldestKey) {
+        this.convertedSessionCache.delete(oldestKey);
+        this.historyPages.delete(oldestKey);
+        this.historyWindows.delete(oldestKey);
+      }
     }
     this.convertedSessionCache.set(backendId, {
       session,
@@ -728,18 +1084,39 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     this.convertedSessionCache.delete(backendId);
     this.historyPages.delete(backendId);
     this.historyPageRequests.delete(backendId);
+    this.historyWindows.delete(backendId);
   }
 
   /** Load and convert one older durable transcript page. */
   async loadOlderHistory(
     sessionId: string,
     signal?: AbortSignal,
+    accumulate = false,
   ): Promise<{
     messages: IAgentScopeRuntimeWebUIMessage[];
     noMore: boolean;
   }> {
     const entry = this.findSession(sessionId) as ExtendedSession | undefined;
     const backendId = entry?.realId ?? sessionId;
+    const window = this.historyWindows.get(backendId);
+    if (window && window.activeIndex + 1 < window.pages.length) {
+      const olderIndex = window.activeIndex + 1;
+      if (accumulate) {
+        window.pages[window.activeIndex] = mergeHistoryMessages(
+          window.pages[olderIndex],
+          window.pages[window.activeIndex],
+        );
+        window.pages.splice(olderIndex, 1);
+      } else {
+        window.activeIndex = olderIndex;
+      }
+      return {
+        messages: this.renderHistoryWindow(backendId),
+        noMore:
+          window.activeIndex === window.pages.length - 1 &&
+          !(this.historyPages.get(backendId) ?? entry?.historyPage)?.has_more,
+      };
+    }
     const page = this.historyPages.get(backendId) ?? entry?.historyPage;
     if (!page?.has_more || !page.next_before) {
       return { messages: [], noMore: true };
@@ -751,7 +1128,7 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     const request = api
       .getChatMessages(backendId, {
         before: page.next_before,
-        limit: 20,
+        limit: HISTORY_PAGE_TURN_LIMIT,
         signal,
         include_app_owned: false,
       })
@@ -767,18 +1144,29 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
         this.setHistoryPage(backendId, nextPage);
         if (entry) entry.historyPage = nextPage;
 
-        const messages = convertMessages(result.messages || []).map(
-          (message) => ({ ...message, history: true }),
-        );
+        const messages = convertMessages(result.messages || [], true);
+        const historyWindow = this.historyWindows.get(backendId) ?? {
+          pages: [entry?.messages ?? []],
+          activeIndex: 0,
+        };
+        if (accumulate) {
+          const current = historyWindow.pages[historyWindow.activeIndex] ?? [];
+          historyWindow.pages[historyWindow.activeIndex] = mergeHistoryMessages(
+            messages,
+            current,
+          );
+        } else {
+          historyWindow.pages.push(messages);
+          historyWindow.activeIndex = historyWindow.pages.length - 1;
+        }
+        this.historyWindows.set(backendId, historyWindow);
+        const visibleMessages = this.renderHistoryWindow(backendId);
         const cached = this.convertedSessionCache.get(backendId);
         if (cached) {
-          cached.session.messages = mergeHistoryMessages(
-            messages,
-            cached.session.messages,
-          );
+          cached.session.messages = visibleMessages;
           cached.session.historyPage = nextPage;
         }
-        return { messages, noMore: !result.has_more };
+        return { messages: visibleMessages, noMore: !result.has_more };
       })
       .finally(() => {
         if (this.historyPageRequests.get(backendId) === request) {
@@ -787,6 +1175,99 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
       });
     this.historyPageRequests.set(backendId, request);
     return request;
+  }
+
+  async loadUserMessageIndex(sessionId: string, signal?: AbortSignal) {
+    const backendId = this.getHistoryBackendId(sessionId);
+    let before: string | undefined;
+    let items: Array<{
+      messageId: string;
+      preview: string;
+      createdAt: string;
+      anchor: string;
+    }> = [];
+    do {
+      const page = await api.getChatUserMessages(backendId, {
+        before,
+        limit: 500,
+        signal,
+        include_app_owned: false,
+      });
+      items = [
+        ...page.items.map((item) => ({
+          clientMessageId: item.client_message_id,
+          messageId: item.message_id,
+          preview: item.preview,
+          createdAt: item.created_at,
+          anchor: item.anchor,
+        })),
+        ...items,
+      ];
+      before = page.has_more ? page.next_before ?? undefined : undefined;
+    } while (before);
+    return items;
+  }
+
+  async loadHistoryAtAnchor(
+    sessionId: string,
+    anchor: string,
+    targetMessageId?: string,
+    signal?: AbortSignal,
+    mode: "replace" | "append-newer" = "replace",
+    isLatest = false,
+  ): Promise<{
+    messages: IAgentScopeRuntimeWebUIMessage[];
+    noMore: boolean;
+  }> {
+    const backendId = this.getHistoryBackendId(sessionId);
+    let result = await api.getChatMessages(backendId, {
+      before: anchor,
+      limit: HISTORY_PAGE_TURN_LIMIT,
+      signal,
+      include_app_owned: false,
+    });
+    let messages = convertMessages(result.messages || [], true);
+    while (
+      targetMessageId &&
+      !messages.some((message) => message.id === targetMessageId) &&
+      result.has_more &&
+      result.next_before
+    ) {
+      result = await api.getChatMessages(backendId, {
+        before: result.next_before,
+        limit: HISTORY_PAGE_TURN_LIMIT,
+        signal,
+        include_app_owned: false,
+      });
+      messages = mergeHistoryMessages(
+        convertMessages(result.messages || [], true),
+        messages,
+      );
+    }
+    const page: ChatHistoryMetadata = {
+      has_more: result.has_more,
+      next_before: result.next_before,
+      snapshot: result.snapshot,
+    };
+    // Forward fills must not move the oldest loaded boundary.
+    if (mode === "replace" && !signal?.aborted) {
+      const previous = this.historyWindows.get(backendId);
+      const latestBeforeAnchor =
+        (isLatest ? { messages, page } : previous?.latestBeforeAnchor) ??
+        (previous
+          ? {
+              messages: previous.pages[0],
+              page: this.historyPages.get(backendId),
+            }
+          : undefined);
+      this.historyWindows.set(backendId, {
+        pages: [messages],
+        activeIndex: 0,
+        latestBeforeAnchor,
+      });
+      this.setHistoryPage(backendId, page);
+    }
+    return { messages, noMore: !result.has_more };
   }
 
   /**
@@ -956,6 +1437,7 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     this.convertedSessionCache.clear();
     this.historyPages.clear();
     this.historyPageRequests.clear();
+    this.historyWindows.clear();
     // Reset the session list and its comparison state as well: the next
     // agent's chats can share a session_id (channel:user_id) with the old
     // list, and merging against leftover entries would transfer the previous
@@ -1070,6 +1552,7 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     this.convertedSessionCache.clear();
     this.historyPages.clear();
     this.historyPageRequests.clear();
+    this.historyWindows.clear();
     this.sessionList = [];
     this._prevReturnedList = null;
     this.lastSelectedIds.clear();
@@ -1587,15 +2070,24 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
         cached.realId =
           listEntry?.realId ??
           (backendId !== displayId ? backendId : cached.realId);
+        const historyWindow = this.historyWindows.get(backendId);
+        if (historyWindow) {
+          historyWindow.activeIndex = 0;
+          cached.messages = this.renderHistoryWindow(backendId);
+        }
         this.applySessionView(cached, owner);
         return cached;
       }
     }
 
-    const chatHistory = await api.getChat(backendId, {
-      signal,
-      include_app_owned: false,
-    });
+    const chatHistory = await (takeChatHistoryPrefetch(
+      backendId,
+      owner.agentId,
+    ) ??
+      api.getChat(backendId, {
+        signal,
+        include_app_owned: false,
+      }));
     const historyPage = chatHistory.history ?? {
       has_more: false,
       next_before: null,
@@ -1617,7 +2109,10 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
       }
     }
     const generating = isGenerating(chatHistory);
-    const messages = convertMessages(chatHistory.messages || []);
+    const messages = convertMessages(chatHistory.messages || [], true);
+    if (this.isActiveOwner(owner)) {
+      this.resetHistoryWindow(backendId, messages);
+    }
 
     const session: ExtendedSession = {
       id: displayId,
@@ -1774,7 +2269,8 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     // session list. Use destructuring instead of mutating the input object
     // — the library may pass its own internal session reference, and
     // mutating session.messages would corrupt its React state.
-    const { messages: _msgs, ...metadata } = session;
+    const metadata = { ...session };
+    delete metadata.messages;
     const index = this.sessionList.findIndex((s) => s.id === metadata.id);
 
     if (index > -1) {

@@ -43,6 +43,9 @@ const {
   mockSessionProjectDirectory,
   mockApprovalLevelToggle,
   mockHydrateBackgroundTasksForSession,
+  mockGetLoading,
+  mockGetMessages,
+  mockSetSessionMessages,
 } = vi.hoisted(() => ({
   mockListProviders: vi.fn(),
   mockGetActiveModels: vi.fn(),
@@ -64,6 +67,9 @@ const {
   mockSessionProjectDirectory: vi.fn(),
   mockApprovalLevelToggle: vi.fn(),
   mockHydrateBackgroundTasksForSession: vi.fn(() => Promise.resolve()),
+  mockGetLoading: vi.fn(() => false),
+  mockGetMessages: vi.fn(() => [] as any[]),
+  mockSetSessionMessages: vi.fn(),
 }));
 
 let capturedOptions: any = null;
@@ -113,8 +119,8 @@ vi.mock("@agentscope-ai/chat", () => ({
       messages: {
         removeAllMessages: mockRemoveAllMessages,
         getSessionMessages: vi.fn(() => []),
-        getMessages: vi.fn(() => []),
-        setSessionMessages: vi.fn(),
+        getMessages: mockGetMessages,
+        setSessionMessages: mockSetSessionMessages,
       },
       execution: {
         execute: mockRuntimeSubmit,
@@ -140,7 +146,7 @@ vi.mock("@agentscope-ai/chat", () => ({
     select({
       loading: false,
       setLoading: vi.fn(),
-      getLoading: vi.fn(() => false),
+      getLoading: mockGetLoading,
       setSessionLoading: vi.fn(),
       setDisabled: vi.fn(),
     }),
@@ -222,6 +228,8 @@ vi.mock("@/contexts/ThemeContext", () => ({
 
 vi.mock("./sessionApi", () => ({
   default: {
+    loadUserMessageIndex: vi.fn(async () => []),
+    loadHistoryAtAnchor: vi.fn(async () => ({ messages: [], noMore: true })),
     onSessionIdResolved: null,
     onSessionRemoved: null,
     onSessionSelected: null,
@@ -252,6 +260,9 @@ vi.mock("./sessionApi", () => ({
       messages: [],
       noMore: true,
     })),
+    loadNewerHistory: vi.fn(() => null),
+    showLatestHistory: vi.fn(() => null),
+    syncVisibleHistory: vi.fn(),
     setVisibleSession: vi.fn(),
     getSession: vi.fn(async (id: string) => ({ id, messages: [] })),
     lastActiveChatId: "last-chat-1",
@@ -577,6 +588,9 @@ describe("ChatPage coverage", () => {
     mockRuntimeSubmit.mockReset();
     mockRuntimeMount.mockReset();
     mockRemoveAllMessages.mockReset();
+    mockGetLoading.mockReset().mockReturnValue(false);
+    mockGetMessages.mockReset().mockReturnValue([]);
+    mockSetSessionMessages.mockReset();
     mockSelectedAgent.mockReturnValue("default");
     mockFetchActiveLoopMode.mockClear();
     mockSessionProjectDirectory.mockClear();
@@ -1335,12 +1349,96 @@ describe("ChatPage coverage", () => {
   });
 
   // ── handleBeforeSubmit: SDK query override ─────────────────────────────
+  it.each([false, true])(
+    "opens contiguous history while running=%s",
+    async (running) => {
+      const { historyMessageWindow } = await import(
+        "./historyMessageWindowStore"
+      );
+      const target = { id: "first-user", role: "user", history: true };
+      vi.mocked(sessionApi.loadHistoryAtAnchor).mockResolvedValueOnce({
+        messages: [target],
+        noMore: true,
+      } as Awaited<ReturnType<typeof sessionApi.loadHistoryAtAnchor>>);
+      renderWithProviders(<ChatPage />, {
+        initialEntries: ["/chat/test-session"],
+      });
+      await screen.findByTestId("chat-ui");
+      await act(async () => {});
+      expect(historyMessageWindow.getSnapshot()).toBeNull();
+      const live = { id: "live-response", role: "assistant" };
+      mockGetLoading.mockReturnValue(running);
+      mockGetMessages.mockReturnValue([live]);
+
+      const navigation = capturedOptions.theme.rightHeader.props.children.find(
+        (child: any) => typeof child?.props?.onNavigate === "function",
+      );
+      await act(async () => {
+        navigation.props.onNavigate({
+          messageId: "first-user",
+          preview: "First user",
+          createdAt: "2026-10-24T00:00:00Z",
+          anchor: "first-anchor",
+        });
+      });
+
+      expect(historyMessageWindow.getSnapshot()).toMatchObject({
+        sessionId: "test-session",
+        turnRows: [[target]],
+        canLoadOlder: false,
+        loading: false,
+      });
+      const mounted = mockSetSessionMessages.mock.calls.at(-1)?.[1];
+      expect(mounted[0].id).toBe("qwenpaw-history-window-test-session");
+      expect(mounted.includes(live)).toBe(running);
+      expect(
+        Boolean(historyMessageWindow.getSnapshot()?.onReturnToLatest),
+      ).toBe(running);
+      await act(async () => {
+        historyMessageWindow.getSnapshot()?.onNavigateToUserMessage(
+          {
+            messageId: "sixth-user",
+            preview: "Sixth user",
+            createdAt: "2026-10-24T00:05:00Z",
+            anchor: "sixth-anchor",
+          },
+          "append-newer",
+        );
+      });
+      expect(sessionApi.loadHistoryAtAnchor).toHaveBeenLastCalledWith(
+        "test-session",
+        "sixth-anchor",
+        "first-user",
+        expect.any(AbortSignal),
+        "append-newer",
+        false,
+      );
+    },
+  );
+
   it("compact command uses execution.execute with current session identity", async () => {
+    const { historyMessageWindow } = await import(
+      "./historyMessageWindowStore"
+    );
+    const source = sessionApi.bindToOwner();
+    vi.mocked(sessionApi.bindToOwner).mockReturnValueOnce({
+      ...source,
+      getSession: vi.fn(async (id: string) => ({
+        id,
+        name: id,
+        messages: [{ id: "history-user", role: "user", history: true }],
+      })) as typeof source.getSession,
+    });
     renderWithProviders(<ChatPage />, {
       initialEntries: ["/chat/test-session"],
     });
     await screen.findByTestId("chat-ui");
     await act(async () => {});
+
+    expect(historyMessageWindow.getSnapshot()?.sessionId).toBe("test-session");
+    mockRuntimeSubmit.mockImplementationOnce(() => {
+      expect(historyMessageWindow.getSnapshot()).toBeNull();
+    });
 
     fireEvent.click(screen.getByTestId("context-usage-compact"));
 

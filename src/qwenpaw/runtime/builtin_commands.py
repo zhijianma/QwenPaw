@@ -597,6 +597,11 @@ def _make_conversation_adapter(
 
         full_query = f"/{name} {args}".strip() if args else f"/{name}"
         result = await cmd_handler.handle_command(full_query)
+        request = getattr(ctx, f"request", None)
+        if request is not None:
+            if not isinstance(request.request_context, dict):
+                request.request_context = {}
+            request.request_context[f"conversation_command"] = name
 
         scroll_block = _resolve_scroll_block(
             updated=cmd_handler.updated_scroll_state,

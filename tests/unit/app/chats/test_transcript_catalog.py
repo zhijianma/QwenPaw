@@ -140,6 +140,52 @@ def test_idle_handles_close_without_losing_history(
     catalog.close()
 
 
+def test_page_forwards_content_block_limit(tmp_path: Path) -> None:
+    catalog = TranscriptCatalog(tmp_path)
+    _start(catalog, "session-a")
+    catalog.upsert_message(
+        session_id="session-a",
+        turn_id="turn-session-a",
+        message=Message(
+            id="message-a",
+            role="assistant",
+            content=[
+                TextContent(text="first"),
+                TextContent(text="second"),
+                TextContent(text="third"),
+            ],
+        ).completed(),
+        ordinal=0,
+    )
+    _finish(catalog, "session-a")
+
+    newest = catalog.get_page(
+        session_id="session-a",
+        user_id="user-1",
+        channel="console",
+        max_content_blocks=2,
+    )
+    assert newest is not None
+    assert [block.text for block in newest.messages[0].content] == [
+        "second",
+        "third",
+    ]
+    assert newest.has_more is True
+    assert newest.next_before is not None
+
+    older = catalog.get_page(
+        session_id="session-a",
+        user_id="user-1",
+        channel="console",
+        before=newest.next_before,
+        max_content_blocks=2,
+    )
+    assert older is not None
+    assert [block.text for block in older.messages[0].content] == ["first"]
+    assert older.has_more is False
+    catalog.close()
+
+
 def test_reopen_cancels_orphaned_running_turn(tmp_path: Path) -> None:
     catalog = TranscriptCatalog(tmp_path)
     _start(catalog, "session-a")

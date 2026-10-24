@@ -120,6 +120,40 @@ async def test_reconnect_gets_fold_then_marker_and_live_tail() -> None:
     assert REPLAY_END_SSE not in replayed
 
 
+async def test_materialized_attach_snapshots_prefix_before_live_tail() -> None:
+    """Future events cannot enter ahead of the materialized replay prefix."""
+    response = (
+        'data: {"id":"response-a","object":"response",'
+        '"status":"in_progress","output":[]}\n\n'
+    )
+    message = (
+        'data: {"id":"message-a","object":"message",'
+        '"type":"message","role":"assistant",'
+        '"status":"in_progress","content":[]}\n\n'
+    )
+    events = [response, message, _content("hello "), _content("world")]
+    tracker = TaskTracker()
+    stream_fn, reached, release = _gated_stream(events, 3)
+
+    live, _ = await tracker.attach_or_start(
+        "run-snapshot",
+        payload=None,
+        stream_fn=stream_fn,
+    )
+    await asyncio.wait_for(reached.wait(), timeout=5)
+
+    attached = await tracker.attach_materialized("run-snapshot")
+    assert attached is not None
+    prefix, future = attached
+    release.set()
+
+    assert await _collect(live) == events
+    assert len(prefix) == 1
+    snapshot = json.loads(prefix[0][len("data: ") :])
+    assert snapshot["output"][0]["content"][0]["text"] == "hello "
+    assert await _collect(future) == [events[-1]]
+
+
 async def test_error_replays_after_completion() -> None:
     """A producer failure reaches live and reconnect subscribers once."""
     first = _content("before failure")
