@@ -34,6 +34,8 @@ export interface HistoryWindowSnapshot {
   turnRows: IAgentScopeRuntimeWebUIMessage[][];
   loading: boolean;
   canLoadOlder: boolean;
+  canLoadNewer?: boolean;
+  newerLoadFailed?: boolean;
   userMessages: HistoryUserMessage[];
   onLoadOlder: (target: HTMLElement) => void;
   onFillOlder: (target: HTMLElement) => void;
@@ -88,6 +90,18 @@ export const historyMessageWindow = {
     if (snapshot?.sessionId === sessionId && snapshot.loading !== loading) {
       publish({ ...snapshot, loading });
     }
+  },
+  setReturnToLatest(sessionId: string, onReturnToLatest: () => void) {
+    if (snapshot?.sessionId === sessionId)
+      publish({ ...snapshot, onReturnToLatest });
+  },
+  setCanLoadNewer(sessionId: string, canLoadNewer: boolean) {
+    if (snapshot?.sessionId === sessionId)
+      publish({ ...snapshot, canLoadNewer });
+  },
+  setNewerLoadFailed(sessionId: string, newerLoadFailed: boolean) {
+    if (snapshot?.sessionId === sessionId)
+      publish({ ...snapshot, newerLoadFailed });
   },
   setUserMessages(sessionId: string, userMessages: HistoryUserMessage[]) {
     if (snapshot?.sessionId === sessionId) {

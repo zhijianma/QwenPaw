@@ -45,6 +45,7 @@ class ConversationUserMessagePage:
     next_before: str | None
     has_more: bool
     snapshot: str
+    total: int = 0
 
 
 class ConversationHistoryStore(Protocol):
@@ -57,6 +58,7 @@ class ConversationHistoryStore(Protocol):
         user_id: str,
         channel: str,
         before: str | None = None,
+        after_message_id: str | None = None,
         limit: int = 5,
         max_bytes: int = 2 * 1024 * 1024,
         max_content_blocks: int = 40,
@@ -148,6 +150,7 @@ class TranscriptHistoryStore:
         user_id: str,
         channel: str,
         before: str | None = None,
+        after_message_id: str | None = None,
         limit: int = 5,
         max_bytes: int = 2 * 1024 * 1024,
         max_content_blocks: int = 40,
@@ -159,6 +162,7 @@ class TranscriptHistoryStore:
                 user_id=user_id,
                 channel=channel,
                 before=cursor,
+                after_message_id=after_message_id,
                 limit=limit,
                 max_bytes=max_bytes,
                 max_content_blocks=max_content_blocks,
@@ -210,6 +214,7 @@ class TranscriptHistoryStore:
             next_before=_encode_cursor(page.next_before),
             has_more=page.has_more,
             snapshot=_encode(_SNAPSHOT.pack(page.snapshot_turn_seq)),
+            total=page.total,
         )
 
 

@@ -1,3 +1,5 @@
+import { BOTTOM_THRESHOLD_PX, distanceFromBottom } from "./bottomFollow";
+import { ChatBottomFollow } from "./ChatBottomFollow";
 import { ChatSessionActivation } from "./components/ChatSessionActivation";
 import {
   ChatSessionTransition,
@@ -107,6 +109,7 @@ import { toChatThemeHex } from "@/utils/chatThemeColor";
 import ChatActionGroup from "./components/ChatActionGroup";
 import ContextUsageIndicator from "./components/ContextUsageIndicator";
 import { wrapChatResponseUsageStream } from "./turnUsage";
+import { batchLiveChatDeltas } from "./liveDeltaBatch";
 import { wrapReplayFastForward } from "./replayFastForward";
 import { clearTurnStopped, markTurnStopped } from "./stoppedTurns";
 import { useTurnUsageStore } from "./turnUsageStore";
@@ -1626,9 +1629,25 @@ export default function ChatPage() {
     null,
   );
   const [historyViewActive, setHistoryViewActive] = useState(false);
-  const restoreLatestHistory = useCallback(() => {
+  const pendingLatestScrollRef = useRef<string>();
+  const restoreLatestHistory = useCallback((scrollToBottom = false): void => {
     const visibleSessionId = chatIdRef.current;
     if (!visibleSessionId || historyTurnRowsRef.current === null) return;
+    const historyScroll = document.querySelector<HTMLElement>(
+      '[data-history-message-window="true"]',
+    );
+    if (
+      !scrollToBottom &&
+      historyScroll &&
+      (distanceFromBottom(historyScroll) > BOTTOM_THRESHOLD_PX ||
+        historyMessageWindow.getSnapshot()?.canLoadNewer === true)
+    ) {
+      // A queued/new run must not replace the history the reader is viewing.
+      historyMessageWindow.setReturnToLatest(visibleSessionId, () =>
+        restoreLatestHistory(true),
+      );
+      return;
+    }
     const latest = sessionApi.showLatestHistory(visibleSessionId);
     const liveMessages = (chatRef.current?.messages.getMessages() ?? []).filter(
       (item) =>
@@ -1636,6 +1655,9 @@ export default function ChatPage() {
         item.id !== `qwenpaw-history-window-${visibleSessionId}`,
     );
     historyTurnRowsRef.current = null;
+    pendingLatestScrollRef.current = scrollToBottom
+      ? visibleSessionId
+      : undefined;
     historyMessageWindow.end(visibleSessionId);
     setHistoryViewActive(false);
     if (latest) {
@@ -3505,7 +3527,11 @@ export default function ChatPage() {
         sessionApi.triggerResolve(localIdToResolve);
       }
 
-      return wrapChatResponseUsageStream(response, chatRef, usageTurn);
+      return wrapChatResponseUsageStream(
+        batchLiveChatDeltas(response, data.signal),
+        chatRef,
+        usageTurn,
+      );
     },
     [extLists, selectedAgent, runningConfigApprovalLevel, usesQwenPawBackend],
   );
@@ -3567,6 +3593,19 @@ export default function ChatPage() {
 
   const compactSender = filesDrawerState.kind === "workspace";
   const chatMessagesAreaRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const requestedSession = pendingLatestScrollRef.current;
+    if (historyViewActive || !requestedSession) return;
+    pendingLatestScrollRef.current = undefined;
+    if (requestedSession !== chatId) return;
+    const root = chatMessagesAreaRef.current;
+    const scroller = root && getMessageScroller(root);
+    if (!scroller) return;
+    // The SDK list is reversed; its newest edge is scrollTop zero.
+    scroller.scrollTop = scroller.className.includes("bubble-list-order-desc")
+      ? 0
+      : scroller.scrollHeight;
+  }, [chatId, historyViewActive]);
   const historyLoadRef = useRef<Promise<void> | null>(null);
   const historyLoadAbortRef = useRef<AbortController | null>(null);
   const historyLoadSessionRef = useRef(chatId);
@@ -3602,6 +3641,13 @@ export default function ChatPage() {
     ) => {
       const sessionId = chatIdRef.current;
       if (!sessionId) return;
+      if (mode === "append-newer" && historyLoadRef.current) return;
+      if (
+        mode === "append-newer" &&
+        historyMessageWindow.getSnapshot()?.newerLoadFailed
+      )
+        return;
+      historyMessageWindow.setNewerLoadFailed(sessionId, false);
       historyLoadAbortRef.current?.abort();
       const controller = new AbortController();
       historyLoadAbortRef.current = controller;
@@ -3633,6 +3679,12 @@ export default function ChatPage() {
           if (controller.signal.aborted || chatIdRef.current !== sessionId) {
             return;
           }
+          if (mode === "append-newer" && messages.length === 0) {
+            historyMessageWindow.setCanLoadNewer(sessionId, false);
+            return;
+          }
+          if (mode === "replace")
+            historyMessageWindow.setCanLoadNewer(sessionId, true);
           if (historyTurnRowsRef.current === null) {
             const messagesApi = chatRef.current?.messages;
             if (messagesApi) {
@@ -3680,7 +3732,15 @@ export default function ChatPage() {
           );
         })
         .catch((error) => {
-          if (error instanceof DOMException && error.name === "AbortError") {
+          if (
+            controller.signal.aborted ||
+            chatIdRef.current !== sessionId ||
+            (error instanceof DOMException && error.name === "AbortError")
+          ) {
+            return;
+          }
+          if (mode === "append-newer") {
+            historyMessageWindow.setNewerLoadFailed(sessionId, true);
             return;
           }
           message.error(
@@ -3708,19 +3768,6 @@ export default function ChatPage() {
     historyLoadAbortRef.current?.abort();
   }, []);
 
-  const loadHistoryUserMessages = useCallback((sessionId: string) => {
-    void sessionApi
-      .loadUserMessageIndex(sessionId)
-      .then((items) => {
-        if (chatIdRef.current === sessionId) {
-          historyMessageWindow.setUserMessages(sessionId, items);
-        }
-      })
-      .catch(() => {
-        // History rendering remains available if navigation indexing fails.
-      });
-  }, []);
-
   const loadOlderHistory = useCallback(
     (_target: HTMLElement, accumulate = false) => {
       const sessionId = chatIdRef.current;
@@ -3739,7 +3786,10 @@ export default function ChatPage() {
       const load = sessionApi
         .loadOlderHistory(sessionId, controller.signal, accumulate)
         .then(({ messages: olderMessages, noMore }) => {
-          if (historyLoadSessionRef.current !== sessionId) {
+          if (
+            controller.signal.aborted ||
+            historyLoadSessionRef.current !== sessionId
+          ) {
             return;
           }
           if (olderMessages.length === 0) {
@@ -3753,6 +3803,11 @@ export default function ChatPage() {
             return;
           }
           if (!alreadyInHistory) {
+            const isRunning = runtimeLoadingBridgeRef.current?.getLoading?.();
+            const hasLiveMessages = visibleHistory.some(
+              (item) => !item.history,
+            );
+            const retainLive = isRunning || hasLiveMessages;
             const turnRows = splitHistoryMessagesIntoTurnRows(
               mergeHistoryMessages(olderMessages, visibleHistory),
             );
@@ -3768,10 +3823,15 @@ export default function ChatPage() {
               },
               onNavigateToUserMessage: navigateToHistoryUserMessage,
               onCancelPending: cancelPendingHistoryInteraction,
+              onReturnToLatest: retainLive
+                ? () => restoreLatestHistory(true)
+                : undefined,
             });
-            loadHistoryUserMessages(sessionId);
             messagesApi.setSessionMessages(sessionId, [
               createHistoryMessageWindowCard(sessionId),
+              // SSE updates must keep their response card mounted while the
+              // user browses history, just as with directory navigation.
+              ...(retainLive ? messagesApi.getMessages() : []),
             ]);
             setHistoryViewActive(true);
           } else {
@@ -3795,20 +3855,20 @@ export default function ChatPage() {
           setHistoryLoadFailed(true);
         })
         .finally(() => {
-          if (historyLoadRef.current === load) {
+          const ownsLoad = historyLoadRef.current === load;
+          if (ownsLoad) {
             historyLoadRef.current = null;
           }
           if (historyLoadAbortRef.current === controller) {
             historyLoadAbortRef.current = null;
           }
-          historyMessageWindow.setLoading(sessionId, false);
+          if (ownsLoad) historyMessageWindow.setLoading(sessionId, false);
         });
       historyLoadRef.current = load;
     },
     [
       chatId,
       cancelPendingHistoryInteraction,
-      loadHistoryUserMessages,
       message,
       navigateToHistoryUserMessage,
       restoreLatestHistory,
@@ -3846,10 +3906,9 @@ export default function ChatPage() {
       onNavigateToUserMessage: navigateToHistoryUserMessage,
       onCancelPending: cancelPendingHistoryInteraction,
       onReturnToLatest: runtimeLoadingBridgeRef.current?.getLoading?.()
-        ? restoreLatestHistory
+        ? () => restoreLatestHistory(true)
         : undefined,
     });
-    loadHistoryUserMessages(visibleSessionId);
     historyMessageWindow.setLoading(visibleSessionId, false);
     setHistoryViewActive(true);
     return {
@@ -4926,15 +4985,18 @@ export default function ChatPage() {
           // Fast-forward the replayed section: render the already
           // generated part instantly instead of re-animating it.
           return wrapChatResponseUsageStream(
-            wrapReplayFastForward(response, undefined, () => {
-              if (displayChatId && canonicalChatId) {
-                recoverReplayOverflow(
-                  displayChatId,
-                  canonicalChatId,
-                  snapshot.agentId,
-                );
-              }
-            }),
+            batchLiveChatDeltas(
+              wrapReplayFastForward(response, undefined, () => {
+                if (displayChatId && canonicalChatId) {
+                  recoverReplayOverflow(
+                    displayChatId,
+                    canonicalChatId,
+                    snapshot.agentId,
+                  );
+                }
+              }),
+              data.signal,
+            ),
             chatRef,
             usageTurn,
           );
@@ -5117,6 +5179,11 @@ export default function ChatPage() {
               .filter(Boolean)
               .join(" ")}
           >
+            <ChatBottomFollow
+              rootRef={chatMessagesAreaRef}
+              sessionId={chatId}
+              disabled={historyViewActive || isSessionTransition}
+            />
             {historyLoadFailed && (
               <Alert
                 banner

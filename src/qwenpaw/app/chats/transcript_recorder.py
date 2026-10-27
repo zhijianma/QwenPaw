@@ -16,6 +16,7 @@ from ...schemas import (
     RunStatus,
 )
 from .transcript import TranscriptStore, TurnStatus
+from ..replay_persistence import ReplayReceipt, replay_receipt
 
 if TYPE_CHECKING:
     from .transcript_catalog import TranscriptCatalog
@@ -101,9 +102,24 @@ class TranscriptRecorder:
 
     async def observe(self, value: Any) -> None:
         """Record normalized message snapshots and terminal responses."""
+        replay_receipt.set(None)
         if not self._started or self._degraded:
             return
         if isinstance(value, Message):
+            if value.id not in self._ordinals:
+                self._ordinals[value.id] = self._next_ordinal
+                self._next_ordinal += 1
+            replay_receipt.set(
+                ReplayReceipt(
+                    self._store,
+                    self._session_id,
+                    self._turn_id,
+                    value.id,
+                    self._ordinals[value.id],
+                    getattr(value, "sequence_number", 0) or 0,
+                    False,
+                ),
+            )
             if value.content and value.status != RunStatus.InProgress:
                 await self._record_message(value)
             return
@@ -173,6 +189,23 @@ class TranscriptRecorder:
             ordinal=ordinal,
             finished_at=finished_at,
         )
+        sequence = getattr(message, "sequence_number", None)
+        if (
+            not self._degraded
+            and isinstance(sequence, int)
+            and message.content
+            and message.status in _TERMINAL_STATUS
+        ):
+            replay_receipt.set(
+                ReplayReceipt(
+                    self._store,
+                    self._session_id,
+                    self._turn_id,
+                    message.id,
+                    ordinal,
+                    sequence,
+                ),
+            )
 
     async def _replacement_turn_id(self) -> str | None:
         if self._store is None:

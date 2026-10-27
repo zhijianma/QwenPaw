@@ -39,10 +39,18 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Iterator, Optional, Union
 
+from .replay_message_state import ReplayMessageState
+from .replay_persistence import ReplayEvent, ReplayReceipt
+from .replay_snapshot import ReplayPrefix
+
 _SSE_PREFIX = "data: "
 _SSE_SUFFIX = "\n\n"
 RECONNECT_REQUIRED_SSE = (
     'data: {"type":"reconnect_required","reason":"buffer_overflow"}\n\n'
+)
+REPLAY_UNAVAILABLE_SSE = (
+    'data: {"error":"Live replay exceeded its capacity. '
+    'Persisted history remains available after the run finishes."}\n\n'
 )
 
 _DEFAULT_MAX_BYTES = 8 * 1024 * 1024
@@ -320,8 +328,9 @@ class ReplayStore:
         *,
         max_bytes: int = _DEFAULT_MAX_BYTES,
         max_slots: int = _DEFAULT_MAX_SLOTS,
+        completed_limit: int = 5,
     ) -> None:
-        if max_bytes < 1 or max_slots < 1:
+        if max_bytes < 1 or max_slots < 1 or completed_limit < 1:
             raise ValueError("replay limits must be positive")
         self._slots: OrderedDict[int, _Slot] = OrderedDict()
         self._owners: dict[Any, int] = {}
@@ -330,16 +339,68 @@ class ReplayStore:
         self._max_slots = max_slots
         self._retained_bytes = 0
         self._requires_resync = False
+        self._state: ReplayMessageState | None = None
+        self._completed: OrderedDict[str, int] = OrderedDict()
+        self._orders: dict[str, int] = {}
+        self._sizes: dict[str, int] = {}
+        self._controls: OrderedDict[str, str] = OrderedDict()
+        self._completed_limit = completed_limit
+        self._source: ReplayReceipt | None = None
+        self._evicted_through = -1
+        self.recovery_unavailable = False
+
+    @property
+    def has_evicted(self) -> bool:
+        return self._evicted_through >= 0
+
+    @property
+    def is_materialized(self) -> bool:
+        return self._state is not None
 
     @property
     def requires_resync(self) -> bool:
         """Return whether this run can no longer be replayed safely."""
         return self._requires_resync
 
-    def append(self, sse: str) -> None:
+    # Legacy folded streams and normalized envelope streams share this entry.
+    # pylint: disable-next=too-many-branches
+    def append(
+        self,
+        sse: str,
+        receipt: ReplayReceipt | None = None,
+    ) -> None:
         """Fold one SSE line into the replay copy."""
         if self._requires_resync:
             return
+        if isinstance(sse, ReplayEvent):
+            sse = sse.replay
+        if (
+            self._state is not None
+            and len(sse.encode("utf-8")) > self._max_bytes
+        ):
+            self._discard_state()
+            return
+        if self._state is not None or '"response"' in sse[:256]:
+            try:
+                event = json.loads(_payload(sse))
+            except (ValueError, TypeError):
+                event = None
+            if not isinstance(event, dict) and self._state is not None:
+                self._controls[f"raw:{len(self._controls)}"] = sse
+                self._trim_state()
+                return
+            if isinstance(event, dict) and (
+                self._state is not None or event.get("object") == "response"
+            ):
+                if self._state is None:
+                    # Legacy callers can send controls before response.start.
+                    self._state = ReplayMessageState()
+                    for index, slot in self._slots.items():
+                        self._controls[f"legacy:{index}"] = slot.render()
+                    self._slots.clear()
+                    self._owners.clear()
+                self._append_state(event, sse, receipt)
+                return
         head = _head(sse)
         if head is None:
             self._push(_RawSlot(sse))
@@ -360,8 +421,145 @@ class ReplayStore:
         if self._requires_resync:
             yield RECONNECT_REQUIRED_SSE
             return
+        if self._state is not None:
+            if self.has_evicted:
+                yield RECONNECT_REQUIRED_SSE
+                return
+            yield from self._controls.values()
+            yield self._encode(self._state.response)
+            return
         for slot in self._slots.values():
             yield slot.render()
+
+    @staticmethod
+    def _encode(value: dict[str, Any]) -> str:
+        return f"data: {json.dumps(value, ensure_ascii=False)}\n\n"
+
+    def _append_state(
+        self,
+        event: dict[str, Any],
+        sse: str,
+        receipt: ReplayReceipt | None,
+    ) -> None:
+        state = self._state
+        assert state is not None
+        kind = event.get("object")
+        if kind not in {"response", "message", "content"}:
+            key = str(event.get("type") or len(self._controls))
+            self._controls[key] = sse
+        else:
+            if kind == "response":
+                event["output"] = [
+                    message
+                    for message in event.get("output", [])
+                    if (message.get("sequence_number") or 0)
+                    > self._evicted_through
+                ]
+            state.apply(event)
+            if (
+                receipt
+                and kind == "message"
+                and event.get("id") == receipt.message_id
+                and event.get("sequence_number") == receipt.sequence
+                and receipt.message_id in state.messages
+            ):
+                self._orders[receipt.message_id] = receipt.ordinal
+                if receipt.committed:
+                    self._source = receipt
+                    self._completed[receipt.message_id] = receipt.sequence
+            for message_id, message in state.messages.items():
+                self._orders.setdefault(
+                    message_id,
+                    message.get("sequence_number") or 0,
+                )
+            touched = (
+                list(state.messages)
+                if kind == "response"
+                else [str(event.get("id") or event.get("msg_id") or "")]
+            )
+            for message_id in touched:
+                if message_id in state.messages:
+                    if kind == "content" and event.get("delta"):
+                        # Conservative byte accounting without serializing
+                        # the growing message again for every token.
+                        self._sizes[message_id] = self._sizes.get(
+                            message_id,
+                            0,
+                        ) + len(sse.encode("utf-8"))
+                        continue
+                    self._sizes[message_id] = len(
+                        self._encode(state.messages[message_id]).encode(
+                            "utf-8",
+                        ),
+                    )
+        self._trim_state()
+
+    def _state_size(self) -> int:
+        assert self._state is not None
+        header = {
+            key: value
+            for key, value in self._state.response.items()
+            if key != "output"
+        }
+        return (
+            sum(self._sizes.values())
+            + len(self._encode(header).encode("utf-8"))
+            + sum(
+                len(value.encode("utf-8")) for value in self._controls.values()
+            )
+        )
+
+    def _trim_state(self) -> None:
+        state = self._state
+        assert state is not None
+        while self._completed and (
+            len(self._completed) > self._completed_limit
+            or self._state_size() > self._max_bytes
+            or len(state.messages) + len(self._controls) > self._max_slots
+        ):
+            message_id, sequence = self._completed.popitem(last=False)
+            self._evicted_through = max(self._evicted_through, sequence)
+            state.remove(message_id)
+            self._orders.pop(message_id, None)
+            self._sizes.pop(message_id, None)
+        self._retained_bytes = self._state_size()
+        if (
+            self._retained_bytes > self._max_bytes
+            or len(state.messages) + len(self._controls) > self._max_slots
+        ):
+            self._discard_state()
+
+    def _discard_state(self) -> None:
+        self._state = None
+        self._completed.clear()
+        self._orders.clear()
+        self._sizes.clear()
+        self._controls.clear()
+        self._source = None
+        self._retained_bytes = 0
+        self._requires_resync = True
+        self.recovery_unavailable = True
+
+    def capture(self) -> ReplayPrefix | None:
+        """Freeze the bounded replay state while the tracker lock is held."""
+        if self._state is None or not self.has_evicted:
+            return None
+        header = {
+            key: value
+            for key, value in self._state.response.items()
+            if key != "output"
+        }
+        messages = sorted(
+            (self._orders[key], self._encode(value))
+            for key, value in self._state.messages.items()
+        )
+        return ReplayPrefix(
+            self._source,
+            self._evicted_through,
+            header,
+            messages,
+            list(self._controls.values()),
+        )
 
     def approx_bytes(self) -> int:
         """Estimate retained characters after folding and limit checks."""

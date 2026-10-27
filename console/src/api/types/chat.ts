@@ -79,6 +79,7 @@ export interface ChatUserMessage {
 
 export interface ChatUserMessagePage extends ChatHistoryMetadata {
   items: ChatUserMessage[];
+  total?: number;
 }
 
 export interface ChatResolution {

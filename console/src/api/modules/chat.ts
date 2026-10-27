@@ -145,6 +145,7 @@ export const chatApi = {
     chatId: string,
     options?: {
       before?: string;
+      after_message_id?: string;
       limit?: number;
       signal?: AbortSignal;
       include_app_owned?: boolean;
@@ -152,6 +153,8 @@ export const chatApi = {
   ) => {
     const searchParams = new URLSearchParams();
     if (options?.before) searchParams.append("before", options.before);
+    if (options?.after_message_id)
+      searchParams.append("after_message_id", options.after_message_id);
     if (options?.limit !== undefined)
       searchParams.append("limit", String(options.limit));
     if (options?.include_app_owned !== undefined)

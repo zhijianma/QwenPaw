@@ -412,7 +412,16 @@ describe("durable transcript pagination", () => {
       next_before: null,
     });
 
-    const index = await sessionApi.loadUserMessageIndex(chatId);
+    const firstIndexPage = await sessionApi.loadUserMessageIndexPage(chatId);
+    expect(getUserMessages).toHaveBeenCalledTimes(1);
+    expect(firstIndexPage.items.map((item) => item.messageId)).toEqual([
+      "user-3",
+    ]);
+    const olderIndexPage = await sessionApi.loadUserMessageIndexPage(
+      chatId,
+      firstIndexPage.before,
+    );
+    const index = [...olderIndexPage.items, ...firstIndexPage.items];
     const target = await sessionApi.loadHistoryAtAnchor(
       chatId,
       "anchor-1",
@@ -426,7 +435,7 @@ describe("durable transcript pagination", () => {
     ]);
     expect(getUserMessages).toHaveBeenNthCalledWith(2, chatId, {
       before: "index-cursor",
-      limit: 500,
+      limit: 50,
       signal: undefined,
       include_app_owned: false,
     });
@@ -529,20 +538,18 @@ describe("durable transcript pagination", () => {
     );
   });
 
-  it("bridges byte-limited forward pages to the existing user boundary", async () => {
+  it("completes exactly the next forward turn without re-reading the old one", async () => {
     const getMessages = vi
       .spyOn(api, "getChatMessages")
       .mockResolvedValueOnce({
-        messages: [msg({ id: "user-997", content: "997" })],
+        messages: [msg({ id: "reply-993", role: "assistant", content: "993" })],
         has_more: true,
-        next_before: "before-997",
+        next_before: "inside-993",
       })
       .mockResolvedValueOnce({
-        messages: Array.from({ length: 5 }, (_, i) =>
-          msg({ id: `user-${992 + i}`, content: String(992 + i) }),
-        ),
+        messages: [msg({ id: "user-993", content: "993" })],
         has_more: true,
-        next_before: "before-992",
+        next_before: "before-993",
       });
     const page = await sessionApi.loadHistoryAtAnchor(
       "44444444-4444-4444-8444-444444444444",
@@ -552,9 +559,17 @@ describe("durable transcript pagination", () => {
       "append-newer",
     );
     expect(getMessages).toHaveBeenCalledTimes(2);
-    expect(page.messages.map((item) => item.id)).toEqual(
-      Array.from({ length: 6 }, (_, i) => `user-${992 + i}`),
-    );
+    expect(page.messages).toHaveLength(2);
+    expect(page.messages[0].id).toBe("user-993");
+    expect(getMessages.mock.calls[0][1]).toMatchObject({
+      after_message_id: "user-992",
+      limit: 1,
+    });
+    expect(getMessages.mock.calls[0][1]).not.toHaveProperty("before");
+    expect(getMessages.mock.calls[1][1]).toMatchObject({
+      before: "inside-993",
+      limit: 1,
+    });
   });
 
   it("restores the latest messages and cursor after repeated anchor navigation", async () => {
@@ -633,6 +648,83 @@ describe("durable transcript pagination", () => {
     });
     expect(first.noMore).toBe(true);
     expect(exhausted).toEqual({ messages: [], noMore: true });
+  });
+
+  it("publishes a split assistant turn only after its user boundary arrives", async () => {
+    const chatId = "33333333-3333-4333-8333-333333333333";
+    vi.spyOn(api, "getChat").mockResolvedValue({
+      messages: [msg({ id: "latest", content: "latest" })],
+      status: "idle",
+      history: { has_more: true, next_before: "start" },
+    });
+    const tail = deferred<Awaited<ReturnType<typeof api.getChatMessages>>>();
+    const getMessages = vi
+      .spyOn(api, "getChatMessages")
+      .mockResolvedValueOnce({
+        messages: [
+          msg({ id: "assistant-tail", role: "assistant", content: "tail" }),
+        ],
+        has_more: true,
+        next_before: "middle",
+      })
+      .mockReturnValueOnce(tail.promise);
+    await sessionApi.getSession(chatId);
+    const published = vi.fn();
+    const load = sessionApi.loadOlderHistory(chatId).then(published);
+    await vi.waitFor(() => expect(getMessages).toHaveBeenCalledTimes(2));
+    expect(published).not.toHaveBeenCalled();
+    expect(getMessages).toHaveBeenLastCalledWith(
+      chatId,
+      expect.objectContaining({
+        before: "middle",
+        limit: 1,
+      }),
+    );
+    tail.resolve({
+      messages: [msg({ id: "older-user", content: "question" })],
+      has_more: true,
+      next_before: "previous-turn",
+    });
+    await load;
+    expect(published).toHaveBeenCalledOnce();
+    expect(
+      published.mock.calls[0][0].messages.map(
+        (item: { id: string }) => item.id,
+      ),
+    ).toEqual(["older-user", expect.any(String), "latest"]);
+    expect(
+      published.mock.calls[0][0].messages[1].cards[0].data.output[0].id,
+    ).toBe("assistant-tail");
+  });
+
+  it("does not commit a staged partial page when it is canceled", async () => {
+    const chatId = "33333333-3333-4333-8333-333333333333";
+    vi.spyOn(api, "getChat").mockResolvedValue({
+      messages: [msg({ id: "latest", content: "latest" })],
+      status: "idle",
+      history: { has_more: true, next_before: "start" },
+    });
+    const controller = new AbortController();
+    const getMessages = vi
+      .spyOn(api, "getChatMessages")
+      .mockImplementationOnce(async () => {
+        controller.abort();
+        return {
+          messages: [msg({ id: "tail", role: "assistant", content: "tail" })],
+          has_more: true,
+          next_before: "middle",
+        };
+      });
+    await sessionApi.getSession(chatId);
+    await expect(
+      sessionApi.loadOlderHistory(chatId, controller.signal),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    getMessages.mockResolvedValueOnce({ messages: [], has_more: false });
+    await sessionApi.loadOlderHistory(chatId);
+    expect(getMessages).toHaveBeenLastCalledWith(
+      chatId,
+      expect.objectContaining({ before: "start" }),
+    );
   });
 
   it("keeps only adjacent pages in the SDK history window", async () => {
@@ -946,6 +1038,38 @@ describe("durable transcript pagination", () => {
       content_total: 1,
     });
   });
+
+  it.each(["failed", "canceled"] as const)(
+    "keeps empty %s response timestamps stable across reloads",
+    (status) => {
+      const input = [
+        msg({
+          metadata: {
+            timestamp: "2026-10-26T04:40:18+00:00",
+            qwenpaw_turn_state: {
+              status,
+              finished_at: "2026-10-26T04:40:31+00:00",
+            },
+          },
+        }),
+      ];
+      const first = T.convertMessages(input, true)[1].cards?.[0]?.data;
+      const now = vi.spyOn(Date, "now").mockReturnValue(2000000000000);
+      try {
+        const reloaded = T.convertMessages(input, true)[1].cards?.[0]?.data;
+        expect(first).toMatchObject({
+          created_at: Date.parse("2026-10-26T04:40:18Z") / 1000,
+          completed_at: Date.parse("2026-10-26T04:40:31Z") / 1000,
+        });
+        expect(reloaded).toMatchObject({
+          created_at: first.created_at,
+          completed_at: first.completed_at,
+        });
+      } finally {
+        now.mockRestore();
+      }
+    },
+  );
 
   it.each(["failed", "canceled", "completed"] as const)(
     "preserves %s when one turn spans history pages",

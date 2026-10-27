@@ -74,6 +74,7 @@ class TranscriptUserMessagePage:
     next_before: TranscriptCursor | None
     has_more: bool
     snapshot_turn_seq: int
+    total: int = 0
 
 
 @dataclass(frozen=True)
@@ -1055,6 +1056,40 @@ class TranscriptStore:
                 ),
             )
 
+    def read_replay_page(
+        self,
+        *,
+        session_id: str,
+        turn_id: str,
+        through: int,
+        after: int,
+    ) -> list[tuple[int, str]]:
+        """Read committed envelope messages without exposing running turns.
+
+        Envelope terminal message sequence numbers do not change when the
+        containing response is finalized. Later completions are excluded.
+        """
+        result: list[tuple[int, str]] = []
+        size = 0
+        with self._read_connection() as connection:
+            rows = connection.execute(
+                "SELECT ordinal, payload_json FROM transcript_messages "
+                "WHERE session_id = ? AND turn_id = ? AND ordinal > ? "
+                "AND json_extract(payload_json, '$.sequence_number') <= ? "
+                "AND role != 'user' ORDER BY ordinal LIMIT 40",
+                (session_id, turn_id, after, through),
+            )
+            for row in rows:
+                payload = str(row["payload_json"])
+                length = len(payload.encode("utf-8"))
+                if length > 8 * 1024 * 1024:
+                    raise ValueError("replay message exceeds byte budget")
+                if result and size + length > 2 * 1024 * 1024:
+                    break
+                result.append((int(row["ordinal"]), payload))
+                size += length
+        return result
+
     def finish_turn(
         self,
         *,
@@ -1163,11 +1198,14 @@ class TranscriptStore:
         user_id: str,
         channel: str,
         before: TranscriptCursor | None = None,
+        after_message_id: str | None = None,
         limit: int = 5,
         max_bytes: int = _DEFAULT_PAGE_MAX_BYTES,
         max_content_blocks: int = _DEFAULT_PAGE_MAX_CONTENT_BLOCKS,
     ) -> TranscriptPage | None:
         """Read a turn-, block-, and byte-bounded durable history page."""
+        if before is not None and after_message_id is not None:
+            raise ValueError("history boundaries are mutually exclusive")
         if limit < 1 or limit > 100:
             raise ValueError(
                 "transcript turn limit must be between 1 and 100",
@@ -1194,6 +1232,45 @@ class TranscriptStore:
                 else max(0, int(session["next_turn_seq"]) - 1)
             )
             turn_sql = "SELECT t.turn_seq FROM transcript_turns t "
+            if after_message_id is not None:
+                boundary = connection.execute(
+                    "SELECT t.turn_seq FROM transcript_messages m "
+                    "JOIN transcript_turns t ON t.session_id = m.session_id "
+                    "AND t.turn_id = m.turn_id WHERE m.session_id = ? "
+                    "AND m.message_id = ? AND m.superseded_at IS NULL",
+                    (session_id, after_message_id),
+                ).fetchone()
+                if boundary is None:
+                    raise ValueError("history boundary message not found")
+                following = connection.execute(
+                    "SELECT t.turn_seq FROM transcript_turns t "
+                    "WHERE t.session_id = ? AND t.turn_seq > ? "
+                    "AND t.turn_seq <= ? AND EXISTS ("
+                    "SELECT 1 FROM transcript_messages m "
+                    "WHERE m.session_id = t.session_id "
+                    "AND m.turn_id = t.turn_id "
+                    "AND m.superseded_at IS NULL "
+                    "AND (t.status != 'running' OR m.role = 'user')) "
+                    "ORDER BY t.turn_seq ASC LIMIT ?",
+                    (
+                        session_id,
+                        boundary["turn_seq"],
+                        snapshot_turn_seq,
+                        limit,
+                    ),
+                ).fetchall()
+                if not following:
+                    return TranscriptPage(
+                        messages=[],
+                        next_before=None,
+                        has_more=False,
+                        snapshot_turn_seq=snapshot_turn_seq,
+                    )
+                before = TranscriptCursor(
+                    turn_seq=int(following[-1]["turn_seq"]) + 1,
+                    ordinal=0,
+                    snapshot_turn_seq=snapshot_turn_seq,
+                )
             turn_sql += "WHERE t.session_id = ? AND t.turn_seq <= ? "
             params: list[Any] = [session_id, snapshot_turn_seq]
             if before is not None:
@@ -1321,6 +1398,16 @@ class TranscriptStore:
                 "AND m.role = 'user' AND m.superseded_at IS NULL "
             )
             params: list[Any] = [session_id, snapshot_turn_seq]
+            total = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM transcript_turns AS t "
+                    "JOIN transcript_messages AS m "
+                    "ON m.session_id = t.session_id AND m.turn_id = t.turn_id "
+                    "WHERE t.session_id = ? AND t.turn_seq <= ? "
+                    "AND m.role = 'user' AND m.superseded_at IS NULL",
+                    params,
+                ).fetchone()[0],
+            )
             if before is not None:
                 query += (
                     "AND (t.turn_seq < ? OR "
@@ -1362,6 +1449,7 @@ class TranscriptStore:
                 next_before=next_before,
                 has_more=has_more,
                 snapshot_turn_seq=snapshot_turn_seq,
+                total=total,
             )
 
     @staticmethod
@@ -1765,6 +1853,11 @@ class TranscriptStore:
                 state_metadata = dict(nested_metadata)
                 metadata["metadata"] = state_metadata
             state = {"status": turn_status}
+            if (
+                turn_status in {"failed", "cancelled"}
+                and row["turn_finished_at"] is not None
+            ):
+                state["finished_at"] = row["turn_finished_at"]
             if turn_status == "cancelled":
                 state["status"] = "canceled"
             if turn_status == "failed" and row["error_json"]:

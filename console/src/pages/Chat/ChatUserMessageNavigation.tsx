@@ -22,7 +22,8 @@ import {
   getNavigationUsers,
   mergeNavigationUsers,
 } from "./userMessageNavigation";
-import sessionApi from "./sessionApi";
+import { useUserMessageIndex } from "./useUserMessageIndex";
+import { revealCachedMessage } from "./MeasuredMessageWindow";
 import styles from "./HistoryMessageWindow.module.less";
 
 export function ChatUserMessageNavigation({
@@ -47,22 +48,60 @@ export function ChatUserMessageNavigation({
     historyMessageWindow.getSnapshot,
     () => null,
   );
-  const [directory, setDirectory] = useState<{
-    sessionId: string;
-    items: HistoryUserMessage[];
-  }>();
+  const {
+    page: directory,
+    loading,
+    loadOlder,
+  } = useUserMessageIndex(sessionId, usersKey);
   const marker = useRef<HTMLSpanElement>(null);
   const [host, setHost] = useState<HTMLElement | null>(null);
   const [active, setActive] = useState<string>();
   const [open, setOpen] = useState(false);
   const [openVersion, setOpenVersion] = useState(0);
   const pending = useRef<HistoryUserMessage>();
+  const locatedMessage = useRef<string>();
+  const navigationIntent = useRef(0);
   const currentWindow = window?.sessionId === sessionId ? window : null;
   const persisted =
     directory && directory.sessionId === sessionId
       ? directory.items
       : currentWindow?.userMessages ?? [];
-  const items = mergeNavigationUsers(persisted, visible);
+  const historyUsers = useMemo(
+    () => getNavigationUsers(currentWindow?.turnRows.flat() ?? []),
+    [currentWindow?.turnRows],
+  );
+  const merged = mergeNavigationUsers(
+    mergeNavigationUsers(persisted, historyUsers),
+    visible,
+  );
+  const newest = persisted[persisted.length - 1]?.createdAt;
+  const liveExtra = mergeNavigationUsers(persisted, visible)
+    .slice(persisted.length)
+    .filter(
+      (item) => !newest || !item.createdAt || item.createdAt >= newest,
+    ).length;
+  const items = [...merged].sort((a, b) =>
+    a.createdAt && b.createdAt ? a.createdAt.localeCompare(b.createdAt) : 0,
+  );
+  const total = directory
+    ? Math.max(directory.total + liveExtra, items.length)
+    : items.length;
+  const sessionRef = useRef(sessionId);
+  sessionRef.current = sessionId;
+
+  // Forward history paging and the directory must share the same index.
+  useEffect(() => {
+    if (
+      directory &&
+      currentWindow &&
+      currentWindow.userMessages !== directory.items
+    ) {
+      historyMessageWindow.setUserMessages(
+        directory.sessionId,
+        directory.items,
+      );
+    }
+  }, [directory, currentWindow]);
 
   useLayoutEffect(() => {
     setHost(
@@ -73,27 +112,12 @@ export function ChatUserMessageNavigation({
   }, []);
 
   useEffect(() => {
+    navigationIntent.current += 1;
     pending.current = undefined;
+    locatedMessage.current = undefined;
     setOpen(false);
     setActive(undefined);
   }, [sessionId]);
-
-  useEffect(() => {
-    if (!sessionId) return;
-    const controller = new AbortController();
-    void sessionApi
-      .loadUserMessageIndex(sessionId, controller.signal)
-      .then((entries) => {
-        if (!controller.signal.aborted) {
-          setDirectory({ sessionId, items: entries });
-          historyMessageWindow.setUserMessages(sessionId, entries);
-        }
-      })
-      .catch(() => {
-        // Keep the last complete index and locally visible users on failure.
-      });
-    return () => controller.abort();
-  }, [sessionId, usersKey]);
 
   const getScroll = useCallback(
     () =>
@@ -127,6 +151,8 @@ export function ChatUserMessageNavigation({
       (header?.getBoundingClientRect().bottom ?? top) - top,
     );
     scroll.scrollTop += element.getBoundingClientRect().top - top - inset - 24;
+    locatedMessage.current = element.id;
+    scroll.dispatchEvent(new Event("chat-history-navigated"));
     setActive(item.messageId);
     return true;
   };
@@ -137,6 +163,8 @@ export function ChatUserMessageNavigation({
   useEffect(() => {
     if (!host) return;
     const cancel = () => {
+      navigationIntent.current += 1;
+      locatedMessage.current = undefined;
       if (!pending.current) return;
       pending.current = undefined;
       onCancel();
@@ -158,6 +186,15 @@ export function ChatUserMessageNavigation({
         id: element.id,
         top: element.getBoundingClientRect().top,
       }));
+      const located = users.find((item) => item.id === locatedMessage.current);
+      if (located) {
+        // A nested step window may measure its real height after navigation.
+        // Keep the requested user visible until explicit user interaction.
+        const delta = located.top - top;
+        if (Math.abs(delta) > 1) scroll.scrollTop += delta;
+        setActive(located.id);
+        return;
+      }
       const reversed = scroll.className.includes("bubble-list-order-desc");
       const atBottom = reversed
         ? Math.abs(scroll.scrollTop) <= 1
@@ -166,14 +203,39 @@ export function ChatUserMessageNavigation({
       if (id) setActive(id);
     };
     const frame = requestAnimationFrame(update);
+    const scroll = getScroll();
+    const intersections =
+      typeof IntersectionObserver !== "undefined" && scroll
+        ? new IntersectionObserver(update, { root: scroll, threshold: [0, 1] })
+        : undefined;
+    const observeUsers = () => {
+      intersections?.disconnect();
+      scroll
+        ?.querySelectorAll('[data-role="user"][id]')
+        .forEach((node) => intersections?.observe(node));
+      update();
+    };
+    const mutations = new MutationObserver(observeUsers);
+    if (scroll) mutations.observe(scroll, { childList: true, subtree: true });
+    const resize =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(update)
+        : undefined;
+    if (scroll?.firstElementChild) resize?.observe(scroll.firstElementChild);
+    observeUsers();
     host.addEventListener("scroll", update, true);
+    host.addEventListener("chat-message-window-rendered", update);
     host.addEventListener("wheel", cancel, { passive: true });
     host.addEventListener("pointerdown", cancel);
     host.addEventListener("keydown", cancel);
     host.addEventListener("touchstart", cancel, { passive: true });
     return () => {
       cancelAnimationFrame(frame);
+      mutations.disconnect();
+      resize?.disconnect();
+      intersections?.disconnect();
       host.removeEventListener("scroll", update, true);
+      host.removeEventListener("chat-message-window-rendered", update);
       host.removeEventListener("wheel", cancel);
       host.removeEventListener("pointerdown", cancel);
       host.removeEventListener("keydown", cancel);
@@ -182,11 +244,21 @@ export function ChatUserMessageNavigation({
   }, [host, onCancel, currentWindow, getScroll, usersKey]);
 
   const select = (item: HistoryUserMessage) => {
+    navigationIntent.current += 1;
     onCancel();
     pending.current = undefined;
     setOpen(false);
     if (locate(item) || !item.anchor) return;
     pending.current = item;
+    const scroll = getScroll();
+    if (
+      scroll &&
+      revealCachedMessage(scroll, item.messageId, () => {
+        if (pending.current === item && locate(item))
+          pending.current = undefined;
+      })
+    )
+      return;
     const targetIndex = items.findIndex(
       (entry) => entry.messageId === item.messageId,
     );
@@ -199,10 +271,56 @@ export function ChatUserMessageNavigation({
       Boolean(active) &&
       (item.messageId === active || item.clientMessageId === active),
   );
-  const index = found >= 0 ? found : items.length - 1;
+  const index = active ? found : items.length - 1;
+  const navigateAdjacent = async (direction: -1 | 1) => {
+    const intent = ++navigationIntent.current;
+    const target = items[index];
+    if (!target) return;
+    let entries = persisted;
+    let position = entries.findIndex(
+      (item) =>
+        item.messageId === target.messageId ||
+        item.clientMessageId === target.messageId,
+    );
+    let before = directory?.before;
+    while (before && (position < 0 || (direction === -1 && position === 0))) {
+      const older = await loadOlder();
+      if (
+        !older ||
+        sessionRef.current !== sessionId ||
+        intent !== navigationIntent.current
+      )
+        return;
+      entries = older.items;
+      position = entries.findIndex(
+        (item) =>
+          item.messageId === target.messageId ||
+          item.clientMessageId === target.messageId,
+      );
+      if (older.before === before) return;
+      before = older.before;
+    }
+    const entry =
+      position >= 0
+        ? entries[position + direction] ?? items[index + direction]
+        : items[index + direction];
+    if (entry) {
+      onCancel();
+      pending.current = entry;
+      setOpen(false);
+      if (locate(entry)) pending.current = undefined;
+      else
+        onNavigate({
+          ...entry,
+          anchor:
+            entries[Math.min(position + direction + 2, entries.length - 1)]
+              ?.anchor || entry.anchor,
+        });
+    }
+  };
   return (
     <span ref={marker}>
-      {host && sessionId && items.length > 0
+      {host && sessionId && total >= 3
         ? createPortal(
             <nav
               className={styles.navigation}
@@ -212,8 +330,8 @@ export function ChatUserMessageNavigation({
                 <button
                   type="button"
                   aria-label="Previous user message"
-                  disabled={index <= 0}
-                  onClick={() => select(items[index - 1])}
+                  disabled={loading || (index <= 0 && !directory?.before)}
+                  onClick={() => void navigateAdjacent(-1)}
                 >
                   <ChevronUp size={18} />
                 </button>
@@ -230,6 +348,10 @@ export function ChatUserMessageNavigation({
                     items={items}
                     openVersion={openVersion}
                     onSelect={select}
+                    total={total}
+                    hasMore={Boolean(directory?.before)}
+                    loading={loading}
+                    onLoadOlder={loadOlder}
                   />
                 }
                 overlayClassName={styles.navigationDirectoryPopover}
@@ -239,15 +361,15 @@ export function ChatUserMessageNavigation({
               >
                 <button type="button" aria-label="User message directory">
                   <List size={18} />
-                  <span>{items.length}</span>
+                  <span>{total > 99 ? "99+" : total}</span>
                 </button>
               </Popover>
               <Tooltip title="Next user message" placement="left">
                 <button
                   type="button"
                   aria-label="Next user message"
-                  disabled={index >= items.length - 1}
-                  onClick={() => select(items[index + 1])}
+                  disabled={loading || index >= items.length - 1}
+                  onClick={() => void navigateAdjacent(1)}
                 >
                   <ChevronDown size={18} />
                 </button>

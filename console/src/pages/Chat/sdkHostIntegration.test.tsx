@@ -16,6 +16,9 @@ import { LongTextPasteInput } from "./LongTextPaste";
 import { chatExtensions } from "@/plugins/registry/chatExtensions";
 import { ApiError } from "@/api/request";
 import type { ChatSpec } from "@/api";
+import type { IAgentScopeRuntimeWebUIMessage } from "@agentscope-ai/chat";
+import sessionApi from "./sessionApi";
+import { historyMessageWindow } from "./historyMessageWindowStore";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -39,6 +42,7 @@ const {
   mockResolveChat,
   mockUnknownRoutes,
   mockResolvedRoutes,
+  mockSdkMessages,
 } = vi.hoisted(() => ({
   mockListProviders: vi.fn(),
   mockGetActiveModels: vi.fn(),
@@ -58,6 +62,11 @@ const {
   mockResolveChat: vi.fn(),
   mockUnknownRoutes: new Set<string>(),
   mockResolvedRoutes: new Map<string, ChatSpec>(),
+  mockSdkMessages: {
+    enabled: false,
+    getMessages: vi.fn(() => [] as IAgentScopeRuntimeWebUIMessage[]),
+    setSessionMessages: vi.fn(),
+  },
 }));
 
 let capturedOptions: any = null;
@@ -97,42 +106,51 @@ vi.mock("./components/ChatSessionInitializer", () => ({
   default: () => null,
 }));
 
-vi.mock("@agentscope-ai/chat", () => ({
-  AgentScopeRuntimeWebUI: vi.fn((props: any) => {
-    capturedOptions = props.options;
-    useEffect(() => {
-      const id = props.options?.session?.currentSessionId;
-      if (id)
-        void props.options.session.api.getSession(id).catch(() => undefined);
-    }, [props.options?.session?.api, props.options?.session?.currentSessionId]);
-    observedSdkSessions.push({
-      agent: mockSelectedAgent(),
-      sessionId: props.options?.session?.currentSessionId,
-    });
-    return (
-      <div data-testid="chat-ui">
-        {props.options?.theme?.rightHeader}
-        {props.options?.sender?.prefix}
-      </div>
-    );
-  }),
-  useChatAnywhereSessionsState: vi.fn(() => ({
-    sessions: [],
-    currentSessionId: null,
-    setCurrentSessionId: vi.fn(),
-    setSessions: vi.fn(),
-  })),
-  useChatAnywhereSessions: vi.fn(() => ({ createSession: vi.fn() })),
-  useChatAnywhereInput: vi.fn((select: any) =>
-    select({
-      loading: mockSdkInput.loading,
-      setSessionLoading: mockSdkInput.setSessionLoading,
-      setLoading: vi.fn(),
-      getLoading: vi.fn(() => false),
-      setDisabled: vi.fn(),
+vi.mock("@agentscope-ai/chat", async () => {
+  const { forwardRef, useImperativeHandle } = await import("react");
+  return {
+    AgentScopeRuntimeWebUI: forwardRef((props: any, ref) => {
+      useImperativeHandle(ref, () =>
+        mockSdkMessages.enabled ? { messages: mockSdkMessages } : null,
+      );
+      capturedOptions = props.options;
+      useEffect(() => {
+        const id = props.options?.session?.currentSessionId;
+        if (id)
+          void props.options.session.api.getSession(id).catch(() => undefined);
+      }, [
+        props.options?.session?.api,
+        props.options?.session?.currentSessionId,
+      ]);
+      observedSdkSessions.push({
+        agent: mockSelectedAgent(),
+        sessionId: props.options?.session?.currentSessionId,
+      });
+      return (
+        <div data-testid="chat-ui">
+          {props.options?.theme?.rightHeader}
+          {props.options?.sender?.prefix}
+        </div>
+      );
     }),
-  ),
-}));
+    useChatAnywhereSessionsState: vi.fn(() => ({
+      sessions: [],
+      currentSessionId: null,
+      setCurrentSessionId: vi.fn(),
+      setSessions: vi.fn(),
+    })),
+    useChatAnywhereSessions: vi.fn(() => ({ createSession: vi.fn() })),
+    useChatAnywhereInput: vi.fn((select: any) =>
+      select({
+        loading: mockSdkInput.loading,
+        setSessionLoading: mockSdkInput.setSessionLoading,
+        setLoading: vi.fn(),
+        getLoading: vi.fn(() => mockSdkInput.loading),
+        setDisabled: vi.fn(),
+      }),
+    ),
+  };
+});
 
 vi.mock(
   "@agentscope-ai/chat/lib/AgentScopeRuntimeWebUI/core/Context/ChatAnywhereI18nContext",
@@ -202,9 +220,12 @@ vi.mock("@/contexts/ThemeContext", () => ({
   useTheme: vi.fn(() => ({ isDark: false })),
 }));
 
-vi.mock("./sessionApi", () => ({
+vi.mock("./sessionApi", async (importOriginal) => ({
+  mergeHistoryMessages: (await importOriginal<typeof import("./sessionApi")>())
+    .mergeHistoryMessages,
   default: {
     loadUserMessageIndex: vi.fn(async () => []),
+    loadUserMessageIndexPage: vi.fn(async () => ({ items: [], total: 0 })),
     onSessionIdResolved: null,
     onSessionRemoved: null,
     onSessionSelected: null,
@@ -613,6 +634,8 @@ describe("ChatPage coverage", () => {
       mockSelectedAgent.mockReturnValue(id);
     });
     mockSdkInput.loading = false;
+    mockSdkMessages.enabled = false;
+    mockSdkMessages.getMessages.mockReturnValue([]);
     mockGetChatStatus.mockReset();
     mockGetChatStatus.mockResolvedValue({ status: "idle" });
     chatExtensions.__resetForTests();
@@ -659,8 +682,58 @@ describe("ChatPage coverage", () => {
   });
 
   afterEach(() => {
+    historyMessageWindow.end();
     chatExtensions.__resetForTests();
     vi.clearAllMocks();
+  });
+
+  it("retains the live response when wheel paging enters history", async () => {
+    const live: IAgentScopeRuntimeWebUIMessage = {
+      id: "live-response",
+      role: "assistant",
+      cards: [],
+    };
+    mockSdkMessages.enabled = true;
+    mockSdkInput.loading = true;
+    mockSdkMessages.getMessages.mockReturnValue([live]);
+    vi.mocked(sessionApi.loadOlderHistory).mockResolvedValueOnce({
+      messages: [{ id: "old-user", role: "user", cards: [] }] as never[],
+      noMore: true,
+    });
+    vi.mocked(sessionApi.showLatestHistory).mockReturnValueOnce([]);
+    renderWithProviders(<ChatPage />, {
+      initialEntries: ["/chat/live-history"],
+    });
+    const surface = await screen.findByTestId("chat-ui");
+    const scroller = document.createElement("div");
+    scroller.className =
+      "qwenpaw-chat-anywhere-message-list-bubble-scroll bubble-list-order-desc";
+    scroller.scrollTop = -400;
+    surface.append(scroller);
+    const anchor = document.createElement("div");
+    anchor.id = live.id;
+    surface.append(anchor);
+    Object.defineProperties(surface, {
+      clientHeight: { value: 500 },
+      scrollHeight: { value: 1000 },
+    });
+    fireEvent.scroll(surface);
+    await waitFor(() =>
+      expect(historyMessageWindow.getSnapshot()?.onReturnToLatest).toEqual(
+        expect.any(Function),
+      ),
+    );
+    expect(mockSdkMessages.setSessionMessages).toHaveBeenCalledWith(
+      "live-history",
+      [expect.objectContaining({ history: true }), live],
+    );
+    act(() => historyMessageWindow.getSnapshot()!.onReturnToLatest!());
+    expect(historyMessageWindow.getSnapshot()).toBeNull();
+    expect(scroller.scrollTop).toBe(0);
+    expect(mockSdkMessages.setSessionMessages).toHaveBeenLastCalledWith(
+      "live-history",
+      [live],
+    );
   });
 
   function RouteHarness() {

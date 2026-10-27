@@ -44,6 +44,7 @@ import { Avatar, Flex } from "antd";
 import { useTranslation } from "react-i18next";
 import { AssistantMarkdown } from "./AssistantMarkdown";
 import { useEffectiveFontSize } from "@/contexts/FontSizeContext";
+import { stripScrollHeadlines } from "./headlineFilter";
 import {
   useChatScalarSnapshot,
   useChatListSnapshot,
@@ -77,7 +78,37 @@ import {
   subscribeChatDisplayPreference,
   type AssistantMessageDisplayPreference,
 } from "../../utils/chatDisplayPreference";
-import { splitHistoryMarkdown } from "./historyMarkdownChunks";
+import {
+  MeasuredMessageWindow,
+  RESPONSE_WINDOW_LIMIT,
+} from "./MeasuredMessageWindow";
+import {
+  createMessageWindowState,
+  MessageWindowStateContext,
+} from "./messageWindowState";
+
+function ResponseWindow<T>({
+  items,
+  id,
+  itemKey,
+  render,
+}: {
+  items: T[];
+  id: string;
+  itemKey: (item: T, index: number) => string;
+  render: (item: T, index: number) => React.ReactNode;
+}) {
+  return (
+    <MeasuredMessageWindow
+      cacheKey={id}
+      ids={items.map(itemKey)}
+      estimate={120}
+      maxItems={RESPONSE_WINDOW_LIMIT}
+    >
+      {(index) => render(items[index], index)}
+    </MeasuredMessageWindow>
+  );
+}
 
 function sortByOrder<T extends { item: { order?: number } }>(arr: T[]): T[] {
   return arr
@@ -139,45 +170,6 @@ export function DeferredHistoryContent({
   );
 }
 
-function HistoryMarkdown({
-  content,
-  messageId,
-}: {
-  content: string;
-  messageId: string;
-}) {
-  const { t } = useTranslation();
-  const chunks = useMemo(() => splitHistoryMarkdown(content), [content]);
-  const [visibleCount, setVisibleCount] = useState(1);
-  const firstVisible = Math.max(0, chunks.length - visibleCount);
-
-  useEffect(() => setVisibleCount(1), [content]);
-
-  return (
-    <div className={styles.historyMarkdown}>
-      {firstVisible > 0 ? (
-        <button
-          className={styles.loadOlderMarkdown}
-          data-history-markdown-load-older="true"
-          type="button"
-          onClick={() => setVisibleCount((count) => count + 1)}
-        >
-          {t("common.loadMore")}
-        </button>
-      ) : null}
-      {chunks.slice(firstVisible).map((chunk, index) => (
-        <AssistantMarkdown
-          key={`${messageId}:chunk:${firstVisible + index}`}
-          messageId={`${messageId}:chunk:${firstVisible + index}`}
-          content={chunk}
-          cursor={false}
-          isStreaming={false}
-        />
-      ))}
-    </div>
-  );
-}
-
 const HostMessage = React.memo(function HostMessage({
   data,
 }: {
@@ -204,96 +196,126 @@ const HostMessage = React.memo(function HostMessage({
 
   return (
     <>
-      {data.content.map((item, index) => {
-        switch (item.type) {
-          case AgentScopeRuntimeContentType.TEXT:
-            return (
-              <DeferredHistoryContent
-                key={index}
-                enabled={history && deferHistoryContent}
-              >
-                {history ? (
-                  <HistoryMarkdown
-                    messageId={`${data.id}:${index}`}
-                    content={item.text}
-                  />
-                ) : (
-                  <AssistantMarkdown
-                    messageId={`${data.id}:${index}`}
-                    content={item.text}
-                    cursor={
-                      item.status === AgentScopeRuntimeRunStatus.InProgress
-                    }
-                    // Native text deltas omit content.status; the message owns
-                    // their lifecycle. Keep the legacy cursor separate.
-                    isStreaming={
-                      (item.status ?? data.status) ===
-                      AgentScopeRuntimeRunStatus.InProgress
-                    }
-                  />
-                )}
-              </DeferredHistoryContent>
-            );
-          case AgentScopeRuntimeContentType.REFUSAL:
-            return (
-              <Markdown
-                key={index}
-                content={item.refusal}
-                raw
-                baseFontSize={baseFontSize}
-              />
-            );
-          case AgentScopeRuntimeContentType.IMAGE:
-            return (
-              <DefaultCards.Images
-                key={index}
-                data={[{ url: formatMediaURL(item.image_url) }]}
-              />
-            );
-          case AgentScopeRuntimeContentType.VIDEO:
-            return (
-              <DefaultCards.Videos
-                key={index}
-                data={[
-                  {
-                    poster: formatMediaURL(item.video_poster),
-                    src: formatMediaURL(item.video_url) || "",
-                  },
-                ]}
-              />
-            );
-          case AgentScopeRuntimeContentType.FILE:
-            return (
-              <DefaultCards.Files
-                key={index}
-                data={[
-                  {
-                    name: item.file_name || item.fileName || item.file_id,
-                    size: item.file_size,
-                    url: formatMediaURL(item.file_url),
-                  },
-                ]}
-                onClick={onFileCardClick}
-              />
-            );
-          case AgentScopeRuntimeContentType.AUDIO:
-            return (
-              <DownloadableAudios
-                key={index}
-                data={[
-                  { src: formatMediaURL(item.audio_url || item.data) || "" },
-                ]}
-              />
-            );
-          default:
-            return <div key={index}>{JSON.stringify(item)}</div>;
-        }
-      })}
+      <ResponseWindow
+        items={data.content}
+        id={`${data.id}:content`}
+        itemKey={(_item, index) => `${data.id}:${index}`}
+        render={(item, index) => {
+          switch (item.type) {
+            case AgentScopeRuntimeContentType.TEXT:
+              return (
+                <DeferredHistoryContent
+                  key={index}
+                  enabled={history && deferHistoryContent}
+                >
+                  {history ? (
+                    <AssistantMarkdown
+                      messageId={`${data.id}:${index}`}
+                      content={stripScrollHeadlines(item.text)}
+                      cursor={false}
+                      isStreaming={false}
+                    />
+                  ) : (
+                    <AssistantMarkdown
+                      messageId={`${data.id}:${index}`}
+                      content={item.text}
+                      cursor={
+                        item.status === AgentScopeRuntimeRunStatus.InProgress
+                      }
+                      // Native text deltas omit content.status; the message owns
+                      // their lifecycle. Keep the legacy cursor separate.
+                      isStreaming={
+                        (item.status ?? data.status) ===
+                        AgentScopeRuntimeRunStatus.InProgress
+                      }
+                    />
+                  )}
+                </DeferredHistoryContent>
+              );
+            case AgentScopeRuntimeContentType.REFUSAL:
+              return (
+                <Markdown
+                  key={index}
+                  content={item.refusal}
+                  raw
+                  baseFontSize={baseFontSize}
+                />
+              );
+            case AgentScopeRuntimeContentType.IMAGE:
+              return (
+                <DefaultCards.Images
+                  key={index}
+                  data={[{ url: formatMediaURL(item.image_url) }]}
+                />
+              );
+            case AgentScopeRuntimeContentType.VIDEO:
+              return (
+                <DefaultCards.Videos
+                  key={index}
+                  data={[
+                    {
+                      poster: formatMediaURL(item.video_poster),
+                      src: formatMediaURL(item.video_url) || "",
+                    },
+                  ]}
+                />
+              );
+            case AgentScopeRuntimeContentType.FILE:
+              return (
+                <DefaultCards.Files
+                  key={index}
+                  data={[
+                    {
+                      name: item.file_name || item.fileName || item.file_id,
+                      size: item.file_size,
+                      url: formatMediaURL(item.file_url),
+                    },
+                  ]}
+                  onClick={onFileCardClick}
+                />
+              );
+            case AgentScopeRuntimeContentType.AUDIO:
+              return (
+                <DownloadableAudios
+                  key={index}
+                  data={[
+                    { src: formatMediaURL(item.audio_url || item.data) || "" },
+                  ]}
+                />
+              );
+            default:
+              return <div key={index}>{JSON.stringify(item)}</div>;
+          }
+        }}
+      />
     </>
   );
 });
 
+const HistoryResponseMessage = React.memo(function HistoryResponseMessage({
+  item,
+}: {
+  item: IAgentScopeRuntimeMessage;
+}) {
+  return renderResponseMessageContent(item);
+});
+
 function renderResponseMessage(item: IAgentScopeRuntimeMessage) {
+  const metadata = (
+    item as IAgentScopeRuntimeMessage & {
+      metadata?: Record<string, unknown> | null;
+    }
+  ).metadata;
+  // Durable items are immutable. Keep the overlapping rows of a moving
+  // window from re-rendering expensive tool and reasoning components.
+  return metadata?.qwenpaw_history ? (
+    <HistoryResponseMessage key={item.id} item={item} />
+  ) : (
+    renderResponseMessageContent(item)
+  );
+}
+
+function renderResponseMessageContent(item: IAgentScopeRuntimeMessage) {
   if (isToolLikeResponseMessageType(item.type)) {
     return <ResponseTool key={item.id} data={item} />;
   }
@@ -313,6 +335,7 @@ function renderResponseMessage(item: IAgentScopeRuntimeMessage) {
                   content: [
                     {
                       type: AgentScopeRuntimeContentType.TEXT,
+                      status: item.status,
                       text: item.content
                         .filter(
                           (part) =>
@@ -404,44 +427,64 @@ function DefaultHostResponseCard({
         </Flex>
       ) : null}
       {contentPrepend}
-      {messageBlocks.map((block, index) => {
-        if (block.kind === "message") {
-          return renderResponseMessage(block.message);
+      <ResponseWindow
+        items={messageBlocks}
+        id={`${messageId}:blocks`}
+        itemKey={(block, index) =>
+          block.kind === "message"
+            ? block.message.id
+            : `group:${block.messages[0]?.id ?? index}`
         }
+        render={(block, index) => {
+          if (block.kind === "message") {
+            return renderResponseMessage(block.message);
+          }
 
-        const groupStatus = getCollapsedGroupStatus(
-          data.status,
-          index === statusStepBlockIndex,
-        );
-        const presentation = getCollapsedStepPresentation(groupStatus);
-        const firstId = block.messages[0]?.id ?? index;
-        const stepCount = countCollapsedSteps(block.messages);
-        if (stepCount === 0) {
-          return (
-            <React.Fragment key={`messages-${firstId}`}>
-              {block.messages.map(renderResponseMessage)}
-            </React.Fragment>
+          const groupStatus = getCollapsedGroupStatus(
+            data.status,
+            index === statusStepBlockIndex,
           );
-        }
-        return (
-          <LazyAccordion
-            className={styles.collapsedSteps}
-            key={getCollapsedStepRenderKey(
-              firstId,
-              messageDisplayMode,
-              presentation.status,
-            )}
-            status={presentation.status}
-            title={t(presentation.titleKey, {
-              count: stepCount,
-            })}
-            defaultOpen={presentation.defaultOpen}
-            renderChildren={() => (
-              <>{block.messages.map(renderResponseMessage)}</>
-            )}
-          />
-        );
-      })}
+          const presentation = getCollapsedStepPresentation(groupStatus);
+          const firstId = block.messages[0]?.id ?? index;
+          const stepCount = countCollapsedSteps(block.messages);
+          if (stepCount === 0) {
+            return (
+              <React.Fragment key={`messages-${firstId}`}>
+                <ResponseWindow
+                  items={block.messages}
+                  id={`${messageId}:group:${firstId}`}
+                  itemKey={(item) => item.id}
+                  render={renderResponseMessage}
+                />
+              </React.Fragment>
+            );
+          }
+          return (
+            <LazyAccordion
+              stateKey={`${messageId}:group:${index}:${messageDisplayMode}`}
+              className={styles.collapsedSteps}
+              key={getCollapsedStepRenderKey(
+                firstId,
+                messageDisplayMode,
+                presentation.status,
+              )}
+              status={presentation.status}
+              title={t(presentation.titleKey, {
+                count: stepCount,
+              })}
+              defaultOpen={presentation.defaultOpen}
+              renderChildren={() => (
+                <ResponseWindow
+                  items={block.messages}
+                  id={`${messageId}:group:${firstId}`}
+                  itemKey={(item) => item.id}
+                  render={renderResponseMessage}
+                />
+              )}
+            />
+          );
+        }}
+      />
       {data.error ? <ResponseError data={data.error} /> : null}
       {!messages.length && data.status === "canceled" ? (
         <Bubble.Interrupted title={t("chat.turnCanceled")} />
@@ -608,15 +651,21 @@ export function HostResponseCard(props: {
   data: ChatResponseData;
   isLast?: boolean;
 }) {
+  const parentMemory = React.useContext(MessageWindowStateContext);
+  const localMemory = useRef(createMessageWindowState());
   // Tool cards cannot tell a running call from one whose turn was interrupted
   // because both lack a result message. Wrapping the whole card publishes the
   // turn state without re-rendering its body: the memoized content bails out
   // on unchanged props.
   return (
-    <ToolCallTurnBoundary
-      data={props.data as unknown as IAgentScopeRuntimeResponse}
+    <MessageWindowStateContext.Provider
+      value={parentMemory ?? localMemory.current}
     >
-      <MemoizedHostResponseCard {...props} />
-    </ToolCallTurnBoundary>
+      <ToolCallTurnBoundary
+        data={props.data as unknown as IAgentScopeRuntimeResponse}
+      >
+        <MemoizedHostResponseCard {...props} />
+      </ToolCallTurnBoundary>
+    </MessageWindowStateContext.Provider>
   );
 }

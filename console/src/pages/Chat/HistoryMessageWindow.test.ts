@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render } from "@testing-library/react";
 import { createElement } from "react";
 import type { ReactNode } from "react";
-import { HistoryMessageWindowCard } from "./HistoryMessageWindow";
+import {
+  HistoryMessageWindowCard,
+  HistoryNavigationDirectory,
+} from "./HistoryMessageWindow";
 import { ChatUserMessageNavigation } from "./ChatUserMessageNavigation";
 import {
   createHistoryMessageWindowCard,
@@ -39,11 +42,46 @@ function rect(top: number, height = 40): DOMRect {
   };
 }
 
+it("bounds directory rows and loads older indexes only after scrolling", () => {
+  const items = Array.from({ length: 1000 }, (_, i) => ({
+    messageId: `index-${i}`,
+    preview: `Input ${i}`,
+    createdAt: "",
+    anchor: `a-${i}`,
+  }));
+  const loadOlder = vi.fn();
+  const { container } = render(
+    createElement(HistoryNavigationDirectory, {
+      items,
+      total: 2000,
+      activeMessageId: "index-999",
+      openVersion: 0,
+      onSelect: vi.fn(),
+      hasMore: true,
+      onLoadOlder: loadOlder,
+    }),
+  );
+  expect(container.querySelectorAll("time").length).toBeLessThanOrEqual(20);
+  expect(loadOlder).not.toHaveBeenCalled();
+  const list = container.querySelector<HTMLElement>(
+    '[style*="overflow: auto"]',
+  )!;
+  Object.defineProperties(list, {
+    clientHeight: { value: 360 },
+    scrollHeight: { value: 33000 },
+  });
+  fireEvent.scroll(list, { target: { scrollTop: 0 } });
+  expect(loadOlder).toHaveBeenCalledOnce();
+  expect(container.querySelectorAll("time").length).toBeLessThanOrEqual(20);
+});
+
 function renderWithNavigation() {
   const current = historyMessageWindow.getSnapshot()!;
-  vi.spyOn(sessionApi, "loadUserMessageIndex").mockResolvedValue(
-    current.userMessages,
-  );
+  vi.spyOn(sessionApi, "loadUserMessageIndexPage").mockResolvedValue({
+    items: current.userMessages,
+    total: current.userMessages.length,
+    before: undefined,
+  });
   return render(
     createElement(
       "div",
@@ -395,7 +433,7 @@ describe("history message window store", () => {
         ],
       ] as never[][],
       canLoadOlder: true,
-      userMessages,
+      userMessages: userMessages.slice(-1),
       onLoadOlder: vi.fn(),
       onFillOlder: vi.fn(),
       onNavigateToUserMessage,
@@ -415,9 +453,81 @@ describe("history message window store", () => {
     act(() => fireEvent.wheel(window!, { deltaY: 10 }));
 
     expect(onNavigateToUserMessage).toHaveBeenCalledExactlyOnceWith(
-      userMessages[6],
+      expect.objectContaining({ messageId: "user-2" }),
       "append-newer",
     );
+  });
+
+  it("returns to the live card at the edge without querying its optimistic id", () => {
+    const navigate = vi.fn();
+    const latest = vi.fn();
+    historyMessageWindow.begin({
+      sessionId: "chat-1",
+      turnRows: [[{ id: "sdk-live-user", role: "user", cards: [] }]],
+      canLoadOlder: false,
+      onLoadOlder: vi.fn(),
+      onFillOlder: vi.fn(),
+      onNavigateToUserMessage: navigate,
+      onReturnToLatest: latest,
+    });
+    historyMessageWindow.setLoading("chat-1", false);
+    const { container } = render(
+      createElement(
+        "div",
+        {
+          className: "qwenpaw-chat-anywhere-message-list",
+        },
+        createElement(HistoryMessageWindowCard),
+      ),
+    );
+    const scroll = container.querySelector<HTMLElement>(
+      "[data-history-message-window]",
+    )!;
+    Object.defineProperties(scroll, {
+      clientHeight: { value: 500 },
+      scrollHeight: { value: 3000 },
+    });
+    scroll.scrollTop = 2000;
+    fireEvent.wheel(scroll, { deltaY: 20 });
+    expect(navigate).not.toHaveBeenCalled();
+    expect(latest).not.toHaveBeenCalled();
+    scroll.scrollTop = 2500;
+    fireEvent.wheel(scroll, { deltaY: 20 });
+    expect(navigate).not.toHaveBeenCalled();
+    expect(latest).toHaveBeenCalledOnce();
+  });
+
+  it("blocks automatic forward retries after a failed page", () => {
+    const navigate = vi.fn();
+    historyMessageWindow.begin({
+      sessionId: "chat-1",
+      turnRows: [[{ id: "durable-user", role: "user", cards: [] }]],
+      canLoadOlder: false,
+      newerLoadFailed: true,
+      onLoadOlder: vi.fn(),
+      onFillOlder: vi.fn(),
+      onNavigateToUserMessage: navigate,
+    });
+    historyMessageWindow.setLoading("chat-1", false);
+    const { container } = render(
+      createElement(
+        "div",
+        {
+          className: "qwenpaw-chat-anywhere-message-list",
+        },
+        createElement(HistoryMessageWindowCard),
+      ),
+    );
+    const scroll = container.querySelector<HTMLElement>(
+      "[data-history-message-window]",
+    )!;
+    Object.defineProperties(scroll, {
+      clientHeight: { value: 500 },
+      scrollHeight: { value: 3000 },
+    });
+    scroll.scrollTop = 2500;
+    for (let i = 0; i < 5; i++) fireEvent.wheel(scroll, { deltaY: 20 });
+    expect(navigate).not.toHaveBeenCalled();
   });
 
   it.each(["older", "newer"])(
@@ -454,7 +564,9 @@ describe("history message window store", () => {
         clientHeight: { value: 500 },
         scrollHeight: { value: 3000 },
       });
-      scroll.scrollTop = direction === "older" ? 200 : 2300;
+      scroll.scrollTop = 1250;
+      fireEvent.pointerDown(scroll);
+      scroll.scrollTop = direction === "older" ? 900 : 1600;
       const position = scroll.scrollTop;
       act(() => {
         fireEvent.scroll(scroll);
@@ -463,7 +575,10 @@ describe("history message window store", () => {
       expect(load).toHaveBeenCalledOnce();
       expect(scroll.scrollTop).toBe(position);
       if (direction === "newer") {
-        expect(load).toHaveBeenCalledWith(userMessages[6], "append-newer");
+        expect(load).toHaveBeenCalledWith(
+          expect.objectContaining({ messageId: "user-2" }),
+          "append-newer",
+        );
       } else {
         expect(load).toHaveBeenCalledWith(scroll);
       }
@@ -504,10 +619,11 @@ describe("history message window store", () => {
     );
     act(() => vi.runAllTimers());
     expect(onNavigateToUserMessage).toHaveBeenCalledExactlyOnceWith(
-      userMessages[5],
+      expect.objectContaining({ messageId: "user-1" }),
       "append-newer",
     );
     act(() => {
+      historyMessageWindow.setCanLoadNewer("chat-1", false);
       historyMessageWindow.setTurnRows(
         "chat-1",
         [[{ id: "user-6", role: "user" }]] as never[][],
@@ -520,6 +636,40 @@ describe("history message window store", () => {
     clientHeight.mockRestore();
     scrollHeight.mockRestore();
     vi.useRealTimers();
+  });
+
+  it("fills following context after a directory jump, not the nearby older edge", () => {
+    const older = vi.fn();
+    const newer = vi.fn(() => historyMessageWindow.setLoading("chat-1", true));
+    historyMessageWindow.begin({
+      sessionId: "chat-1",
+      turnRows: [[{ id: "user-2", role: "user" }]] as never[][],
+      canLoadOlder: true,
+      onLoadOlder: older,
+      onFillOlder: older,
+      onNavigateToUserMessage: newer,
+    });
+    historyMessageWindow.setLoading("chat-1", false);
+    const { container } = render(
+      createElement(
+        "div",
+        { className: "qwenpaw-chat-anywhere-message-list" },
+        createElement(HistoryMessageWindowCard),
+      ),
+    );
+    const scroll = container.querySelector<HTMLElement>(
+      "[data-history-message-window]",
+    )!;
+    Object.defineProperties(scroll, {
+      clientHeight: { value: 800 },
+      scrollHeight: { value: 1000 },
+    });
+    act(() => scroll.dispatchEvent(new Event("chat-history-navigated")));
+    expect(older).not.toHaveBeenCalled();
+    expect(newer).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ messageId: "user-2" }),
+      "append-newer",
+    );
   });
 
   it("loads an unloaded target with following context through an opaque anchor", async () => {
@@ -535,6 +685,12 @@ describe("history message window store", () => {
       ] as never[][],
       canLoadOlder: true,
       userMessages: [
+        {
+          messageId: "user-0",
+          preview: "earlier message",
+          createdAt: "2026-10-23T00:00:00Z",
+          anchor: "opaque-anchor-0",
+        },
         {
           messageId: "user-1",
           preview: "first message",
@@ -581,6 +737,12 @@ describe("history message window store", () => {
       ] as never[][],
       canLoadOlder: true,
       userMessages: [
+        {
+          messageId: "user-0",
+          preview: "earlier message",
+          createdAt: "2026-10-23T00:00:00Z",
+          anchor: "opaque-anchor-0",
+        },
         {
           messageId: "user-1",
           preview: "first message",

@@ -92,6 +92,7 @@ async def _read_history_page(
     chat: ChatSpec,
     *,
     before: str | None = None,
+    after_message_id: str | None = None,
     limit: int = 5,
     max_bytes: int = 2 * 1024 * 1024,
     max_content_blocks: int = 40,
@@ -107,6 +108,11 @@ async def _read_history_page(
             user_id=chat.user_id,
             channel=chat.channel,
             before=before,
+            **(
+                {"after_message_id": after_message_id}
+                if after_message_id
+                else {}
+            ),
             limit=limit,
             max_bytes=max_bytes,
             max_content_blocks=max_content_blocks,
@@ -1061,6 +1067,7 @@ async def get_chat_status(
 async def get_chat_messages(
     chat_id: str,
     before: Optional[str] = Query(None),
+    after_message_id: str | None = None,
     limit: int = Query(5, ge=1, le=100),
     max_bytes: Annotated[
         int,
@@ -1095,6 +1102,7 @@ async def get_chat_messages(
             workspace,
             chat,
             before=before,
+            after_message_id=after_message_id,
             limit=limit,
             max_bytes=max_bytes,
         )
@@ -1146,6 +1154,7 @@ async def get_chat_user_messages(
     if page is None:
         return ChatUserMessagePage()
     return ChatUserMessagePage(
+        total=page.total,
         items=[
             ChatUserMessage(
                 message_id=item.message_id,

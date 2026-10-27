@@ -291,6 +291,7 @@ class ChatUserMessagePage(ChatHistoryMetadata):
     """One stable page of user-message navigation entries."""
 
     items: list[ChatUserMessage] = Field(default_factory=list)
+    total: int = 0
 
 
 class BatchFailure(BaseModel):

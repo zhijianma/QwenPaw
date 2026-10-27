@@ -445,6 +445,23 @@ class TranscriptCatalog:
             str(kwargs["turn_id"]),
         )
 
+    def read_replay_page(self, **kwargs: Any) -> list[tuple[int, str]]:
+        """Read a bounded committed replay page under a session lease."""
+        session_id = str(kwargs["session_id"])
+        identity = self._identity_for_session(session_id)
+        if identity is None:
+            raise ValueError("transcript session does not exist")
+        user_id, channel = identity
+        with self._lease(
+            session_id=session_id,
+            user_id=user_id,
+            channel=channel,
+            create=False,
+        ) as handle:
+            if handle is None:
+                raise ValueError("transcript session does not exist")
+            return handle.store.read_replay_page(**kwargs)
+
     def attach_turn_usage(self, **kwargs: Any) -> bool:
         return bool(self._write_existing("attach_turn_usage", **kwargs))
 
@@ -455,6 +472,7 @@ class TranscriptCatalog:
         user_id: str,
         channel: str,
         before: TranscriptCursor | None = None,
+        after_message_id: str | None = None,
         limit: int = 20,
         max_bytes: int = 2 * 1024 * 1024,
         max_content_blocks: int = 40,
@@ -473,6 +491,7 @@ class TranscriptCatalog:
                 user_id=user_id,
                 channel=channel,
                 before=before,
+                after_message_id=after_message_id,
                 limit=limit,
                 max_bytes=max_bytes,
                 max_content_blocks=max_content_blocks,

@@ -23,8 +23,13 @@ from typing import (
     Optional,
 )
 
-from .replay_store import RECONNECT_REQUIRED_SSE, ReplayStore
-from .replay_snapshot import materialize_replay
+from .replay_store import (
+    RECONNECT_REQUIRED_SSE,
+    REPLAY_UNAVAILABLE_SSE,
+    ReplayStore,
+)
+from .replay_snapshot import ReplayPrefix, materialize_replay
+from .replay_persistence import replay_receipt
 
 logger = logging.getLogger(__name__)
 
@@ -84,12 +89,14 @@ class TaskTracker:
         self._global_last_run_at: Optional[datetime] = None
         self._global_last_finish_at: Optional[datetime] = None
 
-    def _reconnect_queue(self) -> asyncio.Queue:
+    def _reconnect_queue(self, *, unavailable: bool = False) -> asyncio.Queue:
         """Return a terminal queue instructing the client to resync."""
         queue: asyncio.Queue = asyncio.Queue(
             maxsize=self._subscriber_queue_max,
         )
-        queue.put_nowait(RECONNECT_REQUIRED_SSE)
+        queue.put_nowait(
+            REPLAY_UNAVAILABLE_SSE if unavailable else RECONNECT_REQUIRED_SSE,
+        )
         queue.put_nowait(_SENTINEL)
         return queue
 
@@ -105,7 +112,9 @@ class TaskTracker:
         if state.replay.requires_resync or (
             len(replay) + marker_count > self._subscriber_queue_max
         ):
-            return self._reconnect_queue()
+            return self._reconnect_queue(
+                unavailable=state.replay.recovery_unavailable,
+            )
         queue: asyncio.Queue = asyncio.Queue(
             maxsize=self._subscriber_queue_max,
         )
@@ -122,7 +131,9 @@ class TaskTracker:
         if state.replay.requires_resync or (
             len(replay) + 2 > self._subscriber_queue_max
         ):
-            return self._reconnect_queue()
+            return self._reconnect_queue(
+                unavailable=state.replay.recovery_unavailable,
+            )
         queue: asyncio.Queue = asyncio.Queue(
             maxsize=self._subscriber_queue_max,
         )
@@ -342,7 +353,7 @@ class TaskTracker:
     async def attach_materialized(
         self,
         run_key: str,
-    ) -> tuple[list[str], asyncio.Queue] | None:
+    ) -> tuple[list[str] | ReplayPrefix, asyncio.Queue] | None:
         """Atomically subscribe, then materialize the fixed replay prefix.
 
         Future events enter a bounded queue while the captured prefix is
@@ -354,8 +365,12 @@ class TaskTracker:
             if state is None:
                 return None
             if state.replay.requires_resync:
-                return [], self._reconnect_queue()
-            replay = list(state.replay.replay())
+                return [], self._reconnect_queue(
+                    unavailable=state.replay.recovery_unavailable,
+                )
+            durable = state.replay.capture()
+            materialized = state.replay.is_materialized
+            replay = [] if durable else list(state.replay.replay())
             queue: asyncio.Queue = asyncio.Queue(
                 maxsize=self._subscriber_queue_max,
             )
@@ -365,7 +380,13 @@ class TaskTracker:
                 queue.put_nowait(_SENTINEL)
 
         try:
-            snapshot = await asyncio.to_thread(materialize_replay, replay)
+            snapshot: list[str] | ReplayPrefix
+            if durable is not None:
+                snapshot = durable
+            elif materialized:
+                snapshot = replay
+            else:
+                snapshot = await asyncio.to_thread(materialize_replay, replay)
         except BaseException:
             await self.detach_subscriber(run_key, queue)
             raise
@@ -459,6 +480,7 @@ class TaskTracker:
             tracker_ref = weakref.ref(self)
 
             async def _producer() -> None:
+                replay_receipt.set(None)
                 start_time = datetime.now(timezone.utc)
 
                 try:
@@ -474,7 +496,7 @@ class TaskTracker:
                         if tracker is None:
                             return
                         async with tracker.lock:
-                            run.replay.append(sse)
+                            run.replay.append(sse, replay_receipt.get())
                             # pylint: disable-next=protected-access
                             tracker._broadcast(run, sse)
                 except asyncio.CancelledError:

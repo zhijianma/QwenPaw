@@ -1,3 +1,4 @@
+import { BOTTOM_THRESHOLD_PX } from "./bottomFollow";
 import {
   Component,
   memo,
@@ -16,7 +17,14 @@ import {
 } from "@agentscope-ai/chat";
 import { ArrowDown, LocateFixed } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { FixedSizeList } from "react-window";
 import { EagerHistoryContent } from "./HostBubbles";
+import { MeasuredMessageWindow } from "./MeasuredMessageWindow";
+import { followInitialHistoryBottom } from "./initialHistoryBottom";
+import {
+  createMessageWindowState,
+  MessageWindowStateContext,
+} from "./messageWindowState";
 import {
   historyMessageWindow,
   type HistoryUserMessage,
@@ -58,33 +66,49 @@ export function HistoryNavigationDirectory({
   items,
   openVersion,
   onSelect,
+  total = items.length,
+  hasMore = false,
+  loading = false,
+  onLoadOlder,
 }: {
   activeMessageId: string | undefined;
   items: HistoryUserMessage[];
   openVersion: number;
   onSelect: (item: HistoryUserMessage) => void;
+  total?: number;
+  hasMore?: boolean;
+  loading?: boolean;
+  onLoadOlder?: () => unknown;
 }) {
   const { t } = useTranslation();
-  const activeItemRef = useRef<HTMLButtonElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
-
-  const scrollActiveItemIntoView = useCallback(
-    (behavior: ScrollBehavior = "smooth") => {
-      const activeItem = activeItemRef.current;
-      const list = listRef.current;
-      if (!activeItem || !list) return;
-      const nextScrollTop =
-        activeItem.offsetTop -
-        (list.clientHeight - activeItem.offsetHeight) / 2;
-      list.scrollTo({ top: Math.max(0, nextScrollTop), behavior });
-    },
-    [],
+  const listRef = useRef<FixedSizeList>(null);
+  const scrollOffset = useRef(0);
+  const previousItems = useRef(items);
+  const receivedInitialScroll = useRef(false);
+  const activeIndex = items.findIndex(
+    (item) => item.messageId === activeMessageId,
   );
+  const activeIndexRef = useRef(activeIndex);
+  activeIndexRef.current = activeIndex;
+
+  const scrollActiveItemIntoView = useCallback(() => {
+    if (activeIndexRef.current >= 0)
+      listRef.current?.scrollToItem(activeIndexRef.current, "center");
+  }, []);
+
+  useLayoutEffect(() => {
+    const first = previousItems.current[0];
+    const added = first
+      ? items.findIndex((item) => item.messageId === first.messageId)
+      : 0;
+    if (added > 0) listRef.current?.scrollTo(scrollOffset.current + added * 33);
+    previousItems.current = items;
+  }, [items]);
 
   useEffect(() => {
     if (!openVersion) return undefined;
     const frame = requestAnimationFrame(() => {
-      scrollActiveItemIntoView("auto");
+      scrollActiveItemIntoView();
     });
     return () => cancelAnimationFrame(frame);
   }, [openVersion, scrollActiveItemIntoView]);
@@ -92,9 +116,7 @@ export function HistoryNavigationDirectory({
   return (
     <div className={styles.navigationDirectory}>
       <div className={styles.navigationDirectoryTitle}>
-        <span>
-          {t("chat.messageNavigation.title", { count: items.length })}
-        </span>
+        <span>{t("chat.messageNavigation.title", { count: total })}</span>
         <button
           type="button"
           aria-label="Scroll directory to active user message"
@@ -108,8 +130,28 @@ export function HistoryNavigationDirectory({
           <LocateFixed size={14} />
         </button>
       </div>
-      <div className={styles.navigationDirectoryList} ref={listRef}>
-        {items.map((item) => {
+      <FixedSizeList
+        className={styles.navigationDirectoryList}
+        ref={listRef}
+        height={Math.min(360, items.length * 33)}
+        width="100%"
+        itemCount={items.length}
+        itemSize={33}
+        initialScrollOffset={Math.max(0, activeIndex * 33 - 164)}
+        overscanCount={4}
+        itemKey={(index) => items[index].messageId}
+        onScroll={({ scrollOffset: offset, scrollUpdateWasRequested }) => {
+          scrollOffset.current = offset;
+          if (!receivedInitialScroll.current) {
+            receivedInitialScroll.current = true;
+            return;
+          }
+          if (!scrollUpdateWasRequested && offset < 66 && hasMore && !loading)
+            onLoadOlder?.();
+        }}
+      >
+        {({ index, style }) => {
+          const item = items[index];
           const active = item.messageId === activeMessageId;
           return (
             <button
@@ -119,7 +161,8 @@ export function HistoryNavigationDirectory({
                 active ? styles.navigationItemActive : ""
               }`}
               onClick={() => onSelect(item)}
-              ref={active ? activeItemRef : undefined}
+              aria-current={active ? "true" : undefined}
+              style={style}
             >
               <span>{item.preview || "User message"}</span>
               <time dateTime={item.createdAt}>
@@ -127,8 +170,8 @@ export function HistoryNavigationDirectory({
               </time>
             </button>
           );
-        })}
-      </div>
+        }}
+      </FixedSizeList>
     </div>
   );
 }
@@ -146,6 +189,7 @@ interface ScrollAnchor {
 // Capture the actual visible DOM before React inserts a page.
 class HistoryContents extends Component<ContentsProps> {
   private content: HTMLDivElement | null = null;
+  private windowState = createMessageWindowState();
 
   getSnapshotBeforeUpdate(previous: ContentsProps): ScrollAnchor | null {
     const content = this.content;
@@ -185,21 +229,30 @@ class HistoryContents extends Component<ContentsProps> {
         }}
         className={styles.page}
       >
-        <EagerHistoryContent>
-          {this.props.messages.map((message, index) => (
-            <HistoryMessage
-              key={message.id}
-              message={message}
-              isLast={index === this.props.messages.length - 1}
-            />
-          ))}
-        </EagerHistoryContent>
+        <MessageWindowStateContext.Provider value={this.windowState}>
+          <EagerHistoryContent>
+            <MeasuredMessageWindow
+              key={this.props.sessionId}
+              ids={this.props.messages.map((message) => message.id)}
+              gap={24}
+              initialEnd
+            >
+              {(index) => (
+                <HistoryMessage
+                  message={this.props.messages[index]}
+                  isLast={index === this.props.messages.length - 1}
+                />
+              )}
+            </MeasuredMessageWindow>
+          </EagerHistoryContent>
+        </MessageWindowStateContext.Provider>
       </div>
     );
   }
 }
 
 export function HistoryMessageWindowCard() {
+  const { t } = useTranslation();
   const current = useSyncExternalStore(
     historyMessageWindow.subscribe,
     historyMessageWindow.getSnapshot,
@@ -207,11 +260,13 @@ export function HistoryMessageWindowCard() {
   );
   const placeholderRef = useRef<HTMLSpanElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const initialSessionRef = useRef<string>();
   const pendingNavigationRef = useRef<string>();
   const pendingBottomRef = useRef(false);
   const [atBottom, setAtBottom] = useState(true);
   const wheelUntilRef = useRef(0);
+  const scrollIntentRef = useRef<"older" | "newer" | null>(null);
+  const previousScrollTopRef = useRef(0);
+  const directScrollRef = useRef(false);
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
   const turnRows = current?.turnRows ?? EMPTY_TURN_ROWS;
   const messages = useMemo(() => turnRows.flat(), [turnRows]);
@@ -253,11 +308,13 @@ export function HistoryMessageWindowCard() {
 
   useLayoutEffect(() => {
     const scroll = scrollRef.current;
+    if (!scroll || !current?.sessionId) return;
+    return followInitialHistoryBottom(scroll);
+  }, [current?.sessionId, portalTarget]);
+
+  useLayoutEffect(() => {
+    const scroll = scrollRef.current;
     if (!current || !scroll) return;
-    if (initialSessionRef.current !== current.sessionId && messages.length) {
-      initialSessionRef.current = current.sessionId;
-      scroll.scrollTop = scroll.scrollHeight;
-    }
     const pending = pendingNavigationRef.current;
     if (pending && locate(pending)) {
       pendingNavigationRef.current = undefined;
@@ -269,43 +326,85 @@ export function HistoryMessageWindowCard() {
   }, [current, messages, locate, portalTarget]);
 
   const loadNewerHistory = useCallback(() => {
-    if (!current) return;
+    if (!current || current.loading || current.newerLoadFailed) return;
     const lastUser = [...messages]
       .reverse()
       .find((item) => item.role === "user");
-    const index = current.userMessages.findIndex(
-      (item) => item.messageId === lastUser?.id,
-    );
-    const next =
-      current.userMessages[
-        Math.min(index + 5, current.userMessages.length - 1)
-      ];
-    if (index >= 0 && next && next.messageId !== lastUser?.id) {
-      current.onNavigateToUserMessage(next, "append-newer");
+    // Optimistic SDK identities cannot be used as durable history cursors.
+    // Keep the live response mounted and return to it only at the viewport edge.
+    const liveBoundary = current.onReturnToLatest && lastUser?.history !== true;
+    if (liveBoundary || current.canLoadNewer === false) {
+      const scroll = scrollRef.current;
+      if (
+        scroll &&
+        scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop <=
+          EDGE_TOLERANCE_PX
+      )
+        current.onReturnToLatest?.();
+      return;
+    }
+    if (lastUser?.id) {
+      current.onNavigateToUserMessage(
+        {
+          messageId: lastUser.id,
+          preview: "",
+          createdAt: "",
+          anchor: "",
+        },
+        "append-newer",
+      );
     }
   }, [current, messages]);
+
+  const prefetchHistory = useCallback(() => {
+    const scroll = scrollRef.current;
+    if (!scroll || !current || historyMessageWindow.getSnapshot()?.loading)
+      return;
+    if (scroll.clientHeight <= 0) return;
+    // Keep two viewports ready in the direction the reader actually chose.
+    // In a short window both edges can qualify: never prefer the wrong edge.
+    const threshold = scroll.clientHeight * 2;
+    if (
+      scrollIntentRef.current === "older" &&
+      scroll.scrollTop <= threshold &&
+      current.canLoadOlder
+    ) {
+      current.onLoadOlder(scroll);
+    } else if (
+      scrollIntentRef.current === "newer" &&
+      scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop <= threshold
+    ) {
+      loadNewerHistory();
+    }
+  }, [current, loadNewerHistory]);
 
   const updateActiveMessage = useCallback(() => {
     const scroll = scrollRef.current;
     if (!scroll || !current) return;
     const remaining =
       scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop;
-    setAtBottom(remaining <= EDGE_TOLERANCE_PX);
-    if (
-      historyMessageWindow.getSnapshot()?.loading ||
-      scroll.clientHeight <= 0 ||
-      scroll.scrollHeight <= scroll.clientHeight
-    ) {
-      return;
+    setAtBottom(remaining <= BOTTOM_THRESHOLD_PX);
+    const delta = scroll.scrollTop - previousScrollTopRef.current;
+    previousScrollTopRef.current = scroll.scrollTop;
+    if (directScrollRef.current && Math.abs(delta) > EDGE_TOLERANCE_PX) {
+      scrollIntentRef.current = delta < 0 ? "older" : "newer";
     }
-    // Fetch before the native scroll reaches an unloaded boundary.
-    const threshold = scroll.clientHeight / 2;
-    if (scroll.scrollTop <= threshold && current.canLoadOlder) {
-      current.onLoadOlder(scroll);
-    } else if (remaining <= threshold) {
-      loadNewerHistory();
-    }
-  }, [current, loadNewerHistory]);
+    prefetchHistory();
+  }, [current, prefetchHistory]);
+
+  useLayoutEffect(() => {
+    // Prepending and window measurements move scrollTop to preserve the
+    // visible anchor. That correction must not reverse the reader's intent.
+    previousScrollTopRef.current = scrollRef.current?.scrollTop ?? 0;
+  }, [messages]);
+
+  useEffect(() => {
+    if (current?.loading) return;
+    // A reader may reach the boundary while a request is in flight. Recheck
+    // after publishing, without requiring a second wheel gesture to resume.
+    const frame = requestAnimationFrame(prefetchHistory);
+    return () => cancelAnimationFrame(frame);
+  }, [current, prefetchHistory]);
 
   useEffect(() => {
     const scroll = scrollRef.current;
@@ -318,6 +417,10 @@ export function HistoryMessageWindowCard() {
     };
     const wheel = (event: WheelEvent) => {
       cancelNavigation();
+      directScrollRef.current = false;
+      if (event.deltaY !== 0) {
+        scrollIntentRef.current = event.deltaY < 0 ? "older" : "newer";
+      }
       if (current.loading || Date.now() < wheelUntilRef.current) return;
       if (event.deltaY < 0 && scroll.scrollTop <= EDGE_TOLERANCE_PX) {
         if (!current.canLoadOlder) return;
@@ -330,19 +433,36 @@ export function HistoryMessageWindowCard() {
       ) {
         wheelUntilRef.current = Date.now() + WHEEL_GESTURE_IDLE_MS;
         loadNewerHistory();
+      } else {
+        prefetchHistory();
       }
     };
+    const directScroll = () => {
+      cancelNavigation();
+      directScrollRef.current = true;
+      previousScrollTopRef.current = scroll.scrollTop;
+    };
+    const navigated = () => {
+      // A directory jump is an explicit request to read from this message
+      // onward. Fill its following context even if no wheel event follows.
+      directScrollRef.current = false;
+      scrollIntentRef.current = "newer";
+      previousScrollTopRef.current = scroll.scrollTop;
+      prefetchHistory();
+    };
     scroll.addEventListener("wheel", wheel, { passive: true });
-    scroll.addEventListener("pointerdown", cancelNavigation);
-    scroll.addEventListener("touchstart", cancelNavigation, { passive: true });
-    scroll.addEventListener("keydown", cancelNavigation);
+    scroll.addEventListener("pointerdown", directScroll);
+    scroll.addEventListener("touchstart", directScroll, { passive: true });
+    scroll.addEventListener("keydown", directScroll);
+    scroll.addEventListener("chat-history-navigated", navigated);
     return () => {
       scroll.removeEventListener("wheel", wheel);
-      scroll.removeEventListener("pointerdown", cancelNavigation);
-      scroll.removeEventListener("touchstart", cancelNavigation);
-      scroll.removeEventListener("keydown", cancelNavigation);
+      scroll.removeEventListener("pointerdown", directScroll);
+      scroll.removeEventListener("touchstart", directScroll);
+      scroll.removeEventListener("keydown", directScroll);
+      scroll.removeEventListener("chat-history-navigated", navigated);
     };
-  }, [current, loadNewerHistory, portalTarget]);
+  }, [current, loadNewerHistory, portalTarget, prefetchHistory]);
 
   useEffect(() => {
     const scroll = scrollRef.current;
@@ -375,10 +495,24 @@ export function HistoryMessageWindowCard() {
                 onScroll={updateActiveMessage}
               >
                 <HistoryContents
+                  key={current.sessionId}
                   messages={messages}
                   sessionId={current.sessionId}
                 />
               </div>
+              {current.newerLoadFailed && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    historyMessageWindow.setNewerLoadFailed(
+                      current.sessionId,
+                      false,
+                    )
+                  }
+                >
+                  {t("common.retry", "Retry")}
+                </button>
+              )}
               {(current.onReturnToLatest ||
                 !atBottom ||
                 (current.userMessages.length > 0 &&

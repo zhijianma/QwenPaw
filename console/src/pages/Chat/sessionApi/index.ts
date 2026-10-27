@@ -9,6 +9,7 @@ import api, {
   type ChatHistory,
   type ChatContextState,
   type ChatHistoryMetadata,
+  type ChatMessagePage,
   type ChatStatus,
   type Message,
   type TranscriptPosition,
@@ -24,6 +25,7 @@ import { takeChatHistoryPrefetch } from "../chatRoutePrefetch";
 import { useTurnUsageStore } from "../turnUsageStore";
 import { useMessageQueueStore } from "../../../stores/messageQueueStore";
 import { syncSessionsGlobal } from "../../../stores/sessionListStore";
+import type { HistoryUserMessage } from "../historyMessageWindowStore";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -38,6 +40,43 @@ const ROLE_ASSISTANT = "assistant";
 const TYPE_PLUGIN_CALL_OUTPUT = "plugin_call_output";
 const CARD_RESPONSE = "AgentScopeRuntimeResponseCard";
 const HISTORY_PAGE_TURN_LIMIT = 5;
+
+/** Complete only the split oldest turn before publishing a history page. */
+async function completeHistoryPage(
+  backendId: string,
+  firstPage: ChatMessagePage,
+  signal?: AbortSignal,
+  isCurrent: () => boolean = () => true,
+) {
+  let page = firstPage;
+  let messages = convertMessages(page.messages || [], true);
+  const cursors = new Set<string>();
+  while (
+    messages.length > 0 &&
+    messages[0].role !== ROLE_USER &&
+    page.has_more &&
+    page.next_before
+  ) {
+    signal?.throwIfAborted();
+    if (!isCurrent()) throw new DOMException("Agent changed", "AbortError");
+    const cursor = page.next_before;
+    if (cursors.has(cursor)) throw new Error("History cursor did not advance");
+    cursors.add(cursor);
+    page = await api.getChatMessages(backendId, {
+      before: cursor,
+      // Do not pull additional turns while completing a split boundary.
+      limit: 1,
+      signal,
+      include_app_owned: false,
+    });
+    messages = mergeHistoryMessages(
+      convertMessages(page.messages || [], true),
+      messages,
+    );
+  }
+  signal?.throwIfAborted();
+  return { page, messages };
+}
 
 function hydrateTurnUsageFromMessages(
   messages: IAgentScopeRuntimeWebUIMessage[],
@@ -458,8 +497,9 @@ function buildUserCard(msg: Message): IAgentScopeRuntimeWebUIMessage {
  */
 const buildResponseCard = (
   outputMessages: OutputMessage[],
-  terminal?: { status?: string; error?: unknown },
+  terminal?: { status?: string; error?: unknown; finished_at?: string },
   turnId?: string,
+  userTimestamp = 0,
 ): IAgentScopeRuntimeWebUIMessage => {
   const fallbackNow = Math.floor(Date.now() / 1000);
   const maxSeq = outputMessages.reduce(
@@ -500,10 +540,15 @@ const buildResponseCard = (
           output: normalizedMessages,
           object: "response",
           status: terminal?.status || "completed",
-          created_at: firstTs || fallbackNow,
+          created_at: firstTs || userTimestamp || fallbackNow,
           sequence_number: maxSeq + 1,
           error: terminal?.error ?? null,
-          completed_at: finishedAt || lastTs || fallbackNow,
+          completed_at:
+            metadataTimeToSeconds(terminal?.finished_at) ||
+            finishedAt ||
+            lastTs ||
+            userTimestamp ||
+            fallbackNow,
           usage: turnUsage?.usage ?? null,
           context_usage: turnUsage?.context_usage ?? null,
         },
@@ -547,10 +592,14 @@ const convertMessages = (
   let i = 0;
 
   while (i < len) {
-    let terminal: { status?: string; error?: unknown } | undefined;
+    let terminal:
+      | { status?: string; error?: unknown; finished_at?: string }
+      | undefined;
+    let userTimestamp = 0;
     let turnId: string | undefined;
     if (sourceMessages[i].role === ROLE_USER) {
       const user = sourceMessages[i++];
+      userTimestamp = parseTimestamp(user);
       const meta = user.metadata as Record<string, unknown> | undefined;
       const nested = meta?.metadata;
       const stateMetadata =
@@ -558,7 +607,7 @@ const convertMessages = (
           ? (nested as Record<string, unknown>)
           : meta;
       terminal = stateMetadata?.qwenpaw_turn_state as
-        | { status?: string; error?: unknown }
+        | { status?: string; error?: unknown; finished_at?: string }
         | undefined;
       turnId = getTranscriptPosition(user)?.turn_id;
       result.push(buildUserCard(user));
@@ -576,7 +625,9 @@ const convertMessages = (
       terminal?.status === "failed" ||
       terminal?.status === "canceled"
     ) {
-      result.push(buildResponseCard(outputMsgs, terminal, turnId));
+      result.push(
+        buildResponseCard(outputMsgs, terminal, turnId, userTimestamp),
+      );
     }
   }
 
@@ -1132,7 +1183,12 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
         signal,
         include_app_owned: false,
       })
-      .then((result) => {
+      .then((result) =>
+        completeHistoryPage(backendId, result, signal, () =>
+          this.isActiveOwner(owner),
+        ),
+      )
+      .then(({ page: result, messages }) => {
         if (!this.isActiveOwner(owner)) {
           throw new DOMException("Agent changed", "AbortError");
         }
@@ -1144,7 +1200,6 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
         this.setHistoryPage(backendId, nextPage);
         if (entry) entry.historyPage = nextPage;
 
-        const messages = convertMessages(result.messages || [], true);
         const historyWindow = this.historyWindows.get(backendId) ?? {
           pages: [entry?.messages ?? []],
           activeIndex: 0,
@@ -1178,34 +1233,33 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
   }
 
   async loadUserMessageIndex(sessionId: string, signal?: AbortSignal) {
+    return (await this.loadUserMessageIndexPage(sessionId, undefined, signal))
+      .items;
+  }
+
+  async loadUserMessageIndexPage(
+    sessionId: string,
+    before?: string,
+    signal?: AbortSignal,
+  ): Promise<{ items: HistoryUserMessage[]; total: number; before?: string }> {
     const backendId = this.getHistoryBackendId(sessionId);
-    let before: string | undefined;
-    let items: Array<{
-      messageId: string;
-      preview: string;
-      createdAt: string;
-      anchor: string;
-    }> = [];
-    do {
-      const page = await api.getChatUserMessages(backendId, {
-        before,
-        limit: 500,
-        signal,
-        include_app_owned: false,
-      });
-      items = [
-        ...page.items.map((item) => ({
-          clientMessageId: item.client_message_id,
-          messageId: item.message_id,
-          preview: item.preview,
-          createdAt: item.created_at,
-          anchor: item.anchor,
-        })),
-        ...items,
-      ];
-      before = page.has_more ? page.next_before ?? undefined : undefined;
-    } while (before);
-    return items;
+    const page = await api.getChatUserMessages(backendId, {
+      before,
+      limit: 50,
+      signal,
+      include_app_owned: false,
+    });
+    return {
+      items: page.items.map((item) => ({
+        clientMessageId: item.client_message_id,
+        messageId: item.message_id,
+        preview: item.preview,
+        createdAt: item.created_at,
+        anchor: item.anchor,
+      })),
+      total: page.total ?? page.items.length,
+      before: page.has_more ? page.next_before ?? undefined : undefined,
+    };
   }
 
   async loadHistoryAtAnchor(
@@ -1221,13 +1275,25 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
   }> {
     const backendId = this.getHistoryBackendId(sessionId);
     let result = await api.getChatMessages(backendId, {
-      before: anchor,
-      limit: HISTORY_PAGE_TURN_LIMIT,
+      ...(mode === "append-newer"
+        ? { after_message_id: targetMessageId }
+        : { before: anchor }),
+      // Publish the next complete turn promptly instead of waiting for five
+      // tool-heavy turns. The viewport scheduler requests further turns.
+      limit: mode === "append-newer" ? 1 : HISTORY_PAGE_TURN_LIMIT,
       signal,
       include_app_owned: false,
     });
     let messages = convertMessages(result.messages || [], true);
+    if (mode === "append-newer") {
+      // The forward query selects exactly the next turn. Its own user
+      // boundary proves continuity; do not read the previous turn again.
+      const completed = await completeHistoryPage(backendId, result, signal);
+      result = completed.page;
+      messages = completed.messages;
+    }
     while (
+      mode === "replace" &&
       targetMessageId &&
       !messages.some((message) => message.id === targetMessageId) &&
       result.has_more &&
@@ -1235,7 +1301,7 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     ) {
       result = await api.getChatMessages(backendId, {
         before: result.next_before,
-        limit: HISTORY_PAGE_TURN_LIMIT,
+        limit: mode === "append-newer" ? 1 : HISTORY_PAGE_TURN_LIMIT,
         signal,
         include_app_owned: false,
       });

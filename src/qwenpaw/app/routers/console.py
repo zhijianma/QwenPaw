@@ -44,6 +44,7 @@ from ..agent_context import get_agent_for_request
 from ..approvals.display import approval_display_fields
 from ..chats.models import ChatUpdate
 from ..chats.title_generator import generate_and_update_title
+from ..replay_snapshot import ReplayPrefix
 from ..task_tracker import REPLAY_END_SSE
 from ..utils import check_upload_size
 
@@ -391,11 +392,11 @@ def _is_reconnect_request(request_data: Union[AgentRequest, dict]) -> bool:
 async def _attach_reconnect(
     tracker: Any,
     chat_id: str,
-    materialized: bool,
-) -> tuple[list[str], asyncio.Queue | None]:
-    """Attach to a run with either legacy replay or one snapshot prefix."""
-    if not materialized:
-        return [], await tracker.attach(chat_id)
+    _materialized: bool,
+) -> tuple[list[str] | ReplayPrefix, asyncio.Queue | None]:
+    """Attach with standard envelope events, including durable replay."""
+    # Both client versions understand response/message envelopes. FIFO
+    # recovery must not depend on the optional materialization flag.
     attached = await tracker.attach_materialized(chat_id)
     if attached is None:
         return [], None
@@ -510,7 +511,7 @@ async def post_console_chat(
     tracker = workspace.task_tracker
     is_reconnect = _is_reconnect_request(request_data)
 
-    replay_prefix: list[str] = []
+    replay_prefix: list[str] | ReplayPrefix = []
     if is_reconnect:
         materialized_replay = (
             request.query_params.get("materialized_replay") == "1"
@@ -585,8 +586,12 @@ async def post_console_chat(
         stream_it = tracker.stream_from_queue(queue, chat.id)
         try:
             try:
-                for event_data in replay_prefix:
-                    yield event_data
+                if hasattr(replay_prefix, "__aiter__"):
+                    async for event_data in replay_prefix:
+                        yield event_data
+                else:
+                    for event_data in replay_prefix:
+                        yield event_data
                 async for event_data in stream_it:
                     yield event_data
             except Exception as e:
@@ -594,6 +599,8 @@ async def post_console_chat(
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
         finally:
             await stream_it.aclose()
+            # Prefix reads can fail before stream_it starts its own finally.
+            await tracker.detach_subscriber(chat.id, queue)
 
     return StreamingResponse(
         event_generator(),

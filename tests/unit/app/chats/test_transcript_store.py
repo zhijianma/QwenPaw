@@ -235,6 +235,69 @@ def test_user_message_index_anchor_reads_target_turn(tmp_path):
     ]
     assert index.items[2].preview == "user message 3"
     assert index.items[2].client_message_id == "client-3"
+    assert index.total == 7
+    forward = store.get_page(
+        session_id="session-1",
+        user_id="user-1",
+        channel="console",
+        after_message_id="message-2",
+        limit=2,
+    )
+    assert [item.id for item in forward.messages] == [
+        "message-3",
+        "assistant-3",
+        "message-4",
+        "assistant-4",
+    ]
+    end = store.get_page(
+        session_id="session-1",
+        user_id="user-1",
+        channel="console",
+        after_message_id="message-7",
+        limit=2,
+    )
+    assert not end.messages
+    with pytest.raises(ValueError, match="boundary message not found"):
+        store.get_page(
+            session_id="session-1",
+            user_id="user-1",
+            channel="console",
+            after_message_id="unknown",
+            limit=2,
+        )
+    recent = store.get_user_message_page(
+        session_id="session-1",
+        user_id="user-1",
+        channel="console",
+        limit=3,
+    )
+    assert recent.total == 7
+    assert [item.message_id for item in recent.items] == [
+        "message-5",
+        "message-6",
+        "message-7",
+    ]
+    assert recent.has_more
+    _start(store, "later-turn")
+    store.upsert_message(
+        session_id="session-1",
+        turn_id="later-turn",
+        message=_message("later-message", "new input"),
+        ordinal=0,
+    )
+    older = store.get_user_message_page(
+        session_id="session-1",
+        user_id="user-1",
+        channel="console",
+        before=recent.next_before,
+        limit=3,
+    )
+    assert older.total == 7
+    assert [item.message_id for item in older.items] == [
+        "message-2",
+        "message-3",
+        "message-4",
+    ]
 
     page = store.get_page(
         session_id="session-1",
@@ -407,6 +470,7 @@ def test_page_projects_terminal_turn_state(
         turn_id="turn-1",
         status=turn_status,
         error={"code": "failure", "message": ""},
+        finished_at="2026-10-26T04:40:31+00:00",
     )
 
     page = store.get_page(
@@ -418,7 +482,10 @@ def test_page_projects_terminal_turn_state(
     assert page is not None
     metadata = page.messages[0].metadata
     assert metadata is not None
-    expected = {"status": wire_status}
+    expected = {
+        "status": wire_status,
+        "finished_at": "2026-10-26T04:40:31+00:00",
+    }
     if turn_status == "failed":
         expected["error"] = {"code": "failure", "message": ""}
     assert metadata["metadata"]["qwenpaw_turn_state"] == expected

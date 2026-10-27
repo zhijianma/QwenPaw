@@ -30,6 +30,8 @@ from qwenpaw.schemas import (
 
 from ....config.config import ConsoleConfig as ConsoleChannelConfig
 from ...console_push_store import append as push_store_append
+from ...replay_persistence import ReplayEvent
+from ...chats.transcript_recorder import TRANSCRIPT_TURN_ID_CONTEXT_KEY
 from ....constant import DEFAULT_MEDIA_DIR
 from ....token_usage.model_wrapper import TokenRecordingModelWrapper
 from ....exceptions import ModelQuotaExceededException
@@ -62,6 +64,19 @@ _RESET = "\033[0m" if _USE_COLOR else ""
 
 def _ts() -> str:
     return datetime.now().strftime("%H:%M:%S")
+
+
+def _replay_event(event: Any, data: str, request: Any) -> str:
+    wire = f"data: {data}\n\n"
+    if getattr(event, "object", None) == "response" and (
+        getattr(request, "request_context", None) or {}
+    ).get(
+        TRANSCRIPT_TURN_ID_CONTEXT_KEY,
+    ):
+        # Envelope already emitted each Message; output stays on the wire.
+        compact = event.model_dump_json(exclude={"output"})
+        return ReplayEvent(wire, f"data: {compact}\n\n")
+    return wire
 
 
 class ConsoleChannel(BaseChannel):
@@ -505,7 +520,7 @@ class ConsoleChannel(BaseChannel):
                         event,
                         headline_stream_states,
                     )
-                    yield f"data: {data}\n\n"
+                    yield _replay_event(event, data, request)
 
                 if obj == "message" and status == RunStatus.Completed:
                     parts = self._message_to_content_parts(event)
@@ -541,7 +556,7 @@ class ConsoleChannel(BaseChannel):
                     completed_response,
                     headline_stream_states,
                 )
-                yield f"data: {data}\n\n"
+                yield _replay_event(completed_response, data, request)
 
             logger.info(
                 "console stream done: event_count=%s has_response=%s",
