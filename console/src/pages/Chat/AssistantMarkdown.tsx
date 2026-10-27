@@ -1,3 +1,7 @@
+import {
+  WindowedMarkdownTable,
+  WindowedMarkdownTableBody,
+} from "./WindowedMarkdownTable";
 import React, {
   createContext,
   useContext,
@@ -7,7 +11,6 @@ import React, {
 } from "react";
 import { Markdown } from "@agentscope-ai/chat";
 import { useEffectiveFontSize } from "../../contexts/FontSizeContext";
-import { renderableCodeComponents } from "../../components/RenderableCodeBlock";
 import { RenderableCodeBlock } from "../../components/RenderableCodeBlock/RenderableCodeBlock";
 import { useChatListSnapshot } from "../../plugins/registry/useChatExtensions";
 import { PluginSlotBoundary } from "../../plugins/registry/PluginSlotBoundary";
@@ -96,7 +99,7 @@ function AssistantCodeBlock(
           .reverse()
           .find((e) => e.item.language === language)
       : undefined;
-  const fallback = () => <RenderableCodeBlock {...props} />;
+  const fallback = () => <RenderableCodeBlock {...props} virtualize />;
   if (!entry || !ctx || typeof props.children !== "string" || !props.domNode)
     return fallback();
   const blockKey = getCodeBlockKey(props.domNode);
@@ -127,7 +130,18 @@ function AssistantCodeBlock(
 }
 
 // Keep the adapter type stable; portals also survive Markdown ancestor replacement.
-const assistantCodeComponents = { code: AssistantCodeBlock };
+const assistantCodeComponents = {
+  code: AssistantCodeBlock,
+  table: WindowedMarkdownTable,
+  tbody: WindowedMarkdownTableBody,
+};
+const chatCodeComponents = {
+  table: WindowedMarkdownTable,
+  tbody: WindowedMarkdownTableBody,
+  code: (props: React.ComponentProps<typeof RenderableCodeBlock>) => (
+    <RenderableCodeBlock {...props} virtualize />
+  ),
+};
 
 function AssistantMarkdownDocument({
   content,
@@ -159,7 +173,7 @@ function AssistantMarkdownDocument({
     return (
       <Markdown
         baseFontSize={baseFontSize}
-        components={renderableCodeComponents}
+        components={chatCodeComponents}
         content={deferredContent}
         cursor={cursor}
       />

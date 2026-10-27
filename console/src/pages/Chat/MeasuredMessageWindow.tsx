@@ -1,4 +1,12 @@
-import { Component, type ContextType, type ReactNode } from "react";
+import {
+  Component,
+  cloneElement,
+  createElement,
+  type ReactElement,
+  type ContextType,
+  type ReactNode,
+  type HTMLAttributes,
+} from "react";
 import { MessageWindowStateContext } from "./messageWindowState";
 
 export const MESSAGE_WINDOW_LIMIT = 32;
@@ -21,6 +29,7 @@ export function revealCachedMessage(
 }
 
 interface Props {
+  tableColumns?: number;
   cacheKey?: string;
   ids: string[];
   children: (index: number) => ReactNode;
@@ -42,7 +51,7 @@ export class MeasuredMessageWindow extends Component<
   static contextType = MessageWindowStateContext;
   declare context: ContextType<typeof MessageWindowStateContext>;
   state: { first?: string; count?: number } = {};
-  private root: HTMLDivElement | null = null;
+  private root: HTMLElement | null = null;
   private scroll: HTMLElement | null = null;
   private observer?: ResizeObserver;
   private heights = new Map<string, number>();
@@ -237,16 +246,39 @@ export class MeasuredMessageWindow extends Component<
           (index + 1 < ids.length ? gap : 0),
       ),
     );
-    return (
-      <div
-        ref={(node) => {
+    const spacer = (height: number, key: string) =>
+      this.props.tableColumns ? (
+        <tr key={key} aria-hidden="true">
+          <td
+            colSpan={this.props.tableColumns}
+            style={{ height, padding: 0, border: 0 }}
+          />
+        </tr>
+      ) : (
+        <div key={key} aria-hidden="true" style={{ height }} />
+      );
+    return createElement(
+      this.props.tableColumns ? "tbody" : "div",
+      {
+        ref: (node: HTMLElement | null) => {
           this.root = node;
-        }}
-        data-measured-message-window="true"
-      >
-        <div aria-hidden="true" style={{ height: this.offsets[this.start] }} />
-        {ids.slice(this.start, this.end).map((id, offset) => {
+        },
+        "data-measured-message-window": "true",
+      },
+      [
+        spacer(this.offsets[this.start], "before"),
+        ...ids.slice(this.start, this.end).map((id, offset) => {
           const index = this.start + offset;
+          const child = this.props.children(index);
+          if (this.props.tableColumns)
+            return cloneElement(
+              child as ReactElement<
+                HTMLAttributes<HTMLTableRowElement> & {
+                  "data-window-row"?: string;
+                }
+              >,
+              { key: id, "data-window-row": id },
+            );
           return (
             <div
               key={id}
@@ -256,20 +288,17 @@ export class MeasuredMessageWindow extends Component<
                 paddingBottom: index + 1 < ids.length ? gap : 0,
               }}
             >
-              {this.props.children(index)}
+              {child}
             </div>
           );
-        })}
-        <div
-          aria-hidden="true"
-          style={{
-            height:
-              this.end < ids.length
-                ? this.offsets[ids.length] - this.offsets[this.end]
-                : 0,
-          }}
-        />
-      </div>
+        }),
+        spacer(
+          this.end < ids.length
+            ? this.offsets[ids.length] - this.offsets[this.end]
+            : 0,
+          "after",
+        ),
+      ],
     );
   }
 }
