@@ -19,6 +19,7 @@ from qwenpaw.app.chats.api import (
     get_chat,
     get_chat_messages,
     get_chat_user_messages,
+    get_chat_user_message_text,
 )
 from qwenpaw.app.chats.models import ChatSpec
 from qwenpaw.app.chats.session import DatabaseSession, SafeJSONSession
@@ -148,9 +149,7 @@ async def test_user_message_index_anchor_locates_unloaded_turn(
         mgr=manager,
         workspace=workspace,
     )
-    target = next(
-        item for item in index.items if item.message_id == "message-2"
-    )
+    target = next(item for item in index.items if item.message_id == "message-2")
     page = await get_chat_messages(
         chat_id="chat-1",
         before=target.anchor,
@@ -625,8 +624,7 @@ async def test_delete_chat_data_removes_all_persistence(
     )
 
     with patch(
-        "qwenpaw.app.chats.api.CHECKPOINT_RUNTIME."
-        "delete_session_checkpoints",
+        "qwenpaw.app.chats.api.CHECKPOINT_RUNTIME." "delete_session_checkpoints",
         checkpoint_delete,
     ):
         await _delete_chat_data(workspace, [_chat()])
@@ -655,9 +653,7 @@ async def test_delete_chat_data_removes_all_persistence(
 
 
 @pytest.mark.asyncio
-async def test_delete_keeps_data_while_another_chat_maps_same_session() -> (
-    None
-):
+async def test_delete_keeps_data_while_another_chat_maps_same_session() -> None:
     first = _chat()
     second = first.model_copy(update={"id": "chat-2"})
     store = Mock(spec=TranscriptCatalog)
@@ -736,3 +732,41 @@ async def test_batch_delete_stops_running_chat() -> None:
     assert result == {"deleted": True}
     workspace.task_tracker.request_stop.assert_awaited_once_with(chat.id)
     manager.delete_chats.assert_awaited_once_with(chat_ids=[chat.id])
+
+
+@pytest.mark.asyncio
+async def test_user_recall_index_and_full_text(tmp_path):
+    store = TranscriptCatalog(tmp_path)
+    _append_turn(store, 1, "short")
+    original = "first\n  second " + "x" * 200
+    _append_turn(store, 2, original)
+    manager = SimpleNamespace(get_chat=AsyncMock(return_value=_chat()))
+    workspace = _workspace(store)
+    page = await get_chat_user_messages(
+        chat_id="chat-1",
+        before=None,
+        limit=50,
+        include_app_owned=False,
+        mgr=manager,
+        workspace=workspace,
+    )
+    assert [item.preview for item in page.items] == [
+        "short",
+        " ".join(original.split())[:160],
+    ]
+    result = await get_chat_user_message_text(
+        chat_id="chat-1",
+        message_id="message-2",
+        mgr=manager,
+        workspace=workspace,
+    )
+    assert result == {"text": original}
+    with pytest.raises(HTTPException) as error:
+        await get_chat_user_message_text(
+            chat_id="chat-1",
+            message_id="missing",
+            mgr=manager,
+            workspace=workspace,
+        )
+    assert error.value.status_code == 404
+    store.close()

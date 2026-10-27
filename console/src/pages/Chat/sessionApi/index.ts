@@ -1232,6 +1232,20 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     return request;
   }
 
+  async loadUserMessageText(
+    sessionId: string,
+    messageId: string,
+    signal?: AbortSignal,
+  ) {
+    return (
+      await api.getChatUserMessageText(
+        this.getHistoryBackendId(sessionId),
+        messageId,
+        signal,
+      )
+    ).text;
+  }
+
   async loadUserMessageIndex(sessionId: string, signal?: AbortSignal) {
     return (await this.loadUserMessageIndexPage(sessionId, undefined, signal))
       .items;

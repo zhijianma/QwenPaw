@@ -171,6 +171,18 @@ export const chatApi = {
     );
   },
 
+  getChatUserMessageText: (
+    chatId: string,
+    messageId: string,
+    signal?: AbortSignal,
+  ) =>
+    request<{ text: string }>(
+      `/chats/${encodeURIComponent(chatId)}/user-messages/${encodeURIComponent(
+        messageId,
+      )}`,
+      { signal },
+    ),
+
   getChatUserMessages: (
     chatId: string,
     options?: {

@@ -108,11 +108,7 @@ async def _read_history_page(
             user_id=chat.user_id,
             channel=chat.channel,
             before=before,
-            **(
-                {"after_message_id": after_message_id}
-                if after_message_id
-                else {}
-            ),
+            **({"after_message_id": after_message_id} if after_message_id else {}),
             limit=limit,
             max_bytes=max_bytes,
             max_content_blocks=max_content_blocks,
@@ -670,11 +666,7 @@ async def batch_delete_chats(
     """
     catalog = await mgr.list_chats(archived=None)
     chats = {chat.id: chat for chat in catalog}
-    targets = [
-        chat
-        for chat_id in chat_ids
-        if (chat := chats.get(chat_id)) is not None
-    ]
+    targets = [chat for chat_id in chat_ids if (chat := chats.get(chat_id)) is not None]
     data_targets = _unshared_chat_data_targets(targets, catalog)
     # Stop any live run first: a deleted chat must not leave a run behind
     # in the tracker, or it inflates the aggregate running count forever.
@@ -885,9 +877,7 @@ async def set_chat_project_dirs(
             (str(path) for path, _label in entries if not path.is_dir()),
             None,
         )
-        stored = [
-            {"path": str(path), "label": label} for path, label in entries
-        ]
+        stored = [{"path": str(path), "label": label} for path, label in entries]
         return stored, missing, len(entries)
 
     stored, missing, count = await asyncio.to_thread(_normalize)
@@ -1169,6 +1159,38 @@ async def get_chat_user_messages(
         next_before=page.next_before,
         snapshot=page.snapshot,
     )
+
+
+@router.get("/{chat_id}/user-messages/{message_id}")
+async def get_chat_user_message_text(
+    chat_id: str,
+    message_id: str,
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+) -> dict[str, str]:
+    """Recall one full input while keeping the navigation index lightweight."""
+    chat = await mgr.get_chat(chat_id)
+    if chat is None or _is_app_owned_chat(chat):
+        raise HTTPException(status_code=404, detail="Chat not found")
+    store = _history_store(workspace)
+    if store is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+    try:
+        text = await asyncio.to_thread(
+            store.get_user_message_text,
+            session_id=chat.session_id,
+            user_id=chat.user_id,
+            channel=chat.channel,
+            message_id=message_id,
+        )
+    except ConversationHistoryError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="History temporarily unavailable",
+        ) from exc
+    if text is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return {"text": text}
 
 
 @router.get("/{chat_id}", response_model=ChatHistory)

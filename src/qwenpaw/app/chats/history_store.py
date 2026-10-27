@@ -65,6 +65,16 @@ class ConversationHistoryStore(Protocol):
     ) -> ConversationHistoryPage | None:
         """Read one stable page using an opaque continuation cursor."""
 
+    def get_user_message_text(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        channel: str,
+        message_id: str,
+    ) -> str | None:
+        """Read a complete user input by its stable message identity."""
+
     def get_user_message_page(
         self,
         *,
@@ -177,6 +187,24 @@ class TranscriptHistoryStore:
             has_more=page.has_more,
             snapshot=_encode(_SNAPSHOT.pack(page.snapshot_turn_seq)),
         )
+
+    def get_user_message_text(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        channel: str,
+        message_id: str,
+    ) -> str | None:
+        try:
+            return self._transcript_store.get_user_message_text(
+                session_id=session_id,
+                user_id=user_id,
+                channel=channel,
+                message_id=message_id,
+            )
+        except (OSError, sqlite3.Error, TypeError) as exc:
+            raise ConversationHistoryError("history read failed") from exc
 
     def get_user_message_page(
         self,

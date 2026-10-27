@@ -1,3 +1,4 @@
+import { useMessageHistoryNavigation } from "./useMessageHistoryNavigation";
 import { BOTTOM_THRESHOLD_PX, distanceFromBottom } from "./bottomFollow";
 import { ChatBottomFollow } from "./ChatBottomFollow";
 import { ChatSessionActivation } from "./components/ChatSessionActivation";
@@ -270,7 +271,6 @@ import {
   buildModelError,
   normalizeContentUrls,
   extractUserMessageText,
-  extractTextFromMessage,
   getActiveSenderTextarea,
   getSenderTextareaFromTarget,
   setTextareaValue,
@@ -975,156 +975,6 @@ function useMultimodalCapabilities(
   }, [locationPathname, fetchMultimodalCaps]);
 
   return { multimodalCaps, fetchMultimodalCaps };
-}
-
-function useMessageHistoryNavigation(
-  chatRef: React.RefObject<IAgentScopeRuntimeWebUIRef | null>,
-  isChatActive: () => boolean,
-  isComposingRef: React.RefObject<boolean>,
-) {
-  const historyIndexRef = useRef<number>(-1);
-  const draftRef = useRef<string>("");
-
-  /** Cached user messages to avoid re-computing on every keydown */
-  const userMessagesCacheRef = useRef<string[]>([]);
-  const cachedMessageCountRef = useRef<number>(0);
-
-  const getUserMessagesWithText = useCallback((): string[] => {
-    if (!chatRef.current?.messages?.getMessages) return [];
-
-    const allMessages = chatRef.current.messages.getMessages();
-    if (!Array.isArray(allMessages)) return [];
-
-    const currentCount = allMessages.length;
-    if (
-      userMessagesCacheRef.current.length > 0 &&
-      cachedMessageCountRef.current === currentCount
-    ) {
-      return userMessagesCacheRef.current;
-    }
-
-    const userMessages = allMessages
-      .filter((msg) => msg.role === "user")
-      .map((msg) => extractTextFromMessage(msg))
-      .filter((text) => text.trim().length > 0);
-
-    userMessagesCacheRef.current = userMessages;
-    cachedMessageCountRef.current = currentCount;
-
-    return userMessages;
-  }, [chatRef]);
-
-  interface MessageResult {
-    index: number;
-    text: string;
-  }
-
-  const findMessageInDirection = (
-    messages: string[],
-    startIndex: number,
-    direction: 1 | -1,
-  ): MessageResult | null => {
-    const MAX_LOOKUP = 100;
-    let lookupIndex = startIndex;
-    let steps = 0;
-
-    while (
-      lookupIndex >= 0 &&
-      lookupIndex < messages.length &&
-      steps < MAX_LOOKUP
-    ) {
-      const messageText = messages[messages.length - 1 - lookupIndex];
-      if (messageText) {
-        return { index: lookupIndex, text: messageText };
-      }
-      lookupIndex += direction;
-      steps += 1;
-    }
-
-    return null;
-  };
-
-  const isSuggestionPopupOpen = (textarea: HTMLTextAreaElement): boolean =>
-    textarea.value.startsWith("/");
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (!isChatActive()) return;
-      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
-
-      const textarea = getSenderTextareaFromTarget(e.target);
-      if (!textarea) return;
-      if (isComposingRef.current || e.isComposing) return;
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-
-      const hasSelection = textarea.selectionStart !== textarea.selectionEnd;
-      if (hasSelection) return;
-
-      const userMessages = getUserMessagesWithText();
-
-      if (e.key === "ArrowUp") {
-        if (isSuggestionPopupOpen(textarea)) return;
-
-        const cursorPosition = textarea.selectionStart || 0;
-        const textBeforeCursor = textarea.value.substring(0, cursorPosition);
-        const lineBreaks = textBeforeCursor.split("\n").length - 1;
-        if (lineBreaks > 0) return;
-
-        if (userMessages.length === 0) return;
-
-        if (historyIndexRef.current === -1) {
-          draftRef.current = textarea.value;
-        }
-
-        const startIndex = historyIndexRef.current + 1;
-        const messageText = findMessageInDirection(userMessages, startIndex, 1);
-
-        if (messageText) {
-          e.preventDefault();
-          historyIndexRef.current = messageText.index;
-          setTextareaValue(textarea, messageText.text);
-        }
-      } else if (e.key === "ArrowDown") {
-        if (historyIndexRef.current < 0) return;
-
-        const cursorPosition = textarea.selectionStart || 0;
-        const textAfterCursor = textarea.value.substring(cursorPosition);
-        if (textAfterCursor.includes("\n")) return;
-
-        const startIndex = historyIndexRef.current - 1;
-        const messageText = findMessageInDirection(
-          userMessages,
-          startIndex,
-          -1,
-        );
-
-        if (messageText) {
-          e.preventDefault();
-          historyIndexRef.current = messageText.index;
-          setTextareaValue(textarea, messageText.text);
-        } else {
-          e.preventDefault();
-          historyIndexRef.current = -1;
-          setTextareaValue(textarea, draftRef.current);
-        }
-      }
-    };
-
-    const handleFocus = (e: FocusEvent) => {
-      if (getSenderTextareaFromTarget(e.target)) {
-        historyIndexRef.current = -1;
-        draftRef.current = "";
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown, true);
-    document.addEventListener("focusin", handleFocus, true);
-
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown, true);
-      document.removeEventListener("focusin", handleFocus, true);
-    };
-  }, [isChatActive, isComposingRef, getUserMessagesWithText]);
 }
 
 // ---------------------------------------------------------------------------
@@ -2493,7 +2343,7 @@ export default function ChatPage() {
     }
   }, []);
 
-  useMessageHistoryNavigation(chatRef, isChatActive, isComposingRef);
+  useMessageHistoryNavigation(chatRef, isChatActive, isComposingRef, chatId);
   useChatInputDraft(isChatActiveRef.current, selectedAgent);
   // ── Message Queue ───────────────────────────────────────────────────────
 

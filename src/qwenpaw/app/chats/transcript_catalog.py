@@ -497,6 +497,30 @@ class TranscriptCatalog:
                 max_content_blocks=max_content_blocks,
             )
 
+    def get_user_message_text(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        channel: str,
+        message_id: str,
+    ) -> str | None:
+        """Read one user input through the session lease."""
+        with self._lease(
+            session_id=session_id,
+            user_id=user_id,
+            channel=channel,
+            create=False,
+        ) as handle:
+            if handle is None:
+                return None
+            return handle.store.get_user_message_text(
+                session_id=session_id,
+                user_id=user_id,
+                channel=channel,
+                message_id=message_id,
+            )
+
     def get_user_message_page(
         self,
         *,

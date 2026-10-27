@@ -401,8 +401,7 @@ class TranscriptStore:
                         "context_usage": {
                             "estimated_tokens": 0,
                             "max_input_length": int(
-                                previous_context.get("max_input_length", 0)
-                                or 0,
+                                previous_context.get("max_input_length", 0) or 0,
                             ),
                             "context_usage_ratio": 0,
                         },
@@ -495,8 +494,7 @@ class TranscriptStore:
         """Update one nested value in an existing runtime snapshot."""
         with self._transaction():
             row = self._conn.execute(
-                "SELECT state_json FROM session_runtime "
-                "WHERE session_id = ?",
+                "SELECT state_json FROM session_runtime " "WHERE session_id = ?",
                 (session_id,),
             ).fetchone()
             if row is None:
@@ -813,8 +811,7 @@ class TranscriptStore:
         """Cancel turns left running by a previous process."""
         with self._lock:
             orphan = self._conn.execute(
-                "SELECT 1 FROM transcript_turns WHERE status = 'running' "
-                "LIMIT 1",
+                "SELECT 1 FROM transcript_turns WHERE status = 'running' " "LIMIT 1",
             ).fetchone()
             if orphan is None:
                 return 0
@@ -854,8 +851,7 @@ class TranscriptStore:
                     channel=channel,
                 )
                 existing_turn = self._conn.execute(
-                    "SELECT 1 FROM transcript_turns WHERE session_id = ? "
-                    "LIMIT 1",
+                    "SELECT 1 FROM transcript_turns WHERE session_id = ? " "LIMIT 1",
                     (session_id,),
                 ).fetchone()
                 if existing_turn is not None:
@@ -1274,9 +1270,7 @@ class TranscriptStore:
             turn_sql += "WHERE t.session_id = ? AND t.turn_seq <= ? "
             params: list[Any] = [session_id, snapshot_turn_seq]
             if before is not None:
-                at_turn_boundary = (
-                    before.ordinal == 0 and before.content_before == 0
-                )
+                at_turn_boundary = before.ordinal == 0 and before.content_before == 0
                 operator = "<" if at_turn_boundary else "<="
                 turn_sql += f"AND t.turn_seq {operator} ? "
                 params.append(before.turn_seq)
@@ -1290,9 +1284,7 @@ class TranscriptStore:
             )
             params.append(limit + 1)
             candidates = connection.execute(turn_sql, params).fetchall()
-            selected_turns = [
-                int(row["turn_seq"]) for row in candidates[:limit]
-            ]
+            selected_turns = [int(row["turn_seq"]) for row in candidates[:limit]]
             if not selected_turns:
                 return TranscriptPage(
                     messages=[],
@@ -1310,9 +1302,7 @@ class TranscriptStore:
                 f"AND t.turn_seq IN ({placeholders}) "
             )
             message_params: list[Any] = [session_id, *selected_turns]
-            if before is not None and (
-                before.ordinal > 0 or before.content_before > 0
-            ):
+            if before is not None and (before.ordinal > 0 or before.content_before > 0):
                 ordinal_operator = "<=" if before.content_before > 0 else "<"
                 message_filter += "AND (t.turn_seq < ? OR "
                 message_filter += (
@@ -1350,11 +1340,39 @@ class TranscriptStore:
             selection.messages.reverse()
             return TranscriptPage(
                 messages=selection.messages,
-                next_before=(
-                    selection.oldest_position if selection.has_more else None
-                ),
+                next_before=(selection.oldest_position if selection.has_more else None),
                 has_more=selection.has_more,
                 snapshot_turn_seq=snapshot_turn_seq,
+            )
+
+    def get_user_message_text(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        channel: str,
+        message_id: str,
+    ) -> str | None:
+        """Read one complete user input without loading assistant messages."""
+        with self._read_connection() as connection:
+            connection.execute("BEGIN")
+            session = self._session_row(session_id, connection)
+            if session is None:
+                return None
+            self._assert_identity(session, user_id=user_id, channel=channel)
+            row = connection.execute(
+                "SELECT payload_json FROM transcript_messages "
+                "WHERE session_id = ? AND message_id = ? "
+                "AND role = 'user' AND superseded_at IS NULL",
+                (session_id, message_id),
+            ).fetchone()
+            if row is None:
+                return None
+            message = Message.model_validate_json(row["payload_json"])
+            return "\n".join(
+                part.text
+                for part in message.content
+                if isinstance(part, TextContent) and part.text
             )
 
     def get_user_message_page(
@@ -1410,8 +1428,7 @@ class TranscriptStore:
             )
             if before is not None:
                 query += (
-                    "AND (t.turn_seq < ? OR "
-                    "(t.turn_seq = ? AND m.ordinal < ?)) "
+                    "AND (t.turn_seq < ? OR " "(t.turn_seq = ? AND m.ordinal < ?)) "
                 )
                 params.extend(
                     [before.turn_seq, before.turn_seq, before.ordinal],
@@ -1421,20 +1438,24 @@ class TranscriptStore:
             rows = connection.execute(query, params).fetchall()
             has_more = len(rows) > limit
             selected = rows[:limit]
-            items = [
-                TranscriptUserMessage(
-                    message_id=str(row["message_id"]),
-                    client_message_id=row["client_message_id"],
-                    preview=self._user_message_preview(row["payload_json"]),
-                    created_at=str(row["created_at"]),
-                    anchor=TranscriptCursor(
-                        turn_seq=int(row["turn_seq"]) + 1,
-                        ordinal=0,
-                        snapshot_turn_seq=snapshot_turn_seq,
-                    ),
+            items = []
+            for row in selected:
+                preview = self._user_message_preview(
+                    row["payload_json"],
                 )
-                for row in selected
-            ]
+                items.append(
+                    TranscriptUserMessage(
+                        message_id=str(row["message_id"]),
+                        client_message_id=row["client_message_id"],
+                        preview=preview,
+                        created_at=str(row["created_at"]),
+                        anchor=TranscriptCursor(
+                            turn_seq=int(row["turn_seq"]) + 1,
+                            ordinal=0,
+                            snapshot_turn_seq=snapshot_turn_seq,
+                        ),
+                    )
+                )
             items.reverse()
             next_before = None
             if has_more and selected:
@@ -1453,15 +1474,19 @@ class TranscriptStore:
             )
 
     @staticmethod
-    def _user_message_preview(payload_json: str, limit: int = 160) -> str:
+    def _user_message_preview(
+        payload_json: str,
+        limit: int = 160,
+    ) -> str:
         """Extract a bounded single-line preview from a user message."""
         message = Message.model_validate_json(payload_json)
-        text = " ".join(
+        text = "\n".join(
             content.text
             for content in message.content
-            if isinstance(content, TextContent) and content.text
+            if isinstance(content, TextContent)
         )
-        return " ".join(text.split())[:limit]
+        preview = " ".join(text.split())[:limit]
+        return preview
 
     def _select_page_messages(
         self,
@@ -1776,9 +1801,7 @@ class TranscriptStore:
                 fragment_end=text_end,
                 max_bytes=max_bytes,
             )
-            content_before = (
-                content_index + 1 if text_start > 0 else content_index
-            )
+            content_before = content_index + 1 if text_start > 0 else content_index
             return fragment, content_before, text_start
 
         minimum_start = max(0, content_end - max_content_blocks)
