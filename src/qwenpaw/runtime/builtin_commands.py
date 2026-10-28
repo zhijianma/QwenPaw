@@ -11,6 +11,7 @@ and delegates to the original handler.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -307,8 +308,6 @@ async def _request_reme_action_approval(
     kwargs: dict[str, Any],
 ) -> bool:
     """Use the shared approval pipeline for side-effecting ReMe actions."""
-    import json
-
     from ..app.approvals import (
         ApprovalActor,
         ApprovalIdentityPolicy,
@@ -415,7 +414,9 @@ async def _request_reme_action_approval(
     return decision == ApprovalDecision.APPROVED
 
 
-async def _load_agent_state(ctx: Any) -> "tuple[Any, dict]":
+async def _load_agent_state(  # pylint: disable=too-many-return-statements
+    ctx: Any,
+) -> "tuple[Any, dict]":
     """Load AgentState from workspace.session without building the agent.
 
     Returns ``(state, payload)`` where ``payload`` is the raw saved session
@@ -432,6 +433,19 @@ async def _load_agent_state(ctx: Any) -> "tuple[Any, dict]":
         return None, {}
 
     request = getattr(ctx, "request", None)
+    conversation_id = getattr(request, "chat_conversation_id", None)
+    chat_application = getattr(workspace, "chat_application", None)
+    if conversation_id and chat_application is not None:
+        payload = await chat_application.load_runtime_context(
+            str(conversation_id),
+        )
+        payload = payload or {}
+        if not payload:
+            return AgentState(), {}
+        raw = payload.get("state")
+        if raw is not None:
+            return AgentState.model_validate(raw), payload
+        return AgentState(), payload
     user_id = (getattr(request, "user_id", "") if request else "") or ""
     channel = (getattr(request, "channel", "") if request else "") or ""
 
@@ -485,6 +499,19 @@ async def _save_agent_state(
         return
 
     request = getattr(ctx, "request", None)
+    conversation_id = getattr(request, "chat_conversation_id", None)
+    chat_application = getattr(workspace, "chat_application", None)
+    if conversation_id and chat_application is not None:
+        payload = {"state": state.model_dump(mode="json")}
+        if scroll_block is not None:
+            payload["scroll"] = scroll_block
+        payload["mode_state"] = getattr(ctx, "mode_state", {})
+        request.chat_runtime_context = json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return
     user_id = (getattr(request, "user_id", "") if request else "") or ""
     channel = (getattr(request, "channel", "") if request else "") or ""
 
@@ -617,6 +644,13 @@ def _make_conversation_adapter(
             existing=existing_scroll,
         )
         await _save_agent_state(ctx, state, scroll_block=scroll_block)
+        request = getattr(ctx, "request", None)
+        if (
+            name == "clear"
+            and request is not None
+            and getattr(request, "chat_conversation_id", None)
+        ):
+            request.chat_context_revision_kind = "clear"
         return result
 
     return CommandSpec(

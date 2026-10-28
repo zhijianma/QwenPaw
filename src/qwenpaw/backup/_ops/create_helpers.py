@@ -10,6 +10,11 @@ from pathlib import Path
 from typing import Any
 
 from ...agents.context.scroll.history import backup_history_database
+from ...app.chats.storage import (
+    CHAT_STORAGE_MANIFEST,
+    is_live_chat_sqlite_file,
+    snapshot_workspace_chat_storage,
+)
 from .._utils.constants import (
     PREFIX_CONFIG,
     PREFIX_SECRETS,
@@ -29,6 +34,35 @@ logger = logging.getLogger(__name__)
 
 class BackupCancelled(Exception):
     """Raised when cooperative cancellation stops archive creation."""
+
+
+def _archive_chat_snapshot(
+    zf: zipfile.ZipFile,
+    workspace: Path,
+    snapshot_root: Path,
+    agent_id: str,
+    check_cancelled,
+) -> int:
+    """Add a validated Chat snapshot and return its file count."""
+    chat_snapshot_root = snapshot_root / "chat"
+    snapshot = snapshot_workspace_chat_storage(
+        workspace,
+        chat_snapshot_root,
+        check_cancelled=check_cancelled,
+    )
+    if snapshot is None:
+        return 0
+    count = 0
+    for artifact in sorted(snapshot.root.rglob("*")):
+        if not artifact.is_file():
+            continue
+        relative = artifact.relative_to(chat_snapshot_root)
+        zf.write(
+            artifact,
+            f"{PREFIX_WORKSPACES}{agent_id}/{relative.as_posix()}",
+        )
+        count += 1
+    return count
 
 
 def add_agent_workspaces(  # pylint: disable=too-many-branches
@@ -74,7 +108,8 @@ def add_agent_workspaces(  # pylint: disable=too-many-branches
             with tempfile.TemporaryDirectory(
                 prefix=f"qwenpaw-history-{aid}-",
             ) as snapshot_dir:
-                history_snapshot = Path(snapshot_dir) / "history.db"
+                snapshot_root = Path(snapshot_dir)
+                history_snapshot = snapshot_root / "history.db"
                 if history_db.is_file():
                     backup_history_database(
                         history_db,
@@ -86,15 +121,28 @@ def add_agent_workspaces(  # pylint: disable=too-many-branches
                         f"{PREFIX_WORKSPACES}{aid}/{history_filename}",
                     )
                     file_count += 1
+                file_count += _archive_chat_snapshot(
+                    zf,
+                    ws,
+                    snapshot_root,
+                    aid,
+                    check_cancelled,
+                )
                 for entry in sorted(ws.rglob("*")):
                     if stop_event and stop_event.is_set():
                         return False
                     resolved_entry = entry.resolve()
-                    if (
-                        not entry.is_file()
-                        or resolved_entry in sidecars
-                        or resolved_entry == history_db
-                    ):
+                    skip_entry = any(
+                        (
+                            not entry.is_file(),
+                            resolved_entry in sidecars,
+                            resolved_entry == history_db,
+                            is_live_chat_sqlite_file(ws, entry),
+                            entry.name == CHAT_STORAGE_MANIFEST
+                            and entry.parent == ws / ".qwenpaw" / "chat",
+                        ),
+                    )
+                    if skip_entry:
                         continue
                     relative = entry.relative_to(ws)
                     rel = relative.as_posix()

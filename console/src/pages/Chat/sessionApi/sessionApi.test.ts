@@ -10,10 +10,22 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 vi.mock("@agentscope-ai/chat", () => ({}));
 
 import sessionApi, { __test__ as T } from "./index";
-import api, { type ChatHistory, type ChatSpec } from "../../../api";
+import api, {
+  type ChatHistory,
+  type ChatSpec,
+  type ChatTurnItem,
+} from "../../../api";
+import { ApiError } from "../../../api/request";
 import { createSdkSessionAdapter } from "../sdkSessionAdapter";
 import { groupChatsByDate } from "../../../utils/chatGroups";
 import type { ExtendedSession } from "../../../stores/sessionListStore";
+import { sha256Hex } from "../chatBlockFragments";
+import { ACTIVE_PAGE_LIMIT, useChatHistoryStore } from "../chatHistoryStore";
+import {
+  MAX_WINDOW_BUBBLES,
+  MAX_WINDOW_TURNS,
+  TURN_PAGE_LIMIT,
+} from "../chatTimelineWindow";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -37,6 +49,759 @@ function createdChat(id: string): ChatSpec {
     meta: {},
   };
 }
+
+function paginatedTurn(id: number): ChatTurnItem {
+  return {
+    turn_id: `turn-${id}`,
+    parent_turn_id: id > 0 ? `turn-${id - 1}` : null,
+    state: "completed",
+    lineage_depth: id,
+    usage: null,
+    usage_complete: true,
+    error_digest: null,
+    created_at_us: id,
+    updated_at_us: id,
+    terminal_at_us: id,
+    child_cursor: null,
+    children_complete: true,
+    messages: [
+      {
+        message_id: `message-${id}`,
+        turn_id: `turn-${id}`,
+        role: "user",
+        ordinal: 0,
+        state: "completed",
+        metadata: { type: "message" },
+        metadata_complete: true,
+        created_at_us: id,
+        updated_at_us: id,
+        child_cursor: null,
+        children_complete: true,
+        blocks: [
+          {
+            block_id: `block-${id}`,
+            message_id: `message-${id}`,
+            kind: "text",
+            ordinal: 0,
+            state: "completed",
+            total_bytes: 8,
+            content_sha256: null,
+            entity_version: 1,
+            metadata: {},
+            metadata_complete: true,
+            created_at_us: id,
+            updated_at_us: id,
+            content: { type: "text", text: `text-${id}` },
+            content_loaded: true,
+            content_cursor: null,
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function toolDenseTurn(id: number): ChatTurnItem {
+  const turn = paginatedTurn(id);
+  turn.messages.push(
+    ...Array.from({ length: 40 }, (_, index) => ({
+      ...turn.messages[0],
+      message_id: `assistant-${id}-${index}`,
+      role: "assistant",
+      ordinal: index + 1,
+      blocks: [
+        {
+          ...turn.messages[0].blocks[0],
+          block_id: `assistant-block-${id}-${index}`,
+          message_id: `assistant-${id}-${index}`,
+          content: { type: "text", text: `tool-output-${id}-${index}` },
+        },
+      ],
+    })),
+  );
+  return turn;
+}
+
+describe("terminal turn metadata conversion", () => {
+  it("moves normalized turn identity onto the response card", () => {
+    const converted = T.convertMessages([
+      {
+        role: "user",
+        content: [{ type: "text", text: "request" }],
+        chat_turn_id: "turn-7",
+      },
+      {
+        role: "assistant",
+        type: "message",
+        status: "completed",
+        content: [{ type: "text", text: "response" }],
+      },
+    ]);
+    const response = converted[1] as unknown as {
+      cards: Array<{
+        data: { chat_turn_id?: string };
+      }>;
+    };
+
+    expect(response.cards[0].data.chat_turn_id).toBe("turn-7");
+  });
+
+  it.each(["canceled", "failed"])(
+    "restores a %s response card from history metadata",
+    (status) => {
+      const converted = T.convertMessages([
+        {
+          role: "user",
+          content: [{ type: "text", text: "request" }],
+          metadata: { qwenpaw_turn_state: { status } },
+        },
+        {
+          role: "assistant",
+          type: "reasoning",
+          status: "completed",
+          content: [{ type: "text", text: "step" }],
+        },
+      ]);
+      const response = converted[1] as unknown as {
+        cards: Array<{ data: { status: string } }>;
+        msgStatus: string;
+      };
+
+      expect(response.cards[0].data.status).toBe(status);
+      expect(response.msgStatus).toBe(
+        status === "canceled" ? "interrupted" : "finished",
+      );
+    },
+  );
+});
+
+beforeEach(() => {
+  vi.spyOn(api, "getChatView").mockRejectedValue(
+    new ApiError(503, "chat_v2_unavailable"),
+  );
+});
+
+describe("paginated chat history", () => {
+  beforeEach(() => {
+    sessionApi.resetForTests();
+    sessionApi.setActiveAgent("A");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    sessionApi.resetForTests();
+  });
+
+  it("shares concurrent refresh and SDK loads for one Chat owner", async () => {
+    const turnPageGate = deferred<ReturnType<typeof paginatedTurn>[] | null>();
+    vi.mocked(api.getChatView).mockResolvedValue({
+      conversation_id: "copied-chat",
+      display_name: "Copied chat",
+      lifecycle: "active",
+      migration_state: "ready_v2",
+      catalog_generation: 1,
+      head_turn_id: "turn-1",
+      view_version: "view-copied",
+      context_revision_id: "context-copied",
+      active_run: null,
+      capabilities: {
+        turn_pagination: true,
+        message_pagination: true,
+        block_pagination: true,
+        block_fragments: true,
+        chat_copy: true,
+        edit_last_user_message: false,
+      },
+    });
+    const turnPage = vi
+      .spyOn(api, "getTurnPage")
+      .mockImplementation(async () => ({
+        items: (await turnPageGate.promise) ?? [],
+        older_cursor: null,
+        newer_cursor: null,
+        view: {
+          conversation_id: "copied-chat",
+          head_turn_id: "turn-1",
+          view_version: "view-copied",
+        },
+        bytes: 256,
+        truncated_entity: false,
+      }));
+
+    const first = sessionApi.refreshSession("copied-chat");
+    const second = sessionApi.refreshSession("copied-chat");
+    const sdkLoad = sessionApi.getSession("copied-chat");
+    await vi.waitFor(() => expect(turnPage).toHaveBeenCalled());
+    turnPageGate.resolve([paginatedTurn(1)]);
+
+    await expect(Promise.all([first, second, sdkLoad])).resolves.toEqual([
+      expect.objectContaining({ id: "copied-chat" }),
+      expect.objectContaining({ id: "copied-chat" }),
+      expect.objectContaining({ id: "copied-chat" }),
+    ]);
+    expect(turnPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads the tail and replaces it with a bounded older window", async () => {
+    vi.mocked(api.getChatView).mockResolvedValue({
+      conversation_id: "chat-v2",
+      display_name: "V2 chat",
+      lifecycle: "active",
+      migration_state: "ready_v2",
+      catalog_generation: 1,
+      head_turn_id: "turn-2",
+      view_version: "view-v2",
+      context_revision_id: "context-v2",
+      active_run: null,
+      capabilities: {
+        turn_pagination: true,
+        message_pagination: true,
+        block_pagination: true,
+        block_fragments: true,
+        edit_last_user_message: false,
+      },
+    });
+    const initialTurn = paginatedTurn(2);
+    initialTurn.messages[0].child_cursor = "next-block";
+    initialTurn.messages[0].children_complete = false;
+    const blockPage = vi.spyOn(api, "getBlockPage").mockResolvedValue({
+      items: [
+        {
+          ...initialTurn.messages[0].blocks[0],
+          block_id: "block-2-continuation",
+          ordinal: 1,
+          content: { type: "text", text: "continued" },
+        },
+      ],
+      older_cursor: "previous-block",
+      newer_cursor: null,
+      view: {
+        conversation_id: "chat-v2",
+        head_turn_id: "turn-2",
+        view_version: "view-v2",
+      },
+      bytes: 512,
+      truncated_entity: false,
+    });
+    const turnPage = vi
+      .spyOn(api, "getTurnPage")
+      .mockResolvedValueOnce({
+        items: [initialTurn],
+        older_cursor: "older-cursor",
+        newer_cursor: null,
+        view: {
+          conversation_id: "chat-v2",
+          head_turn_id: "turn-2",
+          view_version: "view-v2",
+        },
+        bytes: 1024,
+        truncated_entity: false,
+      })
+      .mockResolvedValueOnce({
+        items: [paginatedTurn(1)],
+        older_cursor: null,
+        newer_cursor: "newer-cursor",
+        view: {
+          conversation_id: "chat-v2",
+          head_turn_id: "turn-2",
+          view_version: "view-v2",
+        },
+        bytes: 1024,
+        truncated_entity: false,
+      });
+    const legacy = vi.spyOn(api, "getChat");
+
+    const session = await sessionApi.getSession("chat-v2");
+    expect(session).toMatchObject({
+      id: "chat-v2",
+      name: "V2 chat",
+      generating: false,
+      historyV2: true,
+    });
+    expect(session.messages).toHaveLength(1);
+    expect(sessionApi.hasPaginatedHistory("chat-v2")).toBe(true);
+    expect(legacy).not.toHaveBeenCalled();
+    expect(turnPage).toHaveBeenNthCalledWith(
+      1,
+      "chat-v2",
+      expect.objectContaining({ limit: 5 }),
+    );
+    expect(blockPage).toHaveBeenCalledWith(
+      "chat-v2",
+      "message-2",
+      expect.objectContaining({ cursor: "next-block" }),
+    );
+
+    const older = await sessionApi.loadOlderHistory("chat-v2");
+    expect(older).toMatchObject({ noMore: true, replacedWindow: true });
+    expect(older.messages).toHaveLength(2);
+    expect(turnPage).toHaveBeenLastCalledWith(
+      "chat-v2",
+      expect.objectContaining({
+        cursor: "older-cursor",
+        headTurnId: "turn-2",
+        limit: 5,
+        viewVersion: "view-v2",
+      }),
+    );
+  });
+
+  it("bounds SDK messages after loading over 1000 tool-dense messages", async () => {
+    const pageCount = 30;
+    const lastPage = pageCount - 1;
+    const headTurn = pageCount * TURN_PAGE_LIMIT - 1;
+    vi.mocked(api.getChatView).mockResolvedValue({
+      conversation_id: "chat-tool-dense",
+      display_name: "Tool dense chat",
+      lifecycle: "active",
+      migration_state: "ready_v2",
+      catalog_generation: 1,
+      head_turn_id: `turn-${headTurn}`,
+      view_version: "view-tool-dense",
+      context_revision_id: "context-tool-dense",
+      active_run: null,
+      capabilities: {
+        turn_pagination: true,
+        message_pagination: true,
+        block_pagination: true,
+        block_fragments: true,
+        chat_copy: true,
+        edit_last_user_message: false,
+      },
+    });
+    const turnPage = vi
+      .spyOn(api, "getTurnPage")
+      .mockImplementation(async (_chatId, options) => {
+        if (options.targetTurnId) {
+          const target = Number(options.targetTurnId.replace("turn-", ""));
+          const firstTurn = Math.max(0, target - TURN_PAGE_LIMIT + 1);
+          return {
+            items: Array.from({ length: target - firstTurn + 1 }, (_, index) =>
+              toolDenseTurn(firstTurn + index),
+            ),
+            older_cursor: firstTurn > 0 ? `cursor-target-${firstTurn}` : null,
+            newer_cursor:
+              target < headTurn ? `cursor-target-${target + 1}` : null,
+            view: {
+              conversation_id: "chat-tool-dense",
+              head_turn_id: `turn-${headTurn}`,
+              view_version: "view-tool-dense",
+            },
+            bytes: 64 * 1024,
+            truncated_entity: false,
+          };
+        }
+        const pageIndex = options.cursor
+          ? Number(options.cursor.replace("cursor-", ""))
+          : lastPage;
+        const firstTurn = pageIndex * TURN_PAGE_LIMIT;
+        return {
+          items: Array.from({ length: TURN_PAGE_LIMIT }, (_, index) =>
+            toolDenseTurn(firstTurn + index),
+          ),
+          older_cursor: pageIndex > 0 ? `cursor-${pageIndex - 1}` : null,
+          newer_cursor: pageIndex < lastPage ? `cursor-${pageIndex + 1}` : null,
+          view: {
+            conversation_id: "chat-tool-dense",
+            head_turn_id: `turn-${headTurn}`,
+            view_version: "view-tool-dense",
+          },
+          bytes: 64 * 1024,
+          truncated_entity: false,
+        };
+      });
+
+    const initial = await sessionApi.getSession("chat-tool-dense");
+    let maxSdkMessages = initial.messages.length;
+    let maxUserAnchors = initial.messages.filter(
+      (message) => message.role === "user",
+    ).length;
+    for (let attempt = 0; attempt < pageCount * 3; attempt += 1) {
+      const result = await sessionApi.loadOlderHistory("chat-tool-dense");
+      maxSdkMessages = Math.max(maxSdkMessages, result.messages.length);
+      maxUserAnchors = Math.max(
+        maxUserAnchors,
+        result.messages.filter((message) => message.role === "user").length,
+      );
+      if (turnPage.mock.calls.length === pageCount) break;
+    }
+
+    const activeKey = useChatHistoryStore.getState().activeKey;
+    const path = activeKey
+      ? useChatHistoryStore.getState().paths[activeKey]
+      : undefined;
+    expect(turnPage).toHaveBeenCalledTimes(pageCount);
+    expect(Object.keys(path?.messagesById ?? {})).toHaveLength(
+      ACTIVE_PAGE_LIMIT * TURN_PAGE_LIMIT * 41,
+    );
+    expect(Object.keys(path?.messagesById ?? {}).length).toBeGreaterThan(1000);
+    expect(path?.pages).toHaveLength(ACTIVE_PAGE_LIMIT);
+    expect(maxSdkMessages).toBe(MAX_WINDOW_BUBBLES);
+    expect(maxUserAnchors).toBe(MAX_WINDOW_TURNS);
+
+    let newer = await sessionApi.loadNewerHistory("chat-tool-dense");
+    for (
+      let attempt = 1;
+      attempt < pageCount * 3 && !newer.atTail;
+      attempt += 1
+    ) {
+      expect(newer.messages.length).toBeLessThanOrEqual(MAX_WINDOW_BUBBLES);
+      newer = await sessionApi.loadNewerHistory("chat-tool-dense");
+    }
+    expect(newer.atTail).toBe(true);
+    expect(newer.messages.some((message) => message.id.includes("149"))).toBe(
+      true,
+    );
+    const newerPath = activeKey
+      ? useChatHistoryStore.getState().paths[activeKey]
+      : undefined;
+    expect(newerPath?.pages.length).toBeLessThanOrEqual(ACTIVE_PAGE_LIMIT);
+
+    const target = await sessionApi.loadHistoryAtTurn(
+      "chat-tool-dense",
+      "turn-32",
+    );
+    expect(target).toMatchObject({
+      atTail: false,
+      replacedWindow: true,
+      targetBubbleId: "message-32",
+      turnCount: TURN_PAGE_LIMIT,
+    });
+    expect(target.messages).toHaveLength(TURN_PAGE_LIMIT * 2);
+    expect(target.messages.some((message) => message.id === "message-32")).toBe(
+      true,
+    );
+    expect(target.messages.some((message) => message.id.includes("149"))).toBe(
+      false,
+    );
+    expect(turnPage).toHaveBeenLastCalledWith(
+      "chat-tool-dense",
+      expect.objectContaining({
+        targetTurnId: "turn-32",
+      }),
+    );
+
+    const latest = await sessionApi.returnToLatestHistory("chat-tool-dense");
+    expect(latest).toMatchObject({
+      atTail: true,
+      replacedWindow: true,
+      turnCount: TURN_PAGE_LIMIT,
+    });
+    expect(latest.messages).toHaveLength(TURN_PAGE_LIMIT * 2);
+    expect(turnPage).toHaveBeenLastCalledWith(
+      "chat-tool-dense",
+      expect.not.objectContaining({ cursor: expect.anything() }),
+    );
+  });
+
+  it.each(["chat_v2_unavailable", "chat_v2_ui_disabled"])(
+    "uses compatible history only for %s",
+    async (code) => {
+      vi.mocked(api.getChatView).mockRejectedValue(new ApiError(503, code));
+      const legacy = vi.spyOn(api, "getChat").mockResolvedValue({
+        messages: [],
+        status: "idle",
+      } as ChatHistory);
+
+      await sessionApi.getSession("chat-fallback");
+
+      expect(legacy).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("does not turn an unrelated 503 into a full transcript read", async () => {
+    const failure = new ApiError(503, "backend overloaded");
+    vi.mocked(api.getChatView).mockRejectedValue(failure);
+    const legacy = vi.spyOn(api, "getChat");
+
+    await expect(sessionApi.getSession("chat-overloaded")).rejects.toBe(
+      failure,
+    );
+    expect(legacy).not.toHaveBeenCalled();
+  });
+
+  it("loads a scoped lazy block fragment and verifies its payload", async () => {
+    const bytes = new TextEncoder().encode(
+      JSON.stringify({ type: "text", text: "lazy content" }),
+    );
+    const digest = await sha256Hex(bytes);
+    const turn = paginatedTurn(1);
+    turn.messages[0].blocks[0] = {
+      ...turn.messages[0].blocks[0],
+      total_bytes: bytes.byteLength,
+      content_sha256: digest,
+      content: null,
+      content_loaded: false,
+      content_cursor: "fragment-cursor",
+      preview: "lazy preview",
+    };
+    vi.mocked(api.getChatView).mockResolvedValue({
+      conversation_id: "chat-v2",
+      display_name: "V2 chat",
+      lifecycle: "active",
+      migration_state: "ready_v2",
+      catalog_generation: 1,
+      head_turn_id: "turn-1",
+      view_version: "view-v2",
+      context_revision_id: "context-v2",
+      active_run: null,
+      capabilities: {
+        turn_pagination: true,
+        message_pagination: true,
+        block_pagination: true,
+        block_fragments: true,
+        edit_last_user_message: false,
+      },
+    });
+    vi.spyOn(api, "getTurnPage").mockResolvedValue({
+      items: [turn],
+      older_cursor: null,
+      newer_cursor: null,
+      view: {
+        conversation_id: "chat-v2",
+        head_turn_id: "turn-1",
+        view_version: "view-v2",
+      },
+      bytes: 256,
+      truncated_entity: true,
+    });
+    const fragment = vi.spyOn(api, "getBlockFragment").mockResolvedValue({
+      items: [
+        {
+          block_id: "block-1",
+          entity_version: 1,
+          start_byte: 0,
+          end_byte: bytes.byteLength,
+          total_bytes: bytes.byteLength,
+          payload_base64: btoa(String.fromCharCode(...bytes)),
+          payload_encoding: "base64",
+          fragment_sha256: digest,
+          content_sha256: digest,
+        },
+      ],
+      older_cursor: null,
+      newer_cursor: null,
+      view: {
+        conversation_id: "chat-v2",
+        head_turn_id: "turn-1",
+        view_version: "view-v2",
+      },
+      bytes: 256,
+      truncated_entity: false,
+    });
+
+    await sessionApi.getSession("chat-v2");
+    const loaded = await sessionApi.loadBlockFragment("block-1", null, 0);
+
+    expect(fragment).toHaveBeenCalledWith(
+      "chat-v2",
+      "block-1",
+      expect.objectContaining({
+        cursor: "fragment-cursor",
+        headTurnId: "turn-1",
+        viewVersion: "view-v2",
+        agentId: "A",
+      }),
+    );
+    expect(new TextDecoder().decode(loaded.bytes)).toContain("lazy content");
+    expect(loaded.nextCursor).toBeNull();
+  });
+
+  it("streams a threshold tail into the visible normalized session", async () => {
+    sessionApi.setVisibleSession("chat-v2");
+    vi.mocked(api.getChatView).mockResolvedValue({
+      conversation_id: "chat-v2",
+      display_name: "V2 chat",
+      lifecycle: "active",
+      migration_state: "ready_v2",
+      catalog_generation: 1,
+      head_turn_id: "turn-1",
+      view_version: "view-v2",
+      context_revision_id: "context-v2",
+      active_run: { run_id: "run-v2", state: "running" },
+      capabilities: {
+        turn_pagination: true,
+        message_pagination: true,
+        block_pagination: true,
+        block_fragments: true,
+        live_resync: true,
+        edit_last_user_message: false,
+      },
+    });
+    vi.spyOn(api, "getTurnPage").mockResolvedValue({
+      items: [paginatedTurn(1)],
+      older_cursor: null,
+      newer_cursor: null,
+      view: {
+        conversation_id: "chat-v2",
+        head_turn_id: "turn-1",
+        view_version: "view-v2",
+      },
+      bytes: 256,
+      truncated_entity: false,
+    });
+    const wire =
+      "event: sync\ndata: " +
+      JSON.stringify({
+        kind: "sync",
+        path: {
+          conversation_id: "chat-v2",
+          run_id: "run-v2",
+          turn_id: "turn-1",
+        },
+        cursor: { run_epoch: "epoch-v2", event_sequence: 1 },
+        view: {
+          run_state: "running",
+          blocks: [
+            {
+              message_id: "live-message",
+              block_id: "live-block",
+              index: 0,
+              kind: "text",
+              state: "partial",
+              durable_bytes: 0,
+              total_bytes: 7,
+              entity_version: 1,
+              pending: [{ start_byte: 0, entity_version: 1, text: "pending" }],
+            },
+          ],
+        },
+        resync_reason: null,
+        terminal: false,
+      }) +
+      "\n\n";
+    const encoded = new TextEncoder().encode(wire);
+    let canceled = false;
+    vi.spyOn(api, "openChatLive").mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoded);
+          },
+          cancel() {
+            canceled = true;
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+    const published = vi.fn();
+    sessionApi.onLiveMessages = published;
+
+    await sessionApi.getSession("chat-v2");
+    await vi.waitFor(() => expect(published).toHaveBeenCalled());
+
+    expect(api.openChatLive).toHaveBeenCalledWith(
+      "chat-v2",
+      expect.objectContaining({
+        cursor: null,
+        agentId: "A",
+      }),
+    );
+    const lastCall = published.mock.calls[published.mock.calls.length - 1];
+    expect(lastCall?.[1]).toEqual(
+      expect.arrayContaining([expect.objectContaining({ role: "assistant" })]),
+    );
+    expect(sessionApi.hasNormalizedLive("chat-v2")).toBe(true);
+    const terminal = sessionApi.waitForNormalizedLiveTerminal("chat-v2");
+    sessionApi.setVisibleSession(null);
+    await terminal;
+    await vi.waitFor(() => expect(canceled).toBe(true));
+  });
+
+  it("re-reads durable history after a terminal sync", async () => {
+    sessionApi.setVisibleSession("chat-v2");
+    const activeView = {
+      conversation_id: "chat-v2",
+      display_name: "V2 chat",
+      lifecycle: "active",
+      migration_state: "ready_v2",
+      catalog_generation: 1,
+      head_turn_id: "turn-1",
+      view_version: "view-v2",
+      context_revision_id: "context-v2",
+      active_run: { run_id: "run-v2", state: "running" },
+      capabilities: {
+        turn_pagination: true,
+        message_pagination: true,
+        block_pagination: true,
+        block_fragments: true,
+        live_resync: true,
+        edit_last_user_message: false,
+      },
+    };
+    vi.mocked(api.getChatView)
+      .mockResolvedValueOnce(activeView)
+      .mockResolvedValueOnce({ ...activeView, active_run: null });
+    const completed = paginatedTurn(1);
+    completed.messages.push({
+      ...completed.messages[0],
+      message_id: "assistant-message",
+      role: "assistant",
+      ordinal: 1,
+      blocks: [
+        {
+          ...completed.messages[0].blocks[0],
+          block_id: "assistant-block",
+          message_id: "assistant-message",
+          content: { type: "text", text: "completed" },
+        },
+      ],
+    });
+    vi.spyOn(api, "getTurnPage")
+      .mockResolvedValueOnce({
+        items: [paginatedTurn(1)],
+        older_cursor: null,
+        newer_cursor: null,
+        view: {
+          conversation_id: "chat-v2",
+          head_turn_id: "turn-1",
+          view_version: "view-v2",
+        },
+        bytes: 256,
+        truncated_entity: false,
+      })
+      .mockResolvedValueOnce({
+        items: [completed],
+        older_cursor: null,
+        newer_cursor: null,
+        view: {
+          conversation_id: "chat-v2",
+          head_turn_id: "turn-1",
+          view_version: "view-v2",
+        },
+        bytes: 512,
+        truncated_entity: false,
+      });
+    const terminalSync =
+      "event: sync\ndata: " +
+      JSON.stringify({
+        kind: "sync",
+        path: {
+          conversation_id: "chat-v2",
+          run_id: "run-v2",
+          turn_id: "turn-1",
+        },
+        cursor: { run_epoch: "epoch-v2", event_sequence: 4 },
+        view: { run_state: "completed", blocks: [] },
+        resync_reason: null,
+        terminal: true,
+      }) +
+      "\n\n";
+    vi.spyOn(api, "openChatLive").mockResolvedValue(
+      new Response(terminalSync, { status: 200 }),
+    );
+    const published = vi.fn();
+    sessionApi.onLiveMessages = published;
+
+    await sessionApi.getSession("chat-v2");
+    await vi.waitFor(() => {
+      expect(api.getChatView).toHaveBeenCalledTimes(2);
+      const calls = published.mock.calls;
+      expect(calls[calls.length - 1]?.[1]).toHaveLength(2);
+    });
+  });
+});
 
 describe("createSession owner-epoch singleflight", () => {
   beforeEach(() => {
@@ -268,7 +1033,7 @@ describe("bound session history owner epochs", () => {
     // Use the real SessionApi and adapter; defer only the backend history.
     const boundResult = oldAdapter.api.getSession(chatId);
     const directResult = sessionApi.getSession(chatId);
-    expect(history).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(history).toHaveBeenCalledTimes(1));
 
     sessionApi.setActiveAgent("B");
     sessionApi.setActiveAgent("A");
@@ -444,6 +1209,19 @@ describe("buildUserCard", () => {
   it("generates an id when the message has none", () => {
     const card = T.buildUserCard(msg({ id: "" }) as never);
     expect(card.id).toBeTruthy();
+  });
+
+  it("preserves normalized turn identity for request actions", () => {
+    const card = T.buildUserCard(
+      msg({
+        chat_turn_id: "turn-7",
+      }) as never,
+    );
+    const data = card.cards![0].data as {
+      chat_turn_id?: string;
+    };
+
+    expect(data.chat_turn_id).toBe("turn-7");
   });
 });
 

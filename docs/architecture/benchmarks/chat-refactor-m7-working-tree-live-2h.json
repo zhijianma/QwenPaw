@@ -1,0 +1,28 @@
+{
+  "concurrent": {
+    "active_chats": 8,
+    "correctness": "passed",
+    "execution_seconds": 0.001177624799311161,
+    "overflowed_slow_subscribers": 8,
+    "published_events_per_chat": 5,
+    "subscribers_per_run": 2
+  },
+  "git_commit": "27d22cd18d+working-tree",
+  "long_run": {
+    "correctness": "passed",
+    "event_count": 144000,
+    "execution_seconds": 7200.008399749873,
+    "python_traced_peak_delta_bytes": 977504,
+    "python_traced_retained_delta_bytes": 971752,
+    "reconnects": 119,
+    "replay_bytes": 647168,
+    "replay_events": 2048,
+    "simulated_duration_seconds": 7200,
+    "subscriber_count": 1
+  },
+  "method": "wall-clock paced live/reconnect soak",
+  "platform": "macOS-26.3.2-arm64-arm-64bit",
+  "python": "3.12.0",
+  "recorded_at": "2026-10-22T12:48:39Z",
+  "schema_version": 1
+}

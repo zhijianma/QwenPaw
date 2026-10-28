@@ -12,6 +12,7 @@ truncation.  Spec collection itself is covered by
 # pylint: disable=use-implicit-booleaness-not-comparison
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from typing import Any, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -549,6 +550,20 @@ class TestLoadAgentState:
         assert isinstance(seen["agent"], StateProxy)
         assert seen["agent"].state_dict() == seen["agent"].data
 
+    async def test_v2_load_uses_normalized_runtime_context(self):
+        payload = _state_payload(scroll={"evicted": 3})
+        ctx, _saved = _session_ctx({"state": {"summary": "legacy"}})
+        ctx.request.chat_conversation_id = "conversation"
+        ctx.workspace.chat_application = SimpleNamespace(
+            load_runtime_context=AsyncMock(return_value=payload),
+        )
+
+        state, returned = await bc._load_agent_state(ctx)
+
+        assert isinstance(state, AgentState)
+        assert returned["scroll"] == {"evicted": 3}
+        ctx.workspace.session.load_session_state.assert_not_awaited()
+
 
 class TestSaveAgentState:
     async def test_writes_state_mode_and_scroll(self):
@@ -618,6 +633,25 @@ class TestSaveAgentState:
         await bc._save_agent_state(ctx, AgentState())
         assert saved["save"]["user_id"] == "session-1"
         assert saved["save"]["channel"] == ""
+
+    async def test_v2_save_stages_context_for_terminal_commit(self):
+        ctx, saved = _session_ctx({})
+        ctx.request.chat_conversation_id = "conversation"
+        ctx.workspace.chat_application = SimpleNamespace()
+        ctx.mode_state = {"mode": "plan"}
+
+        await bc._save_agent_state(
+            ctx,
+            AgentState(),
+            scroll_block={"evicted": 1},
+        )
+
+        payload = json.loads(ctx.request.chat_runtime_context.decode("utf-8"))
+        assert payload["state"]["context"] == []
+        assert payload["scroll"] == {"evicted": 1}
+        assert payload["mode_state"] == {"mode": "plan"}
+        assert saved == {}
+        ctx.workspace.session.save_session_state.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -804,6 +838,42 @@ class TestConversationAdapter:
         ):
             await spec.handler(ctx, "")
         assert "scroll" not in saved["data"]
+
+    @pytest.mark.parametrize(
+        ("command", "expected_kind"),
+        (("clear", "clear"), ("history", None)),
+    )
+    async def test_v2_clear_marks_context_revision_kind(
+        self,
+        command: str,
+        expected_kind: str | None,
+    ) -> None:
+        spec = bc._make_conversation_adapter(command)
+        ctx, _saved = _session_ctx({})
+        ctx.request.chat_conversation_id = "conversation"
+        ctx.workspace.chat_application = SimpleNamespace(
+            load_runtime_context=AsyncMock(
+                return_value=_state_payload(state=_state_with_context()),
+            ),
+        )
+        patcher, _double, _instance = _patch_command_handler()
+        with (
+            patcher,
+            patch(
+                "qwenpaw.config.config.load_agent_config",
+                return_value=_cfg(),
+            ),
+        ):
+            await spec.handler(ctx, "")
+
+        assert (
+            getattr(
+                ctx.request,
+                "chat_context_revision_kind",
+                None,
+            )
+            == expected_kind
+        )
 
     async def test_config_failure_still_runs_the_command(self):
         spec = bc._make_conversation_adapter("history")

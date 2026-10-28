@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import type { ChatSpec, ChatHistory, Message } from "../../../api";
 import api from "../../../api";
+import { ApiError } from "../../../api/request";
 import sessionApi from "../sessionApi";
 
 const T0 = "2026-07-20T10:00:00.000000+00:00";
@@ -52,6 +53,9 @@ async function reloadAsEmptyAgent(): Promise<void> {
 }
 
 beforeEach(() => {
+  vi.spyOn(api, "getChatView").mockRejectedValue(
+    new ApiError(503, "chat_v2_unavailable"),
+  );
   sessionApi.lastActiveChatId = null;
 });
 

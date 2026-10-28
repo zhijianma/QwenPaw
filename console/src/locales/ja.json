@@ -665,6 +665,7 @@
       "preview": "復元をプレビュー",
       "confirm": "復元",
       "conversation": "会話",
+      "allBranches": "会話全体（{{count}}ブランチ）",
       "memory": "メモリ",
       "files": "ワークスペースファイル",
       "refreshWarning": "会話が変更されます。復元後に会話を更新してください。",
@@ -3310,6 +3311,11 @@
     "sidebarPreview": "表示中の項目"
   },
   "chat": {
+    "copy": {
+      "create": "このターンからチャットをコピー",
+      "created": "チャットをコピーしました",
+      "createFailed": "チャットをコピーできませんでした"
+    },
     "longTextPaste": {
       "title": "長いテキストを貼り付け",
       "asText": "テキストとして貼り付け",
@@ -3431,7 +3437,8 @@
       "loading": "読み込み中...",
       "userMessage": "ユーザー",
       "assistantMessage": "アシスタント",
-      "titleMatch": "タイトル"
+      "titleMatch": "タイトル",
+      "loadMore": "さらに読み込む"
     },
     "contextMenu": {
       "open": "開く",
@@ -3477,7 +3484,8 @@
     },
     "conversationHistory": "会話履歴",
     "history": {
-      "empty": "チャット履歴なし"
+      "empty": "チャット履歴なし",
+      "returnLatest": "最新に戻る"
     },
     "sessionGroup": {
       "today": "今日",

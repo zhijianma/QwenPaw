@@ -47,6 +47,9 @@ function mount(referenceId?: string) {
 
 beforeEach(() => {
   sessionApi.resetForTests();
+  vi.spyOn(api, "getChatView").mockRejectedValue(
+    new ApiError(503, "chat_v2_unavailable"),
+  );
   useSessionListStore.setState({ sessions: [], _setLibrarySessions: null });
   useAgentStore.setState({ selectedAgent: "a", lastChatIdByAgent: {} });
   vi.spyOn(menuRegistry, "refresh").mockImplementation(() => {});
@@ -502,10 +505,11 @@ describe("chat route ownership resolution", () => {
     const { result } = mount(alias);
     await waitFor(() => expect(result.current.blocked).toBe(false));
     const fresh = sessionApi.getSession(alias);
-    const requestedTarget = get.mock.calls.some(([id]) => id === TARGET);
+    await waitFor(() =>
+      expect(get.mock.calls.some(([id]) => id === TARGET)).toBe(true),
+    );
     pending.resolve({ messages: [], status: "idle" });
 
-    expect(requestedTarget).toBe(true);
     await expect(fresh).resolves.toMatchObject({ realId: TARGET });
     expect(await stale).toMatchObject([
       { status: "rejected", reason: { name: "AbortError" } },

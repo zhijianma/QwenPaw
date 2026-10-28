@@ -13,6 +13,7 @@ Request processing is handled by ``Runtime`` (see ``stream_query``).
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -20,6 +21,7 @@ from typing import (
     AsyncGenerator,
     Callable,
     Iterable,
+    Literal,
     Optional,
 )
 
@@ -39,6 +41,7 @@ from .service_factories import (
     create_mail_monitor_service,
 )
 from .local_workspace import QwenPawLocalWorkspace
+from ..chats.live import ChatLivePath
 from ..task_tracker import TaskTracker
 from ..chats.session import SafeJSONSession
 from ..crons.manager import CronManager
@@ -51,6 +54,14 @@ if TYPE_CHECKING:
     from ...memory import MemoryBackendContext
 
 logger = logging.getLogger(__name__)
+
+
+def _context_revision_kind(request: Any) -> Literal["turn_commit", "clear"]:
+    """Return the only command-specific context kind accepted by storage."""
+    if getattr(request, "chat_context_revision_kind", None) == "clear":
+        return "clear"
+    return "turn_commit"
+
 
 _MEMORY_BACKEND_FALLBACK = "remelight"
 
@@ -194,6 +205,7 @@ class Workspace:
         self._task_tracker = TaskTracker()
         self._app_services: Any = None
         self._harness_runtime = None
+        self._chat_application = None
 
         # Register all services
         self._register_services()
@@ -223,6 +235,25 @@ class Workspace:
     def chat_manager(self):
         """Get chat manager instance from ServiceManager."""
         return self._service_manager.services.get("chat_manager")
+
+    @property
+    def chat_application(self):
+        """Return the normalized Chat application when rollout is enabled."""
+        from ..chats.feature_flags import (
+            assert_chat_storage_route_safe,
+            chat_storage_v2_enabled,
+        )
+
+        if not chat_storage_v2_enabled():
+            assert_chat_storage_route_safe(self.workspace_dir)
+            return None
+        if self._chat_application is None:
+            from ..chats.application import ChatApplicationService
+
+            self._chat_application = ChatApplicationService(
+                self.workspace_dir,
+            )
+        return self._chat_application
 
     @property
     def channel_manager(self):
@@ -425,6 +456,7 @@ class Workspace:
         self._app_services = app_services
 
     @_sdk_observe_stream
+    # pylint: disable-next=too-many-statements,too-many-branches
     async def stream_query(
         self,
         request: Any,
@@ -436,6 +468,255 @@ class Workspace:
         available = getattr(self._manager, "assert_agent_available", None)
         if available is not None:
             available(self.agent_id)
+
+        chat_application = self.chat_application
+        if chat_application is None:
+            async for item in self._stream_query_backend(request):
+                yield item
+            return
+
+        from ..chats.application import AcceptanceReplayError, ChatAlias
+        from ..chats.event_materializer import ChatEventMaterializer
+        from ..chats.migration.inventory import inventory_legacy_workspace
+        from ..chats.storage import load_runtime_run_handle
+
+        session_id = str(getattr(request, "session_id", "") or "")
+        user_id = str(getattr(request, "user_id", "") or session_id)
+        channel = str(getattr(request, "channel", "") or "console")
+        alias = ChatAlias(
+            agent_id=self.agent_id,
+            namespace="legacy_session",
+            external_key=session_id,
+            owner_scope=f"{channel}:{user_id}",
+        )
+        resolved = chat_application.resolve_alias(alias)
+        if resolved is None and (self.workspace_dir / "chats.json").is_file():
+            await asyncio.to_thread(
+                inventory_legacy_workspace,
+                self.workspace_dir,
+                agent_id=self.agent_id,
+                now_us=time.time_ns() // 1_000,
+            )
+            resolved = chat_application.resolve_alias(alias)
+        user_messages = [
+            message
+            for message in list(getattr(request, "input", None) or [])
+            if getattr(getattr(message, "role", None), "value", None) == "user"
+        ]
+        if resolved is None or not user_messages:
+            async for item in self._stream_query_backend(request):
+                yield item
+            return
+        conversation_id = resolved
+        message = user_messages[-1]
+        client_request_id = str(
+            getattr(request, "request_id", "") or getattr(message, "id", ""),
+        )
+        accepted = await chat_application.accept_input(
+            conversation_id=conversation_id,
+            client_request_id=client_request_id,
+            message=message,
+            backend=load_agent_config(self.agent_id).backend,
+        )
+        if accepted.replayed:
+            raise AcceptanceReplayError(
+                "Chat request was already accepted; live attachment is "
+                "available after the realtime replay milestone",
+            )
+        accepted = await chat_application.wait_for_queued_run(
+            conversation_id=conversation_id,
+            accepted=accepted,
+        )
+        if accepted.replayed:
+            raise AcceptanceReplayError(
+                "Queued Chat request was claimed by another consumer",
+            )
+        handle_task = asyncio.create_task(
+            asyncio.to_thread(
+                load_runtime_run_handle,
+                chat_application.paths.conversation(conversation_id),
+                conversation_id=conversation_id,
+                run_id=accepted.work_id,
+            ),
+        )
+        try:
+            handle = await asyncio.shield(handle_task)
+        except asyncio.CancelledError:
+            try:
+                await handle_task
+            except Exception:
+                logger.exception(
+                    "Chat run handle failed while request was canceled",
+                )
+            await asyncio.shield(
+                chat_application.cancel_accepted_before_runtime(
+                    conversation_id=conversation_id,
+                    accepted=accepted,
+                ),
+            )
+            raise
+        request.chat_conversation_id = conversation_id
+        request.chat_run_id = handle.run_id
+        materializer = ChatEventMaterializer(
+            chat_application.paths,
+            handle,
+            lease_owner=chat_application.process_instance_id,
+            session_id=session_id,
+            initial_message=message,
+        )
+        chat_application.register_materializer(materializer)
+        live_path = ChatLivePath(
+            conversation_id=conversation_id,
+            run_id=handle.run_id,
+            turn_id=handle.turn_id,
+        )
+        live_enabled = True
+        try:
+            await self._task_tracker.chat_live_hub.start_run(
+                live_path,
+                materializer.live_view,
+            )
+            await self._task_tracker.chat_live_hub.publish(
+                live_path,
+                kind="run_accepted",
+                payload={"state": "running"},
+                view=materializer.live_view,
+                entity_id=handle.run_id,
+            )
+        except Exception:
+            live_enabled = False
+            logger.exception(
+                "Normalized Chat live stream could not be initialized",
+            )
+
+        async def _publish_live(result) -> None:
+            nonlocal live_enabled
+            if not live_enabled:
+                return
+            try:
+                for mutation in result.mutations:
+                    await self._task_tracker.chat_live_hub.publish(
+                        live_path,
+                        kind=mutation.kind,
+                        payload=mutation.payload,
+                        view=result.view,
+                        entity_id=mutation.entity_id,
+                        entity_version=mutation.entity_version,
+                        expected_offset=mutation.expected_offset,
+                        terminal=mutation.kind == "terminal",
+                    )
+            except Exception:
+                live_enabled = False
+                logger.exception(
+                    "Normalized Chat live event publication failed",
+                )
+
+        terminal = False
+        try:
+            async for item in self._stream_query_backend(request):
+                runtime_context = getattr(
+                    request,
+                    "chat_runtime_context",
+                    None,
+                )
+                result = await materializer.observe_live(
+                    item,
+                    runtime_context=runtime_context,
+                    context_kind=_context_revision_kind(request),
+                )
+                if result.terminal:
+                    terminal = True
+                    await chat_application.mark_intent_terminal(
+                        conversation_id=conversation_id,
+                        client_request_id=client_request_id,
+                    )
+                await _publish_live(result)
+                yield item
+        except BaseException as exc:
+            if not terminal:
+                committed_state = materializer.terminal_state
+                if committed_state is None:
+                    await asyncio.shield(
+                        materializer.abort(
+                            exc,
+                            runtime_context=getattr(
+                                request,
+                                "chat_runtime_context",
+                                None,
+                            ),
+                            context_kind=_context_revision_kind(request),
+                        ),
+                    )
+                    committed_state = materializer.terminal_state
+                await asyncio.shield(
+                    chat_application.mark_intent_terminal(
+                        conversation_id=conversation_id,
+                        client_request_id=client_request_id,
+                    ),
+                )
+                terminal_result = materializer.live_view
+                if live_enabled:
+                    try:
+                        await asyncio.shield(
+                            self._task_tracker.chat_live_hub.publish(
+                                live_path,
+                                kind="terminal",
+                                payload={
+                                    "state": committed_state
+                                    or (
+                                        "canceled"
+                                        if isinstance(
+                                            exc,
+                                            asyncio.CancelledError,
+                                        )
+                                        else "failed"
+                                    ),
+                                },
+                                view=terminal_result,
+                                entity_id=handle.run_id,
+                                terminal=True,
+                            ),
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Normalized Chat abort publication failed",
+                        )
+            raise
+        if not terminal:
+            error = RuntimeError("Runtime stream ended without terminal event")
+            await materializer.abort(
+                error,
+                runtime_context=getattr(
+                    request,
+                    "chat_runtime_context",
+                    None,
+                ),
+                context_kind=_context_revision_kind(request),
+            )
+            await chat_application.mark_intent_terminal(
+                conversation_id=conversation_id,
+                client_request_id=client_request_id,
+            )
+            if live_enabled:
+                try:
+                    await self._task_tracker.chat_live_hub.publish(
+                        live_path,
+                        kind="terminal",
+                        payload={"state": "failed"},
+                        view=materializer.live_view,
+                        entity_id=handle.run_id,
+                        terminal=True,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Normalized Chat missing-terminal publication failed",
+                    )
+
+    async def _stream_query_backend(
+        self,
+        request: Any,
+    ) -> AsyncGenerator[Any, None]:
+        """Run one request without applying the Chat persistence wrapper."""
         config = load_agent_config(self.agent_id)
         backend = config.backend
         if backend != "qwenpaw":
@@ -901,6 +1182,14 @@ class Workspace:
                 errors.append(("harness", exc))
             else:
                 self._harness_runtime = None
+
+        if self._chat_application is not None:
+            try:
+                await self._chat_application.close()
+            except Exception as exc:
+                errors.append(("chat application", exc))
+            else:
+                self._chat_application = None
 
         if len(errors) == 1:
             raise errors[0][1]

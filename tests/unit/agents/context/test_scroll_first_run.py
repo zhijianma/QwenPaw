@@ -21,6 +21,12 @@ from qwenpaw.agents.context import build_scroll_components
 from qwenpaw.config.config import LightContextConfig
 
 
+@pytest.fixture(autouse=True)
+def _use_legacy_scroll_store(monkeypatch):
+    """Keep these legacy history.db lifecycle tests on the legacy path."""
+    monkeypatch.setenv("QWENPAW_CHAT_STORAGE_V2", "0")
+
+
 class _DummyModel:
     """A stand-in model; scroll only stores it, never calls it at wiring."""
 

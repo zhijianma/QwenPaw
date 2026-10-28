@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import tempfile
 import time
 import weakref
 from dataclasses import dataclass
@@ -46,6 +47,11 @@ from .models import (
 )
 from .restore import RestoreService
 from .repository import CheckpointRepository
+from .chat_artifact import (
+    CHAT_ARTIFACT_DATABASE,
+    CHAT_ARTIFACT_MANIFEST,
+    create_chat_checkpoint_artifact,
+)
 
 logger = logging.getLogger("qwenpaw.checkpoints")
 
@@ -326,6 +332,11 @@ class CheckpointService:
         """Create a snapshot and return its complete internal result."""
         if kind not in {"auto", "snap", "pre-restore"}:
             raise ValueError(f"Unsupported checkpoint kind: {kind}")
+        conversation_id = await self.prepare_chat_artifact(
+            session_id=session_id,
+            user_id=user_id,
+            channel=channel,
+        )
         async with self.maintenance_lock:
             async with self.lock:
                 result = await run_sync_io(
@@ -337,8 +348,64 @@ class CheckpointService:
                     name,
                     message,
                     query,
+                    conversation_id=conversation_id,
                 )
         return result
+
+    async def prepare_chat_artifact(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        channel: str,
+    ) -> str | None:
+        """Resolve, migrate and flush one normalized Chat before snapshot."""
+        conversation_id = self.resolve_chat_conversation_id(
+            session_id=session_id,
+            user_id=user_id,
+            channel=channel,
+            require_materialized=False,
+        )
+        if conversation_id is None:
+            return None
+        application = self.workspace.chat_application
+        await application.ensure_ready(conversation_id)
+        await application.flush_partial_blocks(conversation_id)
+        return conversation_id
+
+    def resolve_chat_conversation_id(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        channel: str,
+        require_materialized: bool = True,
+    ) -> str | None:
+        """Resolve an already-materialized Chat without causing writes."""
+        workspace = self.workspace
+        application = getattr(workspace, "chat_application", None)
+        agent_id = getattr(workspace, "agent_id", None)
+        if application is None or not isinstance(agent_id, str):
+            return None
+        from ..app.chats.application import ChatAlias
+
+        resolved = application.resolve_alias(
+            ChatAlias(
+                agent_id=agent_id,
+                namespace="legacy_session",
+                external_key=session_id,
+                owner_scope=f"{channel}:{user_id}",
+            ),
+        )
+        if resolved is None:
+            return None
+        conversation_id = resolved
+        if (
+            require_materialized
+            and not application.paths.conversation(conversation_id).is_file()
+        ):
+            return None
+        return conversation_id
 
     def create_snapshot_unlocked(
         self,
@@ -351,6 +418,7 @@ class CheckpointService:
         query_override: str | None,
         *,
         tree_override: str | None = None,
+        conversation_id: str | None = None,
     ) -> SnapshotResult:
         key = session_key(
             channel=channel,
@@ -381,7 +449,7 @@ class CheckpointService:
                 ref = f"refs/pre-restore/{now_ms}-{key}"
             subject = f"pre-restore {key} {now_ms}"
 
-        tree = tree_override or self.repository.write_workspace_tree()
+        tree = tree_override or self.write_snapshot_tree(conversation_id)
         body = message.strip() if message else subject
         query = query_override
         if query is None:
@@ -412,6 +480,32 @@ class CheckpointService:
             parent_commit=parent_commit,
             timestamp_ms=now_ms,
         )
+
+    def write_snapshot_tree(self, conversation_id: str | None) -> str:
+        """Add one validated Chat artifact to the normal workspace tree."""
+        if conversation_id is None:
+            return self.repository.write_workspace_tree()
+        workspace = self.workspace
+        application = getattr(workspace, "chat_application", None)
+        if application is None:
+            return self.repository.write_workspace_tree()
+        source = application.paths.conversation(conversation_id)
+        if not source.is_file():
+            return self.repository.write_workspace_tree()
+        with tempfile.TemporaryDirectory(
+            prefix="qwenpaw-checkpoint-chat-",
+        ) as temporary:
+            database, manifest, _metadata = create_chat_checkpoint_artifact(
+                source,
+                Path(temporary),
+                conversation_id=conversation_id,
+            )
+            return self.repository.write_workspace_tree(
+                extra_files={
+                    CHAT_ARTIFACT_DATABASE: database,
+                    CHAT_ARTIFACT_MANIFEST: manifest,
+                },
+            )
 
     # -- reset ------------------------------------------------------------
 

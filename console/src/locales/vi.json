@@ -1145,6 +1145,24 @@
     "runtimeRestartFailed": "Không thể khởi động lại môi trường"
   },
   "chat": {
+    "copy": {
+      "create": "Sao chép cuộc trò chuyện từ lượt này",
+      "created": "Đã sao chép cuộc trò chuyện",
+      "createFailed": "Không thể sao chép cuộc trò chuyện"
+    },
+    "search": {
+      "title": "Tìm kiếm trò chuyện",
+      "tooltip": "Tìm kiếm trò chuyện hiện tại",
+      "placeholder": "Tìm kiếm tin nhắn...",
+      "noResults": "Không tìm thấy kết quả",
+      "resultsCount": "Tìm thấy {{count}} kết quả",
+      "searching": "Đang tìm kiếm {{progress}}...",
+      "loading": "Đang tải...",
+      "userMessage": "Người dùng",
+      "assistantMessage": "Trợ lý",
+      "titleMatch": "Tiêu đề",
+      "loadMore": "Tải thêm"
+    },
     "longTextPaste": {
       "title": "Dán văn bản dài",
       "asText": "Dán dưới dạng văn bản",
@@ -1274,7 +1292,8 @@
     },
     "conversationHistory": "Lịch sử hội thoại",
     "history": {
-      "empty": "Không có lịch sử trò chuyện"
+      "empty": "Không có lịch sử trò chuyện",
+      "returnLatest": "Trở về mới nhất"
     },
     "sessionGroup": {
       "today": "Hôm nay",
@@ -1601,6 +1620,7 @@
       "preview": "Xem trước",
       "confirm": "Khôi phục",
       "conversation": "Hội thoại",
+      "allBranches": "Toàn bộ hội thoại ({{count}} nhánh)",
       "memory": "Bộ nhớ",
       "files": "Tệp workspace",
       "refreshWarning": "Hội thoại sẽ thay đổi. Hãy làm mới sau khi khôi phục.",

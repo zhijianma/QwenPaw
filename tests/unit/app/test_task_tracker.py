@@ -20,7 +20,7 @@ import json
 
 import pytest
 
-from qwenpaw.app.task_tracker import TaskTracker
+from qwenpaw.app.task_tracker import RESYNC_REQUIRED_SSE, TaskTracker
 
 
 # ---------------------------------------------------------------------------
@@ -564,3 +564,100 @@ async def test_attach_appends_replay_end_marker_after_buffer():
     # The original (non-reconnect) subscriber never sees the marker.
     rest_a = await _drain(queue_a, 3)
     assert rest_a == ["data: first\n\n", "data: second\n\n", None]
+
+
+@pytest.mark.asyncio
+async def test_replay_buffer_is_bounded_by_count_and_bytes():
+    tracker = TaskTracker(replay_max_events=2, replay_max_bytes=30)
+    emitted = asyncio.Event()
+    release = asyncio.Event()
+
+    async def stream(_payload):
+        for value in ("first", "second", "third"):
+            yield f"data: {value}\n\n"
+        emitted.set()
+        await release.wait()
+
+    original, _ = await tracker.attach_or_start("bounded", None, stream)
+    await asyncio.wait_for(emitted.wait(), timeout=1)
+    await asyncio.sleep(0)
+    state = tracker._runs["bounded"]
+
+    assert len(state.buffer) <= 2
+    assert state.buffer_bytes <= 30
+    assert [event.sequence for event in state.buffer] == [2, 3]
+    assert state.next_event_sequence == 4
+    assert state.run_epoch
+
+    replay = await tracker.attach("bounded")
+    assert replay is not None
+    assert await replay.get() == "data: second\n\n"
+    assert await replay.get() == "data: third\n\n"
+
+    release.set()
+    async for _ in tracker.stream_from_queue(original, "bounded"):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_slow_subscriber_resync_does_not_block_fast_subscriber():
+    tracker = TaskTracker(
+        subscriber_max_events=2,
+        subscriber_max_bytes=1024,
+    )
+    release = asyncio.Event()
+
+    async def stream(_payload):
+        await release.wait()
+        for value in range(5):
+            yield f"data: {value}\n\n"
+            await asyncio.sleep(0)
+
+    slow, _ = await tracker.attach_or_start("fanout", None, stream)
+    fast, is_new = await tracker.attach_or_start("fanout", None, stream)
+    assert is_new is False
+    fast_events = []
+
+    async def consume_fast():
+        async for event in tracker.stream_from_queue(fast, "fanout"):
+            fast_events.append(event)
+
+    consumer = asyncio.create_task(consume_fast())
+    release.set()
+    await asyncio.wait_for(consumer, timeout=1)
+
+    assert fast_events == [f"data: {value}\n\n" for value in range(5)]
+    assert await slow.get() == RESYNC_REQUIRED_SSE
+    assert await slow.get() is None
+    assert await tracker.get_status("fanout") == "idle"
+
+
+@pytest.mark.asyncio
+async def test_oversized_replay_requests_resync_instead_of_growing_queue():
+    tracker = TaskTracker(
+        replay_max_events=10,
+        replay_max_bytes=1024,
+        subscriber_max_events=2,
+        subscriber_max_bytes=1024,
+    )
+    emitted = asyncio.Event()
+    release = asyncio.Event()
+
+    async def stream(_payload):
+        for value in range(3):
+            yield f"data: {value}\n\n"
+        emitted.set()
+        await release.wait()
+
+    original, _ = await tracker.attach_or_start("large-replay", None, stream)
+    await asyncio.wait_for(emitted.wait(), timeout=1)
+    await asyncio.sleep(0)
+
+    replay = await tracker.attach("large-replay")
+    assert replay is not None
+    assert await replay.get() == RESYNC_REQUIRED_SSE
+    assert await replay.get() is None
+
+    release.set()
+    async for _ in tracker.stream_from_queue(original, "large-replay"):
+        pass

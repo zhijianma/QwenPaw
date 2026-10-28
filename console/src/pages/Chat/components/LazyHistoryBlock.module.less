@@ -1,0 +1,35 @@
+.root {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  margin-block: 6px;
+}
+
+.preview,
+.rawWindow {
+  max-height: 320px;
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--app-font-mono, monospace);
+  font-size: var(--app-font-caption);
+  line-height: 1.5;
+}
+
+.meta {
+  color: var(--ant-color-text-tertiary);
+  font-size: var(--app-font-caption);
+}
+
+.error {
+  color: var(--ant-color-error);
+  font-size: var(--app-font-caption);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

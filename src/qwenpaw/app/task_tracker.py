@@ -11,9 +11,11 @@ import asyncio
 import json
 import logging
 import weakref
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncGenerator,
     AsyncIterator,
@@ -21,6 +23,10 @@ from typing import (
     Callable,
     Optional,
 )
+from uuid import uuid4
+
+if TYPE_CHECKING:
+    from .chats.live import ChatLiveHub
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +40,80 @@ _create_task = asyncio.create_task
 # the client can render the replayed part instantly (no token-by-token
 # re-animation) and switch to live streaming afterwards.
 REPLAY_END_SSE = f"data: {json.dumps({'type': 'replay_end'})}\n\n"
+_RESYNC_REQUIRED_PAYLOAD = {
+    "type": "resync_required",
+    "reason": "subscriber_overflow",
+}
+RESYNC_REQUIRED_SSE = f"data: {json.dumps(_RESYNC_REQUIRED_PAYLOAD)}\n\n"
+
+REPLAY_MAX_EVENTS = 2048
+REPLAY_MAX_BYTES = 8 * 1024 * 1024
+SUBSCRIBER_MAX_EVENTS = 512
+SUBSCRIBER_MAX_BYTES = 2 * 1024 * 1024
+
+
+def _event_size(event: str) -> int:
+    return len(event.encode("utf-8"))
+
+
+class _SubscriberQueue(asyncio.Queue):
+    """Queue with independent payload count/byte accounting."""
+
+    def __init__(self, *, max_events: int, max_bytes: int) -> None:
+        super().__init__()
+        self.max_events = max_events
+        self.max_bytes = max_bytes
+        self.payload_events = 0
+        self.payload_bytes = 0
+
+    def put_payload(self, event: str) -> bool:
+        """Append one payload without blocking, or report overflow."""
+        size = _event_size(event)
+        if (
+            self.payload_events + 1 > self.max_events
+            or self.payload_bytes + size > self.max_bytes
+        ):
+            return False
+        self.put_nowait(event)
+        self.payload_events += 1
+        self.payload_bytes += size
+        return True
+
+    def put_control(self, event: str | None) -> None:
+        """Append a small lifecycle control outside the payload budget."""
+        self.put_nowait(event)
+
+    async def get(self) -> str | None:
+        item = await super().get()
+        self._consume(item)
+        return item
+
+    def get_nowait(self) -> str | None:
+        item = super().get_nowait()
+        self._consume(item)
+        return item
+
+    def _consume(self, item: str | None) -> None:
+        if not isinstance(item, str):
+            return
+        if item in {REPLAY_END_SSE, RESYNC_REQUIRED_SSE}:
+            return
+        self.payload_events = max(0, self.payload_events - 1)
+        self.payload_bytes = max(0, self.payload_bytes - _event_size(item))
+
+    def close_for_resync(self) -> None:
+        """Discard queued payload and terminate with one resync signal."""
+        while not self.empty():
+            self.get_nowait()
+        self.put_control(RESYNC_REQUIRED_SSE)
+        self.put_control(_SENTINEL)
+
+
+@dataclass(frozen=True)
+class _BufferedEvent:
+    sequence: int
+    data: str
+    size: int
 
 
 @dataclass
@@ -41,8 +121,11 @@ class _RunState:
     """Per-run state (task, queues, buffer), guarded by tracker lock."""
 
     task: asyncio.Future
-    queues: list[asyncio.Queue] = field(default_factory=list)
-    buffer: list[str] = field(default_factory=list)
+    queues: list[_SubscriberQueue] = field(default_factory=list)
+    buffer: deque[_BufferedEvent] = field(default_factory=deque)
+    buffer_bytes: int = 0
+    run_epoch: str = field(default_factory=lambda: str(uuid4()))
+    next_event_sequence: int = 1
     start_time: Optional[datetime] = None
     finish_time: Optional[datetime] = None
     owner: object | None = None
@@ -52,16 +135,95 @@ class TaskTracker:
     """Per-agent tracker: run_key -> RunState.
 
     All mutations to _runs under _lock. Producer broadcasts under lock.
-    Subscribers use unbounded per-connection queues; disconnect removes them
-    via :meth:`detach_subscriber`. A workspace reload reuses the same tracker
-    so active runs remain reconnectable.
+    Replay and per-subscriber queues are bounded independently by event count
+    and UTF-8 bytes. A slow subscriber is detached with ``resync_required``;
+    it never backpressures the runtime producer. A workspace reload reuses the
+    same tracker so active runs remain reconnectable.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        replay_max_events: int = REPLAY_MAX_EVENTS,
+        replay_max_bytes: int = REPLAY_MAX_BYTES,
+        subscriber_max_events: int = SUBSCRIBER_MAX_EVENTS,
+        subscriber_max_bytes: int = SUBSCRIBER_MAX_BYTES,
+    ) -> None:
+        if (
+            min(
+                replay_max_events,
+                replay_max_bytes,
+                subscriber_max_events,
+                subscriber_max_bytes,
+            )
+            <= 0
+        ):
+            raise ValueError("TaskTracker limits must be positive")
         self._lock = asyncio.Lock()
         self._runs: dict[str, _RunState] = {}
+        self._replay_max_events = replay_max_events
+        self._replay_max_bytes = replay_max_bytes
+        self._subscriber_max_events = subscriber_max_events
+        self._subscriber_max_bytes = subscriber_max_bytes
         self._global_last_run_at: Optional[datetime] = None
         self._global_last_finish_at: Optional[datetime] = None
+        self._chat_live_hub: ChatLiveHub | None = None
+
+    @property
+    def chat_live_hub(self) -> ChatLiveHub:
+        """Lazily return normalized Chat live state for this agent."""
+        if self._chat_live_hub is None:
+            from .chats.live import ChatLiveHub
+
+            self._chat_live_hub = ChatLiveHub()
+        return self._chat_live_hub
+
+    def _new_subscriber(self) -> _SubscriberQueue:
+        return _SubscriberQueue(
+            max_events=self._subscriber_max_events,
+            max_bytes=self._subscriber_max_bytes,
+        )
+
+    def _attach_locked(
+        self,
+        state: _RunState,
+        *,
+        replay_end: bool,
+    ) -> _SubscriberQueue:
+        queue = self._new_subscriber()
+        for event in state.buffer:
+            if not queue.put_payload(event.data):
+                queue.close_for_resync()
+                return queue
+        if replay_end:
+            queue.put_control(REPLAY_END_SSE)
+        state.queues.append(queue)
+        return queue
+
+    def _publish_locked(self, state: _RunState, event: str) -> None:
+        size = _event_size(event)
+        buffered = _BufferedEvent(
+            sequence=state.next_event_sequence,
+            data=event,
+            size=size,
+        )
+        state.next_event_sequence += 1
+        state.buffer.append(buffered)
+        state.buffer_bytes += size
+        while state.buffer and (
+            len(state.buffer) > self._replay_max_events
+            or state.buffer_bytes > self._replay_max_bytes
+        ):
+            removed = state.buffer.popleft()
+            state.buffer_bytes -= removed.size
+
+        active: list[_SubscriberQueue] = []
+        for queue in state.queues:
+            if queue.put_payload(event):
+                active.append(queue)
+            else:
+                queue.close_for_resync()
+        state.queues = active
 
     @property
     def lock(self) -> asyncio.Lock:
@@ -199,17 +361,12 @@ class TaskTracker:
             state = self._runs.get(run_key)
             if state is None or state.task.done():
                 return None
-            q: asyncio.Queue = asyncio.Queue()
-            for sse in state.buffer:
-                q.put_nowait(sse)
-            q.put_nowait(REPLAY_END_SSE)
-            state.queues.append(q)
-            return q
+            return self._attach_locked(state, replay_end=True)
 
     async def detach_subscriber(
         self,
         run_key: str,
-        queue: asyncio.Queue,
+        queue: _SubscriberQueue,
     ) -> None:
         """Remove *queue* from *run_key*'s subscriber list.
 
@@ -274,17 +431,13 @@ class TaskTracker:
         async with self._lock:
             state = self._runs.get(run_key)
             if state is not None and not state.task.done():
-                q: asyncio.Queue = asyncio.Queue()
-                for sse in state.buffer:
-                    q.put_nowait(sse)
-                state.queues.append(q)
-                return q, False
+                return self._attach_locked(state, replay_end=False), False
 
-            my_queue: asyncio.Queue = asyncio.Queue()
+            my_queue = self._new_subscriber()
             run = _RunState(
                 task=asyncio.Future(),  # placeholder, replaced below
                 queues=[my_queue],
-                buffer=[],
+                buffer=deque(),
                 owner=owner,
             )
 
@@ -306,9 +459,8 @@ class TaskTracker:
                         if tracker is None:
                             return
                         async with tracker.lock:
-                            run.buffer.append(sse)
-                            for q in run.queues:
-                                q.put_nowait(sse)
+                            # pylint: disable=protected-access
+                            tracker._publish_locked(run, sse)
                 except asyncio.CancelledError:
                     logger.debug("run cancelled run_key=%s", run_key)
                 except Exception:
@@ -320,9 +472,8 @@ class TaskTracker:
                     tracker = tracker_ref()
                     if tracker is not None:
                         async with tracker.lock:
-                            run.buffer.append(err_sse)
-                            for q in run.queues:
-                                q.put_nowait(err_sse)
+                            # pylint: disable=protected-access
+                            tracker._publish_locked(run, err_sse)
                 finally:
                     finish_time = datetime.now(timezone.utc)
                     if on_finished is not None:
@@ -340,7 +491,7 @@ class TaskTracker:
                             # pylint: disable=protected-access
                             tracker._global_last_finish_at = finish_time
                             for q in run.queues:
-                                q.put_nowait(_SENTINEL)
+                                q.put_control(_SENTINEL)
                             # pylint: disable=protected-access
                             tracker._runs.pop(
                                 run_key,
@@ -360,7 +511,7 @@ class TaskTracker:
 
     async def stream_from_queue(
         self,
-        queue: asyncio.Queue,
+        queue: _SubscriberQueue,
         run_key: str,
     ) -> AsyncGenerator[str, None]:
         """Yield SSE strings from *queue* until the sentinel ``None``.

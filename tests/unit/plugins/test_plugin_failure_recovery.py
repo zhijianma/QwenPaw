@@ -906,6 +906,7 @@ async def test_workspace_stop_releases_its_plugin_bindings(registry):
     old._started = True
     old._start_attempted = True
     old._harness_runtime = None
+    old._chat_application = None
     old._service_manager = SimpleNamespace(stop_all=AsyncMock(), services={})
     new = workspace()
     registry.projector = WorkspaceProjector(lambda: [old])
@@ -948,6 +949,7 @@ async def test_workspace_stop_continues_after_failed_plugin_revoke(
     old._service_manager = SimpleNamespace(stop_all=AsyncMock())
     harness = SimpleNamespace(stop=AsyncMock())
     old._harness_runtime = harness
+    old._chat_application = None
     registry.projector = SimpleNamespace(
         revoke_workspace=AsyncMock(
             side_effect=[QuiescenceError("plugin still alive"), None],
@@ -984,6 +986,7 @@ async def test_workspace_stop_retains_failed_harness_for_retry(registry):
         stop=AsyncMock(side_effect=[RuntimeError("harness busy"), None]),
     )
     old._harness_runtime = harness
+    old._chat_application = None
     registry.projector = SimpleNamespace(revoke_workspace=AsyncMock())
     with pytest.raises(RuntimeError) as raised:
         await old.stop(final=False)

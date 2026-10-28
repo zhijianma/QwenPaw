@@ -756,6 +756,7 @@
       "preview": "预览恢复",
       "confirm": "恢复检查点",
       "conversation": "会话内容",
+      "allBranches": "完整会话（{{count}} 个分支）",
       "memory": "记忆",
       "files": "工作区文件",
       "refreshWarning": "会话内容将发生变化。恢复完成后，请刷新会话以载入最新状态。",
@@ -3959,6 +3960,11 @@
     "system": "跟随系统"
   },
   "chat": {
+    "copy": {
+      "create": "从此轮复制对话",
+      "created": "对话已复制",
+      "createFailed": "无法复制对话"
+    },
     "sessionSettings": {
       "advanced": "高级选项",
       "decisionEnabled": "使用决策模型"
@@ -4088,7 +4094,8 @@
       "loading": "加载中...",
       "userMessage": "用户",
       "assistantMessage": "助手",
-      "titleMatch": "标题"
+      "titleMatch": "标题",
+      "loadMore": "加载更多"
     },
     "contextMenu": {
       "open": "打开",
@@ -4166,7 +4173,8 @@
     },
     "conversationHistory": "历史对话",
     "history": {
-      "empty": "暂无聊天记录"
+      "empty": "暂无聊天记录",
+      "returnLatest": "回到最新"
     },
     "sessionGroup": {
       "today": "今天",

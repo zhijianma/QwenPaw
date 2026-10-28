@@ -554,13 +554,19 @@ class PawAppContext:
 
     async def delete_chat_session(self, chat_id: str) -> bool:
         """Delete one dialogue after validating app ownership."""
+        from ..app.chats.deletion_service import delete_chat_records
+
         workspace = await self._get_workspace()
         if workspace is None:
             return False
         chat = await workspace.chat_manager.get_chat(chat_id)
         if chat is None or not self._owns_chat_spec(chat):
             return False
-        return await workspace.chat_manager.delete_chats([chat_id])
+        return await delete_chat_records(
+            workspace,
+            workspace.chat_manager,
+            [chat],
+        )
 
     async def _get_workspace(self) -> Any:
         """Get the workspace for the current agent."""

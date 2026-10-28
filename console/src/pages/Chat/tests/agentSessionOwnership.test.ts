@@ -14,6 +14,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { ChatSpec, ChatHistory } from "../../../api";
 import api from "../../../api";
+import { ApiError } from "../../../api/request";
 import sessionApi from "../sessionApi";
 import { useAgentStore } from "../../../stores/agentStore";
 import { useSessionListStore } from "../../../stores/sessionListStore";
@@ -78,6 +79,9 @@ function seedLegacyDraft(id = "1788430000000-legacy1") {
 }
 
 beforeEach(() => {
+  vi.spyOn(api, "getChatView").mockRejectedValue(
+    new ApiError(503, "chat_v2_unavailable"),
+  );
   sessionApi.resetForTests();
   useAgentStore.setState({ lastChatIdByAgent: {} });
   useSessionListStore.setState({ _setLibrarySessions: null });

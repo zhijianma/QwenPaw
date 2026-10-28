@@ -9,6 +9,7 @@ import shutil
 import stat
 import subprocess
 from pathlib import Path
+from pathlib import PurePosixPath
 
 from ..utils.io_utils import read_json, write_json_atomic, write_text_atomic
 from .policy import (
@@ -28,6 +29,7 @@ _INDEX_CONTENT_POLICY = "byte-preserving"
 _BYTE_PRESERVING_ATTRIBUTES = (
     "* -text -eol -filter -ident -working-tree-encoding\n"
 )
+_CHAT_ARTIFACT_PREFIX = ".qwenpaw/checkpoint-chat/"
 
 
 class CheckpointRepository:
@@ -259,12 +261,57 @@ class CheckpointRepository:
             ) from exc
         self._pending_index_policy = None
 
-    def write_workspace_tree(self) -> str:
+    def _replace_virtual_index_files(
+        self,
+        extra_files: dict[str, Path],
+    ) -> None:
+        """Replace checkpoint-only blobs without touching the workspace."""
+        tracked = self.run_git(
+            "ls-files",
+            "-z",
+            "--",
+            _CHAT_ARTIFACT_PREFIX,
+        )
+        for rel in tracked.split("\0"):
+            if rel:
+                self.run_git("update-index", "--force-remove", "--", rel)
+        for rel, source in sorted(extra_files.items()):
+            pure = PurePosixPath(rel)
+            if (
+                not rel.startswith(_CHAT_ARTIFACT_PREFIX)
+                or pure.is_absolute()
+                or ".." in pure.parts
+                or not source.is_file()
+            ):
+                raise CheckpointError(
+                    f"Invalid checkpoint-only artifact: {rel}",
+                )
+            object_id = self.run_git(
+                "hash-object",
+                "-w",
+                "--",
+                str(source),
+            )
+            self.run_git(
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                "100644",
+                object_id,
+                rel,
+            )
+
+    def write_workspace_tree(
+        self,
+        *,
+        extra_files: dict[str, Path] | None = None,
+    ) -> str:
         """Stage the snapshot boundary and return its Git tree object."""
         pathspecs = tuple(SNAPSHOT_EXCLUDE_PATHSPECS)
         if not self._index_policy_matches(pathspecs):
             self.run_git("read-tree", "--empty")
         self.run_git("add", "-f", "-A", "--", ".", *pathspecs)
+        self._replace_virtual_index_files(extra_files or {})
         tree = self.run_git("write-tree")
         self._commit_index_policy()
         return tree

@@ -1,0 +1,28 @@
+{
+  "concurrent": {
+    "active_chats": 8,
+    "correctness": "passed",
+    "execution_seconds": 0.00076299998909235,
+    "overflowed_slow_subscribers": 8,
+    "published_events_per_chat": 5,
+    "subscribers_per_run": 2
+  },
+  "git_commit": "27d22cd18d+working-tree",
+  "long_run": {
+    "correctness": "passed",
+    "event_count": 144000,
+    "events_per_execution_second": 14735.652939248597,
+    "execution_seconds": 9.772217124933377,
+    "python_traced_peak_delta_bytes": 969301,
+    "python_traced_retained_delta_bytes": 966992,
+    "replay_bytes": 638976,
+    "replay_events": 2048,
+    "simulated_duration_seconds": 7200,
+    "subscriber_count": 0
+  },
+  "method": "accelerated event-volume test; not a two-hour wall-clock soak",
+  "platform": "macOS-26.3.2-arm64-arm-64bit",
+  "python": "3.12.0",
+  "recorded_at": "2026-10-22T10:42:44Z",
+  "schema_version": 1
+}

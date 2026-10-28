@@ -1960,7 +1960,10 @@ class BaseChannel(ABC):
             self._on_turn_usage_ready(turn, ctx)
             if turn:
                 logger.info("Usage for session %s: %s", session_id, turn)
-            if session is not None:
+            normalized_chat = bool(
+                getattr(request, "chat_conversation_id", None),
+            )
+            if session is not None and not normalized_chat:
                 try:
                     await token_usage.persist_turn_usage(
                         session=session,

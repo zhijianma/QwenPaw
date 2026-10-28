@@ -91,6 +91,31 @@ async def test_failed_session_save_does_not_mark_turn_as_persisted():
     assert ctx.extras[SESSION_SAVE_SUCCEEDED_KEY] is False
 
 
+async def test_v2_context_bypasses_legacy_json_session():
+    session = _FakeSession()
+
+    class _ChatApplication:
+        async def load_runtime_context(
+            self,
+            conversation_id,
+        ):
+            assert conversation_id == "conversation"
+            return {"context": [], "mode_state": {"chat": {"v2": True}}}
+
+    ctx = _ctx(session, ephemeral=False)
+    ctx.workspace.chat_application = _ChatApplication()
+    ctx.request.chat_conversation_id = "conversation"
+
+    await SessionLoadHook().run(ctx)
+    await SessionSaveHook().run(ctx)
+
+    assert session.loaded is False
+    assert session.saved is False
+    assert ctx.mode_state == {"chat": {"v2": True}}
+    assert ctx.request.chat_runtime_context
+    assert ctx.extras[SESSION_SAVE_SUCCEEDED_KEY] is True
+
+
 async def test_console_image_check_keeps_event_loop_responsive(monkeypatch):
     session = _FakeSession()
     session.load_payload = {"state": {"context": []}}

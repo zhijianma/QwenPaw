@@ -9,10 +9,12 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import React from "react";
+import { ApiError } from "../../../../api/request";
 
 const chatMocks = vi.hoisted(() => ({
   listChats: vi.fn(),
   getChat: vi.fn(),
+  searchChats: vi.fn(),
 }));
 
 vi.mock("../../../../api/modules/chat", () => ({
@@ -79,7 +81,7 @@ vi.mock("@agentscope-ai/design", async (importOriginal) => {
       React.createElement(
         "button",
         { type: "button", onClick, "data-testid": "icon-button" },
-        icon as any,
+        icon as React.ReactNode,
       ),
   };
 });
@@ -114,6 +116,9 @@ describe("ChatSearchPanel", () => {
     sessionStateMocks.sessions = [];
     chatMocks.listChats.mockResolvedValue([]);
     chatMocks.getChat.mockResolvedValue({ messages: [] });
+    chatMocks.searchChats.mockRejectedValue(
+      new ApiError(404, "Search endpoint unavailable"),
+    );
   });
 
   afterEach(() => {
@@ -176,6 +181,38 @@ describe("ChatSearchPanel", () => {
     expect(
       screen.getByText("chat.search.assistantMessage"),
     ).toBeInTheDocument();
+  });
+
+  it("uses recall hits to navigate to the exact off-window turn", async () => {
+    const user = userEvent.setup();
+    chatMocks.listChats.mockResolvedValue(chats(["c1", "Long Chat"]));
+    chatMocks.searchChats.mockResolvedValue({
+      items: [
+        {
+          recall_seq: 42,
+          conversation_id: "c1",
+          turn_id: "turn-32",
+          message_id: "message-32",
+          block_id: "block-32",
+          role: "user",
+          snippet: "needle in older history",
+          created_at_us: 1_799_000_000_000_000,
+        },
+      ],
+      next_before_seq: null,
+    });
+    renderPanel();
+
+    await typeAndWaitForSearch(user, "needle");
+    const match = await screen.findByText("needle in older history");
+    await user.click(
+      match.closest("[class*='searchResultItem']") as HTMLElement,
+    );
+
+    expect(chatMocks.getChat).not.toHaveBeenCalled();
+    expect(navigateSpy).toHaveBeenCalledWith(
+      "/chat/c1?turn_id=turn-32&message_id=message-32",
+    );
   });
 
   it("matches user messages with the user role label", async () => {

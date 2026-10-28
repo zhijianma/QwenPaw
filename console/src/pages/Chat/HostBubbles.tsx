@@ -65,6 +65,7 @@ import {
 } from "./messageDisplay";
 import styles from "./HostBubbles.module.less";
 import LazyAccordion from "./LazyAccordion";
+import { LazyHistoryBlock } from "./components/LazyHistoryBlock";
 import {
   getAssistantMessageDisplayPreference,
   getShowThinkingPreference,
@@ -78,104 +79,182 @@ function sortByOrder<T extends { item: { order?: number } }>(arr: T[]): T[] {
     .sort((a, b) => (a.item.order ?? 100) - (b.item.order ?? 100));
 }
 
-const HostMessage = React.memo(function HostMessage({
-  data,
-}: {
-  data: IAgentScopeRuntimeMessage;
-}) {
-  const replaceMediaURL = useChatAnywhereOptions(
-    (options) => options.api?.replaceMediaURL,
-  );
-  const onFileCardClick = useChatAnywhereOptions(
-    (options) => options.api?.onFileCardClick,
-  );
-  const formatMediaURL = (url?: string) =>
-    url ? replaceMediaURL?.(url) || url : url;
-  const baseFontSize = useEffectiveFontSize();
+interface LazyBlockMetadata {
+  blockId: string;
+  totalBytes: number;
+}
 
-  if (!data.content?.length) return null;
+function getLazyBlockMetadata(item: unknown): LazyBlockMetadata | null {
+  if (!item || typeof item !== "object") return null;
+  const metadata = (item as Record<string, unknown>).metadata;
+  if (!metadata || typeof metadata !== "object") return null;
+  const record = metadata as Record<string, unknown>;
+  return typeof record.qwenpaw_lazy_block_id === "string" &&
+    typeof record.qwenpaw_total_bytes === "number"
+    ? {
+        blockId: record.qwenpaw_lazy_block_id,
+        totalBytes: record.qwenpaw_total_bytes,
+      }
+    : null;
+}
 
+function renderLazyBlocks(data: IAgentScopeRuntimeMessage) {
+  if (!Array.isArray(data.content)) return null;
+  return data.content.map((item, index) => {
+    const lazy = getLazyBlockMetadata(item);
+    if (!lazy) return null;
+    const preview =
+      item && typeof item === "object" && "text" in item
+        ? String(item.text ?? "")
+        : "";
+    return (
+      <LazyHistoryBlock
+        key={lazy.blockId}
+        blockId={lazy.blockId}
+        preview={preview}
+        totalBytes={lazy.totalBytes}
+        messageId={`${data.id}:${index}`}
+      />
+    );
+  });
+}
+
+function isActiveMessage(data: IAgentScopeRuntimeMessage): boolean {
   return (
-    <>
-      {data.content.map((item, index) => {
-        switch (item.type) {
-          case AgentScopeRuntimeContentType.TEXT:
-            return (
-              <AssistantMarkdown
-                key={index}
-                messageId={`${data.id}:${index}`}
-                content={item.text}
-                cursor={item.status === AgentScopeRuntimeRunStatus.InProgress}
-                // Native text deltas omit content.status; the message owns
-                // their lifecycle. Keep the legacy Markdown cursor separate.
-                isStreaming={
-                  (item.status ?? data.status) ===
-                  AgentScopeRuntimeRunStatus.InProgress
-                }
-              />
-            );
-          case AgentScopeRuntimeContentType.REFUSAL:
-            return (
-              <Markdown
-                key={index}
-                content={item.refusal}
-                raw
-                baseFontSize={baseFontSize}
-              />
-            );
-          case AgentScopeRuntimeContentType.IMAGE:
-            return (
-              <DefaultCards.Images
-                key={index}
-                data={[{ url: formatMediaURL(item.image_url) }]}
-              />
-            );
-          case AgentScopeRuntimeContentType.VIDEO:
-            return (
-              <DefaultCards.Videos
-                key={index}
-                data={[
-                  {
-                    poster: formatMediaURL(item.video_poster),
-                    src: formatMediaURL(item.video_url) || "",
-                  },
-                ]}
-              />
-            );
-          case AgentScopeRuntimeContentType.FILE:
-            return (
-              <DefaultCards.Files
-                key={index}
-                data={[
-                  {
-                    name: item.file_name || item.fileName || item.file_id,
-                    size: item.file_size,
-                    url: formatMediaURL(item.file_url),
-                  },
-                ]}
-                onClick={onFileCardClick}
-              />
-            );
-          case AgentScopeRuntimeContentType.AUDIO:
-            return (
-              <DownloadableAudios
-                key={index}
-                data={[
-                  { src: formatMediaURL(item.audio_url || item.data) || "" },
-                ]}
-              />
-            );
-          default:
-            return <div key={index}>{JSON.stringify(item)}</div>;
-        }
-      })}
-    </>
+    data.status === AgentScopeRuntimeRunStatus.InProgress ||
+    data.content?.some(
+      (item) => item.status === AgentScopeRuntimeRunStatus.InProgress,
+    ) === true
   );
-});
+}
+
+const HostMessage = React.memo(
+  function HostMessage({ data }: { data: IAgentScopeRuntimeMessage }) {
+    const replaceMediaURL = useChatAnywhereOptions(
+      (options) => options.api?.replaceMediaURL,
+    );
+    const onFileCardClick = useChatAnywhereOptions(
+      (options) => options.api?.onFileCardClick,
+    );
+    const formatMediaURL = (url?: string) =>
+      url ? replaceMediaURL?.(url) || url : url;
+    const baseFontSize = useEffectiveFontSize();
+
+    if (!data.content?.length) return null;
+
+    return (
+      <>
+        {data.content.map((item, index) => {
+          const lazy = getLazyBlockMetadata(item);
+          if (lazy) {
+            return (
+              <LazyHistoryBlock
+                key={lazy.blockId}
+                blockId={lazy.blockId}
+                preview={"text" in item ? String(item.text ?? "") : ""}
+                totalBytes={lazy.totalBytes}
+                messageId={`${data.id}:${index}`}
+              />
+            );
+          }
+          switch (item.type) {
+            case AgentScopeRuntimeContentType.TEXT:
+              return (
+                <AssistantMarkdown
+                  key={index}
+                  messageId={`${data.id}:${index}`}
+                  content={item.text}
+                  cursor={item.status === AgentScopeRuntimeRunStatus.InProgress}
+                  // Native text deltas omit content.status; the message owns
+                  // their lifecycle. Keep the legacy Markdown cursor separate.
+                  isStreaming={
+                    (item.status ?? data.status) ===
+                    AgentScopeRuntimeRunStatus.InProgress
+                  }
+                />
+              );
+            case AgentScopeRuntimeContentType.REFUSAL:
+              return (
+                <Markdown
+                  key={index}
+                  content={item.refusal}
+                  raw
+                  baseFontSize={baseFontSize}
+                />
+              );
+            case AgentScopeRuntimeContentType.IMAGE:
+              return (
+                <DefaultCards.Images
+                  key={index}
+                  data={[{ url: formatMediaURL(item.image_url) }]}
+                />
+              );
+            case AgentScopeRuntimeContentType.VIDEO:
+              return (
+                <DefaultCards.Videos
+                  key={index}
+                  data={[
+                    {
+                      poster: formatMediaURL(item.video_poster),
+                      src: formatMediaURL(item.video_url) || "",
+                    },
+                  ]}
+                />
+              );
+            case AgentScopeRuntimeContentType.FILE:
+              return (
+                <DefaultCards.Files
+                  key={index}
+                  data={[
+                    {
+                      name: item.file_name || item.fileName || item.file_id,
+                      size: item.file_size,
+                      url: formatMediaURL(item.file_url),
+                    },
+                  ]}
+                  onClick={onFileCardClick}
+                />
+              );
+            case AgentScopeRuntimeContentType.AUDIO:
+              return (
+                <DownloadableAudios
+                  key={index}
+                  data={[
+                    { src: formatMediaURL(item.audio_url || item.data) || "" },
+                  ]}
+                />
+              );
+            default:
+              return <div key={index}>{JSON.stringify(item)}</div>;
+          }
+        })}
+      </>
+    );
+  },
+  (previous, next) => {
+    if (
+      isActiveMessage(previous.data) ||
+      isActiveMessage(next.data) ||
+      previous.data.id !== next.data.id ||
+      previous.data.status !== next.data.status ||
+      previous.data.content?.length !== next.data.content?.length
+    ) {
+      return false;
+    }
+    return previous.data.content?.every(
+      (item, index) => item === next.data.content?.[index],
+    );
+  },
+);
 
 function renderResponseMessage(item: IAgentScopeRuntimeMessage) {
   if (isToolLikeResponseMessageType(item.type)) {
-    return <ResponseTool key={item.id} data={item} />;
+    return (
+      <React.Fragment key={item.id}>
+        <ResponseTool data={item} />
+        {renderLazyBlocks(item)}
+      </React.Fragment>
+    );
   }
   switch (item.type) {
     case AgentScopeRuntimeMessageType.MESSAGE:
@@ -183,7 +262,12 @@ function renderResponseMessage(item: IAgentScopeRuntimeMessage) {
     case AgentScopeRuntimeMessageType.MCP_APPROVAL_REQUEST:
       return <ResponseTool key={item.id} data={item} isApproval />;
     case AgentScopeRuntimeMessageType.REASONING:
-      return <ResponseReasoning key={item.id} data={item} />;
+      return (
+        <React.Fragment key={item.id}>
+          <ResponseReasoning data={item} />
+          {renderLazyBlocks(item)}
+        </React.Fragment>
+      );
     case AgentScopeRuntimeMessageType.ERROR:
       return <ResponseError key={item.id} data={item} />;
     case AgentScopeRuntimeMessageType.HEARTBEAT:

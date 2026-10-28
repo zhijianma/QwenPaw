@@ -135,6 +135,12 @@ async def create_chat_service(
     """
     # pylint: disable=protected-access
     from ..chats.manager import ChatManager
+    from ..chats.deletion_service import resume_pending_chat_deletions
+    from ..chats.feature_flags import (
+        assert_chat_storage_route_safe,
+        chat_storage_v2_enabled,
+    )
+    from ..chats.repo.catalog_repo import CatalogChatRepository
     from ..chats.repo.json_repo import JsonChatRepository
     from ...browser.runtime.links import link_for
     from ...browser.execution.kernel import get_default_kernel_manager
@@ -146,19 +152,42 @@ async def create_chat_service(
             session_id,
         )
 
-    if service is not None:
+    use_v2 = chat_storage_v2_enabled()
+    if not use_v2:
+        assert_chat_storage_route_safe(ws.workspace_dir)
+    if use_v2:
+        chat_application = ws.chat_application
+        if chat_application is None:
+            raise RuntimeError("Chat V2 is enabled without its application")
+        await chat_application.initialize(agent_id=ws.agent_id)
+
+    existing_repo = getattr(service, "_repo", None)
+    compatible_reuse = service is not None and (
+        (use_v2 and isinstance(existing_repo, CatalogChatRepository))
+        or (not use_v2 and isinstance(existing_repo, JsonChatRepository))
+    )
+    if compatible_reuse:
         cm = service
         logger.info(f"Reusing ChatManager for {ws.agent_id}")
     else:
-        chats_path = str(ws.workspace_dir / "chats.json")
-        chat_repo = JsonChatRepository(chats_path)
+        if use_v2:
+            chat_repo = CatalogChatRepository(
+                ws.workspace_dir,
+                agent_id=ws.agent_id,
+                backend=str(getattr(ws.config, "backend", "qwenpaw")),
+            )
+        else:
+            chat_repo = JsonChatRepository(ws.workspace_dir / "chats.json")
         cm = ChatManager(
             repo=chat_repo,
             on_session_closed=close_browser_session,
         )
         publish(cm)
-        logger.info(f"ChatManager created: {chats_path}")
+        logger.info("ChatManager created: %s", chat_repo.path)
     cm.set_on_session_closed(close_browser_session)
+    if use_v2:
+        await resume_pending_chat_deletions(ws, cm)
+        chat_application.start_background_migration()
 
     async def live_session_ids() -> set[str]:
         chats = await cm.list_chats(archived=False)

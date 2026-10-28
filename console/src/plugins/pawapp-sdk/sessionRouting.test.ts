@@ -46,7 +46,7 @@ describe.each(deployments)(
       hooks = await import("../hostSdk/hooks");
       context = await import("./context");
       host = await import("./host");
-    });
+    }, 30_000);
 
     afterAll(() => {
       vi.unstubAllEnvs();

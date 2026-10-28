@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
+import tempfile
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,7 +16,31 @@ from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
 from ..utils.io_utils import run_sync_io
+from ..app.chats.storage import (
+    ChatStoragePaths,
+    interrupt_nonterminal_work,
+    materialize_normalized_transcript,
+    project_conversation,
+    reserve_recall_sequences,
+)
+from ..app.chats.storage.common import (
+    connect_database,
+    immediate_transaction,
+)
 
+from .chat_artifact import (
+    CHAT_ARTIFACT_DATABASE,
+    CHAT_ARTIFACT_MANIFEST,
+    ChatCheckpointManifest,
+    create_chat_checkpoint_artifact,
+    parse_chat_checkpoint_manifest,
+    replace_chat_database,
+    validate_chat_checkpoint_blob,
+)
+from ..app.chats.migration import (
+    create_legacy_snapshot,
+    normalize_legacy_snapshot,
+)
 from .policy import is_qwenpaw_state_path
 from .policy import session_file_path, session_key
 from .models import (
@@ -34,9 +61,11 @@ class _PreparedRestore:
     entry: CheckpointEntry
     previous_head: str | None
     plan: RestorePlan
-    conversation_blob: bytes
+    conversation_blob: bytes | None
     touched: frozenset[str]
     current_tree: str | None = None
+    chat_manifest: ChatCheckpointManifest | None = None
+    chat_database_blob: bytes | None = None
 
 
 def _changed_paths(
@@ -311,6 +340,18 @@ class RestoreService:
             user_id=user_id,
             session_id=session_id,
         )
+        if dry_run:
+            conversation_id = service.resolve_chat_conversation_id(
+                session_id=session_id,
+                user_id=user_id,
+                channel=channel,
+            )
+        else:
+            conversation_id = await service.prepare_chat_artifact(
+                session_id=session_id,
+                user_id=user_id,
+                channel=channel,
+            )
         memory = (
             await run_sync_io(self._memory_restorer)
             if include_memory
@@ -341,8 +382,8 @@ class RestoreService:
                         include_files=include_files,
                         selected_files=selected_files,
                         memory=memory,
+                        conversation_id=conversation_id,
                     )
-
                     if dry_run:
                         return self._result_from_plan(
                             prepared.plan,
@@ -368,6 +409,10 @@ class RestoreService:
                         description=description,
                         memory=memory,
                     )
+                    if prepared.chat_manifest is not None:
+                        await self._invalidate_chat_live(
+                            prepared.chat_manifest.conversation_id,
+                        )
             finally:
                 if mutation_guard is not None:
                     mutation_guard.resume(resume_callbacks)
@@ -408,10 +453,24 @@ class RestoreService:
                 tree_override=(
                     prepared.current_tree if include_files else None
                 ),
+                conversation_id=(
+                    prepared.chat_manifest.conversation_id
+                    if prepared.chat_manifest is not None
+                    else None
+                ),
             )
-            self.repository.restore_internal_paths(
-                {conversation_path: prepared.conversation_blob},
-            )
+            if prepared.conversation_blob is not None:
+                self.repository.restore_internal_paths(
+                    {conversation_path: prepared.conversation_blob},
+                )
+            if (
+                prepared.chat_manifest is not None
+                and prepared.chat_database_blob is not None
+            ):
+                self._restore_chat_database(
+                    prepared.chat_manifest,
+                    prepared.chat_database_blob,
+                )
             if include_files:
                 self.repository.restore_tree_paths(
                     prepared.entry.commit,
@@ -438,6 +497,11 @@ class RestoreService:
                     session_key_str=session_key_str,
                     previous_head=prepared.previous_head,
                     memory=memory,
+                    conversation_id=(
+                        prepared.chat_manifest.conversation_id
+                        if prepared.chat_manifest is not None
+                        else None
+                    ),
                 )
             raise
 
@@ -452,15 +516,25 @@ class RestoreService:
         session_key_str: str,
         previous_head: str | None,
         memory: "MemoryRestorer | None",
+        conversation_id: str | None,
     ) -> None:
         try:
-            conversation = self.repository.read_blob(
+            if self.repository.tree_has_blob(
                 pre_commit,
                 conversation_path,
-            )
-            self.repository.restore_internal_paths(
-                {conversation_path: conversation},
-            )
+            ):
+                conversation = self.repository.read_blob(
+                    pre_commit,
+                    conversation_path,
+                )
+                self.repository.restore_internal_paths(
+                    {conversation_path: conversation},
+                )
+            if conversation_id is not None:
+                self._restore_chat_artifact_from_commit(
+                    pre_commit,
+                    conversation_id,
+                )
             self.repository.restore_tree_paths(pre_commit, file_paths)
             if include_memory and memory is not None:
                 memory.restore_sync(pre_commit)
@@ -495,6 +569,7 @@ class RestoreService:
         include_files: bool,
         selected_files: tuple[str, ...] | None,
         memory: "MemoryRestorer | None",
+        conversation_id: str | None,
     ) -> _PreparedRestore:
         entry = self.service.resolve_target(
             target,
@@ -506,13 +581,38 @@ class RestoreService:
         touched: set[str] = set()
         current_tree: str | None = None
         if include_files:
-            current_tree = self.repository.write_workspace_tree()
+            current_tree = self.service.write_snapshot_tree(
+                conversation_id,
+            )
             assert current_tree is not None
             touched = self._file_restore_candidates(
                 target_commit=entry.commit,
                 current_tree=current_tree,
                 conv_rel=conversation_path,
                 selected_files=selected_files,
+            )
+        conversation = (
+            self.repository.read_blob(entry.commit, conversation_path)
+            if self.repository.tree_has_blob(
+                entry.commit,
+                conversation_path,
+            )
+            else None
+        )
+        chat_manifest, chat_database = self._read_chat_artifact(
+            entry.commit,
+            conversation_id,
+        )
+        if (
+            chat_manifest is None
+            and conversation_id is not None
+            and conversation is not None
+        ):
+            chat_manifest, chat_database = self._legacy_blob_to_chat_artifact(
+                conversation,
+                conversation_id=conversation_id,
+                session_id=session_id,
+                conversation_path=conversation_path,
             )
         plan = self._build_plan(
             target=target,
@@ -522,11 +622,12 @@ class RestoreService:
             include_memory=include_memory,
             include_files=include_files,
             memory=memory,
+            chat_manifest=chat_manifest,
         )
-        conversation = self.repository.read_blob(
-            entry.commit,
-            conversation_path,
-        )
+        if conversation is None and chat_manifest is None:
+            raise CheckpointError(
+                "Checkpoint contains no restorable conversation data",
+            )
         return _PreparedRestore(
             entry=entry,
             previous_head=previous_head,
@@ -534,6 +635,8 @@ class RestoreService:
             conversation_blob=conversation,
             touched=frozenset(touched),
             current_tree=current_tree,
+            chat_manifest=chat_manifest,
+            chat_database_blob=chat_database,
         )
 
     def _build_plan(
@@ -546,6 +649,7 @@ class RestoreService:
         include_memory: bool,
         include_files: bool,
         memory: "MemoryRestorer | None",
+        chat_manifest: ChatCheckpointManifest | None,
     ) -> RestorePlan:
         restored: list[str] = []
         deleted: list[str] = []
@@ -567,6 +671,21 @@ class RestoreService:
             file_paths=tuple(sorted(touched)) if include_files else (),
             include_memory=include_memory,
             include_files=include_files,
+            conversation_format=(
+                "normalized_chat_v2"
+                if chat_manifest is not None
+                else "legacy_session_json"
+            ),
+            conversation_id=(
+                chat_manifest.conversation_id
+                if chat_manifest is not None
+                else None
+            ),
+            head_turn_id=(
+                chat_manifest.head_turn_id
+                if chat_manifest is not None
+                else None
+            ),
         )
 
     @staticmethod
@@ -589,7 +708,324 @@ class RestoreService:
             include_files=plan.include_files,
             deleted_paths=plan.delete_paths,
             file_paths=plan.file_paths,
+            conversation_format=plan.conversation_format,
+            conversation_id=plan.conversation_id,
+            head_turn_id=plan.head_turn_id,
+            view_invalidated=(
+                not dry_run and plan.conversation_id is not None
+            ),
         )
+
+    def _read_chat_artifact(
+        self,
+        commit: str,
+        conversation_id: str | None,
+    ) -> tuple[ChatCheckpointManifest | None, bytes | None]:
+        has_database = self.repository.tree_has_blob(
+            commit,
+            CHAT_ARTIFACT_DATABASE,
+        )
+        has_manifest = self.repository.tree_has_blob(
+            commit,
+            CHAT_ARTIFACT_MANIFEST,
+        )
+        if has_database != has_manifest:
+            raise CheckpointError("Chat checkpoint artifact is incomplete")
+        if not has_database:
+            return None, None
+        if conversation_id is None:
+            raise CheckpointError(
+                "Normalized Chat checkpoint has no current Chat mapping",
+            )
+        manifest = parse_chat_checkpoint_manifest(
+            self.repository.read_blob(commit, CHAT_ARTIFACT_MANIFEST),
+        )
+        database = self.repository.read_blob(
+            commit,
+            CHAT_ARTIFACT_DATABASE,
+        )
+        validate_chat_checkpoint_blob(
+            database,
+            manifest,
+            expected_conversation_id=conversation_id,
+        )
+        return manifest, database
+
+    def _restore_chat_artifact_from_commit(
+        self,
+        commit: str,
+        conversation_id: str,
+    ) -> None:
+        manifest, database = self._read_chat_artifact(
+            commit,
+            conversation_id,
+        )
+        if manifest is None or database is None:
+            raise CheckpointError(
+                "Safety checkpoint has no normalized Chat artifact",
+            )
+        self._restore_chat_database(manifest, database)
+
+    def _restore_chat_database(
+        self,
+        manifest: ChatCheckpointManifest,
+        database: bytes,
+    ) -> None:
+        workspace = self.service.workspace
+        application = getattr(workspace, "chat_application", None)
+        if application is None:
+            raise CheckpointError("Normalized Chat service is unavailable")
+        paths = ChatStoragePaths(self.service.workspace_dir)
+        now_us = time.time_ns() // 1_000
+        replace_chat_database(
+            paths.conversation(manifest.conversation_id),
+            database,
+        )
+        self._validate_alias_conflicts(
+            paths,
+            manifest.conversation_id,
+        )
+        self._assign_recall_sequences(
+            paths,
+            manifest.conversation_id,
+            now_us=now_us,
+        )
+        self._rebase_restored_chat(
+            paths,
+            manifest.conversation_id,
+            now_us=now_us,
+        )
+        interrupt_nonterminal_work(
+            paths.conversation(manifest.conversation_id),
+            conversation_id=manifest.conversation_id,
+            now_us=now_us,
+        )
+        self._clear_derived_chat_rows(paths, manifest.conversation_id)
+        project_conversation(
+            paths,
+            manifest.conversation_id,
+            now_us=now_us,
+        )
+
+    def _legacy_blob_to_chat_artifact(
+        self,
+        blob: bytes,
+        *,
+        conversation_id: str,
+        session_id: str,
+        conversation_path: str,
+    ) -> tuple[ChatCheckpointManifest, bytes]:
+        paths = ChatStoragePaths(self.service.workspace_dir)
+        with connect_database(
+            paths.conversation(conversation_id),
+            readonly=True,
+        ) as source:
+            identity = source.execute(
+                "SELECT agent_id, owner_scope, backend, created_at_us "
+                "FROM chat_meta WHERE singleton_id = 1",
+            ).fetchone()
+        if identity is None:
+            raise CheckpointError("Current Chat identity is missing")
+        with tempfile.TemporaryDirectory(
+            prefix="qwenpaw-checkpoint-legacy-",
+        ) as temporary:
+            workspace = Path(temporary) / "workspace"
+            relative = PurePosixPath(conversation_path)
+            if not relative.parts or relative.parts[0] != "sessions":
+                raise CheckpointError(
+                    "Legacy checkpoint session path is invalid",
+                )
+            session_relative = PurePosixPath(*relative.parts[1:])
+            session_file = workspace / "sessions" / session_relative
+            session_file.parent.mkdir(parents=True, exist_ok=True)
+            session_file.write_bytes(blob)
+            snapshot = create_legacy_snapshot(
+                workspace,
+                conversation_id=conversation_id,
+                session_id=session_id,
+                source_paths=[session_relative.as_posix()],
+            )
+            normalized = normalize_legacy_snapshot(workspace, snapshot)
+            database = workspace / "materialized.db"
+            materialize_normalized_transcript(
+                database,
+                conversation_id=conversation_id,
+                agent_id=str(identity["agent_id"]),
+                owner_scope=str(identity["owner_scope"]),
+                backend=str(identity["backend"]),
+                normalized=normalized,
+                snapshot=snapshot,
+                now_us=int(identity["created_at_us"]),
+            )
+            artifact_dir = workspace / "artifact"
+            (
+                artifact,
+                _manifest_path,
+                manifest,
+            ) = create_chat_checkpoint_artifact(
+                database,
+                artifact_dir,
+                conversation_id=conversation_id,
+            )
+            return manifest, artifact.read_bytes()
+
+    @staticmethod
+    def _assign_recall_sequences(
+        paths: ChatStoragePaths,
+        conversation_id: str,
+        *,
+        now_us: int,
+    ) -> None:
+        path = paths.conversation(conversation_id)
+        with connect_database(path, readonly=True) as source:
+            block_ids = [
+                str(row["block_id"])
+                for row in source.execute(
+                    "SELECT block_id FROM chat_blocks "
+                    "WHERE recall_seq IS NULL "
+                    "ORDER BY created_at_us, block_id",
+                )
+            ]
+        lease = reserve_recall_sequences(
+            paths.catalog,
+            workspace_id=str(paths.workspace.resolve()),
+            count=len(block_ids),
+            lease_owner="checkpoint-restore",
+            now_us=now_us,
+        )
+        if lease is None:
+            return
+        with connect_database(path) as source:
+            with immediate_transaction(source):
+                source.executemany(
+                    "UPDATE chat_blocks SET recall_seq = ? "
+                    "WHERE block_id = ? AND recall_seq IS NULL",
+                    zip(lease.values(), block_ids),
+                )
+
+    @staticmethod
+    def _validate_alias_conflicts(
+        paths: ChatStoragePaths,
+        conversation_id: str,
+    ) -> None:
+        with connect_database(
+            paths.conversation(conversation_id),
+            readonly=True,
+        ) as source:
+            aliases = source.execute(
+                "SELECT alias_namespace, external_key, owner_scope "
+                "FROM chat_aliases",
+            ).fetchall()
+        with connect_database(paths.catalog, readonly=True) as catalog:
+            agent = catalog.execute(
+                "SELECT agent_id FROM chat_catalog_entries "
+                "WHERE conversation_id = ? AND lifecycle = 'ready'",
+                (conversation_id,),
+            ).fetchone()
+            if agent is None:
+                raise CheckpointError("Ready Chat catalog entry is missing")
+            for alias in aliases:
+                conflict = catalog.execute(
+                    "SELECT conversation_id FROM chat_alias_index "
+                    "WHERE agent_id = ? AND alias_namespace = ? "
+                    "AND external_key = ? AND owner_scope = ?",
+                    (
+                        agent["agent_id"],
+                        alias["alias_namespace"],
+                        alias["external_key"],
+                        alias["owner_scope"],
+                    ),
+                ).fetchone()
+                if (
+                    conflict is not None
+                    and str(conflict["conversation_id"]) != conversation_id
+                ):
+                    raise CheckpointError(
+                        "Chat checkpoint alias belongs to another Chat",
+                    )
+
+    @staticmethod
+    def _rebase_restored_chat(
+        paths: ChatStoragePaths,
+        conversation_id: str,
+        *,
+        now_us: int,
+    ) -> None:
+        with connect_database(paths.catalog, readonly=True) as catalog:
+            row = catalog.execute(
+                "SELECT source_generation FROM chat_catalog_entries "
+                "WHERE conversation_id = ?",
+                (conversation_id,),
+            ).fetchone()
+        catalog_generation = int(row["source_generation"]) if row else 0
+        with connect_database(
+            paths.conversation(conversation_id),
+        ) as source:
+            with immediate_transaction(source):
+                meta = source.execute(
+                    "SELECT source_generation, write_seq "
+                    "FROM chat_meta WHERE singleton_id = 1",
+                ).fetchone()
+                generation = (
+                    max(
+                        catalog_generation,
+                        int(meta["source_generation"]),
+                    )
+                    + 1
+                )
+                write_seq = int(meta["write_seq"]) + 1
+                source.execute(
+                    "UPDATE chat_meta SET source_generation = ?, "
+                    "write_seq = ?, updated_at_us = ? "
+                    "WHERE singleton_id = 1",
+                    (generation, write_seq, now_us),
+                )
+                source.execute(
+                    "INSERT INTO chat_projection_outbox("
+                    "projection, operation, source_generation, "
+                    "payload_json, created_at_us, updated_at_us) VALUES "
+                    "('catalog', 'checkpoint_restored', ?, ?, ?, ?), "
+                    "('recall', 'checkpoint_restored', ?, ?, ?, ?)",
+                    (
+                        generation,
+                        json.dumps(
+                            {"conversation_id": conversation_id},
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                        now_us,
+                        now_us,
+                        generation,
+                        "{}",
+                        now_us,
+                        now_us,
+                    ),
+                )
+
+    @staticmethod
+    def _clear_derived_chat_rows(
+        paths: ChatStoragePaths,
+        conversation_id: str,
+    ) -> None:
+        with connect_database(paths.catalog) as catalog:
+            with immediate_transaction(catalog):
+                catalog.execute(
+                    "DELETE FROM chat_alias_index "
+                    "WHERE conversation_id = ?",
+                    (conversation_id,),
+                )
+                catalog.execute(
+                    "DELETE FROM chat_runtime_intents "
+                    "WHERE conversation_id = ?",
+                    (conversation_id,),
+                )
+
+    async def _invalidate_chat_live(self, conversation_id: str) -> None:
+        workspace = self.service.workspace
+        tracker = getattr(workspace, "task_tracker", None)
+        hub = getattr(tracker, "chat_live_hub", None)
+        if hub is not None:
+            await hub.invalidate_conversation(conversation_id)
 
     def _file_restore_candidates(
         self,

@@ -547,6 +547,25 @@ describe("messageQueueStore", () => {
     expect(useMessageQueueStore.getState().getQueue(SESSION_ID)[0].status).toBe(
       "sent",
     );
+    expect(localStorage.getItem(getStorageKey(SESSION_ID))).toBeNull();
+  });
+
+  it("drops accepted items when reading storage written by an older build", () => {
+    useMessageQueueStore.getState().enqueue(SESSION_ID, { text: "accepted" });
+    const accepted = useMessageQueueStore.getState().getQueue(SESSION_ID)[0];
+    localStorage.setItem(
+      getStorageKey(SESSION_ID),
+      JSON.stringify({
+        items: [{ ...accepted, status: "sent" }],
+        runState: "idle",
+      }),
+    );
+    resetStore();
+
+    useMessageQueueStore.getState().loadFromStorage(SESSION_ID);
+
+    expect(useMessageQueueStore.getState().getQueue(SESSION_ID)).toEqual([]);
+    expect(localStorage.getItem(getStorageKey(SESSION_ID))).toBeNull();
   });
 
   it("setItemStatus to 'failed' increments retryCount and stores errorMessage", () => {

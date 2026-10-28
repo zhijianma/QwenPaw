@@ -15,6 +15,7 @@ fixed steps (build + execute) are the only agent-touching code.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from typing import Any, AsyncGenerator
@@ -328,6 +329,24 @@ class Runtime:
                 ),
                 ctx.error,
             )
+            conversation_id = getattr(
+                request,
+                "chat_conversation_id",
+                None,
+            )
+            chat_application = getattr(
+                workspace,
+                "chat_application",
+                None,
+            )
+            if conversation_id and chat_application is not None:
+                proxy.data["mode_state"] = ctx.mode_state
+                request.chat_runtime_context = json.dumps(
+                    proxy.data,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+                return
             user_id = getattr(request, "user_id", "") or ctx.session_id
             channel = getattr(request, "channel", "") or ""
             await asyncio.shield(

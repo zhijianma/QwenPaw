@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AssistantMarkdown } from "./AssistantMarkdown";
+import { isLargePlainText } from "./assistantPlainText";
 import { chatExtensions } from "../../plugins/registry/chatExtensions";
 import type { ChatCodeBlockProps } from "../../plugins/types/qwenpaw";
 
@@ -36,6 +37,35 @@ vi.mock("../../components/RenderableCodeBlock/RenderableCodeBlock", () => ({
 afterEach(() => {
   cleanup();
   chatExtensions.__resetForTests();
+});
+
+describe("large plain text rendering", () => {
+  it("uses the bounded fast path only when Markdown semantics are absent", () => {
+    expect(isLargePlainText("x".repeat(4_096))).toBe(true);
+    expect(isLargePlainText(`chat-long-00 ${"x".repeat(4_096)}`)).toBe(true);
+    expect(isLargePlainText("x".repeat(4_095))).toBe(false);
+    expect(isLargePlainText(`${"x".repeat(4_096)}\nnext`)).toBe(false);
+    expect(isLargePlainText(`${"x".repeat(4_096)} https://example.com`)).toBe(
+      false,
+    );
+    expect(isLargePlainText(`${"x".repeat(4_096)} **bold**`)).toBe(false);
+    expect(isLargePlainText(`- ${"x".repeat(4_096)}`)).toBe(false);
+  });
+
+  it("renders completed large plain text without the Markdown tree", () => {
+    const content = `plain ${"x".repeat(4_096)}`;
+    const view = render(
+      <AssistantMarkdown
+        messageId="plain"
+        content={content}
+        cursor={false}
+      />,
+    );
+    expect(view.container.querySelector(".qwenpaw-markdown")).toHaveTextContent(
+      content,
+    );
+    expect(view.container.querySelector(".x-markdown")).toBeNull();
+  });
 });
 
 describe("assistant code block plugins", () => {

@@ -249,7 +249,14 @@ class HarnessRuntime:
         response.completed_at = datetime.now(timezone.utc).isoformat(
             timespec="seconds",
         )
-        if self._session_bridge is not None and clear_history:
+        uses_chat_storage = bool(
+            getattr(request, "chat_conversation_id", None),
+        )
+        if (
+            self._session_bridge is not None
+            and clear_history
+            and not (uses_chat_storage)
+        ):
             try:
                 await self._session_bridge.clear(
                     session_id=session_id,
@@ -264,7 +271,7 @@ class HarnessRuntime:
                     session_id,
                     exc_info=True,
                 )
-        elif self._session_bridge is not None:
+        elif self._session_bridge is not None and not uses_chat_storage:
             try:
                 await self._session_bridge.append_turn(
                     request=request,

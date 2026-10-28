@@ -53,6 +53,9 @@ class RestorePlan:
     file_paths: tuple[str, ...] = ()
     include_memory: bool = False
     include_files: bool = False
+    conversation_format: str = "legacy_session_json"
+    conversation_id: str | None = None
+    head_turn_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -68,6 +71,10 @@ class RestoreResult:
     include_files: bool = False
     deleted_paths: tuple[str, ...] = ()
     file_paths: tuple[str, ...] = ()
+    conversation_format: str = "legacy_session_json"
+    conversation_id: str | None = None
+    head_turn_id: str | None = None
+    view_invalidated: bool = False
 
 
 @dataclass(frozen=True)

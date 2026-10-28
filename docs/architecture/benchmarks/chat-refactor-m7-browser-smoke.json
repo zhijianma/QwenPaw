@@ -1,0 +1,114 @@
+{
+  "browser": "ChatGPT in-app browser",
+  "browser_version": "unavailable",
+  "cache_state": "warm shared browser cache",
+  "chat_profile": "existing small chat; not a frozen Long profile",
+  "git_commit": "27d22cd18d+working-tree",
+  "method": {
+    "reload": "reload to visible textarea and first message root",
+    "switch": "sidebar click to URL and known-content AX confirmation",
+    "timing_clock": "external automation wall clock",
+    "unsupported": [
+      "Navigation Timing",
+      "Long Task API",
+      "React Profiler",
+      "retained browser heap"
+    ]
+  },
+  "network_throttling": "none",
+  "rollout_status": {
+    "enabled": false,
+    "ui_enabled": false
+  },
+  "reload": {
+    "failures": 0,
+    "samples_ms": [
+      1382,
+      1602,
+      1157,
+      1137,
+      1370,
+      1135,
+      1141,
+      1144,
+      1157,
+      1313,
+      1484,
+      1447,
+      1212,
+      1624,
+      1154,
+      1113,
+      1151,
+      1467,
+      1205,
+      1276,
+      1390,
+      1119,
+      1100,
+      1140,
+      1209,
+      1087,
+      1256,
+      1156,
+      1250,
+      2136
+    ],
+    "summary": {
+      "count": 30,
+      "max_ms": 2136,
+      "p50_ms": 1205,
+      "p95_ms": 1624
+    }
+  },
+  "render_snapshot": {
+    "body_text_length": 598,
+    "dom_elements": 1263,
+    "message_roots": 3
+  },
+  "switch": {
+    "failures": 0,
+    "samples_ms": [
+      727,
+      518,
+      520,
+      503,
+      511,
+      417,
+      404,
+      451,
+      505,
+      502,
+      480,
+      526,
+      504,
+      485,
+      400,
+      403,
+      529,
+      532,
+      544,
+      582,
+      610,
+      477,
+      433,
+      556,
+      405,
+      474,
+      510,
+      483,
+      388,
+      427
+    ],
+    "summary": {
+      "count": 30,
+      "max_ms": 727,
+      "p50_ms": 502,
+      "p95_ms": 610
+    }
+  },
+  "viewport": {
+    "height": 1224,
+    "width": 1099
+  }
+}

@@ -37,6 +37,7 @@ const {
   mockRequiresQwenPawModel,
   mockSdkInput,
   mockResolveChat,
+  mockRefreshSession,
   mockUnknownRoutes,
   mockResolvedRoutes,
 } = vi.hoisted(() => ({
@@ -56,6 +57,7 @@ const {
   mockRequiresQwenPawModel: vi.fn(() => true),
   mockSdkInput: { loading: false, setSessionLoading: vi.fn() },
   mockResolveChat: vi.fn(),
+  mockRefreshSession: vi.fn(async (id: string) => ({ id, messages: [] })),
   mockUnknownRoutes: new Set<string>(),
   mockResolvedRoutes: new Map<string, ChatSpec>(),
 }));
@@ -237,6 +239,7 @@ vi.mock("./sessionApi", () => ({
     discardLastUserMessage: vi.fn(),
     setVisibleSession: vi.fn(),
     getSession: vi.fn(async (id: string) => ({ id, messages: [] })),
+    refreshSession: mockRefreshSession,
     lastActiveChatId: "last-chat-1",
     patchLastUserMessage: vi.fn(),
     getSessionIdentity: vi.fn((id?: string) => {
@@ -251,6 +254,9 @@ vi.mock("./sessionApi", () => ({
         channel: chat?.channel ?? "console",
       };
     }),
+    hasNormalizedLive: vi.fn(() => false),
+    getActiveBranchId: vi.fn(() => undefined),
+    waitForNormalizedLiveTerminal: vi.fn(async () => undefined),
     triggerResolve: vi.fn(),
     resetWindowIdentity: vi.fn(),
     isSessionSwitching: false,
@@ -1238,6 +1244,27 @@ describe("ChatPage coverage", () => {
     }
   });
 
+  it("responseParser calibrates durable history on resync_required", async () => {
+    renderWithProviders(<ChatPage />, {
+      initialEntries: ["/chat/test-session"],
+    });
+    await screen.findByTestId("chat-ui");
+
+    if (capturedOptions?.api?.responseParser) {
+      const parsed = capturedOptions.api.responseParser(
+        JSON.stringify({
+          type: "resync_required",
+          reason: "subscriber_overflow",
+        }),
+      );
+      expect(parsed).toBeTruthy();
+      expect(parsed.type).toBe("heartbeat");
+      await waitFor(() => {
+        expect(mockRefreshSession).toHaveBeenCalledWith("test-session");
+      });
+    }
+  });
+
   // ── responseParser: rate_limited → null ────────────────────────────────
   it("responseParser handles rate_limited payload", async () => {
     renderWithProviders(<ChatPage />, {
@@ -1406,6 +1433,71 @@ describe("ChatPage coverage", () => {
         }),
       );
       expect(result).toBeTruthy();
+    }
+  });
+
+  it("uses the normalized live waiter instead of legacy replay", async () => {
+    const { default: mockedSessionApi } = await import("./sessionApi");
+    vi.mocked(mockedSessionApi.hasNormalizedLive).mockReturnValueOnce(true);
+    let finish!: () => void;
+    vi.mocked(
+      mockedSessionApi.waitForNormalizedLiveTerminal,
+    ).mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    renderWithProviders(<ChatPage />, {
+      initialEntries: ["/chat/test-session"],
+    });
+    await screen.findByTestId("chat-ui");
+    const fetchCalls = vi.mocked(fetch).mock.calls.length;
+
+    if (capturedOptions?.api?.reconnect) {
+      const response = await capturedOptions.api.reconnect({
+        session_id: "test-session",
+        signal: undefined,
+      });
+      const reader = response.body?.getReader();
+      expect(reader).toBeDefined();
+      const heartbeat = await reader!.read();
+      expect(new TextDecoder().decode(heartbeat.value)).toContain("heartbeat");
+      expect(fetch).toHaveBeenCalledTimes(fetchCalls);
+      finish();
+      expect((await reader!.read()).done).toBe(true);
+    }
+  });
+
+  it("releases the normalized live waiter when reconnect is canceled", async () => {
+    const { default: mockedSessionApi } = await import("./sessionApi");
+    vi.mocked(mockedSessionApi.hasNormalizedLive).mockReturnValueOnce(true);
+    let waiterSignal: AbortSignal | undefined;
+    vi.mocked(
+      mockedSessionApi.waitForNormalizedLiveTerminal,
+    ).mockImplementationOnce((_sessionId, signal) => {
+      waiterSignal = signal;
+      return new Promise<void>((_resolve, reject) => {
+        signal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("Aborted", "AbortError")),
+          { once: true },
+        );
+      });
+    });
+    renderWithProviders(<ChatPage />, {
+      initialEntries: ["/chat/test-session"],
+    });
+    await screen.findByTestId("chat-ui");
+
+    if (capturedOptions?.api?.reconnect) {
+      const response = await capturedOptions.api.reconnect({
+        session_id: "test-session",
+        signal: undefined,
+      });
+      const reader = response.body?.getReader();
+      expect(reader).toBeDefined();
+      await reader!.cancel();
+      expect(waiterSignal?.aborted).toBe(true);
     }
   });
 

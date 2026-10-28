@@ -19,10 +19,11 @@
  * mocked `api.getChat` / `api.listChats`, asserting a re-fetch happens exactly
  * when `updated_at` advances (and NOT when it stays the same).
  */
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { ChatSpec, ChatHistory, Message } from "../../../api";
 import api from "../../../api";
 import sessionApi from "../sessionApi";
+import { ApiError } from "../../../api/request";
 
 const T0 = "2026-07-16T15:30:00.000000+00:00";
 const T1 = "2026-07-16T15:36:00.000000+00:00";
@@ -59,6 +60,12 @@ function makeHistory(
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+beforeEach(() => {
+  vi.spyOn(api, "getChatView").mockRejectedValue(
+    new ApiError(503, "chat_v2_unavailable"),
+  );
 });
 
 describe("SessionApi converted-cache staleness on updated_at change (#6131)", () => {

@@ -661,6 +661,10 @@ class ChatManager:  # pylint: disable=too-many-public-methods
                 exc_info=True,
             )
 
+    async def close_session_resources(self, session_id: str) -> None:
+        """Close runtime-owned resources after durable Chat tombstoning."""
+        await self._close_browser_session(session_id)
+
     async def unarchive_chat(self, chat_id: str) -> Optional[ChatSpec]:
         """Unarchive a single chat. Idempotent: active chats unchanged.
 

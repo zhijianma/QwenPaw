@@ -41,6 +41,7 @@ def _handler(tmp_path, *, strategy="scroll", workspace=True, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_builds_scroll_manager_under_scroll(tmp_path, monkeypatch):
+    monkeypatch.setenv("QWENPAW_CHAT_STORAGE_V2", "0")
     handler = _handler(tmp_path, strategy="scroll", monkeypatch=monkeypatch)
     mgr = await handler._build_standalone_scroll_manager(_config("scroll"))
     try:
@@ -51,6 +52,38 @@ async def test_builds_scroll_manager_under_scroll(tmp_path, monkeypatch):
     finally:
         if mgr is not None:
             mgr.close()
+
+
+@pytest.mark.asyncio
+async def test_chat_v2_compact_uses_recall_bridge(tmp_path, monkeypatch):
+    from qwenpaw.app.chats.scroll_bridge import ChatRecallHistoryStore
+
+    handler = _handler(tmp_path, strategy="scroll", monkeypatch=monkeypatch)
+    monkeypatch.setenv("QWENPAW_CHAT_STORAGE_V2", "1")
+    bridge = SimpleNamespace(
+        path=tmp_path / "chat_recall.db",
+        closed=False,
+        close=lambda: None,
+    )
+    calls = []
+
+    def resolve(workspace, *, session_id, agent_id):
+        calls.append((workspace, session_id, agent_id))
+        return bridge
+
+    monkeypatch.setattr(ChatRecallHistoryStore, "resolve", resolve)
+
+    manager = await handler._build_standalone_scroll_manager(
+        _config("scroll"),
+    )
+    try:
+        assert manager is not None
+        assert manager._history is bridge
+        assert calls == [(tmp_path, "sess-x", "ag1")]
+        assert not (tmp_path / "history.db").exists()
+    finally:
+        if manager is not None:
+            manager.close()
 
 
 @pytest.mark.asyncio

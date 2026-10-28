@@ -9,6 +9,7 @@ agent state back to session storage after the response completes.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 
 from ..base import LifecycleHook
@@ -51,6 +52,27 @@ class SessionLoadHook(LifecycleHook):
             return HookResult()
         if ctx.workspace is None:
             return HookResult()
+        conversation_id = getattr(
+            ctx.request,
+            "chat_conversation_id",
+            None,
+        )
+        chat_application = getattr(ctx.workspace, "chat_application", None)
+        if conversation_id and chat_application is not None:
+            try:
+                state = await chat_application.load_runtime_context(
+                    str(conversation_id),
+                )
+                if state:
+                    ctx.session_state = state
+                    mode_state = state.get("mode_state")
+                    if isinstance(mode_state, dict):
+                        loaded_mode_state = dict(mode_state)
+                        loaded_mode_state.update(ctx.mode_state)
+                        ctx.mode_state = loaded_mode_state
+            except Exception:
+                logger.debug("chat context load failed", exc_info=True)
+            return await self._prepare_loaded_state(ctx)
         session = getattr(ctx.workspace, "session", None)
         if session is None:
             return HookResult()
@@ -80,6 +102,9 @@ class SessionLoadHook(LifecycleHook):
             )
         except Exception:
             logger.debug("session_load: failed", exc_info=True)
+        return await self._prepare_loaded_state(ctx)
+
+    async def _prepare_loaded_state(self, ctx: HookContext) -> HookResult:
         if ctx.session_state:
             prepare_console_regeneration(ctx.session_state, ctx.request)
             if getattr(ctx.request, "channel", None) == "console":
@@ -102,6 +127,30 @@ class SessionSaveHook(LifecycleHook):
         if _is_ephemeral_request(ctx):
             return HookResult()
         if ctx.workspace is None or ctx.agent is None:
+            return HookResult()
+        conversation_id = getattr(
+            ctx.request,
+            "chat_conversation_id",
+            None,
+        )
+        chat_application = getattr(ctx.workspace, "chat_application", None)
+        if conversation_id and chat_application is not None:
+            try:
+                restore_cron_context(ctx)
+                state = ctx.agent.state_dict()
+                stamp_console_turn(state, ctx.request, "completed")
+                state["mode_state"] = ctx.mode_state
+                ctx.request.chat_runtime_context = json.dumps(
+                    state,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+                ctx.extras[SESSION_SAVE_SUCCEEDED_KEY] = True
+            except Exception:
+                logger.debug(
+                    "chat context serialization failed",
+                    exc_info=True,
+                )
             return HookResult()
         session = getattr(ctx.workspace, "session", None)
         if session is None:

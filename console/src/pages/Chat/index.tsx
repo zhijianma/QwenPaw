@@ -4,6 +4,7 @@ import {
   ReadyChatWelcome,
 } from "./components/ChatSessionTransition";
 import { ChatWelcome } from "./components/ChatWelcome";
+import { ChatBenchmarkProfiler } from "./components/ChatBenchmarkProfiler";
 import { useChatRouteResolution } from "./hooks/useChatRouteResolution";
 import { useAdvisorDecisionAvailability } from "./hooks/useAdvisorDecisionAvailability";
 import { loadSessionModel } from "../../features/session-settings/sessionModel";
@@ -38,6 +39,7 @@ import { useIsMobile } from "../../hooks/useIsMobile";
 import {
   CircleAlert as ExclamationCircleOutlined,
   Copy,
+  GitBranch,
   Paperclip as SparkAttachmentLine,
   Settings as SettingOutlined,
 } from "lucide-react";
@@ -49,6 +51,7 @@ import { AnimatePresence } from "motion/react";
 import i18n from "../../i18n";
 import { useLocation, useNavigate } from "react-router-dom";
 import sessionApi from "./sessionApi";
+import { useChatHistoryStore } from "./chatHistoryStore";
 import {
   getDraftStorageKey,
   parseDraft,
@@ -73,7 +76,12 @@ import { skillApi } from "../../api/modules/skill";
 import { getApiUrl } from "../../api/config";
 import { buildAuthHeaders } from "../../api/authHeaders";
 import { providerApi } from "../../api/modules/provider";
-import type { ProviderInfo, ModelInfo, SkillSpec } from "../../api/types";
+import type {
+  ChatSpec,
+  ProviderInfo,
+  ModelInfo,
+  SkillSpec,
+} from "../../api/types";
 import {
   AdvisorModelsPill,
   useIsAdvisorConversation,
@@ -107,6 +115,7 @@ import { wrapReplayFastForward } from "./replayFastForward";
 import { clearTurnStopped, markTurnStopped } from "./stoppedTurns";
 import { useTurnUsageStore } from "./turnUsageStore";
 import ChatHeaderTitle from "./components/ChatHeaderTitle";
+import ChatHistoryPaginationBridge from "./components/ChatHistoryPaginationBridge";
 import {
   buildFallbackSystemMessage,
   modelFallbackEventKey,
@@ -757,6 +766,17 @@ function payloadCompletesResponse(payload: unknown): boolean {
   return record.object === "response" && record.status === "completed";
 }
 
+function payloadTerminatesResponse(payload: unknown): boolean {
+  if (!payload || typeof payload !== "object") return false;
+  const record = payload as Record<string, unknown>;
+  return (
+    record.object === "response" &&
+    ["completed", "failed", "canceled", "cancelled"].includes(
+      String(record.status ?? ""),
+    )
+  );
+}
+
 function renderSuggestionLabel(command: string, description?: string) {
   return (
     <div
@@ -1285,6 +1305,49 @@ const timestampStyle: React.CSSProperties = {
   whiteSpace: "nowrap",
 };
 
+interface ChatCopyCardData {
+  chat_turn_id?: unknown;
+  status?: unknown;
+  input?: unknown[];
+  output?: unknown[];
+}
+
+function chatCopyTurnId(data: ChatCopyCardData): string | null {
+  const nested = [...(data.input ?? []), ...(data.output ?? [])].filter(
+    (item): item is Record<string, unknown> =>
+      Boolean(item) && typeof item === "object",
+  );
+  return typeof data.chat_turn_id === "string"
+    ? data.chat_turn_id
+    : nested
+        .map((item) => item.chat_turn_id)
+        .find((value): value is string => typeof value === "string") ?? null;
+}
+
+function ResponseChatCopyAction({
+  data,
+  label,
+  onCreate,
+}: {
+  data: ChatCopyCardData;
+  label: string;
+  onCreate: (data: ChatCopyCardData) => void;
+}) {
+  if (data.status !== "completed" || !chatCopyTurnId(data)) return null;
+  return (
+    <Tooltip title={label}>
+      <IconButton
+        aria-label={label}
+        bordered={false}
+        icon={<GitBranch />}
+        iconSize={16}
+        size="small"
+        onClick={() => onCreate(data)}
+      />
+    </Tooltip>
+  );
+}
+
 /**
  * Temporary local session ids (created before the first message is sent) are
  * not real backend sessions and must never be used for URL restore, session
@@ -1303,6 +1366,20 @@ export default function ChatPage() {
     () => getSessionIdFromPath(location.pathname),
     [location.pathname],
   );
+  const historyTargetTurnId = useMemo(
+    () => new URLSearchParams(location.search).get("turn_id"),
+    [location.search],
+  );
+  const clearHistoryTarget = useCallback(() => {
+    const params = new URLSearchParams(location.search);
+    params.delete("turn_id");
+    params.delete("message_id");
+    const search = params.toString();
+    navigate(
+      { pathname: location.pathname, search: search ? `?${search}` : "" },
+      { replace: true },
+    );
+  }, [location.pathname, location.search, navigate]);
   const prevSelectedAgentRef = useRef(selectedAgent);
   const [agentTransitionTarget, setAgentTransitionTarget] = useState<{
     agentId: string;
@@ -1348,6 +1425,12 @@ export default function ChatPage() {
     confirmed: terminalCapabilityConfirmed,
   } = useTerminalEnabled(selectedAgent);
   const backendChatId = resolveBackendChatId(chatId);
+  const paginatedHistoryActive = useChatHistoryStore((state) => {
+    const path = state.activeKey ? state.paths[state.activeKey] : undefined;
+    return Boolean(
+      backendChatId && path?.view?.conversation_id === backendChatId,
+    );
+  });
   const decisionScope = `${selectedAgent}:${queueSessionId}:${
     backendChatId ?? ""
   }`;
@@ -1713,7 +1796,9 @@ export default function ChatPage() {
               user_id: userId,
               channel,
               agent_id: agentId,
-              biz_params: item.bizParams,
+              biz_params: {
+                ...item.bizParams,
+              },
               context: buildChatSubmissionContext(
                 item.requestContext,
                 { sessionId: runtimeSessionId, userId, channel },
@@ -2083,6 +2168,52 @@ export default function ChatPage() {
     return sdkSessionAdapter.subscribe(scheduleReadyQueue);
   }, [sdkSessionAdapter, scheduleNextSend]);
   const { message } = useAppMessage();
+  const refreshCurrentHistory = useCallback(async () => {
+    if (!chatId) return;
+    useTurnUsageStore.getState().invalidateTurn();
+    const session = await sessionApi.refreshSession(chatId);
+    if (!session || chatIdRef.current !== chatId) return;
+    chatRef.current?.messages.setSessionMessages(
+      chatId,
+      (session.messages || []).map((entry) => ({
+        ...entry,
+        history: true,
+      })),
+    );
+    setRefreshKey((version) => version + 1);
+  }, [chatId]);
+  const handleCreateChatCopy = useCallback(
+    async (data: ChatCopyCardData) => {
+      if (!chatId || !backendChatId) return;
+      const turnId = chatCopyTurnId(data);
+      if (!turnId) return;
+      let copied: ChatSpec;
+      try {
+        copied = await chatApi.createChatCopy(
+          backendChatId,
+          turnId,
+          selectedAgent,
+        );
+      } catch (error) {
+        console.error("Failed to copy Chat from response turn", error);
+        message.error(
+          t("chat.copy.createFailed", {
+            defaultValue: "Could not copy chat",
+          }),
+        );
+        return;
+      }
+      try {
+        await sessionApi.getSessionList();
+      } catch (error) {
+        console.warn("Copied Chat but could not refresh the Chat list", error);
+      }
+      message.success(t("chat.copy.created", { defaultValue: "Chat copied" }));
+      setLastChatIdRef.current(selectedAgentRef.current, copied.id);
+      navigate(buildChatPath(copied.id));
+    },
+    [backendChatId, chatId, message, navigate, selectedAgent, t],
+  );
   const { approvals, setApprovals } = useApprovalContext();
   const [approvalRequests, setApprovalRequests] = useState<
     Map<string, ApprovalMessageData>
@@ -2623,6 +2754,7 @@ export default function ChatPage() {
     queueKey,
     sdkSessionAdapter,
     isSessionTransition,
+    usesQwenPawBackend,
   ]);
 
   const handleQueueRemove = useCallback(
@@ -2889,10 +3021,16 @@ export default function ChatPage() {
     queueMicrotask(() => {
       if (!pendingClearHistoryRef.current) return;
       pendingClearHistoryRef.current = false;
-      chatRef.current?.messages.removeAllMessages();
       useTurnUsageStore.getState().setSnapshot(null);
+      if (paginatedHistoryActive) {
+        void refreshCurrentHistory().catch((error) => {
+          console.error("Failed to refresh Chat after context clear", error);
+        });
+        return;
+      }
+      chatRef.current?.messages.removeAllMessages();
     });
-  }, []);
+  }, [paginatedHistoryActive, refreshCurrentHistory]);
 
   const handleCompactCommand = useCallback(() => {
     const execution = chatRef.current?.execution;
@@ -2985,6 +3123,17 @@ export default function ChatPage() {
       } catch {
         // ignore migration errors
       }
+    };
+
+    sessionApi.onLiveMessages = (sessionId, messages) => {
+      if (!isChatActiveRef.current || !chatIdRef.current) return;
+      const visible = sessionApi.getEffectiveSessionId(chatIdRef.current);
+      const incoming = sessionApi.getEffectiveSessionId(sessionId);
+      if (visible !== incoming) return;
+      chatRef.current?.messages.setSessionMessages(
+        chatIdRef.current,
+        messages.map((message) => ({ ...message, history: true })),
+      );
     };
 
     sessionApi.onSessionIdResolved = (tempId, realId) => {
@@ -3181,6 +3330,7 @@ export default function ChatPage() {
       sessionApi.onSessionRemoved = null;
       sessionApi.onSessionSelected = null;
       sessionApi.onSessionCreated = null;
+      sessionApi.onLiveMessages = null;
     };
   }, []);
 
@@ -3434,7 +3584,6 @@ export default function ChatPage() {
           : {}),
         ...biz_params,
       };
-
       requestBody = applyChatPayloadTransforms(
         requestBody,
         requestSnapshot.agentId,
@@ -4057,6 +4206,7 @@ export default function ChatPage() {
         colorPrimary,
         bubbleList: {
           ...defaultConfig.theme.bubbleList,
+          pagination: !paginatedHistoryActive,
           userMessageAnchors: userMessageAnchorsConfig,
         },
         leftHeader: mergedLeftHeader,
@@ -4393,6 +4543,39 @@ export default function ChatPage() {
             >;
           }
 
+          if (payload.type === "resync_required") {
+            const sessionId = chatIdRef.current;
+            if (sessionId) {
+              void sessionApi
+                .refreshSession(sessionId)
+                .then((session) => {
+                  if (!session || chatIdRef.current !== sessionId) return;
+                  chatRef.current?.messages.setSessionMessages(
+                    sessionId,
+                    (session.messages || []).map((entry) => ({
+                      ...entry,
+                      history: true,
+                    })),
+                  );
+                })
+                .catch((error) => {
+                  if (
+                    !(error instanceof DOMException) ||
+                    error.name !== "AbortError"
+                  ) {
+                    console.error("Failed to resync chat history", error);
+                  }
+                });
+            }
+            return { object: "message", type: "heartbeat" } as ReturnType<
+              NonNullable<
+                NonNullable<
+                  IAgentScopeRuntimeWebUIOptions["api"]
+                >["responseParser"]
+              >
+            >;
+          }
+
           if (payload.type === "rate_limited") {
             const alts =
               (payload.alternatives as typeof rateLimitAlternatives) || [];
@@ -4403,9 +4586,12 @@ export default function ChatPage() {
 
           if (payloadRequestsHistoryClear(payload)) {
             pendingClearHistoryRef.current = true;
-            if (payloadCompletesResponse(payload)) {
-              scheduleHistoryClear();
-            }
+          }
+          if (
+            pendingClearHistoryRef.current &&
+            payloadTerminatesResponse(payload)
+          ) {
+            scheduleHistoryClear();
           }
 
           return payload as unknown as ReturnType<
@@ -4469,6 +4655,61 @@ export default function ChatPage() {
             {},
             selectedAgent,
           );
+          if (sessionApi.hasNormalizedLive(snapshot.sessionId)) {
+            const encoder = new TextEncoder();
+            let heartbeat: ReturnType<typeof setInterval> | null = null;
+            const waitAbort = new AbortController();
+            let streamClosed = false;
+            const forwardAbort = () => waitAbort.abort();
+            data.signal?.addEventListener("abort", forwardAbort, {
+              once: true,
+            });
+            const cleanup = () => {
+              if (heartbeat !== null) clearInterval(heartbeat);
+              heartbeat = null;
+              data.signal?.removeEventListener("abort", forwardAbort);
+            };
+            return new Response(
+              new ReadableStream({
+                start(controller) {
+                  const emitHeartbeat = () =>
+                    controller.enqueue(
+                      encoder.encode(
+                        'data: {"object":"message","type":"heartbeat"}\n\n',
+                      ),
+                    );
+                  emitHeartbeat();
+                  heartbeat = setInterval(emitHeartbeat, 15_000);
+                  void sessionApi
+                    .waitForNormalizedLiveTerminal(
+                      snapshot.sessionId,
+                      waitAbort.signal,
+                    )
+                    .then(() => {
+                      cleanup();
+                      if (streamClosed) return;
+                      streamClosed = true;
+                      controller.close();
+                    })
+                    .catch((error) => {
+                      cleanup();
+                      if (streamClosed) return;
+                      streamClosed = true;
+                      controller.error(error);
+                    });
+                },
+                cancel() {
+                  streamClosed = true;
+                  cleanup();
+                  waitAbort.abort();
+                },
+              }),
+              {
+                status: 200,
+                headers: { "Content-Type": "text/event-stream" },
+              },
+            );
+          }
           // Attaching to a live turn only invalidates this session's stop.
           clearTurnStopped(snapshot.sessionId);
           headers["X-Agent-Id"] = snapshot.agentId;
@@ -4533,6 +4774,23 @@ export default function ChatPage() {
               );
             },
           },
+          ...(usesQwenPawBackend && paginatedHistoryActive
+            ? [
+                {
+                  render: ({ data }: { data: ChatCopyCardData }) => (
+                    <ResponseChatCopyAction
+                      data={data}
+                      label={t("chat.copy.create", {
+                        defaultValue: "Copy chat from this turn",
+                      })}
+                      onCreate={(cardData) => {
+                        void handleCreateChatCopy(cardData);
+                      }}
+                    />
+                  ),
+                },
+              ]
+            : []),
           ...pluginActions,
         ],
         replace: !usesQwenPawBackend,
@@ -4575,6 +4833,8 @@ export default function ChatPage() {
     customFetch,
     copyResponse,
     handleFileUpload,
+    handleCreateChatCopy,
+    refreshCurrentHistory,
     t,
     i18n.language,
     isDark,
@@ -4597,6 +4857,7 @@ export default function ChatPage() {
     approvalPresets,
     usesQwenPawBackend,
     supportsAttachments,
+    paginatedHistoryActive,
     runningConfigApprovalLevel,
     captureRequestContext,
     queueSessionId,
@@ -4685,11 +4946,20 @@ export default function ChatPage() {
                   onRetry={retrySession}
                 >
                   {!isAgentTransition && (
-                    <AgentScopeRuntimeWebUI
-                      ref={chatRef}
-                      key={refreshKey}
-                      options={options}
-                    />
+                    <ChatBenchmarkProfiler>
+                      <AgentScopeRuntimeWebUI
+                        ref={chatRef}
+                        key={refreshKey}
+                        options={options}
+                      />
+                      <ChatHistoryPaginationBridge
+                        rootRef={chatMessagesAreaRef}
+                        chatRef={chatRef}
+                        sessionId={chatId}
+                        targetTurnId={historyTargetTurnId}
+                        onTargetResolved={clearHistoryTarget}
+                      />
+                    </ChatBenchmarkProfiler>
                   )}
                 </ChatSessionTransition>
               </RichFileReferenceInputProvider>

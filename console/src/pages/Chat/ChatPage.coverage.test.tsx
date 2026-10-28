@@ -18,6 +18,7 @@ import { stopBackgroundQueue } from "./backgroundQueueRegistry";
 import { chatExtensions } from "@/plugins/registry/chatExtensions";
 import { useSessionFilesDrawer } from "@/stores/filesSurfaceStore";
 import { useStoppedTurnsStore } from "./stoppedTurns";
+import { useChatHistoryStore } from "./chatHistoryStore";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -42,6 +43,12 @@ const {
   mockSessionProjectDirectory,
   mockApprovalLevelToggle,
   mockHydrateBackgroundTasksForSession,
+  mockRemoveAllMessages,
+  mockSetSessionMessages,
+  mockCreateChatCopy,
+  mockInvalidateTurn,
+  mockMessageSuccess,
+  mockMessageError,
 } = vi.hoisted(() => ({
   mockListProviders: vi.fn(),
   mockGetActiveModels: vi.fn(),
@@ -62,6 +69,12 @@ const {
   mockSessionProjectDirectory: vi.fn(),
   mockApprovalLevelToggle: vi.fn(),
   mockHydrateBackgroundTasksForSession: vi.fn(() => Promise.resolve()),
+  mockRemoveAllMessages: vi.fn(),
+  mockSetSessionMessages: vi.fn(),
+  mockCreateChatCopy: vi.fn(),
+  mockInvalidateTurn: vi.fn(),
+  mockMessageSuccess: vi.fn(),
+  mockMessageError: vi.fn(),
 }));
 
 let capturedOptions: any = null;
@@ -71,7 +84,11 @@ let capturedOptions: any = null;
 // ---------------------------------------------------------------------------
 vi.mock("../../hooks/useAppMessage", () => ({
   useAppMessage: () => ({
-    message: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
+    message: {
+      success: mockMessageSuccess,
+      error: mockMessageError,
+      warning: vi.fn(),
+    },
   }),
 }));
 
@@ -109,10 +126,10 @@ vi.mock("@agentscope-ai/chat", () => ({
     useImperativeHandle(ref, () => ({
       input: { submit: mockRuntimeSubmit },
       messages: {
-        removeAllMessages: vi.fn(),
+        removeAllMessages: mockRemoveAllMessages,
         getSessionMessages: vi.fn(() => []),
         getMessages: vi.fn(() => []),
-        setSessionMessages: vi.fn(),
+        setSessionMessages: mockSetSessionMessages,
       },
       execution: {
         execute: mockRuntimeSubmit,
@@ -154,6 +171,21 @@ vi.mock(
 
 vi.mock("../../features/session-settings/sessionModel", () => ({
   loadSessionModel: (...args: unknown[]) => mockGetActiveModels(...args),
+  loadSessionThinkingView: vi.fn(async () => ({
+    provider_id: null,
+    model: null,
+    model_key: "default",
+    effective_max_input_length: null,
+    control: {
+      kind: "unknown",
+      efforts: [],
+      supports_off: false,
+    },
+    value: { level: "inherit" },
+    effective: { level: "inherit" },
+    source: "model",
+    reason: null,
+  })),
   readPendingModel: () => null,
   migratePendingModel: vi.fn(),
   withPendingModel: (body: unknown) => body,
@@ -175,6 +207,7 @@ vi.mock("@/api/modules/chat", () => ({
     uploadFile: mockUploadFile,
     filePreviewUrl: mockFilePreviewUrl,
     getChatStatus: mockGetChatStatus,
+    createChatCopy: mockCreateChatCopy,
     stopChat: vi.fn(() => Promise.resolve()),
   },
 }));
@@ -252,6 +285,7 @@ vi.mock("./sessionApi", () => ({
     discardLastUserMessage: vi.fn(),
     setVisibleSession: vi.fn(),
     getSession: vi.fn(async (id: string) => ({ id, messages: [] })),
+    getSessionList: vi.fn(async () => []),
     lastActiveChatId: "last-chat-1",
     patchLastUserMessage: vi.fn(),
     getSessionIdentity: vi.fn(() => ({
@@ -259,6 +293,8 @@ vi.mock("./sessionApi", () => ({
       userId: "test-user",
       channel: "console",
     })),
+    hasNormalizedLive: vi.fn(() => false),
+    waitForNormalizedLiveTerminal: vi.fn(async () => undefined),
     triggerResolve: vi.fn(),
     isSessionSwitching: false,
     isUnresolvedLocalSession: vi.fn(() => false),
@@ -504,7 +540,7 @@ vi.mock("./turnUsageStore", () => ({
         beginTurn: vi.fn(() => ({ turnId: "t1" })),
         setSnapshot: vi.fn(),
         snapshot: null,
-        invalidateTurn: vi.fn(),
+        invalidateTurn: mockInvalidateTurn,
       })),
     },
   ),
@@ -605,6 +641,19 @@ describe("ChatPage coverage", () => {
       lastMigratedTo: null,
     });
     useStoppedTurnsStore.setState({ stoppedSessionIds: new Set() });
+    useChatHistoryStore.setState({ activeKey: null, paths: {} });
+    mockRemoveAllMessages.mockReset();
+    mockSetSessionMessages.mockReset();
+    mockCreateChatCopy.mockReset();
+    mockMessageSuccess.mockReset();
+    mockMessageError.mockReset();
+    mockInvalidateTurn.mockReset();
+    mockCreateChatCopy.mockResolvedValue({
+      id: "copied-chat",
+      session_id: "copy:copied-chat",
+      user_id: "default",
+      channel: "console",
+    });
     mockBeginLoopModeSubmission.mockReset();
     mockBeginLoopModeSubmission.mockImplementation((text: string) => text);
     mockRequiresQwenPawModel.mockReset();
@@ -928,6 +977,101 @@ describe("ChatPage coverage", () => {
       );
       expect(parsed).toBeTruthy();
     }
+  });
+
+  it("preserves normalized transcript after context clear", async () => {
+    const owner = useChatHistoryStore
+      .getState()
+      .beginPath("default", "test-session");
+    useChatHistoryStore.getState().mergeTurnPage(owner, {
+      items: [],
+      older_cursor: null,
+      newer_cursor: null,
+      view: {
+        conversation_id: "test-session",
+        head_turn_id: null,
+        view_version: "version",
+      },
+      bytes: 0,
+      truncated_entity: false,
+    });
+    const refresh = vi
+      .spyOn(sessionApi, "refreshSession")
+      .mockResolvedValue(undefined);
+    renderWithProviders(<ChatPage />, {
+      initialEntries: ["/chat/test-session"],
+    });
+    await screen.findByTestId("chat-ui");
+
+    await act(async () => {
+      capturedOptions.api.responseParser(
+        JSON.stringify({
+          object: "response",
+          status: "completed",
+          output: [
+            {
+              object: "message",
+              metadata: { clear_history: true },
+            },
+          ],
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(refresh).toHaveBeenCalledWith("test-session");
+    expect(mockRemoveAllMessages).not.toHaveBeenCalled();
+  });
+
+  it("keeps legacy clear-history screen clearing", async () => {
+    renderWithProviders(<ChatPage />, {
+      initialEntries: ["/chat/test-session"],
+    });
+    await screen.findByTestId("chat-ui");
+
+    await act(async () => {
+      capturedOptions.api.responseParser(
+        JSON.stringify({
+          object: "response",
+          status: "completed",
+          output: [
+            {
+              object: "message",
+              metadata: { clear_history: true },
+            },
+          ],
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(mockRemoveAllMessages).toHaveBeenCalledTimes(1);
+  });
+
+  it("applies a clear marker carried only by the preceding message", async () => {
+    renderWithProviders(<ChatPage />, {
+      initialEntries: ["/chat/test-session"],
+    });
+    await screen.findByTestId("chat-ui");
+
+    await act(async () => {
+      capturedOptions.api.responseParser(
+        JSON.stringify({
+          object: "message",
+          metadata: { clear_history: true },
+        }),
+      );
+      capturedOptions.api.responseParser(
+        JSON.stringify({
+          object: "response",
+          status: "completed",
+          output: [],
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(mockRemoveAllMessages).toHaveBeenCalledTimes(1);
   });
 
   it("handles payload completion detection", async () => {
@@ -1289,6 +1433,153 @@ describe("ChatPage coverage", () => {
       });
       expect(true).toBe(true);
     }
+  });
+
+  it("copies a Chat from the exact completed response turn", async () => {
+    const owner = useChatHistoryStore
+      .getState()
+      .beginPath("default", "test-session");
+    useChatHistoryStore.getState().mergeTurnPage(owner, {
+      items: [],
+      older_cursor: null,
+      newer_cursor: null,
+      view: {
+        conversation_id: "test-session",
+        head_turn_id: "turn-7",
+        view_version: "version",
+      },
+      bytes: 0,
+      truncated_entity: false,
+    });
+    const refreshList = vi.spyOn(sessionApi, "getSessionList");
+    renderWithProviders(<ChatPage />, {
+      initialEntries: ["/chat/test-session"],
+    });
+    await screen.findByTestId("chat-ui");
+    expect(capturedOptions.requestActions.list).toHaveLength(2);
+    const forkAction = capturedOptions.actions.list[2];
+    const forkControl = forkAction.render({
+      data: {
+        status: "completed",
+        chat_turn_id: "turn-7",
+        output: [],
+      },
+    });
+    renderWithProviders(forkControl);
+
+    await act(async () => {
+      const forkButton = screen.getByRole("button", {
+        name: "Copy chat from this turn",
+      });
+      expect(forkButton.querySelector("svg")).not.toHaveAttribute(
+        "width",
+        "small",
+      );
+      expect(forkButton.querySelector("svg")).not.toHaveAttribute(
+        "height",
+        "small",
+      );
+      fireEvent.click(forkButton);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockCreateChatCopy).toHaveBeenCalledWith(
+      "test-session",
+      "turn-7",
+      "default",
+    );
+    expect(refreshList).toHaveBeenCalled();
+    expect(mockMessageSuccess).toHaveBeenCalledWith("Chat copied");
+    expect(mockMessageError).not.toHaveBeenCalledWith("Could not copy chat");
+  });
+
+  it("does not report copy failure when only the Chat list refresh fails", async () => {
+    const owner = useChatHistoryStore
+      .getState()
+      .beginPath("default", "test-session");
+    useChatHistoryStore.getState().mergeTurnPage(owner, {
+      items: [],
+      older_cursor: null,
+      newer_cursor: null,
+      view: {
+        conversation_id: "test-session",
+        head_turn_id: "turn-7",
+        view_version: "version",
+      },
+      bytes: 0,
+      truncated_entity: false,
+    });
+    vi.spyOn(sessionApi, "getSessionList").mockRejectedValueOnce(
+      new Error("list refresh failed"),
+    );
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    renderWithProviders(<ChatPage />, {
+      initialEntries: ["/chat/test-session"],
+    });
+    await screen.findByTestId("chat-ui");
+    const forkAction = capturedOptions.actions.list[2];
+    const forkControl = forkAction.render({
+      data: {
+        status: "completed",
+        chat_turn_id: "turn-7",
+        output: [],
+      },
+    });
+    renderWithProviders(forkControl);
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Copy chat from this turn",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(mockMessageSuccess).toHaveBeenCalledWith("Chat copied");
+    });
+    expect(mockMessageError).not.toHaveBeenCalledWith("Could not copy chat");
+    expect(warning).toHaveBeenCalledWith(
+      "Copied Chat but could not refresh the Chat list",
+      expect.any(Error),
+    );
+    warning.mockRestore();
+  });
+
+  it("hides Chat copy on non-completed responses", async () => {
+    const owner = useChatHistoryStore
+      .getState()
+      .beginPath("default", "test-session");
+    useChatHistoryStore.getState().mergeTurnPage(owner, {
+      items: [],
+      older_cursor: null,
+      newer_cursor: null,
+      view: {
+        conversation_id: "test-session",
+        head_turn_id: "turn-7",
+        view_version: "version",
+      },
+      bytes: 0,
+      truncated_entity: false,
+    });
+    renderWithProviders(<ChatPage />, {
+      initialEntries: ["/chat/test-session"],
+    });
+    await screen.findByTestId("chat-ui");
+    const forkAction = capturedOptions.actions.list[2];
+    const forkControl = forkAction.render({
+      data: {
+        status: "failed",
+        chat_turn_id: "turn-7",
+        output: [],
+      },
+    });
+    const view = renderWithProviders(forkControl);
+
+    expect(
+      view.queryByRole("button", {
+        name: "Copy chat from this turn",
+      }),
+    ).not.toBeInTheDocument();
   });
 
   // ── requestActions: timestamp render ───────────────────────────────────

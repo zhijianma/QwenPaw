@@ -258,6 +258,73 @@ describe("chatApi CRUD", () => {
     );
   });
 
+  it("getChatView uses the lightweight V2 endpoint and agent scope", async () => {
+    const controller = new AbortController();
+    await chatApi.getChatView("chat/1", {
+      signal: controller.signal,
+      agentId: "agent-2",
+    });
+    expect(request).toHaveBeenCalledWith("/chats/chat%2F1/view", {
+      signal: controller.signal,
+      headers: { "X-Agent-Id": "agent-2" },
+    });
+  });
+
+  it("uses the independent Chat copy endpoint", async () => {
+    await chatApi.createChatCopy("chat/1", "turn/1", "agent-2");
+    expect(request).toHaveBeenLastCalledWith("/chats/chat%2F1/copies", {
+      method: "POST",
+      headers: { "X-Agent-Id": "agent-2" },
+      body: JSON.stringify({
+        source_turn_id: "turn/1",
+      }),
+    });
+  });
+
+  it("opens a scoped live stream with its reconnect cursor", async () => {
+    const response = new Response(null, { status: 200 });
+    global.fetch = vi.fn().mockResolvedValue(response);
+    const controller = new AbortController();
+
+    const result = await chatApi.openChatLive("chat/1", {
+      cursor: { run_epoch: "epoch/1", event_sequence: 7 },
+      signal: controller.signal,
+      agentId: "agent-2",
+    });
+
+    expect(result).toBe(response);
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/chats/chat%2F1/live?" +
+        "run_epoch=epoch%2F1&event_sequence=7",
+      {
+        method: "GET",
+        headers: { "X-Agent-Id": "agent-2" },
+        signal: controller.signal,
+      },
+    );
+  });
+
+  it("serializes a fully scoped opaque turn cursor", async () => {
+    const controller = new AbortController();
+    await chatApi.getTurnPage("chat/1", {
+      headTurnId: "head/1",
+      viewVersion: "view+1",
+      cursor: "opaque/cursor",
+      limit: 30,
+      signal: controller.signal,
+      agentId: "agent-2",
+    });
+    expect(request).toHaveBeenCalledWith(
+      "/chats/chat%2F1/turns?" +
+        "head_turn_id=head%2F1&view_version=view%2B1&" +
+        "cursor=opaque%2Fcursor&limit=30",
+      {
+        signal: controller.signal,
+        headers: { "X-Agent-Id": "agent-2" },
+      },
+    );
+  });
+
   it("updateChat sends PUT to the correct path", async () => {
     await chatApi.updateChat("chat-1", { name: "New Name" });
     expect(request).toHaveBeenCalledWith(

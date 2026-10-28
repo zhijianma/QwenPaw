@@ -21,6 +21,7 @@ async def test_scroll_schema_migration_does_not_block_startup_loop(
     monkeypatch,
 ) -> None:
     """A populated legacy DB may build its date index in a worker thread."""
+    monkeypatch.setenv("QWENPAW_CHAT_STORAGE_V2", "0")
     monkeypatch.setattr(
         "qwenpaw.envs.load_envs_into_environ",
         lambda: None,
@@ -57,6 +58,10 @@ async def test_scroll_schema_migration_does_not_block_startup_loop(
 
     monkeypatch.setattr(HistoryStore, "_init_schema", blocked_init_schema)
     monkeypatch.setattr(scroll_sync, "sync_all_scroll_agents", startup_sync)
+    monkeypatch.setattr(
+        "qwenpaw.config.utils.get_agent_dirs",
+        lambda: [],
+    )
 
     task = asyncio.create_task(startup_helper())
     try:

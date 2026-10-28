@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
 from pathlib import Path
-from typing import Literal, Optional
+from typing import AsyncGenerator, Literal, Optional
 from uuid import uuid4
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from agentscope.message import Msg
@@ -25,12 +28,24 @@ from .models import (
     ChatSpec,
     ChatUpdate,
     ChatHistory,
+    CHAT_NAME_MAX_LENGTH,
 )
 from .utils import agentscope_msg_to_message, parse_legacy_memory_state
+from .pagination_cursor import InvalidChatCursorError
+from .live import ChatLiveCursor, ChatLiveEvent, ChatLiveSync
 from .resolver import (
     ChatResolution,
     find_chat_matches,
     is_app_owned_chat as _is_app_owned_chat,
+)
+from .deletion_service import delete_chat_records
+from .rollout import read_chat_rollout_status
+from .feature_flags import chat_v2_ui_enabled
+from .storage import CatalogEntryNotFoundError, ChatCopyError
+from .storage.pagination_repository import (
+    ChatEntityVersionError,
+    ChatPageNotFoundError,
+    ChatViewInvalidatedError,
 )
 from ...config.utils import load_config
 from ...utils.io_utils import run_sync_io
@@ -45,7 +60,6 @@ from ...services.session_thinking import (
     thinking_view,
 )
 from ...config.config import ModelSlotConfig
-from ...checkpoints.runtime import RUNTIME as CHECKPOINT_RUNTIME
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +120,72 @@ class ChatStatusResponse(BaseModel):
     """Lightweight TaskTracker status for one chat."""
 
     status: Literal["idle", "running"]
+
+
+@router.get("/rollout-status")
+async def get_chat_rollout_status(request: Request) -> dict:
+    """Return lightweight per-Agent rollout and repair counters."""
+    workspace = await get_workspace(request)
+    application = workspace.chat_application
+    if application is None:
+        return {
+            "enabled": False,
+            "ui_enabled": False,
+            "healthy": True,
+            "stop_reasons": [],
+            "warnings": [],
+        }
+    status = await run_sync_io(
+        read_chat_rollout_status,
+        application.paths,
+    )
+    return {
+        "enabled": True,
+        "ui_enabled": chat_v2_ui_enabled(),
+        **status.as_dict(),
+    }
+
+
+class ChatCopyCreateRequest(BaseModel):
+    """Copy one complete turn lineage into a new independent Chat."""
+
+    source_turn_id: str
+    name: str | None = None
+
+
+def _next_copy_display_name(
+    source_name: str,
+    chats: list[ChatSpec],
+) -> str:
+    """Return the next numbered title for an independent Chat copy."""
+    suffix_pattern = re.compile(r" \((\d+)\)$")
+
+    def numbered_name(number: int) -> str:
+        suffix = f" ({number})"
+        max_base_length = CHAT_NAME_MAX_LENGTH - len(suffix)
+        return f"{source_name[:max_base_length]}{suffix}"
+
+    suffixes = []
+    for chat in chats:
+        match = suffix_pattern.search(chat.name)
+        if match is None:
+            continue
+        number = int(match.group(1))
+        if numbered_name(number) == chat.name:
+            suffixes.append(number)
+    return numbered_name(max(suffixes, default=1) + 1)
+
+
+def _raise_copy_http(error: ChatCopyError) -> None:
+    status = (
+        404
+        if error.code in {"copy_source_empty", "copy_turn_unreachable"}
+        else 409
+    )
+    raise HTTPException(
+        status_code=status,
+        detail={"code": error.code, "message": str(error)},
+    ) from error
 
 
 class ProjectDirEntryPayload(BaseModel):
@@ -346,6 +426,46 @@ async def list_chats(
     return result
 
 
+@router.get("/search", response_model=dict)
+async def search_chats(
+    query: str = Query(min_length=1, max_length=500),
+    before_seq: int | None = Query(default=None, ge=1),
+    limit: int = Query(default=50, ge=1, le=100),
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+) -> dict:
+    """Search active Chat projections without loading full transcripts."""
+    application = getattr(workspace, "chat_application", None)
+    if application is None:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "chat_v2_unavailable"},
+        )
+    if not chat_v2_ui_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "chat_v2_ui_disabled"},
+        )
+    chats = await mgr.list_chats(archived=False)
+    allowed_ids = {
+        str(chat.id)
+        for chat in chats
+        if chat.id and not _is_app_owned_chat(chat)
+    }
+    page = await application.search_history(
+        query,
+        before_seq=before_seq,
+        limit=limit,
+    )
+    payload = page.as_dict()
+    payload["items"] = [
+        item
+        for item in payload["items"]
+        if item["conversation_id"] in allowed_ids
+    ]
+    return payload
+
+
 @router.post("", response_model=ChatSpec)
 async def create_chat(
     request: ChatSpec,
@@ -471,16 +591,12 @@ async def batch_delete_chats(
     # in the tracker, or it inflates the aggregate running count forever.
     for chat_id in chat_ids:
         await workspace.task_tracker.request_stop(chat_id)
-    deleted = await mgr.delete_chats(chat_ids=chat_ids)
-    if deleted:
-        await CHECKPOINT_RUNTIME.delete_session_checkpoints(
-            workspace,
-            [
-                (chat.session_id, chat.user_id, chat.channel)
-                for chat_id in chat_ids
-                if (chat := chats.get(chat_id)) is not None
-            ],
-        )
+    selected = [
+        chat
+        for chat_id in chat_ids
+        if (chat := chats.get(chat_id)) is not None
+    ]
+    deleted = await delete_chat_records(workspace, mgr, selected)
     return {"deleted": deleted}
 
 
@@ -858,6 +974,399 @@ async def get_chat_status(
     return ChatStatusResponse(status=status)
 
 
+async def _get_v2_chat_access(
+    chat_id: str,
+    *,
+    mgr: ChatManager,
+    workspace,
+):
+    """Recheck Chat visibility and return its normalized application."""
+    chat_spec = await mgr.get_chat(chat_id)
+    if chat_spec is None or _is_app_owned_chat(chat_spec):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Chat not found: {chat_id}",
+        )
+    application = getattr(workspace, "chat_application", None)
+    if application is None:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "chat_v2_unavailable"},
+        )
+    if not chat_v2_ui_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "chat_v2_ui_disabled"},
+        )
+    return application
+
+
+async def _history_page_response(operation) -> dict:
+    """Map stable pagination failures onto explicit API error contracts."""
+    try:
+        page = await operation
+    except InvalidChatCursorError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "invalid_cursor"},
+        ) from exc
+    except ChatViewInvalidatedError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "view_invalidated",
+                "head_turn_id": exc.current_head_turn_id,
+            },
+        ) from exc
+    except ChatEntityVersionError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "entity_version_changed"},
+        ) from exc
+    except (ChatPageNotFoundError, CatalogEntryNotFoundError) as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "history_entity_not_found"},
+        ) from exc
+    return page.as_dict()
+
+
+@router.get("/{chat_id}/view", response_model=dict)
+async def get_chat_view(
+    chat_id: str,
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+):
+    """Return Chat metadata and capabilities without transcript payloads."""
+    application = await _get_v2_chat_access(
+        chat_id,
+        mgr=mgr,
+        workspace=workspace,
+    )
+    try:
+        return await application.history_view(
+            chat_id,
+            backend=str(workspace.config.backend),
+        )
+    except CatalogEntryNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Chat not found: {chat_id}",
+        ) from exc
+
+
+@router.post("/{chat_id}/copies", response_model=ChatSpec)
+async def post_chat_copy(
+    chat_id: str,
+    body: ChatCopyCreateRequest,
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+):
+    """Copy a completed response turn into a new independent Chat."""
+    application = await _get_v2_chat_access(
+        chat_id,
+        mgr=mgr,
+        workspace=workspace,
+    )
+    source = await mgr.get_chat(chat_id)
+    if source is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Chat not found: {chat_id}",
+        )
+    target_id = str(uuid4())
+    target_session_id = f"copy:{target_id}"
+    chats = await mgr.list_chats(archived=None)
+    source_meta = source.meta or {}
+    copy_root_chat_id = str(
+        source_meta.get("copy_root_chat_id")
+        or source_meta.get("copy_source_chat_id")
+        or source.id,
+    )
+    root_chat = next(
+        (chat for chat in chats if chat.id == copy_root_chat_id),
+        None,
+    )
+    copy_base_name = str(
+        source_meta.get("copy_base_name")
+        or (root_chat.name if root_chat is not None else source.name),
+    )
+    display_name = body.name or _next_copy_display_name(
+        copy_base_name,
+        chats,
+    )
+    target = ChatSpec(
+        id=target_id,
+        name=display_name,
+        session_id=target_session_id,
+        user_id=source.user_id,
+        channel=source.channel,
+        source=source.source,
+        group_id=source.group_id,
+        meta={
+            "copy_source_chat_id": chat_id,
+            "copy_source_turn_id": body.source_turn_id,
+            "copy_root_chat_id": copy_root_chat_id,
+            "copy_base_name": copy_base_name,
+        },
+    )
+    try:
+        await application.copy_chat(
+            chat_id,
+            target_conversation_id=target_id,
+            target_session_id=target_session_id,
+            source_turn_id=body.source_turn_id,
+            display_name=target.name,
+            group_id=source.group_id,
+            backend=str(workspace.config.backend),
+        )
+    except ChatCopyError as exc:
+        _raise_copy_http(exc)
+    try:
+        target = await mgr.create_chat(target)
+    except Exception:
+        await application.discard_unpublished_chat(target_id)
+        raise
+    return target
+
+
+def _live_sse(
+    kind: str,
+    payload: dict,
+    cursor: ChatLiveCursor | None,
+) -> str:
+    """Encode one named SSE event without leaking transcript data to logs."""
+    lines = []
+    if cursor is not None:
+        lines.append(
+            f"id: {cursor.run_epoch}:{cursor.event_sequence}",
+        )
+    lines.extend(
+        (
+            f"event: {kind}",
+            "data: "
+            + json.dumps(
+                payload,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+            "",
+            "",
+        ),
+    )
+    return "\n".join(lines)
+
+
+@router.get(
+    "/{chat_id}/live",
+    response_class=StreamingResponse,
+)
+async def stream_chat_live(
+    chat_id: str,
+    run_epoch: str | None = Query(default=None),
+    event_sequence: int | None = Query(default=None, ge=0),
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+) -> StreamingResponse:
+    """Sync an active overlay, then stream events after its barrier."""
+    application = await _get_v2_chat_access(
+        chat_id,
+        mgr=mgr,
+        workspace=workspace,
+    )
+    if (run_epoch is None) != (event_sequence is None):
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "invalid_live_cursor"},
+        )
+    await _history_page_response(
+        application.turn_page(
+            chat_id,
+            subject=str(workspace.agent_id),
+            backend=str(workspace.config.backend),
+            limit=1,
+        ),
+    )
+    cursor = (
+        ChatLiveCursor(run_epoch, event_sequence)
+        if run_epoch is not None and event_sequence is not None
+        else None
+    )
+    live_hub = workspace.task_tracker.chat_live_hub
+    subscription = await live_hub.subscribe(
+        chat_id,
+        cursor,
+    )
+
+    async def _events() -> AsyncGenerator[str, None]:
+        try:
+            sync: ChatLiveSync = subscription.sync
+            yield _live_sse("sync", sync.as_dict(), sync.cursor)
+            while True:
+                try:
+                    event = await asyncio.wait_for(
+                        subscription.queue.get(),
+                        timeout=15,
+                    )
+                except asyncio.TimeoutError:
+                    yield ": heartbeat\n\n"
+                    continue
+                if event is None:
+                    return
+                live_event: ChatLiveEvent = event
+                yield _live_sse(
+                    live_event.kind,
+                    live_event.as_dict(),
+                    live_event.cursor,
+                )
+        finally:
+            await live_hub.unsubscribe(subscription)
+
+    return StreamingResponse(
+        _events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get(
+    "/{chat_id}/turns",
+    response_model=dict,
+)
+async def get_chat_turn_page(
+    chat_id: str,
+    head_turn_id: str | None = Query(default=None),
+    view_version: str | None = Query(default=None),
+    cursor: str | None = Query(default=None),
+    target_turn_id: str | None = Query(default=None),
+    limit: int = Query(default=30, ge=1, le=30),
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+):
+    """Return one stable, keyset-paginated turn page."""
+    application = await _get_v2_chat_access(
+        chat_id,
+        mgr=mgr,
+        workspace=workspace,
+    )
+    return await _history_page_response(
+        application.turn_page(
+            chat_id,
+            subject=str(workspace.agent_id),
+            backend=str(workspace.config.backend),
+            head_turn_id=head_turn_id,
+            view_version=view_version,
+            cursor=cursor,
+            target_turn_id=target_turn_id,
+            limit=limit,
+        ),
+    )
+
+
+@router.get(
+    "/{chat_id}/turns/{turn_id}/messages",
+    response_model=dict,
+)
+async def get_chat_message_page(
+    chat_id: str,
+    turn_id: str,
+    head_turn_id: str | None = Query(default=None),
+    view_version: str | None = Query(default=None),
+    cursor: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=100),
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+):
+    """Return a message page within a reachable turn."""
+    application = await _get_v2_chat_access(
+        chat_id,
+        mgr=mgr,
+        workspace=workspace,
+    )
+    return await _history_page_response(
+        application.message_page(
+            chat_id,
+            turn_id=turn_id,
+            subject=str(workspace.agent_id),
+            backend=str(workspace.config.backend),
+            head_turn_id=head_turn_id,
+            view_version=view_version,
+            cursor=cursor,
+            limit=limit,
+        ),
+    )
+
+
+@router.get(
+    "/{chat_id}/messages/{message_id}/blocks",
+    response_model=dict,
+)
+async def get_chat_block_page(
+    chat_id: str,
+    message_id: str,
+    head_turn_id: str | None = Query(default=None),
+    view_version: str | None = Query(default=None),
+    cursor: str | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=200),
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+):
+    """Return a byte-bounded block page for a reachable message."""
+    application = await _get_v2_chat_access(
+        chat_id,
+        mgr=mgr,
+        workspace=workspace,
+    )
+    return await _history_page_response(
+        application.block_page(
+            chat_id,
+            message_id=message_id,
+            subject=str(workspace.agent_id),
+            backend=str(workspace.config.backend),
+            head_turn_id=head_turn_id,
+            view_version=view_version,
+            cursor=cursor,
+            limit=limit,
+        ),
+    )
+
+
+@router.get(
+    "/{chat_id}/blocks/{block_id}/content",
+    response_model=dict,
+)
+async def get_chat_block_fragment(
+    chat_id: str,
+    block_id: str,
+    head_turn_id: str | None = Query(default=None),
+    view_version: str | None = Query(default=None),
+    cursor: str | None = Query(default=None),
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+):
+    """Return one version-fenced fragment of a reachable block."""
+    application = await _get_v2_chat_access(
+        chat_id,
+        mgr=mgr,
+        workspace=workspace,
+    )
+    return await _history_page_response(
+        application.block_fragment(
+            chat_id,
+            block_id=block_id,
+            subject=str(workspace.agent_id),
+            backend=str(workspace.config.backend),
+            head_turn_id=head_turn_id,
+            view_version=view_version,
+            cursor=cursor,
+        ),
+    )
+
+
 @router.get("/{chat_id}", response_model=ChatHistory)
 async def get_chat(
     chat_id: str,
@@ -897,6 +1406,15 @@ async def get_chat(
             status_code=404,
             detail=f"Chat not found: {chat_id}",
         )
+
+    chat_application = getattr(workspace, "chat_application", None)
+    if chat_application is not None:
+        messages = await chat_application.load_transcript(
+            chat_id,
+            backend=str(workspace.config.backend),
+        )
+        status = await workspace.task_tracker.get_status(chat_id)
+        return ChatHistory(messages=messages, status=status)
 
     state = await session.get_session_state_dict(
         chat_spec.session_id,
@@ -1012,15 +1530,14 @@ async def delete_chat(
     # Stop any live run first: a deleted chat must not leave a run behind
     # in the tracker, or it inflates the aggregate running count forever.
     await workspace.task_tracker.request_stop(chat_id)
-    deleted = await mgr.delete_chats(chat_ids=[chat_id])
+    deleted = await delete_chat_records(
+        workspace,
+        mgr,
+        [chat] if chat is not None else [],
+    )
     if not deleted:
         raise HTTPException(
             status_code=404,
             detail=f"Chat not found: {chat_id}",
-        )
-    if chat is not None:
-        await CHECKPOINT_RUNTIME.delete_session_checkpoints(
-            workspace,
-            [(chat.session_id, chat.user_id, chat.channel)],
         )
     return {"deleted": True}

@@ -21,6 +21,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Message, ChatHistory } from "../../../api/types/chat";
+import { ApiError } from "../../../api/request";
 
 vi.mock("../../../api/modules/chat", async (importOriginal) => {
   const actual = await importOriginal<
@@ -109,6 +110,9 @@ function seedSessionList(id: string, sessionId = id): void {
 
 async function mockGetChat(history: ChatHistory) {
   const apiImport = await import("../../../api");
+  vi.spyOn(apiImport.api, "getChatView").mockRejectedValue(
+    new ApiError(503, "chat_v2_unavailable"),
+  );
   return vi.spyOn(apiImport.api, "getChat").mockResolvedValue(history);
 }
 

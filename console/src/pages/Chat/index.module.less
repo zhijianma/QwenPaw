@@ -678,6 +678,20 @@
   }
 }
 
+/* The SDK marks a selected navigation target only after its own smooth-scroll
+ * settling pass. Keep the bounded local window measurable after navigation;
+ * restoring content-visibility here would invalidate the settled position. */
+.chatMessagesArea :global {
+  .qwenpaw-host-anchor-window-stable.qwenpaw-bubble-list > .qwenpaw-bubble {
+    content-visibility: visible !important;
+  }
+
+  .qwenpaw-bubble-list > .qwenpaw-bubble.qwenpaw-host-anchor-target {
+    content-visibility: visible !important;
+    contain-intrinsic-size: none !important;
+  }
+}
+
 /* Fix #4216: Preserve newlines in user message bubbles.
  * The Raw text renderer (used when raw=true) renders \n as plain React
  * children which HTML collapses into whitespace. pre-wrap keeps them. */

@@ -65,6 +65,13 @@ export function createSdkSessionAdapter(
         if (pending.get(id) === token && !session) failed.add(id);
         return session;
       } catch (error) {
+        // Route/owner changes intentionally abort the superseded history
+        // request. Treating that cancellation as a load failure flashes an
+        // error for a healthy Chat while the replacement request is already
+        // taking ownership.
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return undefined;
+        }
         if (pending.get(id) === token) failed.add(id);
         throw error;
       } finally {

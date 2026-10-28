@@ -104,6 +104,9 @@ function createFixture() {
       return chat;
     });
   vi.spyOn(api, "listChats").mockImplementation(async () => [...records]);
+  vi.spyOn(api, "getChatView").mockRejectedValue(
+    new ApiError(503, "chat_v2_unavailable"),
+  );
   const history = vi.spyOn(api, "getChat").mockImplementation(async (id) => {
     trace.push(`GET-idle:${id}`);
     return { status: "idle", messages: [] };

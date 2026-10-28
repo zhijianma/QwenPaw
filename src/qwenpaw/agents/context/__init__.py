@@ -172,19 +172,25 @@ def build_scroll_components(
 
         sc = lcc.scroll_config
         trc = lcc.tool_result_pruning_config
-        db_path = resolve_history_db_path(workspace_dir, sc.db_filename)
-        # First-run notice: scroll is the default as of this release, so agents
-        # that never set ``strategy`` are switched to it silently. The first
-        # time we wire scroll in a workspace we create ``history.db`` there;
-        # warn once (the file's absence is the first-run signal — it never
-        # repeats) so the switch, the new on-disk file, and the rollback path
-        # are all discoverable.
-        if not db_path.exists():
-            _warn_first_run(db_path)
+        from ...app.chats.feature_flags import chat_storage_v2_enabled
+
+        if chat_storage_v2_enabled():
+            from ...app.chats.scroll_bridge import ChatRecallHistoryStore
+
+            history = ChatRecallHistoryStore.resolve(
+                Path(workspace_dir),
+                session_id=session_id,
+                agent_id=str(agent_id or ""),
+            )
+            db_path = history.path
         else:
-            # Existing store: nudge toward a retention window if it grew large.
-            _warn_db_size(db_path)
-        history = HistoryStore(db_path)
+            db_path = resolve_history_db_path(workspace_dir, sc.db_filename)
+            # The legacy backend remains available only while V2 is disabled.
+            if not db_path.exists():
+                _warn_first_run(db_path)
+            else:
+                _warn_db_size(db_path)
+            history = HistoryStore(db_path)
         recall_loop_guard = RecallLoopGuard()
         scratch_root = str(Path(workspace_dir) / ".scroll")
 

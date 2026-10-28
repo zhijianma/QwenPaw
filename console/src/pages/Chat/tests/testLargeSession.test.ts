@@ -41,6 +41,8 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Message, ChatHistory } from "../../../api/types/chat";
+import api from "../../../api";
+import { ApiError } from "../../../api/request";
 
 // Mock chatApi.filePreviewUrl so toDisplayUrl() is deterministic and does
 // not touch real config/token code paths. Preserve all other named exports
@@ -638,6 +640,9 @@ describe("session id + status helpers", () => {
 
 describe("SessionApi.getSession — large payload integration (#5479)", () => {
   beforeEach(() => {
+    vi.spyOn(api, "getChatView").mockRejectedValue(
+      new ApiError(503, "chat_v2_unavailable"),
+    );
     // Reset internal sessionList + caches between tests so the cache never
     // masks a regression introduced by another test.
     (sessionApiDefaultExport as any).sessionList = [];

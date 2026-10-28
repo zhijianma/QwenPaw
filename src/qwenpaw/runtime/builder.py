@@ -713,6 +713,14 @@ class AgentBuilder:
             ),
             "root_session_id": getattr(ctx, "root_session_id", "") or "",
             "root_agent_id": getattr(ctx, "root_agent_id", "") or "",
+            "chat_conversation_id": (
+                getattr(request, "chat_conversation_id", "") or ""
+                if request
+                else ""
+            ),
+            "chat_run_id": (
+                getattr(request, "chat_run_id", "") or "" if request else ""
+            ),
         }
         _ws = getattr(ctx, "workspace_dir", None)
         if _ws is not None:

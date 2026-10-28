@@ -221,6 +221,13 @@ def render_restore(result: RestoreResult) -> str:
         "- Conversation: "
         f"{'would be restored' if result.dry_run else 'restored'}",
     ]
+    if result.conversation_format == "normalized_chat_v2":
+        lines.extend(
+            [
+                "- Chat data: entire Chat timeline",
+                f"- Head turn: `{result.head_turn_id or 'empty'}`",
+            ],
+        )
 
     if changed_paths:
         lines.extend(["", f"**{action} ({len(changed_paths)})**"])
@@ -269,7 +276,7 @@ def render_restore(result: RestoreResult) -> str:
                 "```",
             ],
         )
-    elif conversation_paths:
+    elif conversation_paths or result.view_invalidated:
         lines.extend(
             ["", "Reopen the conversation to load restored messages."],
         )

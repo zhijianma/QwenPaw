@@ -11,6 +11,37 @@ import pytest
 from qwenpaw.security.tool_guard.models import ToolGuardResult
 
 
+def test_builder_propagates_v2_run_identity_to_tool_guard() -> None:
+    from qwenpaw.runtime.builder import AgentBuilder
+
+    request = SimpleNamespace(
+        channel="console",
+        user_id="user",
+        chat_conversation_id="conversation",
+        chat_run_id="run",
+        request_context={},
+        channel_meta=None,
+        channel_instance=None,
+    )
+    context = SimpleNamespace(
+        request=request,
+        session_id="session",
+        agent_id="agent",
+        root_session_id="session",
+        root_agent_id="agent",
+        workspace_dir="/workspace",
+        app_services=None,
+        mode_state={},
+    )
+
+    # pylint: disable-next=protected-access
+    result = AgentBuilder._build_request_context(context)
+
+    assert result["chat_conversation_id"] == "conversation"
+    assert result["chat_run_id"] == "run"
+    assert result["workspace_dir"] == "/workspace"
+
+
 @pytest.mark.asyncio
 async def test_guarded_permissions_offloads_engine_guard():
     """Async permission adapter must not call engine.guard on the loop."""

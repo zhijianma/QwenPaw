@@ -67,6 +67,10 @@ export interface RestoreResult {
   dry_run: boolean;
   include_memory: boolean;
   include_files: boolean;
+  conversation_format: "legacy_session_json" | "normalized_chat_v2";
+  conversation_id: string | null;
+  head_turn_id: string | null;
+  view_invalidated: boolean;
 }
 
 export interface GcResult {

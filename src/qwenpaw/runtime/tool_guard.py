@@ -4,10 +4,120 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+async def _persist_chat_approval(
+    request_context: dict[str, Any],
+    pending: Any,
+    *,
+    state: str,
+    decision: Any = None,
+) -> None:
+    """Persist one V2 approval boundary without changing legacy behavior."""
+    workspace_dir = request_context.get("workspace_dir")
+    conversation_id = str(
+        request_context.get("chat_conversation_id") or "",
+    )
+    run_id = str(request_context.get("chat_run_id") or "")
+    if not workspace_dir or not conversation_id or not run_id:
+        return
+
+    write_task = asyncio.create_task(
+        _write_chat_approval(
+            workspace_dir=Path(str(workspace_dir)),
+            conversation_id=conversation_id,
+            run_id=run_id,
+            pending=pending,
+            state=state,
+            decision=decision,
+        ),
+    )
+    try:
+        await asyncio.shield(write_task)
+    except asyncio.CancelledError:
+        await write_task
+        raise
+
+
+async def _write_chat_approval(
+    *,
+    workspace_dir: Path,
+    conversation_id: str,
+    run_id: str,
+    pending: Any,
+    state: str,
+    decision: Any,
+) -> None:
+    """Write one approval boundary after the caller establishes V2 scope."""
+
+    from ..app.chats.storage import (
+        ChatStoragePaths,
+        append_completed_message,
+        load_runtime_run_handle,
+        reserve_recall_sequences,
+    )
+    from ..schemas import DataContent, Message, MessageType, Role, RunStatus
+
+    paths = ChatStoragePaths(workspace_dir)
+    handle = await asyncio.to_thread(
+        load_runtime_run_handle,
+        paths.conversation(conversation_id),
+        conversation_id=conversation_id,
+        run_id=run_id,
+    )
+    now_us = time.time_ns() // 1_000
+    lease = await asyncio.to_thread(
+        reserve_recall_sequences,
+        paths.catalog,
+        workspace_id=str(paths.workspace.resolve()),
+        count=1,
+        lease_owner=f"approval:{run_id}",
+        now_us=now_us,
+    )
+    decision_value = str(getattr(decision, "value", decision) or "")
+    scope = getattr(pending, "scope", None)
+    scope_value = str(getattr(scope, "value", scope) or "")
+    tool_call = getattr(pending, "extra", {}).get("tool_call", {})
+    message = Message(
+        id=f"approval_{pending.request_id}_{state}",
+        type=MessageType.PROGRESS,
+        role=Role.ASSISTANT,
+        content=[
+            DataContent(
+                data={
+                    "kind": "approval",
+                    "approval_request_id": pending.request_id,
+                    "tool_call_id": str(tool_call.get("id") or ""),
+                    "tool_name": pending.tool_name,
+                    "state": state,
+                    "decision": decision_value or None,
+                    "scope": scope_value or None,
+                    "severity": pending.severity,
+                    "findings_count": pending.findings_count,
+                    "summary": pending.result_summary,
+                },
+            ).completed(),
+        ],
+        status=RunStatus.Completed,
+        metadata={
+            "approval_request_id": pending.request_id,
+            "approval_state": state,
+        },
+    )
+    await asyncio.to_thread(
+        append_completed_message,
+        paths.conversation(conversation_id),
+        handle,
+        message,
+        recall_sequences=list(lease.values()) if lease else [],
+        now_us=now_us,
+    )
 
 
 class GuardedFunctionTool:
@@ -466,6 +576,16 @@ async def _ask_user_approval(
             ),
         },
     )
+    try:
+        await _persist_chat_approval(ctx, pending, state="pending")
+    except BaseException:
+        await asyncio.shield(
+            svc.resolve_request(
+                pending.request_id,
+                ApprovalDecision.DENIED,
+            ),
+        )
+        raise
 
     logger.info(
         "GuardedFunctionTool: awaiting approval for tool=%s session=%s "
@@ -488,6 +608,13 @@ async def _ask_user_approval(
             exc_info=True,
         )
         decision = ApprovalDecision.DENIED
+
+    await _persist_chat_approval(
+        ctx,
+        pending,
+        state="resolved",
+        decision=decision,
+    )
 
     summary = format_findings_summary(guard_result)
     if decision == ApprovalDecision.APPROVED:

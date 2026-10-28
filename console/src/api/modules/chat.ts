@@ -1,4 +1,4 @@
-import { request } from "../request";
+import { ApiError, request } from "../request";
 import { getApiUrl, getApiToken } from "../config";
 import { buildAuthHeaders } from "../authHeaders";
 import type {
@@ -9,6 +9,13 @@ import type {
   ChatUpdateRequest,
   ChatGroup,
   BatchArchiveResult,
+  ChatBlockFragment,
+  ChatBlockItem,
+  ChatHistoryPage,
+  ChatMessageItem,
+  ChatSearchPage,
+  ChatTurnItem,
+  ChatView,
   Session,
 } from "../types";
 
@@ -21,6 +28,40 @@ export interface ChatUploadResponse {
 
 export interface ChatStatusResponse {
   status: "idle" | "running";
+}
+
+interface ChatPageOptions {
+  headTurnId?: string | null;
+  viewVersion?: string | null;
+  cursor?: string | null;
+  targetTurnId?: string | null;
+  limit?: number;
+  signal?: AbortSignal;
+  agentId?: string;
+}
+
+interface ChatLiveOptions {
+  cursor?: { run_epoch: string; event_sequence: number } | null;
+  signal?: AbortSignal;
+  agentId?: string;
+}
+
+function historyQuery(options: ChatPageOptions): string {
+  const params = new URLSearchParams();
+  if (options.headTurnId) params.set("head_turn_id", options.headTurnId);
+  if (options.viewVersion) params.set("view_version", options.viewVersion);
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.targetTurnId) params.set("target_turn_id", options.targetTurnId);
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+function historyRequestOptions(options: ChatPageOptions): RequestInit {
+  return {
+    signal: options.signal,
+    headers: options.agentId ? { "X-Agent-Id": options.agentId } : undefined,
+  };
 }
 
 const FILES_PREVIEW = "/files/preview";
@@ -123,6 +164,109 @@ export const chatApi = {
       },
     );
   },
+
+  getChatView: (
+    chatId: string,
+    options?: { signal?: AbortSignal; agentId?: string },
+  ) =>
+    request<ChatView>(`/chats/${encodeURIComponent(chatId)}/view`, {
+      signal: options?.signal,
+      headers: options?.agentId ? { "X-Agent-Id": options.agentId } : undefined,
+    }),
+
+  createChatCopy: (chatId: string, sourceTurnId: string, agentId?: string) =>
+    request<ChatSpec>(`/chats/${encodeURIComponent(chatId)}/copies`, {
+      method: "POST",
+      headers: agentId ? { "X-Agent-Id": agentId } : undefined,
+      body: JSON.stringify({
+        source_turn_id: sourceTurnId,
+      }),
+    }),
+
+  openChatLive: async (chatId: string, options: ChatLiveOptions) => {
+    const params = new URLSearchParams();
+    if (options.cursor) {
+      params.set("run_epoch", options.cursor.run_epoch);
+      params.set("event_sequence", String(options.cursor.event_sequence));
+    }
+    const query = params.toString();
+    const path = `/chats/${encodeURIComponent(chatId)}/live${
+      query ? `?${query}` : ""
+    }`;
+    const headers = {
+      ...buildAuthHeaders(),
+      ...(options.agentId ? { "X-Agent-Id": options.agentId } : {}),
+    };
+    const response = await fetch(getApiUrl(path), {
+      method: "GET",
+      headers,
+      signal: options.signal,
+    });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new ApiError(
+        response.status,
+        detail || `Chat live request failed: ${response.status}`,
+      );
+    }
+    return response;
+  },
+
+  getTurnPage: (chatId: string, options: ChatPageOptions) =>
+    request<ChatHistoryPage<ChatTurnItem>>(
+      `/chats/${encodeURIComponent(chatId)}/turns${historyQuery(options)}`,
+      historyRequestOptions(options),
+    ),
+
+  searchChats: (
+    query: string,
+    options?: {
+      beforeSeq?: number | null;
+      limit?: number;
+      signal?: AbortSignal;
+      agentId?: string;
+    },
+  ) => {
+    const params = new URLSearchParams({ query });
+    if (options?.beforeSeq !== undefined && options.beforeSeq !== null) {
+      params.set("before_seq", String(options.beforeSeq));
+    }
+    if (options?.limit !== undefined) {
+      params.set("limit", String(options.limit));
+    }
+    return request<ChatSearchPage>(`/chats/search?${params}`, {
+      signal: options?.signal,
+      headers: options?.agentId ? { "X-Agent-Id": options.agentId } : undefined,
+    });
+  },
+
+  getMessagePage: (chatId: string, turnId: string, options: ChatPageOptions) =>
+    request<ChatHistoryPage<ChatMessageItem>>(
+      `/chats/${encodeURIComponent(chatId)}/turns/${encodeURIComponent(
+        turnId,
+      )}/messages${historyQuery(options)}`,
+      historyRequestOptions(options),
+    ),
+
+  getBlockPage: (chatId: string, messageId: string, options: ChatPageOptions) =>
+    request<ChatHistoryPage<ChatBlockItem>>(
+      `/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(
+        messageId,
+      )}/blocks${historyQuery(options)}`,
+      historyRequestOptions(options),
+    ),
+
+  getBlockFragment: (
+    chatId: string,
+    blockId: string,
+    options: ChatPageOptions,
+  ) =>
+    request<ChatHistoryPage<ChatBlockFragment>>(
+      `/chats/${encodeURIComponent(chatId)}/blocks/${encodeURIComponent(
+        blockId,
+      )}/content${historyQuery(options)}`,
+      historyRequestOptions(options),
+    ),
 
   getChatStatus: (
     chatId: string,

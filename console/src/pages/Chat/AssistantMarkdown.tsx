@@ -17,6 +17,7 @@ import {
 import type { ChatListSnapshot } from "../../plugins/registry/chatExtensions";
 import { resolveLanguage } from "../../components/RenderableCodeBlock/language";
 import { CodeBlockSlot, StableCodeBlocks } from "./StableCodeBlocks";
+import { isLargePlainText } from "./assistantPlainText";
 
 import type { ComponentProps } from "@ant-design/x-markdown";
 
@@ -148,6 +149,13 @@ export function AssistantMarkdown({
     scope.current.sessionId = session.id;
   }
   const extended = entries.length > 0;
+  if (!cursor && !isStreaming && isLargePlainText(deferredContent)) {
+    return (
+      <div className="qwenpaw-markdown" style={{ fontSize: baseFontSize }}>
+        {deferredContent}
+      </div>
+    );
+  }
   if (!extended) {
     return (
       <Markdown

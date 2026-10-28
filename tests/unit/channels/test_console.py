@@ -18,6 +18,7 @@ Key patterns demonstrated:
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -662,6 +663,46 @@ class TestConsoleStreaming:
             enabled=True,
             bot_prefix=">> ",
         )
+
+    async def test_v2_turn_usage_does_not_write_legacy_session(
+        self,
+        stream_channel,
+        monkeypatch,
+    ):
+        """V2 terminal materialization owns usage persistence."""
+        from qwenpaw import token_usage
+        from qwenpaw.token_usage import turn_usage
+
+        resolve = AsyncMock(
+            return_value=(
+                {"total_tokens": 1},
+                {"estimated_tokens": 1},
+                object(),
+            ),
+        )
+        persist = AsyncMock()
+        monkeypatch.setattr(turn_usage, "resolve_turn_usage", resolve)
+        monkeypatch.setattr(token_usage, "persist_turn_usage", persist)
+        stream_channel._workspace = SimpleNamespace(
+            session=object(),
+            agent_id="default",
+        )
+        stream_channel._on_turn_usage_ready = MagicMock()
+        request = SimpleNamespace(
+            user_id="default",
+            channel="console",
+            chat_conversation_id="chat-v2",
+        )
+
+        result = await stream_channel._commit_turn_usage(
+            request,
+            "legacy-session",
+            emit_sse=False,
+        )
+
+        assert result == []
+        resolve.assert_awaited_once()
+        persist.assert_not_awaited()
 
     async def test_stream_emits_usage_between_calls(self, stream_channel):
         """Publish each call without consuming the final usage snapshot."""

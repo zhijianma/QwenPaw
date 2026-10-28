@@ -92,6 +92,20 @@ load_envs_into_environ()
 
 async def _sync_scroll_history_on_startup() -> None:
     """Run the composed legacy-history migration outside the event loop."""
+    from .chats.feature_flags import (
+        assert_chat_storage_route_safe,
+        chat_storage_v2_enabled,
+    )
+
+    if chat_storage_v2_enabled():
+        logger.info(
+            "session-sync: legacy Scroll history disabled by Chat V2",
+        )
+        return
+    from ..config.utils import get_agent_dirs
+
+    for workspace_dir in get_agent_dirs():
+        assert_chat_storage_route_safe(workspace_dir)
     try:
         from ..agents.context.scroll.sync import sync_all_scroll_agents
 

@@ -629,9 +629,9 @@ class CommandHandler(ConversationCommandHandlerMixin):
 
         Returns ``None`` unless the strategy is ``scroll`` and a workspace is
         known — in which case the caller stays on native compression. The
-        manager opens the workspace ``history.db``; the caller must
-        ``close()`` it. No model is needed at construction (compaction reads it
-        from the agent passed to ``compress``).
+        manager opens the active history implementation; the caller must
+        ``close()`` it. No model is needed at construction (compaction reads
+        it from the agent passed to ``compress``).
         """
         lcc = agent_config.running.light_context_config
         if (
@@ -640,17 +640,10 @@ class CommandHandler(ConversationCommandHandlerMixin):
         ):
             return None
         try:
-            from .context.scroll.history import HistoryStore
             from .context.scroll.manager import ScrollContextManager
+            from ..app.chats.feature_flags import chat_storage_v2_enabled
 
             sc = lcc.scroll_config
-            history = await run_sync_io(
-                HistoryStore,
-                resolve_history_db_path(
-                    self._workspace_dir,
-                    sc.db_filename,
-                ),
-            )
             # Must match the id normal turns persist under (the builder uses
             # ``ctx.session_id``), so these rows align with the live history.
             session_id = (
@@ -658,6 +651,27 @@ class CommandHandler(ConversationCommandHandlerMixin):
                 or getattr(self._state, "session_id", "")
                 or "local"
             )
+            if chat_storage_v2_enabled():
+                from ..app.chats.scroll_bridge import (
+                    ChatRecallHistoryStore,
+                )
+
+                history = await run_sync_io(
+                    ChatRecallHistoryStore.resolve,
+                    Path(self._workspace_dir),
+                    session_id=session_id,
+                    agent_id=str(self._agent_id or ""),
+                )
+            else:
+                from .context.scroll.history import HistoryStore
+
+                history = await run_sync_io(
+                    HistoryStore,
+                    resolve_history_db_path(
+                        self._workspace_dir,
+                        sc.db_filename,
+                    ),
+                )
             return ScrollContextManager(
                 history=history,
                 session_id=session_id,

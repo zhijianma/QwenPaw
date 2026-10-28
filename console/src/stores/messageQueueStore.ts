@@ -148,6 +148,10 @@ interface PersistedQueue {
   runState: QueueRunState;
 }
 
+function unacceptedItems(items: QueueItem[]): QueueItem[] {
+  return items.filter((item) => item.status !== "sent");
+}
+
 export function getStorageKey(sessionId: string): string {
   return `${STORAGE_PREFIX}${sessionId}`;
 }
@@ -192,11 +196,14 @@ function readQueueFromStorage(sessionId: string): PersistedQueue | null {
       const parsed = JSON.parse(saved);
       // Backward compat: old format was QueueItem[]
       if (Array.isArray(parsed)) {
-        return { items: parsed as QueueItem[], runState: "idle" };
+        return {
+          items: unacceptedItems(parsed as QueueItem[]),
+          runState: "idle",
+        };
       }
       return {
         ...parsed,
-        items: parsed.items.map(restoreQueueIdentity),
+        items: unacceptedItems(parsed.items.map(restoreQueueIdentity)),
       } as PersistedQueue;
     }
   } catch {
@@ -211,10 +218,11 @@ function writeQueueToStorage(
   runState: QueueRunState,
 ) {
   try {
-    if (items.length > 0) {
+    const persistedItems = unacceptedItems(items);
+    if (persistedItems.length > 0) {
       localStorage.setItem(
         getStorageKey(sessionId),
-        JSON.stringify({ items, runState }),
+        JSON.stringify({ items: persistedItems, runState }),
       );
     } else {
       localStorage.removeItem(getStorageKey(sessionId));
@@ -757,6 +765,7 @@ export const useMessageQueueStore = create<MessageQueueStore>((set, get) => ({
   loadFromStorage: (sessionId: string) => {
     const saved = readQueueFromStorage(sessionId);
     if (saved) {
+      if (saved.items.length === 0) removeQueueFromStorage(sessionId);
       set((state) => ({
         queues: { ...state.queues, [sessionId]: saved.items },
         // A failed head requires an explicit retry, including for older saves

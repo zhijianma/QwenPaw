@@ -665,6 +665,7 @@
       "preview": "Предпросмотр",
       "confirm": "Восстановить",
       "conversation": "Диалог",
+      "allBranches": "Весь диалог (веток: {{count}})",
       "memory": "Память",
       "files": "Файлы рабочей области",
       "refreshWarning": "Диалог изменится. После восстановления обновите его.",
@@ -3325,6 +3326,11 @@
     "sidebarPreview": "Видимые пункты"
   },
   "chat": {
+    "copy": {
+      "create": "Скопировать чат с этого хода",
+      "created": "Чат скопирован",
+      "createFailed": "Не удалось скопировать чат"
+    },
     "longTextPaste": {
       "title": "Вставить длинный текст",
       "asText": "Вставить как текст",
@@ -3446,7 +3452,8 @@
       "loading": "Загрузка...",
       "userMessage": "Пользователь",
       "assistantMessage": "Ассистент",
-      "titleMatch": "Название"
+      "titleMatch": "Название",
+      "loadMore": "Загрузить ещё"
     },
     "contextMenu": {
       "open": "Открыть",
@@ -3492,7 +3499,8 @@
     },
     "conversationHistory": "История диалогов",
     "history": {
-      "empty": "Нет истории чатов"
+      "empty": "Нет истории чатов",
+      "returnLatest": "Вернуться к последним сообщениям"
     },
     "sessionGroup": {
       "today": "Сегодня",

@@ -1129,6 +1129,11 @@
     "acceptInvitation": "Bergabung melalui undangan"
   },
   "chat": {
+    "copy": {
+      "create": "Salin percakapan dari giliran ini",
+      "created": "Percakapan disalin",
+      "createFailed": "Tidak dapat menyalin percakapan"
+    },
     "longTextPaste": {
       "title": "Tempel teks panjang",
       "asText": "Tempel sebagai teks",
@@ -1250,7 +1255,8 @@
       "loading": "Memuat...",
       "userMessage": "Pengguna",
       "assistantMessage": "Asisten",
-      "titleMatch": "Judul"
+      "titleMatch": "Judul",
+      "loadMore": "Muat lebih banyak"
     },
     "contextMenu": {
       "open": "Buka",
@@ -1291,7 +1297,8 @@
     },
     "conversationHistory": "Riwayat Percakapan",
     "history": {
-      "empty": "Tidak ada riwayat obrolan"
+      "empty": "Tidak ada riwayat obrolan",
+      "returnLatest": "Kembali ke terbaru"
     },
     "sessionGroup": {
       "today": "Hari ini",
@@ -2377,6 +2384,7 @@
       "preview": "Pratinjau pemulihan",
       "confirm": "Pulihkan",
       "conversation": "Percakapan",
+      "allBranches": "Seluruh percakapan ({{count}} cabang)",
       "memory": "Memori",
       "files": "File workspace",
       "refreshWarning": "Percakapan akan berubah. Muat ulang setelah pemulihan selesai.",

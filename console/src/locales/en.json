@@ -988,6 +988,7 @@
       "preview": "Preview restore",
       "confirm": "Restore checkpoint",
       "conversation": "Conversation",
+      "allBranches": "Entire conversation ({{count}} branches)",
       "memory": "Memory",
       "files": "Workspace files",
       "refreshWarning": "The conversation will change. Refresh the conversation after the restore completes.",
@@ -4100,6 +4101,11 @@
     "system": "System"
   },
   "chat": {
+    "copy": {
+      "create": "Copy chat from this turn",
+      "created": "Chat copied",
+      "createFailed": "Could not copy chat"
+    },
     "sessionSettings": {
       "advanced": "Advanced options",
       "decisionEnabled": "Use decision model"
@@ -4230,7 +4236,8 @@
       "loading": "Loading...",
       "userMessage": "User",
       "assistantMessage": "Assistant",
-      "titleMatch": "Title"
+      "titleMatch": "Title",
+      "loadMore": "Load more"
     },
     "contextMenu": {
       "open": "Open",
@@ -4308,7 +4315,8 @@
     },
     "conversationHistory": "Conversation History",
     "history": {
-      "empty": "No chat history"
+      "empty": "No chat history",
+      "returnLatest": "Return to latest"
     },
     "sessionGroup": {
       "today": "Today",

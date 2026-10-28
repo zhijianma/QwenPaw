@@ -654,6 +654,7 @@
       "preview": "Visualizar restauração",
       "confirm": "Restaurar",
       "conversation": "Conversa",
+      "allBranches": "Conversa completa ({{count}} ramificações)",
       "memory": "Memória",
       "files": "Arquivos do workspace",
       "refreshWarning": "A conversa será alterada. Atualize-a após a restauração.",
@@ -3565,6 +3566,11 @@
     "sidebarPreview": "Itens visíveis"
   },
   "chat": {
+    "copy": {
+      "create": "Copiar chat a partir deste turno",
+      "created": "Chat copiado",
+      "createFailed": "Não foi possível copiar o chat"
+    },
     "longTextPaste": {
       "title": "Colar texto longo",
       "asText": "Colar como texto",
@@ -3686,7 +3692,8 @@
       "loading": "Carregando...",
       "userMessage": "Usuario",
       "assistantMessage": "Assistant",
-      "titleMatch": "Title"
+      "titleMatch": "Title",
+      "loadMore": "Carregar mais"
     },
     "contextMenu": {
       "open": "Abrir",
@@ -3732,7 +3739,8 @@
     },
     "conversationHistory": "Histórico de conversas",
     "history": {
-      "empty": "Sem histórico de conversas"
+      "empty": "Sem histórico de conversas",
+      "returnLatest": "Voltar ao mais recente"
     },
     "sessionGroup": {
       "today": "Hoje",

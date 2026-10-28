@@ -9,6 +9,7 @@ Replaces the GuardedFunctionTool. Each tool call goes through two layers:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from typing import Any, Optional
@@ -866,6 +867,18 @@ async def _ask_user_approval(
             ),
         },
     )
+    from ..runtime.tool_guard import _persist_chat_approval
+
+    try:
+        await _persist_chat_approval(ctx, pending, state="pending")
+    except BaseException:
+        await asyncio.shield(
+            svc.resolve_request(
+                pending.request_id,
+                ApprovalDecision.DENIED,
+            ),
+        )
+        raise
 
     logger.info(
         "PolicyGuardedTool: awaiting approval for tool=%s session=%s "
@@ -888,6 +901,13 @@ async def _ask_user_approval(
             exc_info=True,
         )
         decision = ApprovalDecision.DENIED
+
+    await _persist_chat_approval(
+        ctx,
+        pending,
+        state="resolved",
+        decision=decision,
+    )
 
     # Record user approve/deny result to audit log
     approved = decision == ApprovalDecision.APPROVED

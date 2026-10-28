@@ -10,6 +10,7 @@ import api, {
   type ChatStatus,
   type Message,
 } from "../../../api";
+import { ApiError } from "../../../api/request";
 import { toDisplayUrl } from "../utils";
 import { useAgentStore } from "../../../stores/agentStore";
 import {
@@ -20,6 +21,27 @@ import { useTurnUsageStore } from "../turnUsageStore";
 import { extractClientMessageId } from "../../../utils/clientMessageId";
 import { useMessageQueueStore } from "../../../stores/messageQueueStore";
 import { syncSessionsGlobal } from "../../../stores/sessionListStore";
+import {
+  selectLoadedBackendMessages,
+  selectWindowBackendMessages,
+  type ChatHistoryOwner,
+  useChatHistoryStore,
+} from "../chatHistoryStore";
+import {
+  createTimelineWindowAtTurn,
+  createTailTimelineWindow,
+  extendTimelineWindowNewer,
+  extendTimelineWindowOlder,
+  timelineWindowCanExtendNewer,
+  timelineWindowCanExtendOlder,
+  TURN_PAGE_LIMIT,
+  type ChatTimelineWindow,
+} from "../chatTimelineWindow";
+import {
+  type LoadedChatBlockFragment,
+  validateChatBlockFragment,
+} from "../chatBlockFragments";
+import { ChatLiveController } from "../chatLiveController";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -33,6 +55,8 @@ const ROLE_USER = "user";
 const ROLE_ASSISTANT = "assistant";
 const TYPE_PLUGIN_CALL_OUTPUT = "plugin_call_output";
 const CARD_RESPONSE = "AgentScopeRuntimeResponseCard";
+const CHILD_PREFETCH_BYTE_LIMIT = 2 * 1024 * 1024;
+const CHILD_PREFETCH_REQUEST_LIMIT = 8;
 
 function hydrateTurnUsageFromMessages(
   messages: IAgentScopeRuntimeWebUIMessage[],
@@ -95,6 +119,23 @@ interface ExtendedSession extends IAgentScopeRuntimeWebUISession {
   groupId?: string | null;
   parentSessionId?: string | null;
   rootSessionId?: string | null;
+  /** Loaded from normalized chat_* pagination instead of legacy transcript. */
+  historyV2?: boolean;
+}
+
+export interface HistoryLoadResult {
+  messages: IAgentScopeRuntimeWebUIMessage[];
+  noMore: boolean;
+  replacedWindow: boolean;
+  windowAtLimit: boolean;
+  turnCount: number;
+  atOlderLimit: boolean;
+  atTail: boolean;
+  targetBubbleId?: string;
+}
+
+export interface HistoryLoadOptions {
+  extendOnly?: boolean;
 }
 
 export interface SessionIdentity {
@@ -230,6 +271,8 @@ const toOutputMessage = (msg: Message): OutputMessage => ({
 /** Build a user card (AgentScopeRuntimeRequestCard) from a user message. */
 function buildUserCard(msg: Message): IAgentScopeRuntimeWebUIMessage {
   const contentParts = contentToRequestParts(msg.content);
+  const chatTurnId =
+    typeof msg.chat_turn_id === "string" ? msg.chat_turn_id : undefined;
   return {
     id: (msg.id as string) || generateId(),
     role: "user",
@@ -238,6 +281,7 @@ function buildUserCard(msg: Message): IAgentScopeRuntimeWebUIMessage {
         code: "AgentScopeRuntimeRequestCard",
         data: {
           created_at: parseTimestamp(msg),
+          ...(chatTurnId ? { chat_turn_id: chatTurnId } : {}),
           input: [
             {
               role: "user",
@@ -259,6 +303,7 @@ function buildUserCard(msg: Message): IAgentScopeRuntimeWebUIMessage {
 const buildResponseCard = (
   outputMessages: OutputMessage[],
   terminal?: { status?: string; error?: unknown },
+  turnIdentity?: { turnId: string },
 ): IAgentScopeRuntimeWebUIMessage => {
   const fallbackNow = Math.floor(Date.now() / 1000);
   const maxSeq = outputMessages.reduce(
@@ -284,28 +329,48 @@ const buildResponseCard = (
   }));
 
   const turnUsage = extractTurnUsageFromOutputMessages(outputMessages);
+  const generating =
+    terminal === undefined &&
+    outputMessages.some(
+      (message) =>
+        message.status === "in_progress" || message.status === "running",
+    );
+  const responseId = turnIdentity?.turnId
+    ? `response_${turnIdentity.turnId}`
+    : `response_${String(outputMessages[0]?.id ?? generateId())}`;
 
   return {
-    id: generateId(),
+    id: responseId,
     role: ROLE_ASSISTANT,
     cards: [
       {
         code: CARD_RESPONSE,
         data: {
-          id: `response_${generateId()}`,
+          id: responseId,
           output: normalizedMessages,
           object: "response",
-          status: terminal?.status || "completed",
+          status:
+            terminal?.status || (generating ? "in_progress" : "completed"),
           created_at: firstTs || fallbackNow,
           sequence_number: maxSeq + 1,
           error: terminal?.error ?? null,
           completed_at: finishedAt || lastTs || fallbackNow,
           usage: turnUsage?.usage ?? null,
           context_usage: turnUsage?.context_usage ?? null,
+          ...(turnIdentity
+            ? {
+                chat_turn_id: turnIdentity.turnId,
+              }
+            : {}),
         },
       },
     ],
-    msgStatus: terminal?.status === "canceled" ? "interrupted" : "finished",
+    msgStatus:
+      terminal?.status === "canceled"
+        ? "interrupted"
+        : generating
+        ? "generating"
+        : "finished",
   };
 };
 
@@ -326,10 +391,25 @@ const convertMessages = (
 
   while (i < len) {
     let terminal: { status?: string; error?: unknown } | undefined;
+    let turnIdentity: { turnId: string } | undefined;
     if (messages[i].role === ROLE_USER) {
       const user = messages[i++];
-      const meta = user.metadata as Record<string, any> | undefined;
-      terminal = (meta?.metadata ?? meta)?.qwenpaw_turn_state;
+      if (typeof user.chat_turn_id === "string") {
+        turnIdentity = {
+          turnId: user.chat_turn_id,
+        };
+      }
+      const meta = user.metadata as Record<string, unknown> | undefined;
+      const nested = meta?.metadata;
+      const terminalSource =
+        nested && typeof nested === "object"
+          ? (nested as Record<string, unknown>)
+          : meta;
+      const candidate = terminalSource?.qwenpaw_turn_state;
+      terminal =
+        candidate && typeof candidate === "object"
+          ? (candidate as { status?: string; error?: unknown })
+          : undefined;
       result.push(buildUserCard(user));
     }
     const startIdx = i;
@@ -340,7 +420,7 @@ const convertMessages = (
       terminal?.status === "failed" ||
       terminal?.status === "canceled"
     ) {
-      result.push(buildResponseCard(outputMsgs, terminal));
+      result.push(buildResponseCard(outputMsgs, terminal, turnIdentity));
     }
   }
 
@@ -606,6 +686,20 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     { session: ExtendedSession; timestamp: number; updatedAt: string | null }
   >();
 
+  /** Stable normalized-history owners, addressable by SDK and backend IDs. */
+  private historyOwners = new Map<string, ChatHistoryOwner>();
+  /** Complete-turn windows currently mounted into the SDK MessageList. */
+  private historyWindows = new Map<
+    string,
+    { epoch: number; window: ChatTimelineWindow }
+  >();
+  /** Paths whose tail includes a local, not-yet-persisted user card. */
+  private pendingHistoryPaths = new Set<string>();
+  /** At most one visible V2 stream is retained; keys are backend Chat IDs. */
+  private liveControllers = new Map<string, ChatLiveController>();
+  private calibratingLive = new Map<string, Promise<void>>();
+  private liveTerminalWaiters = new Map<string, Set<() => void>>();
+
   private getCachedConvertedSession(
     backendId: string,
     currentUpdatedAt?: string | null,
@@ -840,6 +934,7 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
    */
   setActiveAgent(agentId: string): SessionOwnerToken {
     if (this.activeOwner.agentId === agentId) return this.activeOwner;
+    this.stopAllLiveControllers();
     this.activeOwner = { agentId, generation: this.activeOwner.generation + 1 };
     // Drop shared in-flight work and short-lived caches from the previous
     // epoch so the new agent never awaits or reuses them. The underlying
@@ -852,6 +947,9 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     this.sessionRequests.clear();
     this.sessionResultCache.clear();
     this.convertedSessionCache.clear();
+    this.historyOwners.clear();
+    this.historyWindows.clear();
+    this.pendingHistoryPaths.clear();
     // Reset the session list and its comparison state as well: the next
     // agent's chats can share a session_id (channel:user_id) with the old
     // list, and merging against leftover entries would transfer the previous
@@ -919,6 +1017,20 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
   setVisibleSession(sessionId: string | null): void {
     if (this.visibleSessionId === sessionId) return;
     this.visibleSessionId = sessionId;
+    const visibleBackendId = sessionId
+      ? this.getEffectiveSessionId(sessionId, null)
+      : null;
+    for (const [backendId, controller] of this.liveControllers) {
+      if (backendId === visibleBackendId) continue;
+      controller.stop();
+      this.liveControllers.delete(backendId);
+      this.settleLiveWaiters(backendId);
+    }
+    for (const backendId of this.calibratingLive.keys()) {
+      if (backendId !== visibleBackendId) {
+        this.settleLiveWaiters(backendId);
+      }
+    }
     const turn = useTurnUsageStore.getState().activeTurn;
     if (
       sessionId &&
@@ -950,11 +1062,237 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     hydrateTurnUsageFromMessages(session.messages ?? []);
   }
 
+  private stopAllLiveControllers(): void {
+    for (const controller of this.liveControllers.values()) controller.stop();
+    this.liveControllers.clear();
+    this.calibratingLive.clear();
+    for (const backendId of this.liveTerminalWaiters.keys()) {
+      this.settleLiveWaiters(backendId);
+    }
+  }
+
+  private settleLiveWaiters(backendId: string): void {
+    const waiters = this.liveTerminalWaiters.get(backendId);
+    this.liveTerminalWaiters.delete(backendId);
+    for (const settle of waiters ?? []) settle();
+  }
+
+  hasNormalizedLive(sessionId: string): boolean {
+    const backendId = this.getRealIdForSession(sessionId) || sessionId;
+    const historyOwner =
+      this.historyOwners.get(sessionId) ?? this.historyOwners.get(backendId);
+    const historyPath = historyOwner
+      ? useChatHistoryStore.getState().paths[historyOwner.key]
+      : undefined;
+    return (
+      this.liveControllers.has(backendId) ||
+      this.calibratingLive.has(backendId) ||
+      Boolean(
+        historyOwner &&
+          historyPath?.ownerEpoch === historyOwner.epoch &&
+          historyPath.view,
+      )
+    );
+  }
+
+  waitForNormalizedLiveTerminal(
+    sessionId: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const backendId = this.getRealIdForSession(sessionId) || sessionId;
+    if (
+      !this.liveControllers.has(backendId) &&
+      !this.calibratingLive.has(backendId)
+    ) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+      const waiters = this.liveTerminalWaiters.get(backendId) ?? new Set();
+      const settle = () => {
+        signal?.removeEventListener("abort", abort);
+        waiters.delete(settle);
+        resolve();
+      };
+      const abort = () => {
+        waiters.delete(settle);
+        if (waiters.size === 0) this.liveTerminalWaiters.delete(backendId);
+        reject(new DOMException("Aborted", "AbortError"));
+      };
+      waiters.add(settle);
+      this.liveTerminalWaiters.set(backendId, waiters);
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) abort();
+    });
+  }
+
+  private publishLiveWindow(
+    displayId: string,
+    historyOwner: ChatHistoryOwner,
+    owner: SessionOwnerToken,
+  ): void {
+    if (
+      !this.isActiveOwner(owner) ||
+      !this.isVisibleSession(displayId) ||
+      useChatHistoryStore.getState().activeKey !== historyOwner.key
+    ) {
+      return;
+    }
+    const entry = this.historyWindows.get(historyOwner.key);
+    const path = useChatHistoryStore.getState().paths[historyOwner.key];
+    if (!path || entry?.epoch !== historyOwner.epoch) return;
+    const messages = convertMessages(
+      selectWindowBackendMessages(
+        historyOwner,
+        entry.window.turnIds,
+        entry.window.atTail,
+      ),
+    );
+    this.onLiveMessages?.(displayId, messages);
+  }
+
+  private async runLiveCalibration(
+    displayId: string,
+    backendId: string,
+    owner: SessionOwnerToken,
+  ): Promise<void> {
+    const current = this.liveControllers.get(backendId);
+    current?.stop();
+    if (this.liveControllers.get(backendId) === current) {
+      this.liveControllers.delete(backendId);
+    }
+    let retryDelay = 250;
+    while (this.isActiveOwner(owner) && this.isVisibleSession(displayId)) {
+      try {
+        const session = await this.refreshSession(displayId);
+        if (
+          session &&
+          this.isActiveOwner(owner) &&
+          this.isVisibleSession(displayId)
+        ) {
+          this.onLiveMessages?.(displayId, session.messages ?? []);
+        }
+        return;
+      } catch (error) {
+        const retryable =
+          (error instanceof DOMException && error.name === "AbortError") ||
+          error instanceof TypeError ||
+          (error instanceof ApiError &&
+            (error.status === 409 || error.status >= 500));
+        if (!retryable) {
+          console.error("Failed to calibrate Chat live history", error);
+          return;
+        }
+        try {
+          const view = await api.getChatView(backendId, {
+            agentId: owner.agentId,
+          });
+          if (!view.active_run) retryDelay = 250;
+        } catch {
+          // Keep the bounded backoff below; the next refresh retries both
+          // the durable history read and the authoritative run-state probe.
+        }
+      }
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, retryDelay);
+      });
+      retryDelay = Math.min(retryDelay * 2, 4000);
+    }
+  }
+
+  private async calibrateLiveHistory(
+    displayId: string,
+    backendId: string,
+    owner: SessionOwnerToken,
+  ): Promise<void> {
+    const existing = this.calibratingLive.get(backendId);
+    if (existing) return existing;
+    const calibration = this.runLiveCalibration(displayId, backendId, owner);
+    this.calibratingLive.set(backendId, calibration);
+    try {
+      await calibration;
+    } finally {
+      if (this.calibratingLive.get(backendId) === calibration) {
+        this.calibratingLive.delete(backendId);
+      }
+      // A successful running refresh installs a replacement controller. If
+      // no controller remains, the run is terminal, inaccessible, or the
+      // user navigated away, so reconnect waiters must not hang forever.
+      if (!this.liveControllers.has(backendId)) {
+        this.settleLiveWaiters(backendId);
+      }
+    }
+  }
+
+  private configureLiveController(
+    displayId: string,
+    backendId: string,
+    historyOwner: ChatHistoryOwner,
+    owner: SessionOwnerToken,
+    enabled: boolean,
+  ): void {
+    const previous = this.liveControllers.get(backendId);
+    previous?.stop();
+    this.liveControllers.delete(backendId);
+    if (!enabled || !this.isVisibleSession(displayId)) {
+      useChatHistoryStore.getState().clearLive(historyOwner);
+      return;
+    }
+    const controller = new ChatLiveController(
+      backendId,
+      (cursor, signal) =>
+        api.openChatLive(backendId, {
+          cursor,
+          signal,
+          agentId: owner.agentId,
+        }),
+      {
+        onSync: async (sync) => {
+          if (!this.isActiveOwner(owner)) return;
+          if (
+            !useChatHistoryStore.getState().applyLiveSync(historyOwner, sync)
+          ) {
+            await this.calibrateLiveHistory(displayId, backendId, owner);
+            return;
+          }
+          if (sync.terminal) return;
+          this.publishLiveWindow(displayId, historyOwner, owner);
+        },
+        onEvents: async (events) => {
+          if (!this.isActiveOwner(owner)) return;
+          if (
+            !useChatHistoryStore
+              .getState()
+              .applyLiveEvents(historyOwner, events)
+          ) {
+            await this.calibrateLiveHistory(displayId, backendId, owner);
+            return;
+          }
+          if (events.some((event) => event.kind === "terminal")) return;
+          this.publishLiveWindow(displayId, historyOwner, owner);
+        },
+        onResync: async () => {
+          await this.calibrateLiveHistory(displayId, backendId, owner);
+        },
+        onTerminal: async () => {
+          await this.calibrateLiveHistory(displayId, backendId, owner);
+          this.settleLiveWaiters(backendId);
+        },
+      },
+    );
+    this.liveControllers.set(backendId, controller);
+    void controller.start().finally(() => {
+      if (this.liveControllers.get(backendId) === controller) {
+        this.liveControllers.delete(backendId);
+      }
+    });
+  }
+
   /**
    * Test-only: restores ownership, in-flight work, caches, and callbacks to a
    * pristine page-load state so tests cannot leak state into each other.
    */
   resetForTests(): void {
+    this.stopAllLiveControllers();
     this.visibleSessionId = undefined;
     this.activeOwner = { agentId: "", generation: 0 };
     this.resolvedRouteSession = null;
@@ -968,6 +1306,9 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     this.sessionRequests.clear();
     this.sessionResultCache.clear();
     this.convertedSessionCache.clear();
+    this.historyOwners.clear();
+    this.historyWindows.clear();
+    this.pendingHistoryPaths.clear();
     this.sessionList = [];
     this._prevReturnedList = null;
     this.lastSelectedIds.clear();
@@ -979,6 +1320,7 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     this.onSessionRemoved = null;
     this.onSessionSelected = null;
     this.onSessionCreated = null;
+    this.onLiveMessages = null;
   }
 
   /**
@@ -1063,6 +1405,7 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     {
       promise: Promise<IAgentScopeRuntimeWebUISession>;
       owner: SessionOwnerToken;
+      kind: "get" | "refresh";
     }
   > = new Map();
 
@@ -1091,6 +1434,11 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
    * Consumers can register here to update the URL with the new session id.
    */
   onSessionCreated: ((sessionId: string) => void) | null = null;
+
+  /** Publishes a bounded normalized live window to the visible SDK host. */
+  onLiveMessages:
+    | ((sessionId: string, messages: IAgentScopeRuntimeWebUIMessage[]) => void)
+    | null = null;
 
   /**
    * When reconnecting to a running conversation, the backend history may not
@@ -1473,11 +1821,12 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     for (let i = 0; i < prev.length; i++) {
       const a = prev[i] as ExtendedSession;
       const b = next[i] as ExtendedSession;
+      const bothRunning = a.status === "running" && b.status === "running";
       if (
         a.id !== b.id ||
         a.name !== b.name ||
         a.status !== b.status ||
-        a.updatedAt !== b.updatedAt ||
+        (!bothRunning && a.updatedAt !== b.updatedAt) ||
         a.lastFinishedAt !== b.lastFinishedAt ||
         a.createdAt !== b.createdAt ||
         a.pinned !== b.pinned ||
@@ -1545,14 +1894,42 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
   /** Refresh after another sender has owned this Chat, without selecting it. */
   async refreshSession(sessionId: string, signal?: AbortSignal) {
     const owner = this.getActiveOwner();
-    const inFlight = this.sessionRequests.get(sessionId);
-    if (inFlight) await inFlight.promise.catch(() => undefined);
+    let requestKey = this.getEffectiveSessionId(sessionId);
+    const inFlight =
+      this.sessionRequests.get(sessionId) ??
+      this.sessionRequests.get(requestKey);
+    if (inFlight && this.isActiveOwner(inFlight.owner)) {
+      if (inFlight.kind === "refresh") return inFlight.promise;
+      await inFlight.promise.catch(() => undefined);
+    }
     if (signal?.aborted || !this.isActiveOwner(owner)) return undefined;
     const backendId = this.getRealIdForSession(sessionId) || sessionId;
+    requestKey = backendId;
+    const requestKeys = new Set([sessionId, requestKey]);
+    const joinedRefresh = [...requestKeys]
+      .map((key) => this.sessionRequests.get(key))
+      .find((entry) => entry?.kind === "refresh");
+    if (
+      joinedRefresh?.kind === "refresh" &&
+      this.isActiveOwner(joinedRefresh.owner)
+    ) {
+      return joinedRefresh.promise;
+    }
     this.sessionResultCache.delete(sessionId);
     this.sessionResultCache.delete(backendId);
     this.invalidateConvertedCache(backendId);
-    return this._doGetSession(sessionId, signal, owner);
+    const requestPromise = this._doGetSession(sessionId, signal, owner);
+    const entry = { promise: requestPromise, owner, kind: "refresh" as const };
+    requestKeys.forEach((key) => this.sessionRequests.set(key, entry));
+    try {
+      return await requestPromise;
+    } finally {
+      requestKeys.forEach((key) => {
+        if (this.sessionRequests.get(key) === entry) {
+          this.sessionRequests.delete(key);
+        }
+      });
+    }
   }
 
   async getSession(sessionId: string, signal?: AbortSignal) {
@@ -1574,14 +1951,18 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     // Reuse an in-flight request only within the same ownership epoch, so a
     // new agent never adopts a request (and its captured owner) started by a
     // previous agent.
-    const existingRequest = this.sessionRequests.get(sessionId);
+    const requestKey = this.getEffectiveSessionId(sessionId);
+    const requestKeys = new Set([sessionId, requestKey]);
+    const existingRequest = [...requestKeys]
+      .map((key) => this.sessionRequests.get(key))
+      .find((request) => request !== undefined);
     if (existingRequest && this.isActiveOwner(existingRequest.owner)) {
       return existingRequest.promise;
     }
 
     const requestPromise = this._doGetSession(sessionId, signal, owner);
-    const entry = { promise: requestPromise, owner };
-    this.sessionRequests.set(sessionId, entry);
+    const entry = { promise: requestPromise, owner, kind: "get" as const };
+    requestKeys.forEach((key) => this.sessionRequests.set(key, entry));
 
     try {
       const session = await requestPromise;
@@ -1608,9 +1989,11 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     } finally {
       // Delete by entry identity so a stale request cannot remove a newer
       // epoch's in-flight entry stored under the same key.
-      if (this.sessionRequests.get(sessionId) === entry) {
-        this.sessionRequests.delete(sessionId);
-      }
+      requestKeys.forEach((key) => {
+        if (this.sessionRequests.get(key) === entry) {
+          this.sessionRequests.delete(key);
+        }
+      });
     }
   }
 
@@ -1628,7 +2011,6 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     signal: AbortSignal | undefined,
     owner: SessionOwnerToken,
   ): Promise<ExtendedSession> {
-    // Check LRU cache for non-generating sessions
     const isIdle = !listEntry?.generating;
     if (isIdle) {
       const cached = this.getCachedConvertedSession(
@@ -1636,17 +2018,270 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
         listEntry?.updatedAt,
       );
       if (cached) {
-        // Update mutable fields that may differ
-        cached.id = displayId;
-        if (listEntry?.name) cached.name = listEntry.name;
-        cached.realId =
-          listEntry?.realId ??
-          (backendId !== displayId ? backendId : cached.realId);
-        this.applySessionView(cached, owner);
-        return cached;
+        let historyReady = true;
+        if (cached.historyV2) {
+          const historyOwner = useChatHistoryStore
+            .getState()
+            .beginPath(owner.agentId, backendId);
+          const historyPath =
+            useChatHistoryStore.getState().paths[historyOwner.key];
+          if (!historyPath?.view) {
+            this.invalidateConvertedCache(backendId);
+            historyReady = false;
+          } else {
+            this.historyOwners.set(displayId, historyOwner);
+            this.historyOwners.set(backendId, historyOwner);
+            this.historyWindows.set(historyOwner.key, {
+              epoch: historyOwner.epoch,
+              window: createTailTimelineWindow(historyPath),
+            });
+          }
+        }
+        if (historyReady) {
+          cached.id = displayId;
+          if (listEntry?.name) cached.name = listEntry.name;
+          cached.realId =
+            listEntry?.realId ??
+            (backendId !== displayId ? backendId : cached.realId);
+          this.applySessionView(cached, owner);
+          return cached;
+        }
       }
     }
 
+    try {
+      return await this.fetchAndBuildPaginatedSession(
+        displayId,
+        backendId,
+        listEntry,
+        signal,
+        owner,
+      );
+    } catch (error) {
+      // A rolling downgrade can remove the V2 application while the Console
+      // bundle is still open. Only that explicit capability failure may use
+      // the legacy transcript endpoint; authorization and data errors must
+      // remain visible instead of being masked by a second read path.
+      const capabilityUnavailable =
+        error instanceof ApiError &&
+        error.status === 503 &&
+        ["chat_v2_unavailable", "chat_v2_ui_disabled"].some((code) =>
+          error.message.includes(code),
+        );
+      if (!capabilityUnavailable) throw error;
+    }
+
+    return this.fetchAndBuildLegacySession(
+      displayId,
+      backendId,
+      listEntry,
+      signal,
+      owner,
+    );
+  }
+
+  private assertHistoryOwner(
+    displayId: string,
+    backendId: string,
+    owner: SessionOwnerToken,
+    signal?: AbortSignal,
+  ): void {
+    if (
+      signal?.aborted ||
+      !this.isActiveOwner(owner) ||
+      this.getEffectiveSessionId(displayId) !== backendId
+    ) {
+      throw new DOMException("Aborted", "AbortError");
+    }
+  }
+
+  private async fetchAndBuildPaginatedSession(
+    displayId: string,
+    backendId: string,
+    listEntry: ExtendedSession | undefined,
+    signal: AbortSignal | undefined,
+    owner: SessionOwnerToken,
+  ): Promise<ExtendedSession> {
+    const view = await api.getChatView(backendId, {
+      signal,
+      agentId: owner.agentId,
+    });
+    this.assertHistoryOwner(displayId, backendId, owner, signal);
+
+    const historyState = useChatHistoryStore.getState();
+    const currentHistoryOwner =
+      this.historyOwners.get(displayId) ?? this.historyOwners.get(backendId);
+    const currentHistoryPath = currentHistoryOwner
+      ? historyState.paths[currentHistoryOwner.key]
+      : undefined;
+    const historyOwner =
+      currentHistoryOwner?.agentId === owner.agentId &&
+      currentHistoryOwner.conversationId === backendId &&
+      currentHistoryPath?.ownerEpoch === currentHistoryOwner.epoch &&
+      currentHistoryPath.view?.view_version === view.view_version &&
+      historyState.activeKey === currentHistoryOwner.key
+        ? currentHistoryOwner
+        : historyState.beginPath(owner.agentId, backendId, view.view_version);
+    const page = await api.getTurnPage(backendId, {
+      headTurnId: view.head_turn_id,
+      viewVersion: view.view_version,
+      limit: TURN_PAGE_LIMIT,
+      signal,
+      agentId: owner.agentId,
+    });
+    this.assertHistoryOwner(displayId, backendId, owner, signal);
+    if (!useChatHistoryStore.getState().mergeTurnPage(historyOwner, page)) {
+      throw new DOMException("History owner changed", "AbortError");
+    }
+    await this.prefetchIncompleteChildren(
+      backendId,
+      historyOwner,
+      owner,
+      signal,
+    );
+
+    this.historyOwners.set(displayId, historyOwner);
+    this.historyOwners.set(backendId, historyOwner);
+    const historyPath = useChatHistoryStore.getState().paths[historyOwner.key];
+    if (!historyPath) {
+      throw new DOMException("History owner changed", "AbortError");
+    }
+    const historyWindow = createTailTimelineWindow(historyPath);
+    this.historyWindows.set(historyOwner.key, {
+      epoch: historyOwner.epoch,
+      window: historyWindow,
+    });
+    const backendMessages = selectLoadedBackendMessages(historyOwner);
+    for (const id of new Set([displayId, backendId])) {
+      useMessageQueueStore
+        .getState()
+        .reconcileHistory(id, owner.agentId, backendMessages);
+    }
+
+    const generating = view.active_run !== null;
+    const messages = convertMessages(
+      selectWindowBackendMessages(
+        historyOwner,
+        historyWindow.turnIds,
+        historyWindow.atTail,
+      ),
+    );
+    const patchedPending = this.patchLastUserMessage(messages, generating, [
+      backendId,
+      displayId,
+      listEntry?.realId,
+    ]);
+    if (patchedPending) this.pendingHistoryPaths.add(historyOwner.key);
+    else this.pendingHistoryPaths.delete(historyOwner.key);
+    const session: ExtendedSession = {
+      id: displayId,
+      name: listEntry?.name || view.display_name || DEFAULT_SESSION_NAME,
+      sessionId: listEntry?.sessionId || displayId,
+      userId: listEntry?.userId || DEFAULT_USER_ID,
+      channel: listEntry?.channel || DEFAULT_CHANNEL,
+      messages,
+      meta: listEntry?.meta || {},
+      realId:
+        listEntry?.realId ?? (backendId !== displayId ? backendId : undefined),
+      generating,
+      historyV2: true,
+    };
+    this.applySessionView(session, owner);
+    this.configureLiveController(
+      displayId,
+      backendId,
+      historyOwner,
+      owner,
+      Boolean(view.capabilities.live_resync && view.active_run),
+    );
+    if (!generating && !patchedPending && this.isActiveOwner(owner)) {
+      this.setCachedConvertedSession(
+        backendId,
+        session,
+        listEntry?.updatedAt ?? null,
+      );
+    }
+    return session;
+  }
+
+  private async prefetchIncompleteChildren(
+    backendId: string,
+    historyOwner: ChatHistoryOwner,
+    owner: SessionOwnerToken,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    let fetchedBytes = 0;
+    let requests = 0;
+    while (
+      fetchedBytes < CHILD_PREFETCH_BYTE_LIMIT &&
+      requests < CHILD_PREFETCH_REQUEST_LIMIT
+    ) {
+      if (signal?.aborted || !this.isActiveOwner(owner)) {
+        throw new DOMException("Aborted", "AbortError");
+      }
+      const path = useChatHistoryStore.getState().paths[historyOwner.key];
+      if (!path || path.ownerEpoch !== historyOwner.epoch || !path.view) {
+        throw new DOMException("History owner changed", "AbortError");
+      }
+
+      let progressed = false;
+      for (const turnId of [...path.turnOrder].reverse()) {
+        const turn = path.turnsById[turnId];
+        if (!turn) continue;
+        for (const messageId of turn.messageIds) {
+          const message = path.messagesById[messageId];
+          if (!message?.child_cursor) continue;
+          const blockPage = await api.getBlockPage(backendId, messageId, {
+            headTurnId: path.view.head_turn_id,
+            viewVersion: path.view.view_version,
+            cursor: message.child_cursor,
+            signal,
+            agentId: owner.agentId,
+          });
+          if (
+            !useChatHistoryStore
+              .getState()
+              .mergeBlockPage(historyOwner, messageId, blockPage)
+          ) {
+            throw new DOMException("History view changed", "AbortError");
+          }
+          fetchedBytes += blockPage.bytes;
+          requests += 1;
+          progressed = true;
+          break;
+        }
+        if (progressed) break;
+        if (!turn.child_cursor) continue;
+        const messagePage = await api.getMessagePage(backendId, turnId, {
+          headTurnId: path.view.head_turn_id,
+          viewVersion: path.view.view_version,
+          cursor: turn.child_cursor,
+          signal,
+          agentId: owner.agentId,
+        });
+        if (
+          !useChatHistoryStore
+            .getState()
+            .mergeMessagePage(historyOwner, turnId, messagePage)
+        ) {
+          throw new DOMException("History view changed", "AbortError");
+        }
+        fetchedBytes += messagePage.bytes;
+        requests += 1;
+        progressed = true;
+        break;
+      }
+      if (!progressed) return;
+    }
+  }
+
+  private async fetchAndBuildLegacySession(
+    displayId: string,
+    backendId: string,
+    listEntry: ExtendedSession | undefined,
+    signal: AbortSignal | undefined,
+    owner: SessionOwnerToken,
+  ): Promise<ExtendedSession> {
     const chatHistory = await api.getChat(backendId, {
       signal,
       include_app_owned: false,
@@ -1701,6 +2336,466 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
 
     this.applySessionView(session, owner);
     return session;
+  }
+
+  /** Load the next older normalized window for the active SDK session. */
+  async loadOlderHistory(
+    sessionId: string,
+    options: HistoryLoadOptions = {},
+  ): Promise<HistoryLoadResult> {
+    const owner = this.getActiveOwner();
+    const backendId = this.getRealIdForSession(sessionId) || sessionId;
+    const historyOwner =
+      this.historyOwners.get(sessionId) ?? this.historyOwners.get(backendId);
+    if (
+      !historyOwner ||
+      historyOwner.agentId !== owner.agentId ||
+      this.pendingHistoryPaths.has(historyOwner.key)
+    ) {
+      return {
+        messages: [],
+        noMore: true,
+        replacedWindow: false,
+        windowAtLimit: false,
+        turnCount: 0,
+        atOlderLimit: true,
+        atTail: true,
+      };
+    }
+    const path = useChatHistoryStore.getState().paths[historyOwner.key];
+    if (!path || path.ownerEpoch !== historyOwner.epoch || !path.view) {
+      return {
+        messages: [],
+        noMore: true,
+        replacedWindow: false,
+        windowAtLimit: false,
+        turnCount: 0,
+        atOlderLimit: true,
+        atTail: true,
+      };
+    }
+    const entry = this.historyWindows.get(historyOwner.key);
+    const currentWindow =
+      entry?.epoch === historyOwner.epoch
+        ? entry.window
+        : createTailTimelineWindow(path);
+    const firstIndex = path.turnOrder.indexOf(currentWindow.turnIds[0]);
+    if (firstIndex <= 0 && path.olderCursor) {
+      const page = await api.getTurnPage(backendId, {
+        headTurnId: path.view.head_turn_id,
+        viewVersion: path.view.view_version,
+        cursor: path.olderCursor,
+        limit: TURN_PAGE_LIMIT,
+        agentId: owner.agentId,
+      });
+      if (!this.isActiveOwner(owner)) {
+        throw new DOMException("Agent changed", "AbortError");
+      }
+      const merged = useChatHistoryStore
+        .getState()
+        .mergeTurnPage(historyOwner, page, "older");
+      if (!merged) {
+        throw new DOMException("History view changed", "AbortError");
+      }
+      await this.prefetchIncompleteChildren(backendId, historyOwner, owner);
+    }
+    const updatedPath = useChatHistoryStore.getState().paths[historyOwner.key];
+    if (!updatedPath) {
+      throw new DOMException("History owner changed", "AbortError");
+    }
+    const extendedWindow = extendTimelineWindowOlder(
+      updatedPath,
+      currentWindow,
+      false,
+    );
+    const windowExtended =
+      extendedWindow.turnIds.join("\u0000") !==
+      currentWindow.turnIds.join("\u0000");
+    const nextWindow =
+      !options.extendOnly && !windowExtended
+        ? extendTimelineWindowOlder(updatedPath, currentWindow, true)
+        : extendedWindow;
+    this.historyWindows.set(historyOwner.key, {
+      epoch: historyOwner.epoch,
+      window: nextWindow,
+    });
+    const replacedWindow =
+      nextWindow.turnIds.join("\u0000") !==
+      currentWindow.turnIds.join("\u0000");
+    const canExtend = timelineWindowCanExtendOlder(updatedPath, nextWindow);
+    const messages = convertMessages(
+      selectWindowBackendMessages(
+        historyOwner,
+        nextWindow.turnIds,
+        nextWindow.atTail,
+      ),
+    );
+    return {
+      messages,
+      noMore: nextWindow.atOlderLimit,
+      replacedWindow,
+      windowAtLimit: canExtend && !replacedWindow,
+      turnCount: nextWindow.turnIds.length,
+      atOlderLimit: nextWindow.atOlderLimit,
+      atTail: nextWindow.atTail,
+    };
+  }
+
+  /** Load or reveal the next newer normalized window. */
+  async loadNewerHistory(
+    sessionId: string,
+    options: HistoryLoadOptions = {},
+  ): Promise<HistoryLoadResult> {
+    const owner = this.getActiveOwner();
+    const backendId = this.getRealIdForSession(sessionId) || sessionId;
+    const historyOwner =
+      this.historyOwners.get(sessionId) ?? this.historyOwners.get(backendId);
+    if (
+      !historyOwner ||
+      historyOwner.agentId !== owner.agentId ||
+      this.pendingHistoryPaths.has(historyOwner.key)
+    ) {
+      return {
+        messages: [],
+        noMore: true,
+        replacedWindow: false,
+        windowAtLimit: false,
+        turnCount: 0,
+        atOlderLimit: true,
+        atTail: true,
+      };
+    }
+    const path = useChatHistoryStore.getState().paths[historyOwner.key];
+    if (!path || path.ownerEpoch !== historyOwner.epoch || !path.view) {
+      return {
+        messages: [],
+        noMore: true,
+        replacedWindow: false,
+        windowAtLimit: false,
+        turnCount: 0,
+        atOlderLimit: true,
+        atTail: true,
+      };
+    }
+    const entry = this.historyWindows.get(historyOwner.key);
+    const currentWindow =
+      entry?.epoch === historyOwner.epoch
+        ? entry.window
+        : createTailTimelineWindow(path);
+    const lastIndex = path.turnOrder.indexOf(
+      currentWindow.turnIds[currentWindow.turnIds.length - 1],
+    );
+    if (lastIndex >= path.turnOrder.length - 1 && path.newerCursor) {
+      const page = await api.getTurnPage(backendId, {
+        headTurnId: path.view.head_turn_id,
+        viewVersion: path.view.view_version,
+        cursor: path.newerCursor,
+        limit: TURN_PAGE_LIMIT,
+        agentId: owner.agentId,
+      });
+      if (!this.isActiveOwner(owner)) {
+        throw new DOMException("Agent changed", "AbortError");
+      }
+      const merged = useChatHistoryStore
+        .getState()
+        .mergeTurnPage(historyOwner, page, "newer");
+      if (!merged) {
+        throw new DOMException("History view changed", "AbortError");
+      }
+      await this.prefetchIncompleteChildren(backendId, historyOwner, owner);
+    }
+    const updatedPath = useChatHistoryStore.getState().paths[historyOwner.key];
+    if (!updatedPath) {
+      throw new DOMException("History owner changed", "AbortError");
+    }
+    const extendedWindow = extendTimelineWindowNewer(
+      updatedPath,
+      currentWindow,
+      false,
+    );
+    const windowExtended =
+      extendedWindow.turnIds.join("\u0000") !==
+      currentWindow.turnIds.join("\u0000");
+    const nextWindow =
+      !options.extendOnly && !windowExtended
+        ? extendTimelineWindowNewer(updatedPath, currentWindow, true)
+        : extendedWindow;
+    this.historyWindows.set(historyOwner.key, {
+      epoch: historyOwner.epoch,
+      window: nextWindow,
+    });
+    const replacedWindow =
+      nextWindow.turnIds.join("\u0000") !==
+      currentWindow.turnIds.join("\u0000");
+    const canExtend = timelineWindowCanExtendNewer(updatedPath, nextWindow);
+    const messages = convertMessages(
+      selectWindowBackendMessages(
+        historyOwner,
+        nextWindow.turnIds,
+        nextWindow.atTail,
+      ),
+    );
+    return {
+      messages,
+      noMore: nextWindow.atTail,
+      replacedWindow,
+      windowAtLimit: canExtend && !replacedWindow,
+      turnCount: nextWindow.turnIds.length,
+      atOlderLimit: nextWindow.atOlderLimit,
+      atTail: nextWindow.atTail,
+    };
+  }
+
+  /** Re-read the fixed view tail and atomically reset the mounted window. */
+  async returnToLatestHistory(sessionId: string): Promise<HistoryLoadResult> {
+    const owner = this.getActiveOwner();
+    const backendId = this.getRealIdForSession(sessionId) || sessionId;
+    const historyOwner =
+      this.historyOwners.get(sessionId) ?? this.historyOwners.get(backendId);
+    const path = historyOwner
+      ? useChatHistoryStore.getState().paths[historyOwner.key]
+      : undefined;
+    if (
+      !historyOwner ||
+      historyOwner.agentId !== owner.agentId ||
+      !path ||
+      path.ownerEpoch !== historyOwner.epoch ||
+      !path.view
+    ) {
+      return {
+        messages: [],
+        noMore: true,
+        replacedWindow: false,
+        windowAtLimit: false,
+        turnCount: 0,
+        atOlderLimit: true,
+        atTail: true,
+      };
+    }
+    const latestView = await api.getChatView(backendId, {
+      agentId: owner.agentId,
+    });
+    if (!this.isActiveOwner(owner)) {
+      throw new DOMException("Agent changed", "AbortError");
+    }
+    if (latestView.view_version !== path.view.view_version) {
+      const session = await this.refreshSession(sessionId);
+      const refreshedOwner =
+        this.historyOwners.get(sessionId) ?? this.historyOwners.get(backendId);
+      const refreshedEntry = refreshedOwner
+        ? this.historyWindows.get(refreshedOwner.key)
+        : undefined;
+      if (!session || !refreshedOwner || !refreshedEntry) {
+        throw new DOMException("History owner changed", "AbortError");
+      }
+      return {
+        messages: session.messages ?? [],
+        noMore: refreshedEntry.window.atTail,
+        replacedWindow: true,
+        windowAtLimit: false,
+        turnCount: refreshedEntry.window.turnIds.length,
+        atOlderLimit: refreshedEntry.window.atOlderLimit,
+        atTail: refreshedEntry.window.atTail,
+      };
+    }
+    const page = await api.getTurnPage(backendId, {
+      headTurnId: path.view.head_turn_id,
+      viewVersion: path.view.view_version,
+      limit: TURN_PAGE_LIMIT,
+      agentId: owner.agentId,
+    });
+    if (!this.isActiveOwner(owner)) {
+      throw new DOMException("Agent changed", "AbortError");
+    }
+    const merged = useChatHistoryStore
+      .getState()
+      .mergeTurnPage(historyOwner, page, "initial");
+    if (!merged) {
+      throw new DOMException("History view changed", "AbortError");
+    }
+    await this.prefetchIncompleteChildren(backendId, historyOwner, owner);
+    const updatedPath = useChatHistoryStore.getState().paths[historyOwner.key];
+    if (!updatedPath) {
+      throw new DOMException("History owner changed", "AbortError");
+    }
+    const nextWindow = createTailTimelineWindow(updatedPath);
+    this.historyWindows.set(historyOwner.key, {
+      epoch: historyOwner.epoch,
+      window: nextWindow,
+    });
+    return {
+      messages: convertMessages(
+        selectWindowBackendMessages(
+          historyOwner,
+          nextWindow.turnIds,
+          nextWindow.atTail,
+        ),
+      ),
+      noMore: nextWindow.atTail,
+      replacedWindow: true,
+      windowAtLimit: false,
+      turnCount: nextWindow.turnIds.length,
+      atOlderLimit: nextWindow.atOlderLimit,
+      atTail: nextWindow.atTail,
+    };
+  }
+
+  /** Hydrate one fixed-view turn window for data-layer navigation. */
+  async loadHistoryAtTurn(
+    sessionId: string,
+    turnId: string,
+  ): Promise<HistoryLoadResult> {
+    const owner = this.getActiveOwner();
+    const backendId = this.getRealIdForSession(sessionId) || sessionId;
+    const historyOwner =
+      this.historyOwners.get(sessionId) ?? this.historyOwners.get(backendId);
+    const path = historyOwner
+      ? useChatHistoryStore.getState().paths[historyOwner.key]
+      : undefined;
+    if (
+      !historyOwner ||
+      historyOwner.agentId !== owner.agentId ||
+      !path ||
+      path.ownerEpoch !== historyOwner.epoch ||
+      !path.view
+    ) {
+      return {
+        messages: [],
+        noMore: true,
+        replacedWindow: false,
+        windowAtLimit: false,
+        turnCount: 0,
+        atOlderLimit: true,
+        atTail: true,
+      };
+    }
+    const page = await api.getTurnPage(backendId, {
+      headTurnId: path.view.head_turn_id,
+      viewVersion: path.view.view_version,
+      targetTurnId: turnId,
+      limit: TURN_PAGE_LIMIT,
+      agentId: owner.agentId,
+    });
+    if (!this.isActiveOwner(owner)) {
+      throw new DOMException("Agent changed", "AbortError");
+    }
+    const merged = useChatHistoryStore
+      .getState()
+      .mergeTurnPage(historyOwner, page, "initial");
+    if (!merged) {
+      throw new DOMException("History view changed", "AbortError");
+    }
+    await this.prefetchIncompleteChildren(backendId, historyOwner, owner);
+    const updatedPath = useChatHistoryStore.getState().paths[historyOwner.key];
+    const targetTurn = updatedPath?.turnsById[turnId];
+    if (!updatedPath || !targetTurn) {
+      throw new Error("Target Chat turn was not returned by the server");
+    }
+    const nextWindow = createTimelineWindowAtTurn(updatedPath, turnId);
+    this.historyWindows.set(historyOwner.key, {
+      epoch: historyOwner.epoch,
+      window: nextWindow,
+    });
+    const targetBubbleId = targetTurn.messageIds.find(
+      (messageId) => updatedPath.messagesById[messageId]?.role === "user",
+    );
+    return {
+      messages: convertMessages(
+        selectWindowBackendMessages(
+          historyOwner,
+          nextWindow.turnIds,
+          nextWindow.atTail,
+        ),
+      ),
+      noMore: nextWindow.atOlderLimit,
+      replacedWindow: true,
+      windowAtLimit: false,
+      turnCount: nextWindow.turnIds.length,
+      atOlderLimit: nextWindow.atOlderLimit,
+      atTail: nextWindow.atTail,
+      targetBubbleId,
+    };
+  }
+
+  hasPaginatedHistory(sessionId: string): boolean {
+    const backendId = this.getRealIdForSession(sessionId) || sessionId;
+    const historyOwner =
+      this.historyOwners.get(sessionId) ?? this.historyOwners.get(backendId);
+    if (!historyOwner) return false;
+    const path = useChatHistoryStore.getState().paths[historyOwner.key];
+    return Boolean(
+      path &&
+        path.ownerEpoch === historyOwner.epoch &&
+        path.view &&
+        !this.pendingHistoryPaths.has(historyOwner.key),
+    );
+  }
+
+  /**
+   * Read one integrity-checked payload fragment from the active normalized
+   * history path. The caller owns buffering and must keep it bounded.
+   */
+  async loadBlockFragment(
+    blockId: string,
+    cursor: string | null,
+    expectedStart: number,
+    signal?: AbortSignal,
+  ): Promise<LoadedChatBlockFragment> {
+    const owner = this.getActiveOwner();
+    const activeKey = useChatHistoryStore.getState().activeKey;
+    const historyOwner = [...this.historyOwners.values()].find(
+      (candidate) =>
+        candidate.key === activeKey && candidate.agentId === owner.agentId,
+    );
+    if (!historyOwner) {
+      throw new Error("Chat history is no longer active");
+    }
+    const path = useChatHistoryStore.getState().paths[historyOwner.key];
+    const block = path?.blocksById[blockId];
+    if (
+      !path ||
+      path.ownerEpoch !== historyOwner.epoch ||
+      !path.view ||
+      !block ||
+      block.content_loaded
+    ) {
+      throw new Error("Chat block is no longer available for lazy loading");
+    }
+
+    const requestCursor = cursor ?? block.content_cursor;
+    if (!requestCursor) {
+      throw new Error("Chat block does not have a content cursor");
+    }
+    const page = await api.getBlockFragment(
+      historyOwner.conversationId,
+      blockId,
+      {
+        headTurnId: path.view.head_turn_id,
+        viewVersion: path.view.view_version,
+        cursor: requestCursor,
+        signal,
+        agentId: owner.agentId,
+      },
+    );
+    if (signal?.aborted || !this.isActiveOwner(owner)) {
+      throw new DOMException("Agent changed", "AbortError");
+    }
+    const currentPath = useChatHistoryStore.getState().paths[historyOwner.key];
+    const currentBlock = currentPath?.blocksById[blockId];
+    if (
+      currentPath?.ownerEpoch !== historyOwner.epoch ||
+      currentPath.view?.view_version !== path.view.view_version ||
+      !currentBlock ||
+      currentBlock.entity_version !== block.entity_version
+    ) {
+      throw new DOMException("History view changed", "AbortError");
+    }
+    return validateChatBlockFragment(
+      page,
+      currentBlock,
+      path.view,
+      expectedStart,
+    );
   }
 
   private async _doGetSession(
@@ -1839,6 +2934,7 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     // — the library may pass its own internal session reference, and
     // mutating session.messages would corrupt its React state.
     const { messages: _msgs, ...metadata } = session;
+    void _msgs;
     const index = this.sessionList.findIndex((s) => s.id === metadata.id);
 
     if (index > -1) {

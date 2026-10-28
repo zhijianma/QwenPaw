@@ -548,10 +548,16 @@ async def test_scroll_sync_failure_never_blocks_startup(monkeypatch) -> None:
     """A broken session sync is logged, not propagated out of startup."""
     from qwenpaw.agents.context.scroll import sync as scroll_sync
 
+    monkeypatch.setenv("QWENPAW_CHAT_STORAGE_V2", "0")
+
     def boom() -> None:
         raise RuntimeError("scroll sync is broken")
 
     monkeypatch.setattr(scroll_sync, "sync_all_scroll_agents", boom)
+    monkeypatch.setattr(
+        "qwenpaw.config.utils.get_agent_dirs",
+        lambda: [],
+    )
 
     await app_module._sync_scroll_history_on_startup()
 
@@ -560,13 +566,33 @@ async def test_scroll_sync_failure_never_blocks_startup(monkeypatch) -> None:
 async def test_scroll_sync_success_runs_the_migration(monkeypatch) -> None:
     from qwenpaw.agents.context.scroll import sync as scroll_sync
 
+    monkeypatch.setenv("QWENPAW_CHAT_STORAGE_V2", "0")
+
     ran: List[str] = []
 
     def ok() -> None:
         ran.append("synced")
 
     monkeypatch.setattr(scroll_sync, "sync_all_scroll_agents", ok)
+    monkeypatch.setattr(
+        "qwenpaw.config.utils.get_agent_dirs",
+        lambda: [],
+    )
 
     await app_module._sync_scroll_history_on_startup()
 
     assert ran == ["synced"]
+
+
+@pytest.mark.asyncio
+async def test_chat_v2_skips_legacy_scroll_sync(monkeypatch) -> None:
+    from qwenpaw.agents.context.scroll import sync as scroll_sync
+
+    monkeypatch.setenv("QWENPAW_CHAT_STORAGE_V2", "1")
+
+    def unexpected() -> None:
+        raise AssertionError("Chat V2 must not touch legacy history.db")
+
+    monkeypatch.setattr(scroll_sync, "sync_all_scroll_agents", unexpected)
+
+    await app_module._sync_scroll_history_on_startup()

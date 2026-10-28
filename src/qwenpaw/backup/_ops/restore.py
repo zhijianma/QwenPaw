@@ -10,10 +10,19 @@ import logging
 import os
 import shutil
 import sqlite3
+import time
 import zipfile
 from pathlib import Path
 
 from ...agents.context.scroll.history import validate_history_database
+from ...app.chats.storage import (
+    CHAT_STORAGE_MANIFEST,
+    ChatStoragePaths,
+    ChatStorageSchemaError,
+    interrupt_nonterminal_work,
+    rebuild_all_recall_projections,
+    validate_workspace_chat_storage,
+)
 from .._utils.constants import (
     PREFIX_CONFIG,
     PREFIX_SECRETS,
@@ -280,6 +289,42 @@ def _stage_skill_pool(zf: zipfile.ZipFile, staged_dirs: list[Path]) -> None:
     staged_dirs.append(skill_pool_dir)
 
 
+def _restore_staged_chat_storage(
+    staged_workspace: Path,
+    *,
+    agent_id: str,
+) -> None:
+    """Validate normalized storage and rebuild its derived projection."""
+    chat_paths = ChatStoragePaths(staged_workspace)
+    manifest_exists = (chat_paths.root / CHAT_STORAGE_MANIFEST).is_file()
+    chat_snapshot = validate_workspace_chat_storage(
+        staged_workspace,
+        require_manifest=manifest_exists,
+    )
+    if chat_snapshot is None:
+        return
+    for path in (
+        chat_paths.recall,
+        Path(f"{chat_paths.recall}-wal"),
+        Path(f"{chat_paths.recall}-shm"),
+        Path(f"{chat_paths.recall}-journal"),
+    ):
+        path.unlink(missing_ok=True)
+    instant = time.time_ns() // 1_000
+    for conversation_id in chat_snapshot.conversation_ids:
+        interrupt_nonterminal_work(
+            chat_paths.conversation(conversation_id),
+            conversation_id=conversation_id,
+            now_us=instant,
+        )
+    rebuild_all_recall_projections(chat_paths, now_us=instant)
+    chat_snapshot.manifest_path.unlink(missing_ok=True)
+    logger.info(
+        "Validated normalized Chat storage for agent '%s'",
+        agent_id,
+    )
+
+
 def _stage_agents(
     zf: zipfile.ZipFile,
     agent_ids: list[str],
@@ -344,6 +389,24 @@ def _stage_agents(
                         "error": str(exc),
                     },
                 ) from exc
+        try:
+            _restore_staged_chat_storage(
+                staged_workspace,
+                agent_id=aid,
+            )
+        except (OSError, sqlite3.Error, ChatStorageSchemaError) as exc:
+            discard_tmp(dst)
+            chat_paths = ChatStoragePaths(staged_workspace)
+            raise BackupValidationError(
+                "chat_storage_invalid",
+                f"Agent '{aid}' Chat storage failed restore "
+                f"validation: {exc}",
+                {
+                    "agent_id": aid,
+                    "path": str(chat_paths.root),
+                    "error": str(exc),
+                },
+            ) from exc
         staged_dirs.append(dst)
         dst_map[aid] = dst
         if is_new:
