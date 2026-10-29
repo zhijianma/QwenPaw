@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from qwenpaw.app.chats.transcript import TranscriptStore
+from qwenpaw.app.chats import transcript_schema
 from qwenpaw.app.chats.transcript_catalog import TranscriptCatalog
 from qwenpaw.schemas import Message, TextContent
 
@@ -125,9 +125,9 @@ def test_idle_handles_close_without_losing_history(
     _finish(catalog, "session-a")
     assert not catalog._handles  # pylint: disable=protected-access
     monkeypatch.setattr(
-        TranscriptStore,
-        "_create_schema",
-        lambda _store: pytest.fail("existing store recreated its schema"),
+        transcript_schema,
+        "SCHEMA",
+        "INVALID SQL: existing store must not recreate its schema",
     )
     page = catalog.get_page(
         session_id="session-a",

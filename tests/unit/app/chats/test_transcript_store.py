@@ -94,7 +94,7 @@ def test_existing_empty_database_initializes_missing_schema(tmp_path):
     db_path = tmp_path / "session.db"
     db_path.touch()
 
-    store = TranscriptStore(db_path, initialize_schema=False)
+    store = TranscriptStore(db_path)
     _start(store, "turn-1")
     store.close()
 
@@ -430,7 +430,7 @@ def test_database_snapshot_excludes_running_turns(tmp_path):
     )
     snapshot_path = tmp_path / "snapshot.db"
     snapshot_path.write_bytes(snapshot)
-    restored = TranscriptStore(snapshot_path, initialize_schema=False)
+    restored = TranscriptStore(snapshot_path)
     page = restored.get_page(
         session_id="session-1",
         user_id="user-1",
@@ -761,7 +761,8 @@ def test_page_byte_limit_splits_one_message_by_content_block(tmp_path):
         )
         assert page is not None
         message_bytes = sum(
-            len(message.model_dump_json().encode("utf-8")) for message in page.messages
+            len(message.model_dump_json().encode("utf-8"))
+            for message in page.messages
         )
         assert message_bytes + 1_024 <= max_bytes
         pages.append(page)
@@ -832,7 +833,9 @@ def test_page_byte_limit_splits_one_oversized_text_block(tmp_path):
         before = page.next_before
 
     assert len(pages) > 1
-    restored = "".join(page.messages[0].content[0].text for page in reversed(pages))
+    restored = "".join(
+        page.messages[0].content[0].text for page in reversed(pages)
+    )
     assert restored == text
     assert pages[-1].has_more is False
     store.close()
@@ -906,7 +909,9 @@ def test_default_page_block_limit_splits_one_high_fanout_message(tmp_path):
         message=Message(
             id="high-fanout",
             role="assistant",
-            content=[TextContent(text=f"block-{index:03d}") for index in range(250)],
+            content=[
+                TextContent(text=f"block-{index:03d}") for index in range(250)
+            ],
         ).completed(),
         ordinal=0,
     )
@@ -942,7 +947,9 @@ def test_default_page_block_limit_splits_one_high_fanout_message(tmp_path):
         10,
     ]
     restored = [
-        content.text for page in reversed(pages) for content in page.messages[0].content
+        content.text
+        for page in reversed(pages)
+        for content in page.messages[0].content
     ]
     assert restored == [f"block-{index:03d}" for index in range(250)]
     assert pages[-1].has_more is False
@@ -1079,7 +1086,7 @@ def test_page_uses_one_snapshot_when_running_turn_finishes(
                     nonlocal snapshot_started
                     if sql == "BEGIN":
                         snapshot_started = True
-                    if sql.startswith("SELECT m.payload_json"):
+                    if sql.startswith("SELECT m.envelope_json"):
                         finish_requested.set()
                         if not snapshot_started:
                             assert finish_completed.wait(timeout=5)
@@ -1118,11 +1125,11 @@ def test_user_input_text_preserves_full_text_and_identity(tmp_path):
             message=_message(role, text, role=role),
             ordinal=0 if role == "user" else 1,
         )
-    identity = dict(
-        session_id="session-1",
-        user_id="user-1",
-        channel="console",
-    )
+    identity = {
+        "session_id": "session-1",
+        "user_id": "user-1",
+        "channel": "console",
+    }
     assert store.get_user_message_text(**identity, message_id="user") == text
     assert (
         store.get_user_message_text(
@@ -1149,7 +1156,14 @@ def test_user_input_text_preserves_full_text_and_identity(tmp_path):
 
 @pytest.mark.parametrize(
     "text",
-    ["short input", "x" * 160, "x" * 161, "first\nsecond", "two  spaces", " trailing "],
+    [
+        "short input",
+        "x" * 160,
+        "x" * 161,
+        "first\nsecond",
+        "two  spaces",
+        " trailing ",
+    ],
 )
 def test_user_preview_keeps_full_text_available(tmp_path, text):
     store = TranscriptStore(tmp_path / "preview.db")
@@ -1160,11 +1174,11 @@ def test_user_preview_keeps_full_text_available(tmp_path, text):
         message=_message("user", text, role="user"),
         ordinal=0,
     )
-    identity = dict(
-        session_id="session-1",
-        user_id="user-1",
-        channel="console",
-    )
+    identity = {
+        "session_id": "session-1",
+        "user_id": "user-1",
+        "channel": "console",
+    }
     page = store.get_user_message_page(**identity)
     assert page.items[0].preview == " ".join(text.split())[:160]
     assert store.get_user_message_text(**identity, message_id="user") == text

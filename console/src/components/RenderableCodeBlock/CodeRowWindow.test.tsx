@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { RenderableCodeBlock } from "./RenderableCodeBlock";
 import { CODE_ROW_LIMIT } from "./CodeRowWindow";
@@ -57,8 +57,10 @@ it("bounds mounted lines, preserves multiline tokens and copies the full source"
       </RenderableCodeBlock>
     </div>,
   );
-  expect(view.container.querySelectorAll("[data-code-line]")).toHaveLength(
-    CODE_ROW_LIMIT,
+  await waitFor(() =>
+    expect(view.container.querySelectorAll("[data-code-line]")).toHaveLength(
+      CODE_ROW_LIMIT,
+    ),
   );
   expect(
     view.container.querySelector(
