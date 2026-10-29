@@ -1388,7 +1388,7 @@ describe("ChatPage coverage", () => {
         canLoadOlder: false,
         loading: false,
       });
-      const mounted = mockSetSessionMessages.mock.calls.at(-1)?.[1];
+      const mounted = mockSetSessionMessages.mock.calls.slice(-1)[0]?.[1];
       expect(mounted[0].id).toBe("qwenpaw-history-window-test-session");
       expect(mounted.includes(live)).toBe(running);
       expect(

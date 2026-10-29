@@ -18,6 +18,7 @@ import { setPendingThinking } from "@/features/thinking/sessionThinkingApi";
 import { SessionThinking } from "@/features/thinking/SessionThinking";
 import {
   AgentScopeRuntimeWebUI,
+  useChatAnywhereSessionsState,
   IAgentScopeRuntimeWebUIOptions,
   type IAgentScopeRuntimeRequest,
   type IAgentScopeRuntimeWebUIInputData,
@@ -1082,9 +1083,16 @@ function RuntimeLoadingBridge({
     setSdkLocale?.(i18n.language.startsWith("zh") ? "cn" : "en");
   }, [i18n.language, setSdkLocale]);
   const setDisabled = useChatAnywhereInput((value) => value.setDisabled);
+  const setSessionDisabled = useChatAnywhereInput(
+    (value) => value.setSessionDisabled,
+  );
+  const { currentSessionId } = useChatAnywhereSessionsState();
   useEffect(() => {
-    setDisabled?.(disabled);
-  }, [disabled, setDisabled]);
+    // Route readiness belongs to the target Chat, not the SDK's previous
+    // active session while its controlled selection is still catching up.
+    if (sessionId) setSessionDisabled?.(sessionId, disabled);
+    else if (!currentSessionId) setDisabled?.(disabled);
+  }, [sessionId, currentSessionId, disabled, setDisabled, setSessionDisabled]);
   const { loading, setLoading, getLoading, setSessionLoading } =
     useChatAnywhereInput(
       (value) =>
@@ -1501,7 +1509,7 @@ export default function ChatPage() {
     const latest = sessionApi.showLatestHistory(visibleSessionId);
     const liveMessages = (chatRef.current?.messages.getMessages() ?? []).filter(
       (item) =>
-        !item.history &&
+        !(item as { history?: boolean }).history &&
         item.id !== `qwenpaw-history-window-${visibleSessionId}`,
     );
     historyTurnRowsRef.current = null;
@@ -3522,8 +3530,8 @@ export default function ChatPage() {
           boundaryMessageId ?? entry.messageId,
           controller.signal,
           mode,
-          historyMessageWindow.getSnapshot()?.userMessages.at(-1)?.messageId ===
-            entry.messageId,
+          historyMessageWindow.getSnapshot()?.userMessages.slice(-1)[0]
+            ?.messageId === entry.messageId,
         )
         .then(({ messages, noMore }) => {
           if (controller.signal.aborted || chatIdRef.current !== sessionId) {
@@ -3655,7 +3663,7 @@ export default function ChatPage() {
           if (!alreadyInHistory) {
             const isRunning = runtimeLoadingBridgeRef.current?.getLoading?.();
             const hasLiveMessages = visibleHistory.some(
-              (item) => !item.history,
+              (item) => !(item as { history?: boolean }).history,
             );
             const retainLive = isRunning || hasLiveMessages;
             const turnRows = splitHistoryMessagesIntoTurnRows(

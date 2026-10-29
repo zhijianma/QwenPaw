@@ -314,6 +314,26 @@ export function HistoryMessageWindowCard() {
 
   useLayoutEffect(() => {
     const scroll = scrollRef.current;
+    if (!scroll) return;
+    // Window measurements can change the bottom distance without scrolling.
+    const update = () =>
+      setAtBottom(
+        scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop <=
+          BOTTOM_THRESHOLD_PX,
+      );
+    const observer = new ResizeObserver(update);
+    observer.observe(scroll);
+    if (scroll.firstElementChild) observer.observe(scroll.firstElementChild);
+    scroll.addEventListener("chat-message-window-rendered", update);
+    update();
+    return () => {
+      observer.disconnect();
+      scroll.removeEventListener("chat-message-window-rendered", update);
+    };
+  }, [current?.sessionId, portalTarget]);
+
+  useLayoutEffect(() => {
+    const scroll = scrollRef.current;
     if (!current || !scroll) return;
     const pending = pendingNavigationRef.current;
     if (pending && locate(pending)) {
@@ -332,7 +352,9 @@ export function HistoryMessageWindowCard() {
       .find((item) => item.role === "user");
     // Optimistic SDK identities cannot be used as durable history cursors.
     // Keep the live response mounted and return to it only at the viewport edge.
-    const liveBoundary = current.onReturnToLatest && lastUser?.history !== true;
+    const liveBoundary =
+      current.onReturnToLatest &&
+      (lastUser as { history?: boolean } | undefined)?.history !== true;
     if (liveBoundary || current.canLoadNewer === false) {
       const scroll = scrollRef.current;
       if (
@@ -515,10 +537,7 @@ export function HistoryMessageWindowCard() {
               )}
               {(current.onReturnToLatest ||
                 !atBottom ||
-                (current.userMessages.length > 0 &&
-                  !messages.some(
-                    (item) => item.id === latestUser?.messageId,
-                  ))) && (
+                current.canLoadNewer === true) && (
                 <button
                   type="button"
                   className={styles.scrollToBottom}

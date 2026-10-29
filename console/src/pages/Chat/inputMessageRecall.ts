@@ -7,11 +7,19 @@ export class InputMessageRecall {
   private cursor?: string;
   private newer: (string | undefined)[] = [];
   private texts = new Map<string, string>();
+  private loadPage: (before?: string) => Promise<Page>;
+  private loadText: (id: string) => Promise<string>;
+  private fallback: string[];
+
   constructor(
-    private loadPage: (before?: string) => Promise<Page>,
-    private loadText: (id: string) => Promise<string>,
-    private fallback: string[] = [],
-  ) {}
+    loadPage: (before?: string) => Promise<Page>,
+    loadText: (id: string) => Promise<string>,
+    fallback: string[] = [],
+  ) {
+    this.loadPage = loadPage;
+    this.loadText = loadText;
+    this.fallback = fallback;
+  }
 
   /** undefined means the oldest boundary; null restores the unsent draft. */
   async move(older: boolean): Promise<string | null | undefined> {

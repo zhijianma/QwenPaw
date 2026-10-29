@@ -1315,7 +1315,7 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     ) {
       result = await api.getChatMessages(backendId, {
         before: result.next_before,
-        limit: mode === "append-newer" ? 1 : HISTORY_PAGE_TURN_LIMIT,
+        limit: HISTORY_PAGE_TURN_LIMIT,
         signal,
         include_app_owned: false,
       });
