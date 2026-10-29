@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { ArrowDown } from "lucide-react";
 import { attachBottomFollow } from "./bottomFollow";
@@ -17,7 +17,7 @@ export function ChatBottomFollow({
   const [target, setTarget] = useState<HTMLElement | null>(null);
   const [away, setAway] = useState(false);
   const controller = useRef<ReturnType<typeof attachBottomFollow>>();
-  useLayoutEffect(() => {
+  useEffect(() => {
     const root = rootRef.current;
     if (!root || disabled) return;
     let attached: HTMLElement | null = null;
