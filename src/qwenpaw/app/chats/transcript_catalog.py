@@ -183,7 +183,6 @@ class TranscriptCatalog:
                     handle = _SessionHandle(
                         TranscriptStore(
                             path,
-                            initialize_schema=not path.exists(),
                         ),
                     )
                     if self._recover_orphaned_turns:
@@ -309,6 +308,18 @@ class TranscriptCatalog:
             if handle is None:
                 raise RuntimeError("failed to create runtime session")
             return handle.store.write_runtime_state(**kwargs)
+
+    def read_turn_context(self, **kwargs: Any) -> RuntimeSnapshot | None:
+        """Read a committed turn context under the session identity lease."""
+        with self._lease(
+            session_id=kwargs["session_id"],
+            user_id=kwargs["user_id"],
+            channel=kwargs["channel"],
+            create=False,
+        ) as handle:
+            if handle is None:
+                return None
+            return handle.store.read_turn_context(**kwargs)
 
     def update_runtime_state(
         self,
@@ -556,6 +567,7 @@ class TranscriptCatalog:
         target_session_id: str,
         target_user_id: str,
         target_channel: str,
+        source_turn_id: str | None = None,
     ) -> bool:
         """Clone completed history and agent runtime into a new session."""
         with self._lock:
@@ -577,6 +589,16 @@ class TranscriptCatalog:
                 ) as target:
                     if target is None:
                         raise RuntimeError("failed to create fork session")
+                    if source_turn_id is not None:
+                        target.store.copy_completed_turn_from(
+                            source_path=source.store.path,
+                            source_session_id=source_session_id,
+                            target_session_id=target_session_id,
+                            target_user_id=target_user_id,
+                            target_channel=target_channel,
+                            turn_id=source_turn_id,
+                        )
+                        return True
                     return target.store.clone_completed_session_from(
                         source_path=source.store.path,
                         source_session_id=source_session_id,

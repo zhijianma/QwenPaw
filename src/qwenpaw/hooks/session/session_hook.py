@@ -22,7 +22,11 @@ from ...runtime.console_turn_state import (
 )
 from ...runtime.hooks import HookContext, HookResult
 from ...runtime.phases import Phase
-from .signals import SESSION_SAVE_SUCCEEDED_KEY
+from .signals import (
+    SESSION_SAVE_SUCCEEDED_KEY,
+    TRANSCRIPT_RECORDING_READY_KEY,
+    TRANSCRIPT_TURN_ID_CONTEXT_KEY,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -116,11 +120,25 @@ class SessionSaveHook(LifecycleHook):
             proxy.data = ctx.agent.state_dict()
             stamp_console_turn(proxy.data, request, "completed")
             proxy.data["mode_state"] = ctx.mode_state
-            await session.save_session_state(
+            save = session.save_session_state
+            save_kwargs = {}
+            request_context = getattr(request, "request_context", None) or {}
+            turn_id = request_context.get(TRANSCRIPT_TURN_ID_CONTEXT_KEY)
+            if (
+                turn_id
+                and request_context.get(TRANSCRIPT_RECORDING_READY_KEY)
+                and callable(
+                    getattr(type(session), "save_turn_session_state", None),
+                )
+            ):
+                save = session.save_turn_session_state
+                save_kwargs["turn_id"] = str(turn_id)
+            await save(
                 session_id=ctx.session_id,
                 user_id=user_id,
                 channel=channel,
                 agent=proxy,
+                **save_kwargs,
             )
             ctx.extras[SESSION_SAVE_SUCCEEDED_KEY] = True
         except Exception:

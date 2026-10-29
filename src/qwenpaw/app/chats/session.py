@@ -606,6 +606,29 @@ class DatabaseSession:
             state=state,
         )
 
+    async def save_turn_session_state(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        channel: str,
+        turn_id: str,
+        **state_modules_mapping: Any,
+    ) -> None:
+        """Save runtime and its immutable turn revision in one transaction."""
+        state = {
+            name: module.state_dict()
+            for name, module in state_modules_mapping.items()
+        }
+        await run_sync_io(
+            self._catalog.write_runtime_state,
+            session_id=session_id,
+            user_id=user_id,
+            channel=channel,
+            state=state,
+            turn_id=turn_id,
+        )
+
     async def reset_session_state(
         self,
         session_id: str,

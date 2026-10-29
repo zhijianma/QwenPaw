@@ -5,14 +5,10 @@ import type { ComponentProps } from "@ant-design/x-markdown";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import { Check, Code2, Copy, Download, Eye } from "lucide-react";
-import {
-  Prism as SyntaxHighlighter,
-  type SyntaxHighlighterProps,
-} from "react-syntax-highlighter";
-import {
-  oneDark,
-  oneLight,
-} from "react-syntax-highlighter/dist/esm/styles/prism";
+import type { SyntaxHighlighterProps } from "react-syntax-highlighter";
+import SyntaxHighlighter from "react-syntax-highlighter/dist/esm/prism-async";
+import oneDark from "react-syntax-highlighter/dist/esm/styles/prism/one-dark";
+import oneLight from "react-syntax-highlighter/dist/esm/styles/prism/one-light";
 import { useTranslation } from "react-i18next";
 import { useTheme } from "../../contexts/ThemeContext";
 import { MermaidCodeBlock } from "../MermaidCodeBlock";

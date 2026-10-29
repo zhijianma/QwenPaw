@@ -9,6 +9,10 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from ...constant import QWENPAW_CLIENT_MESSAGE_ID_KEY
+from ...hooks.session.signals import (
+    TRANSCRIPT_RECORDING_READY_KEY,
+    TRANSCRIPT_TURN_ID_CONTEXT_KEY,
+)
 from ...runtime.console_turn_state import REGENERATE_FROM
 from ...schemas import (
     AgentResponse,
@@ -22,8 +26,6 @@ if TYPE_CHECKING:
     from .transcript_catalog import TranscriptCatalog
 
 logger = logging.getLogger(__name__)
-
-TRANSCRIPT_TURN_ID_CONTEXT_KEY = "_qwenpaw_transcript_turn_id"
 
 _TERMINAL_STATUS: dict[RunStatus, TurnStatus] = {
     RunStatus.Completed: "completed",
@@ -60,6 +62,7 @@ class TranscriptRecorder:
             request_context = {}
             request.request_context = request_context
         request_context[TRANSCRIPT_TURN_ID_CONTEXT_KEY] = self._turn_id
+        request_context[TRANSCRIPT_RECORDING_READY_KEY] = False
         self._ordinals: dict[str, int] = {}
         self._next_ordinal = 0
         self._started = False
@@ -99,6 +102,9 @@ class TranscriptRecorder:
         for message in getattr(self._request, "input", None) or []:
             if isinstance(message, Message):
                 await self._record_message(message)
+        self._request.request_context[
+            TRANSCRIPT_RECORDING_READY_KEY
+        ] = not self._degraded
 
     async def observe(self, value: Any) -> None:
         """Record normalized message snapshots and terminal responses."""
