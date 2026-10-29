@@ -382,6 +382,8 @@ function DefaultHostResponseCard({
     () => AgentScopeRuntimeResponseBuilder.mergeToolMessages(data.output),
     [data.output],
   );
+  const canceledWithoutReply =
+    data.status === "canceled" && !data.output?.length;
   const showThinking = useSyncExternalStore(
     subscribeChatDisplayPreference,
     getShowThinkingPreference,
@@ -487,13 +489,21 @@ function DefaultHostResponseCard({
       />
       {data.error ? <ResponseError data={data.error} /> : null}
       {!messages.length && data.status === "canceled" ? (
-        <Bubble.Interrupted title={t("chat.turnCanceled")} />
+        <Bubble.Interrupted
+          title={t(
+            canceledWithoutReply
+              ? "chat.canceledWithoutReply"
+              : "chat.turnCanceled",
+          )}
+        />
       ) : null}
       {contentAppend}
       {AgentScopeRuntimeResponseBuilder.maybeDone(data) ? (
         <ResponseArtifactList messages={messages} />
       ) : null}
-      <ResponseActions data={data} messageId={messageId} isLast={isLast} />
+      {!canceledWithoutReply ? (
+        <ResponseActions data={data} messageId={messageId} isLast={isLast} />
+      ) : null}
     </>
   );
 }

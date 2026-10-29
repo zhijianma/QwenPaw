@@ -613,6 +613,7 @@ class DatabaseSession:
         user_id: str,
         channel: str,
         turn_id: str,
+        reset_context: bool = False,
         **state_modules_mapping: Any,
     ) -> None:
         """Save runtime and its immutable turn revision in one transaction."""
@@ -627,6 +628,7 @@ class DatabaseSession:
             channel=channel,
             state=state,
             turn_id=turn_id,
+            reset_context=reset_context,
         )
 
     async def reset_session_state(

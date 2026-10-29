@@ -15,6 +15,10 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..hooks.session.signals import (
+    TRANSCRIPT_RECORDING_READY_KEY,
+    TRANSCRIPT_TURN_ID_CONTEXT_KEY,
+)
 from ._state_utils import StateProxy
 from .slash_command_registry import CommandSpec, FallbackHandler
 
@@ -478,13 +482,24 @@ async def _save_agent_state(
         proxy.data["scroll"] = scroll_block
     proxy.data["mode_state"] = getattr(ctx, "mode_state", {})
     save = session.save_session_state
-    if reset_context and hasattr(session, "reset_session_state"):
+    save_kwargs = {}
+    request_context = getattr(request, "request_context", None) or {}
+    turn_id = request_context.get(TRANSCRIPT_TURN_ID_CONTEXT_KEY)
+    if (
+        turn_id
+        and request_context.get(TRANSCRIPT_RECORDING_READY_KEY)
+        and callable(getattr(type(session), "save_turn_session_state", None))
+    ):
+        save = session.save_turn_session_state
+        save_kwargs = {"turn_id": str(turn_id), "reset_context": reset_context}
+    elif reset_context and hasattr(session, "reset_session_state"):
         save = session.reset_session_state
     await save(
         session_id=ctx.session_id,
         user_id=user_id or ctx.session_id,
         channel=channel,
         agent=proxy,
+        **save_kwargs,
     )
 
 

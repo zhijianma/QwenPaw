@@ -131,6 +131,7 @@ class TranscriptRecorder:
             return
         if not isinstance(value, AgentResponse):
             return
+        value.chat_turn_id = self._turn_id
         for message in value.output:
             if not message.content:
                 continue

@@ -3302,6 +3302,12 @@
     "sidebarPreview": "表示中の項目"
   },
   "chat": {
+    "fork": {
+      "action": "ここから新しい会話を作成",
+      "contextMissing": "このターンには保存されたモデルコンテキストがないため、分岐できません。",
+      "busy": "会話の実行が完了するまでお待ちください。",
+      "failed": "分岐を作成できませんでした。再試行してください。"
+    },
     "sessionLoadFailed": "会話を読み込めませんでした。もう一度開いてください。",
     "longTextPaste": {
       "title": "長いテキストを貼り付け",
@@ -3478,6 +3484,7 @@
     },
     "regenerate": "再生成",
     "regenerateUnavailable": "この過去のターンにはリクエスト ID がありません。新しいメッセージを送信してください。",
+    "canceledWithoutReply": "ユーザーがキャンセルしました（返信なし）",
     "turnCanceled": "停止済み"
   },
   "security": {

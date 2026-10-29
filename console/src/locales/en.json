@@ -4090,6 +4090,12 @@
     "system": "System"
   },
   "chat": {
+    "fork": {
+      "action": "Branch into new chat",
+      "contextMissing": "This turn has no saved model context and cannot be branched.",
+      "busy": "Wait until this conversation finishes running.",
+      "failed": "Could not create the branch. Please retry."
+    },
     "sessionLoadFailed": "Could not load this conversation. Please reopen it.",
     "sessionSettings": {
       "advanced": "Advanced options",
@@ -4307,6 +4313,7 @@
     },
     "regenerate": "Regenerate",
     "regenerateUnavailable": "This older turn has no receipt ID. Send a new message to continue.",
+    "canceledWithoutReply": "Canceled by user; no reply",
     "turnCanceled": "Canceled"
   },
   "security": {

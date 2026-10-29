@@ -70,10 +70,12 @@ export class MeasuredMessageWindow extends Component<
 
   private anchor(): Anchor | null {
     if (!this.scroll) return null;
-    const top = this.scroll.getBoundingClientRect().top;
-    const row = this.rows().find(
-      (node) => node.getBoundingClientRect().bottom > top,
-    );
+    const viewport = this.scroll.getBoundingClientRect();
+    const top = viewport.top;
+    const row = this.rows().find((node) => {
+      const bounds = node.getBoundingClientRect();
+      return bounds.bottom > top && bounds.top < viewport.bottom;
+    });
     return row
       ? {
           id: row.dataset.windowRow!,
@@ -103,7 +105,12 @@ export class MeasuredMessageWindow extends Component<
       const height =
         row.getBoundingClientRect().height -
         (Number.parseFloat(row.style.paddingBottom) || 0);
-      if (height > 0 && this.heights.get(row.dataset.windowRow!) !== height) {
+      const previousHeight = this.heights.get(row.dataset.windowRow!);
+      if (
+        height > 0 &&
+        (previousHeight === undefined ||
+          Math.abs(previousHeight - height) > 0.5)
+      ) {
         this.heights.set(row.dataset.windowRow!, height);
         changed = true;
       }
@@ -228,11 +235,14 @@ export class MeasuredMessageWindow extends Component<
     const index = previousFirst ? ids.indexOf(previousFirst) : -1;
     this.start = Math.max(
       0,
-      index >= 0
-        ? index
-        : this.props.initialEnd
-        ? ids.length - MESSAGE_WINDOW_LIMIT
-        : 0,
+      Math.min(
+        ids.length - MESSAGE_WINDOW_LIMIT,
+        index >= 0
+          ? index
+          : this.props.initialEnd
+          ? ids.length - MESSAGE_WINDOW_LIMIT
+          : 0,
+      ),
     );
     this.end = Math.min(
       ids.length,

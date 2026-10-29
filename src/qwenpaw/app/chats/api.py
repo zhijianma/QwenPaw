@@ -108,7 +108,11 @@ async def _read_history_page(
             user_id=chat.user_id,
             channel=chat.channel,
             before=before,
-            **({"after_message_id": after_message_id} if after_message_id else {}),
+            **(
+                {"after_message_id": after_message_id}
+                if after_message_id
+                else {}
+            ),
             limit=limit,
             max_bytes=max_bytes,
             max_content_blocks=max_content_blocks,
@@ -579,6 +583,74 @@ async def create_chat(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+class ChatForkRequest(BaseModel):
+    source_turn_id: str = Field(min_length=1)
+
+
+@router.post("/{chat_id}/forks", response_model=ChatSpec)
+async def fork_chat(
+    chat_id: str,
+    body: ChatForkRequest,
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+):
+    """Create an independent Chat at a terminal response-card boundary."""
+    source = await mgr.get_chat(chat_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    if workspace.config.backend != "qwenpaw":
+        raise HTTPException(status_code=409, detail="fork_unsupported")
+    if await workspace.task_tracker.get_status(chat_id) != "idle":
+        raise HTTPException(status_code=409, detail="chat_busy")
+    target_id = str(uuid4())
+    target = ChatSpec(
+        id=target_id,
+        session_id=f"fork:{target_id}",
+        name=source.name,
+        user_id=source.user_id,
+        channel=source.channel,
+        group_id=source.group_id,
+        meta={
+            **source.meta,
+            "fork_source_chat_id": source.id,
+            "fork_source_turn_id": body.source_turn_id,
+            "fork_root_chat_id": source.meta.get(
+                "fork_root_chat_id",
+                source.id,
+            ),
+        },
+    )
+    store = workspace.transcript_store
+    if store is None:
+        raise HTTPException(status_code=409, detail="fork_context_missing")
+    try:
+        forked = await run_sync_io(
+            store.clone_session,
+            source_session_id=source.session_id,
+            source_user_id=source.user_id,
+            source_channel=source.channel,
+            target_session_id=target.session_id,
+            target_user_id=target.user_id,
+            target_channel=target.channel,
+            source_turn_id=body.source_turn_id,
+        )
+    except ValueError as exc:
+        if str(exc) not in {
+            "chat_busy",
+            "fork_turn_not_terminal",
+            "fork_context_missing",
+        }:
+            raise
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not forked:
+        raise HTTPException(status_code=409, detail="fork_context_missing")
+    try:
+        return await mgr.create_chat(target)
+    except Exception:
+        await run_sync_io(store.delete_session, target.session_id)
+        raise
+
+
 # ----- Chat group endpoints -----
 
 
@@ -666,7 +738,11 @@ async def batch_delete_chats(
     """
     catalog = await mgr.list_chats(archived=None)
     chats = {chat.id: chat for chat in catalog}
-    targets = [chat for chat_id in chat_ids if (chat := chats.get(chat_id)) is not None]
+    targets = [
+        chat
+        for chat_id in chat_ids
+        if (chat := chats.get(chat_id)) is not None
+    ]
     data_targets = _unshared_chat_data_targets(targets, catalog)
     # Stop any live run first: a deleted chat must not leave a run behind
     # in the tracker, or it inflates the aggregate running count forever.
@@ -877,7 +953,9 @@ async def set_chat_project_dirs(
             (str(path) for path, _label in entries if not path.is_dir()),
             None,
         )
-        stored = [{"path": str(path), "label": label} for path, label in entries]
+        stored = [
+            {"path": str(path), "label": label} for path, label in entries
+        ]
         return stored, missing, len(entries)
 
     stored, missing, count = await asyncio.to_thread(_normalize)

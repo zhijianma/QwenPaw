@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Copy a completed turn boundary without replaying model or tool calls."""
+"""Copy a terminal turn boundary without replaying model or tool calls."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import sqlite3
 from .transcript_blocks import copy_message_blocks
 
 
-def copy_turn(
+def fork_turn(
     connection: sqlite3.Connection,
     *,
     source_session_id: str,
@@ -30,8 +30,12 @@ def copy_turn(
         "WHERE session_id = ? AND turn_id = ?",
         (source_session_id, turn_id),
     ).fetchone()
-    if turn is None or turn["status"] != "completed":
-        raise ValueError("copy_turn_not_completed")
+    if turn is None or turn["status"] not in {
+        "completed",
+        "cancelled",
+        "failed",
+    }:
+        raise ValueError("fork_turn_not_terminal")
     revision = connection.execute(
         "SELECT r.* FROM parent.turn_context_revision t "
         "JOIN parent.context_revisions r ON r.session_id = t.session_id "
@@ -40,7 +44,7 @@ def copy_turn(
         (source_session_id, turn_id),
     ).fetchone()
     if revision is None:
-        raise ValueError("copy_context_missing")
+        raise ValueError("fork_context_missing")
     boundary = int(turn["turn_seq"])
     connection.execute(
         "INSERT INTO transcript_sessions VALUES (?, ?, ?, ?)",

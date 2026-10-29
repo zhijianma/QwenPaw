@@ -590,7 +590,7 @@ class TranscriptCatalog:
                     if target is None:
                         raise RuntimeError("failed to create fork session")
                     if source_turn_id is not None:
-                        target.store.copy_completed_turn_from(
+                        target.store.fork_turn_from(
                             source_path=source.store.path,
                             source_session_id=source_session_id,
                             target_session_id=target_session_id,

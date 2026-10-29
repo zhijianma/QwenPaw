@@ -28,6 +28,14 @@ export interface ChatStatusResponse {
 const FILES_PREVIEW = "/files/preview";
 
 export const chatApi = {
+  createChatFork: (chatId: string, turnId: string, agentId: string) =>
+    request<ChatSpec>(`/chats/${encodeURIComponent(chatId)}/forks`, {
+      method: "POST",
+      retries: 0,
+      headers: { "X-Agent-Id": agentId },
+      body: JSON.stringify({ source_turn_id: turnId }),
+    }),
+
   resolveChat: (
     chatId: string,
     options?: { currentAgentId?: string; signal?: AbortSignal },

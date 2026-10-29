@@ -24,7 +24,7 @@ from .transcript_blocks import (
     message_envelope,
     write_message_blocks,
 )
-from .copy_turn import copy_turn
+from .fork_turn import fork_turn
 from .transcript_schema import initialize_database, validate_database
 from .transcript_models import (
     RuntimeSnapshot,
@@ -741,7 +741,7 @@ class TranscriptStore:
         finally:
             self._conn.execute("DETACH DATABASE parent")
 
-    def copy_completed_turn_from(
+    def fork_turn_from(
         self,
         *,
         source_path: Path,
@@ -759,7 +759,7 @@ class TranscriptStore:
             )
             try:
                 with self._transaction():
-                    copy_turn(
+                    fork_turn(
                         self._conn,
                         source_session_id=source_session_id,
                         target_session_id=target_session_id,

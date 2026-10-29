@@ -262,6 +262,7 @@ export function HistoryMessageWindowCard() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const pendingNavigationRef = useRef<string>();
   const pendingBottomRef = useRef(false);
+  const stopBottomFollowRef = useRef<() => void>();
   const [atBottom, setAtBottom] = useState(true);
   const wheelUntilRef = useRef(0);
   const scrollIntentRef = useRef<"older" | "newer" | null>(null);
@@ -271,6 +272,13 @@ export function HistoryMessageWindowCard() {
   const turnRows = current?.turnRows ?? EMPTY_TURN_ROWS;
   const messages = useMemo(() => turnRows.flat(), [turnRows]);
   const latestUser = current?.userMessages[current.userMessages.length - 1];
+
+  const followBottom = useCallback(() => {
+    stopBottomFollowRef.current?.();
+    const scroll = scrollRef.current;
+    if (scroll)
+      stopBottomFollowRef.current = followInitialHistoryBottom(scroll);
+  }, []);
 
   const locate = useCallback((messageId: string) => {
     const scroll = scrollRef.current;
@@ -309,8 +317,9 @@ export function HistoryMessageWindowCard() {
   useLayoutEffect(() => {
     const scroll = scrollRef.current;
     if (!scroll || !current?.sessionId) return;
-    return followInitialHistoryBottom(scroll);
-  }, [current?.sessionId, portalTarget]);
+    followBottom();
+    return () => stopBottomFollowRef.current?.();
+  }, [current?.sessionId, portalTarget, followBottom]);
 
   useLayoutEffect(() => {
     const scroll = scrollRef.current;
@@ -339,11 +348,11 @@ export function HistoryMessageWindowCard() {
     if (pending && locate(pending)) {
       pendingNavigationRef.current = undefined;
       if (pendingBottomRef.current) {
-        scroll.scrollTop = scroll.scrollHeight;
+        followBottom();
         pendingBottomRef.current = false;
       }
     }
-  }, [current, messages, locate, portalTarget]);
+  }, [current, messages, locate, portalTarget, followBottom]);
 
   const loadNewerHistory = useCallback(() => {
     if (!current || current.loading || current.newerLoadFailed) return;
@@ -556,8 +565,7 @@ export function HistoryMessageWindowCard() {
                       pendingBottomRef.current = true;
                       current.onNavigateToUserMessage(latest, "replace");
                     } else if (scrollRef.current) {
-                      scrollRef.current.scrollTop =
-                        scrollRef.current.scrollHeight;
+                      followBottom();
                     }
                   }}
                 >

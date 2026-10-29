@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable
 from typing import Optional
 
 from .models import (
+    CHAT_NAME_MAX_LENGTH,
     BatchArchiveResult,
     BatchFailure,
     ChatGroup,
@@ -225,6 +226,39 @@ class ChatManager:  # pylint: disable=too-many-public-methods
                     update={"group_id": _default_group_id(spec.source)},
                 )
             await self._validate_group_id_locked(spec.group_id)
+            root_id = spec.meta.get("fork_root_chat_id")
+            if root_id:
+                # Allocate the name with insertion under the same lock.
+                chats = await self._repo.filter_chats()
+                number = 1 + max(
+                    (
+                        chat.meta.get("fork_number", 0)
+                        for chat in chats
+                        if chat.meta.get("fork_root_chat_id") == root_id
+                    ),
+                    default=0,
+                )
+                root = next((c for c in chats if c.id == root_id), None)
+                title = (
+                    root.name
+                    if root
+                    else spec.meta.get(
+                        "fork_root_name",
+                        spec.name,
+                    )
+                )
+                suffix = f" · {number}"
+                spec = spec.model_copy(
+                    update={
+                        "name": title[: CHAT_NAME_MAX_LENGTH - len(suffix)]
+                        + suffix,
+                        "meta": {
+                            **spec.meta,
+                            "fork_number": number,
+                            "fork_root_name": title,
+                        },
+                    },
+                )
             await self._repo.upsert_chat(spec)
             return spec
 

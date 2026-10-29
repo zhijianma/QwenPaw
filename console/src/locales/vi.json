@@ -1138,6 +1138,12 @@
     "runtimeRestartFailed": "Không thể khởi động lại môi trường"
   },
   "chat": {
+    "fork": {
+      "action": "Tạo nhánh hội thoại mới",
+      "contextMissing": "Lượt này không có ngữ cảnh mô hình đã lưu để tạo nhánh.",
+      "busy": "Vui lòng chờ hội thoại chạy xong.",
+      "failed": "Không thể tạo nhánh. Vui lòng thử lại."
+    },
     "sessionLoadFailed": "Không thể tải cuộc trò chuyện. Vui lòng mở lại.",
     "longTextPaste": {
       "title": "Dán văn bản dài",
@@ -1276,6 +1282,7 @@
     },
     "regenerate": "Tạo lại",
     "regenerateUnavailable": "Lượt cũ này không có mã yêu cầu. Hãy gửi tin nhắn mới để tiếp tục.",
+    "canceledWithoutReply": "Người dùng đã hủy, không có phản hồi",
     "turnCanceled": "Đã dừng"
   },
   "debug": {

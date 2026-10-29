@@ -1122,6 +1122,12 @@
     "acceptInvitation": "Bergabung melalui undangan"
   },
   "chat": {
+    "fork": {
+      "action": "Buat cabang percakapan baru",
+      "contextMissing": "Giliran ini tidak memiliki konteks model tersimpan untuk membuat cabang.",
+      "busy": "Tunggu hingga percakapan selesai berjalan.",
+      "failed": "Gagal membuat cabang. Silakan coba lagi."
+    },
     "sessionLoadFailed": "Percakapan tidak dapat dimuat. Silakan buka kembali.",
     "longTextPaste": {
       "title": "Tempel teks panjang",
@@ -1293,6 +1299,7 @@
     },
     "regenerate": "Buat ulang",
     "regenerateUnavailable": "Giliran lama ini tidak memiliki ID permintaan. Kirim pesan baru untuk melanjutkan.",
+    "canceledWithoutReply": "Dibatalkan pengguna, tanpa balasan",
     "turnCanceled": "Dihentikan"
   },
   "modelSelector": {
