@@ -1,0 +1,14 @@
+import { chromium } from '/Users/mazhijian/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright/index.mjs';
+import fs from 'node:fs';
+const out='console/scripts/verify/artifacts/chat-perf-2026-10-28';
+const browser=await chromium.launch({channel:'chrome',headless:true,args:['--enable-precise-memory-info']});
+const page=await browser.newPage({viewport:{width:1440,height:900},deviceScaleFactor:1});
+const port=process.argv[2]||'5175';
+const errors=[];page.on('pageerror',e=>errors.push(e.message));
+await page.goto(`http://localhost:${port}/chat/fd6b78ba-474e-422f-a093-8a3bdfc5cd6b?agent=UP3wQD`);
+await page.waitForTimeout(15000);
+const state=await page.evaluate(()=>({title:document.title,text:document.body.innerText.slice(0,6000),storage:{...localStorage},messages:[...document.querySelectorAll('[data-role][id]')].map(e=>({id:e.id,role:e.dataset.role,text:e.textContent.slice(0,100),rect:e.getBoundingClientRect().toJSON()})),scrolls:[...document.querySelectorAll('*')].filter(e=>e.scrollHeight>e.clientHeight+50&&['auto','scroll'].includes(getComputedStyle(e).overflowY)).map(e=>({tag:e.tagName,cls:e.className,dataset:{...e.dataset},top:e.scrollTop,height:e.scrollHeight,client:e.clientHeight,rect:e.getBoundingClientRect().toJSON()})),links:[...document.querySelectorAll('a')].map(e=>({href:e.getAttribute('href'),text:e.textContent.slice(0,100)}))}));
+fs.writeFileSync(`${out}/calibration/browser-${port}.json`,JSON.stringify({version:browser.version(),errors,...state},null,2));
+await page.screenshot({path:`${out}/screenshots/calibration-${port}.png`});
+console.log(JSON.stringify({version:browser.version(),errors,...state}));
+await browser.close();
