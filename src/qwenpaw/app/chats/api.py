@@ -19,7 +19,7 @@ from fastapi import (
 )
 from pydantic import BaseModel, ConfigDict, Field
 
-from .session import DatabaseSession
+from .session import DatabaseSession, LegacyConversationSnapshot
 from .manager import ChatManager, MAX_BATCH_SIZE
 from .models import (
     BatchArchiveResult,
@@ -48,6 +48,7 @@ from .resolver import (
     is_app_owned_chat as _is_app_owned_chat,
 )
 from ...config.utils import load_config
+from ...constant import QWENPAW_CLIENT_MESSAGE_ID_KEY
 from ...utils.io_utils import run_sync_io
 from ...services.project_directory import (
     agent_project_dirs_from_config,
@@ -55,7 +56,7 @@ from ...services.project_directory import (
     session_project_dirs_raw_from_meta,
 )
 from ...providers.thinking import ThinkingPreference
-from ...schemas import Message
+from ...schemas import Message, Role, TextContent
 from ...services.session_thinking import (
     session_model,
     thinking_view,
@@ -179,28 +180,65 @@ async def _read_context_state(
         return None
 
 
-def _migrate_legacy_messages(
-    workspace,
+async def _read_legacy_snapshot(
+    session: DatabaseSession,
     chat: ChatSpec,
-    messages: list[Message],
-) -> None:
-    """Best-effort import of legacy display history after a response."""
-    store = getattr(workspace, "transcript_store", None)
-    if store is None or not messages:
-        return
-    try:
-        store.import_legacy_messages(
+) -> LegacyConversationSnapshot | None:
+    """Read legacy JSON and start its shared background migration."""
+    snapshot = await session.get_legacy_snapshot(
+        session_id=chat.session_id,
+        user_id=chat.user_id,
+        channel=chat.channel,
+    )
+    if snapshot is not None:
+        await session.start_legacy_migration(
             session_id=chat.session_id,
             user_id=chat.user_id,
             channel=chat.channel,
-            messages=messages,
+            snapshot=snapshot,
         )
-    except Exception:
-        logger.warning(
-            "Failed to migrate legacy transcript for session %s",
-            chat.session_id,
-            exc_info=True,
+    return snapshot
+
+
+async def _read_workspace_legacy_snapshot(workspace, chat: ChatSpec):
+    """Read a legacy snapshot through the workspace session service."""
+    session = getattr(workspace, "session", None)
+    if session is None:
+        return None
+    return await _read_legacy_snapshot(session, chat)
+
+
+def _legacy_message_text(message: Message) -> str:
+    """Return the complete textual content of one legacy message."""
+    return "\n".join(
+        part.text
+        for part in message.content
+        if isinstance(part, TextContent) and part.text
+    )
+
+
+def _legacy_user_messages(messages: list[Message]) -> list[ChatUserMessage]:
+    """Build navigation entries directly from legacy messages."""
+    items = []
+    for message in messages:
+        if message.role != Role.USER:
+            continue
+        text = _legacy_message_text(message)
+        metadata = message.metadata or {}
+        client_id = metadata.get(QWENPAW_CLIENT_MESSAGE_ID_KEY)
+        nested = metadata.get("metadata")
+        if not client_id and isinstance(nested, dict):
+            client_id = nested.get(QWENPAW_CLIENT_MESSAGE_ID_KEY)
+        items.append(
+            ChatUserMessage(
+                message_id=message.id,
+                client_message_id=str(client_id) if client_id else None,
+                preview=" ".join(text.split())[:160],
+                created_at=str(metadata.get("timestamp") or ""),
+                anchor="",
+            ),
         )
+    return items
 
 
 async def _delete_chat_data(workspace, chats: list[ChatSpec]) -> None:
@@ -213,6 +251,8 @@ async def _delete_chat_data(workspace, chats: list[ChatSpec]) -> None:
                 await asyncio.to_thread(
                     store.delete_session,
                     chat.session_id,
+                    chat.user_id,
+                    chat.channel,
                 )
         if session is not None:
             for chat in chats:
@@ -581,74 +621,6 @@ async def create_chat(
         return await mgr.create_chat(spec)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-class ChatForkRequest(BaseModel):
-    source_turn_id: str = Field(min_length=1)
-
-
-@router.post("/{chat_id}/forks", response_model=ChatSpec)
-async def fork_chat(
-    chat_id: str,
-    body: ChatForkRequest,
-    mgr: ChatManager = Depends(get_chat_manager),
-    workspace=Depends(get_workspace),
-):
-    """Create an independent Chat at a terminal response-card boundary."""
-    source = await mgr.get_chat(chat_id)
-    if source is None:
-        raise HTTPException(status_code=404, detail="Chat not found")
-    if workspace.config.backend != "qwenpaw":
-        raise HTTPException(status_code=409, detail="fork_unsupported")
-    if await workspace.task_tracker.get_status(chat_id) != "idle":
-        raise HTTPException(status_code=409, detail="chat_busy")
-    target_id = str(uuid4())
-    target = ChatSpec(
-        id=target_id,
-        session_id=f"fork:{target_id}",
-        name=source.name,
-        user_id=source.user_id,
-        channel=source.channel,
-        group_id=source.group_id,
-        meta={
-            **source.meta,
-            "fork_source_chat_id": source.id,
-            "fork_source_turn_id": body.source_turn_id,
-            "fork_root_chat_id": source.meta.get(
-                "fork_root_chat_id",
-                source.id,
-            ),
-        },
-    )
-    store = workspace.transcript_store
-    if store is None:
-        raise HTTPException(status_code=409, detail="fork_context_missing")
-    try:
-        forked = await run_sync_io(
-            store.clone_session,
-            source_session_id=source.session_id,
-            source_user_id=source.user_id,
-            source_channel=source.channel,
-            target_session_id=target.session_id,
-            target_user_id=target.user_id,
-            target_channel=target.channel,
-            source_turn_id=body.source_turn_id,
-        )
-    except ValueError as exc:
-        if str(exc) not in {
-            "chat_busy",
-            "fork_turn_not_terminal",
-            "fork_context_missing",
-        }:
-            raise
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    if not forked:
-        raise HTTPException(status_code=409, detail="fork_context_missing")
-    try:
-        return await mgr.create_chat(target)
-    except Exception:
-        await run_sync_io(store.delete_session, target.session_id)
-        raise
 
 
 # ----- Chat group endpoints -----
@@ -1180,7 +1152,10 @@ async def get_chat_messages(
             detail="Invalid history cursor",
         ) from exc
     if page is None:
-        return ChatMessagePage()
+        snapshot = await _read_workspace_legacy_snapshot(workspace, chat)
+        if snapshot is None:
+            return ChatMessagePage()
+        return ChatMessagePage(messages=snapshot.messages)
     metadata = _history_metadata(page)
     return ChatMessagePage(
         messages=page.messages,
@@ -1220,7 +1195,11 @@ async def get_chat_user_messages(
             detail="Invalid history cursor",
         ) from exc
     if page is None:
-        return ChatUserMessagePage()
+        snapshot = await _read_workspace_legacy_snapshot(workspace, chat)
+        if snapshot is None:
+            return ChatUserMessagePage()
+        items = _legacy_user_messages(snapshot.messages)
+        return ChatUserMessagePage(total=len(items), items=items)
     return ChatUserMessagePage(
         total=page.total,
         items=[
@@ -1251,21 +1230,28 @@ async def get_chat_user_message_text(
     if chat is None or _is_app_owned_chat(chat):
         raise HTTPException(status_code=404, detail="Chat not found")
     store = _history_store(workspace)
-    if store is None:
-        raise HTTPException(status_code=404, detail="Message not found")
-    try:
-        text = await asyncio.to_thread(
-            store.get_user_message_text,
-            session_id=chat.session_id,
-            user_id=chat.user_id,
-            channel=chat.channel,
-            message_id=message_id,
-        )
-    except ConversationHistoryError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail="History temporarily unavailable",
-        ) from exc
+    text = None
+    if store is not None:
+        try:
+            text = await asyncio.to_thread(
+                store.get_user_message_text,
+                session_id=chat.session_id,
+                user_id=chat.user_id,
+                channel=chat.channel,
+                message_id=message_id,
+            )
+        except ConversationHistoryError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="History temporarily unavailable",
+            ) from exc
+    if text is None:
+        snapshot = await _read_workspace_legacy_snapshot(workspace, chat)
+        if snapshot is not None:
+            for message in snapshot.messages:
+                if message.id == message_id and message.role == Role.USER:
+                    text = _legacy_message_text(message)
+                    break
     if text is None:
         raise HTTPException(status_code=404, detail="Message not found")
     return {"text": text}
@@ -1300,6 +1286,7 @@ async def get_chat(
     Raises:
         HTTPException: If chat not found (404)
     """
+    del background_tasks
     chat_spec = await mgr.get_chat(chat_id)
     if not chat_spec:
         raise HTTPException(
@@ -1313,7 +1300,6 @@ async def get_chat(
         )
 
     status = await workspace.task_tracker.get_status(chat_id)
-    context_state = await _read_context_state(session, chat_spec)
     backend = workspace.config.backend
 
     if backend == "qwenpaw":
@@ -1322,13 +1308,31 @@ async def get_chat(
             chat_spec,
         )
         if transcript_page is not None:
+            context_state = await _read_context_state(session, chat_spec)
             return ChatHistory(
                 messages=transcript_page.messages,
                 status=status,
                 history=_history_metadata(transcript_page),
                 context_state=context_state,
             )
+        if hasattr(session, "get_legacy_snapshot"):
+            snapshot = await _read_legacy_snapshot(session, chat_spec)
+            if snapshot is not None:
+                return ChatHistory(
+                    messages=snapshot.messages,
+                    status=status,
+                    history=ChatHistoryMetadata(),
+                    context_state=None,
+                )
+            context_state = await _read_context_state(session, chat_spec)
+            return ChatHistory(
+                messages=[],
+                status=status,
+                history=ChatHistoryMetadata(),
+                context_state=context_state,
+            )
 
+    context_state = await _read_context_state(session, chat_spec)
     state = await session.get_session_state_dict(
         chat_spec.session_id,
         chat_spec.user_id,
@@ -1365,13 +1369,6 @@ async def get_chat(
         )
 
     messages = await asyncio.to_thread(session_state_to_messages, state)
-    if backend == "qwenpaw":
-        background_tasks.add_task(
-            _migrate_legacy_messages,
-            workspace,
-            chat_spec,
-            messages,
-        )
     return ChatHistory(
         messages=messages,
         status=status,

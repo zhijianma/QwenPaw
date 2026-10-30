@@ -618,6 +618,8 @@ class Workspace:  # pylint: disable=too-many-public-methods
                 attached = await asyncio.to_thread(
                     store.attach_turn_usage,
                     session_id=session_id,
+                    user_id=user_id,
+                    channel=channel,
                     turn_id=str(transcript_turn_id),
                     usage=turn,
                     context_usage=context_usage,

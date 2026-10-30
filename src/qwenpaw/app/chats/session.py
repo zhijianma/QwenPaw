@@ -5,15 +5,18 @@ compatibility.
 Windows filenames cannot contain: \\ / : * ? " < > |
 """
 
+import asyncio
 import os
 import re
 import logging
 import shutil
 
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Sequence, Union
 
-from qwenpaw.exceptions import ConfigurationException
+from qwenpaw.exceptions import ConfigurationException, LegacyMigrationError
+from ...schemas import Message
 from ...exceptions import AgentStateError
 from ...utils.io_utils import (
     get_path_lock,
@@ -26,6 +29,14 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .transcript_catalog import TranscriptCatalog
+
+
+@dataclass(frozen=True)
+class LegacyConversationSnapshot:
+    """Read-only view of one legacy JSON session."""
+
+    state: dict[str, Any]
+    messages: list[Message]
 
 
 def _legacy_current_usage(state: dict[str, Any]) -> dict[str, Any] | None:
@@ -525,6 +536,15 @@ class DatabaseSession:
     ) -> None:
         self._catalog = catalog
         self._legacy_save_dir = Path(legacy_save_dir)
+        self._migration_lock = asyncio.Lock()
+        self._migration_tasks: dict[
+            tuple[str, str, str],
+            asyncio.Task[bool],
+        ] = {}
+        self._legacy_snapshot_tasks: dict[
+            tuple[str, str, str],
+            asyncio.Task[LegacyConversationSnapshot | None],
+        ] = {}
 
     async def _legacy_path(
         self,
@@ -542,6 +562,191 @@ class DatabaseSession:
                 return channel_path
         return self._legacy_save_dir / filename
 
+    async def _load_legacy_snapshot(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        channel: str,
+    ) -> LegacyConversationSnapshot | None:
+        path = await self._legacy_path(session_id, user_id, channel)
+        try:
+            state = await run_sync_io(_read_session_json, str(path))
+        except FileNotFoundError:
+            return None
+        if not state:
+            return None
+
+        from .utils import session_state_to_messages
+
+        messages = await run_sync_io(session_state_to_messages, state)
+        return LegacyConversationSnapshot(state=state, messages=messages)
+
+    async def get_legacy_snapshot(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        channel: str,
+    ) -> LegacyConversationSnapshot | None:
+        """Read legacy JSON without creating or changing database data."""
+        key = (session_id, user_id, channel)
+        async with self._migration_lock:
+            task = self._legacy_snapshot_tasks.get(key)
+            if task is None:
+                task = asyncio.create_task(
+                    self._load_legacy_snapshot(
+                        session_id=session_id,
+                        user_id=user_id,
+                        channel=channel,
+                    ),
+                )
+                self._legacy_snapshot_tasks[key] = task
+        try:
+            snapshot = await asyncio.shield(task)
+        except BaseException:
+            async with self._migration_lock:
+                if self._legacy_snapshot_tasks.get(key) is task:
+                    self._legacy_snapshot_tasks.pop(key, None)
+            raise
+        if snapshot is None:
+            async with self._migration_lock:
+                if self._legacy_snapshot_tasks.get(key) is task:
+                    self._legacy_snapshot_tasks.pop(key, None)
+        return snapshot
+
+    async def _migrate_legacy_snapshot(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        channel: str,
+        snapshot: LegacyConversationSnapshot,
+    ) -> bool:
+        if snapshot.messages:
+            await run_sync_io(
+                self._catalog.import_legacy_messages,
+                session_id=session_id,
+                user_id=user_id,
+                channel=channel,
+                messages=snapshot.messages,
+            )
+        _, inserted = await run_sync_io(
+            self._catalog.write_runtime_state,
+            session_id=session_id,
+            user_id=user_id,
+            channel=channel,
+            state=snapshot.state,
+            current_usage=_legacy_current_usage(snapshot.state),
+            only_if_missing=True,
+            migration_anchor=True,
+        )
+        return inserted
+
+    def _migration_finished(
+        self,
+        key: tuple[str, str, str],
+        task: asyncio.Task[bool],
+    ) -> None:
+        if self._migration_tasks.get(key) is task:
+            self._migration_tasks.pop(key, None)
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            logger.warning(
+                "Failed to migrate legacy session %s",
+                key[0],
+                exc_info=True,
+            )
+            return
+        self._legacy_snapshot_tasks.pop(key, None)
+
+    async def _get_migration_task(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        channel: str,
+        snapshot: LegacyConversationSnapshot,
+    ) -> asyncio.Task[bool]:
+        key = (session_id, user_id, channel)
+        async with self._migration_lock:
+            task = self._migration_tasks.get(key)
+            if task is None:
+                task = asyncio.create_task(
+                    self._migrate_legacy_snapshot(
+                        session_id=session_id,
+                        user_id=user_id,
+                        channel=channel,
+                        snapshot=snapshot,
+                    ),
+                )
+                self._migration_tasks[key] = task
+                task.add_done_callback(
+                    lambda finished: self._migration_finished(key, finished),
+                )
+            return task
+
+    async def start_legacy_migration(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        channel: str,
+        snapshot: LegacyConversationSnapshot | None = None,
+    ) -> bool:
+        """Start one shared migration and return without waiting for it."""
+        legacy = snapshot or await self.get_legacy_snapshot(
+            session_id=session_id,
+            user_id=user_id,
+            channel=channel,
+        )
+        if legacy is None:
+            return False
+        await self._get_migration_task(
+            session_id=session_id,
+            user_id=user_id,
+            channel=channel,
+            snapshot=legacy,
+        )
+        return True
+
+    async def ensure_legacy_migrated(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        channel: str,
+    ) -> bool:
+        """Wait for a legacy migration before a conversation can continue."""
+        try:
+            current = await run_sync_io(
+                self._catalog.read_runtime_state,
+                session_id=session_id,
+                user_id=user_id,
+                channel=channel,
+            )
+            if current is not None:
+                return False
+            snapshot = await self.get_legacy_snapshot(
+                session_id=session_id,
+                user_id=user_id,
+                channel=channel,
+            )
+            if snapshot is None:
+                return False
+            task = await self._get_migration_task(
+                session_id=session_id,
+                user_id=user_id,
+                channel=channel,
+                snapshot=snapshot,
+            )
+            return await asyncio.shield(task)
+        except Exception as exc:
+            raise LegacyMigrationError(session_id) from exc
+
     async def _import_legacy(
         self,
         *,
@@ -549,42 +754,11 @@ class DatabaseSession:
         user_id: str,
         channel: str,
     ) -> bool:
-        path = await self._legacy_path(session_id, user_id, channel)
-        try:
-            state = await run_sync_io(_read_session_json, str(path))
-        except FileNotFoundError:
-            return False
-        if not state:
-            return False
-
-        _, inserted = await run_sync_io(
-            self._catalog.write_runtime_state,
+        return await self.ensure_legacy_migrated(
             session_id=session_id,
             user_id=user_id,
             channel=channel,
-            state=state,
-            current_usage=_legacy_current_usage(state),
-            only_if_missing=True,
         )
-        try:
-            from .utils import session_state_to_messages
-
-            messages = await run_sync_io(session_state_to_messages, state)
-            if messages:
-                await run_sync_io(
-                    self._catalog.import_legacy_messages,
-                    session_id=session_id,
-                    user_id=user_id,
-                    channel=channel,
-                    messages=messages,
-                )
-        except Exception:
-            logger.warning(
-                "Failed to import legacy transcript for %s",
-                session_id,
-                exc_info=True,
-            )
-        return inserted
 
     async def save_session_state(
         self,
@@ -815,6 +989,8 @@ class DatabaseSession:
         deleted = await run_sync_io(
             self._catalog.delete_session,
             session_id,
+            user_id,
+            channel,
         )
         path = await self._legacy_path(session_id, user_id, channel)
         try:

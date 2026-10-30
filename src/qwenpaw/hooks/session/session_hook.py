@@ -11,6 +11,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from qwenpaw.exceptions import LegacyMigrationError
+
 from ..base import LifecycleHook
 from ..cron.cron_hook import restore_cron_context
 from ...agents.acp.meta import ACP_EPHEMERAL_META_KEY
@@ -82,6 +84,8 @@ class SessionLoadHook(LifecycleHook):
                 "session_load: skipped (schema mismatch): %s",
                 e,
             )
+        except LegacyMigrationError:
+            raise
         except Exception:
             logger.debug("session_load: failed", exc_info=True)
         if ctx.session_state:

@@ -3555,12 +3555,6 @@
     "sidebarPreview": "Itens visíveis"
   },
   "chat": {
-    "fork": {
-      "action": "Criar ramificação em nova conversa",
-      "contextMissing": "Este turno não tem contexto do modelo salvo para criar uma ramificação.",
-      "busy": "Aguarde a conclusão da conversa.",
-      "failed": "Não foi possível criar a ramificação. Tente novamente."
-    },
     "sessionLoadFailed": "Não foi possível carregar a conversa. Abra-a novamente.",
     "longTextPaste": {
       "title": "Colar texto longo",

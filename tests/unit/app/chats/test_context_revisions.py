@@ -2,19 +2,13 @@
 """Regression tests for context identity at completed turn boundaries."""
 
 import asyncio
-import json
 import sqlite3
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from typing import Any
 
 import pytest
-from fastapi import HTTPException
 from agentscope.state import AgentState
 
-from qwenpaw.app.chats.api import ChatForkRequest, fork_chat
-from qwenpaw.app.chats.manager import ChatManager
-from qwenpaw.app.chats.models import ChatSpec
-from qwenpaw.app.chats.repo import JsonChatRepository
 from qwenpaw.app.chats.transcript import TranscriptStore
 from qwenpaw.app.chats.transcript_catalog import TranscriptCatalog
 from qwenpaw.app.chats.transcript_recorder import TranscriptRecorder
@@ -24,7 +18,6 @@ from qwenpaw.hooks.session.signals import SESSION_SAVE_SUCCEEDED_KEY
 from qwenpaw.runtime.runtime import Runtime
 from qwenpaw.runtime.builtin_commands import _save_agent_state
 from qwenpaw.schemas import AgentRequest, AgentResponse
-from qwenpaw.schemas import Message, TextContent
 
 IDENTITY = {
     "session_id": "session",
@@ -33,17 +26,13 @@ IDENTITY = {
 }
 
 
-def _saved_context(path, turn_id):
-    with sqlite3.connect(path) as connection:
-        row = connection.execute(
-            "SELECT b.payload FROM turn_context_revision t "
-            "JOIN context_revisions r ON r.session_id = t.session_id "
-            "AND r.revision_id = t.revision_id "
-            "JOIN context_blobs b ON b.content_hash = r.content_hash "
-            "WHERE t.turn_id = ?",
-            (turn_id,),
-        ).fetchone()
-    return json.loads(row[0]) if row else None
+def _saved_context(path, turn_id) -> dict[str, Any] | None:
+    store = TranscriptStore(path)
+    try:
+        snapshot = store.read_turn_context(**IDENTITY, turn_id=turn_id)
+        return snapshot.state if snapshot else None
+    finally:
+        store.close()
 
 
 def test_turn_context_survives_clear_and_later_saves(tmp_path):
@@ -106,6 +95,55 @@ def test_missing_turn_snapshot_does_not_reuse_current_context(tmp_path):
             )
         snapshot = store.read_runtime_state(**IDENTITY)
         assert snapshot.state == {"agent": {"old": True}}
+    finally:
+        store.close()
+
+
+def test_context_prefixes_and_same_turn_revision_are_deduplicated(tmp_path):
+    path = tmp_path / "session.db"
+    store = TranscriptStore(path)
+    try:
+        first = {"role": "user", "content": "first"}
+        second = {"role": "assistant", "content": "second"}
+        store.start_turn(**IDENTITY, turn_id="one")
+        store.write_runtime_state(
+            **IDENTITY,
+            turn_id="one",
+            state={"agent": {"state": {"context": [first]}}},
+        )
+        store.write_runtime_state(
+            **IDENTITY,
+            turn_id="one",
+            state={"agent": {"state": {"context": [first, second]}}},
+        )
+        store.finish_turn(
+            session_id="session",
+            turn_id="one",
+            status="completed",
+        )
+        with sqlite3.connect(path) as connection:
+            assert (
+                connection.execute(
+                    "SELECT COUNT(*) FROM context_revisions",
+                ).fetchone()[0]
+                == 1
+            )
+            assert (
+                connection.execute(
+                    "SELECT COUNT(*) FROM context_nodes",
+                ).fetchone()[0]
+                == 2
+            )
+            assert (
+                connection.execute(
+                    "SELECT COUNT(*) FROM state_objects "
+                    "WHERE codec = 'context-item-v1'",
+                ).fetchone()[0]
+                == 2
+            )
+        assert _saved_context(path, "one") == {
+            "agent": {"state": {"context": [first, second]}},
+        }
     finally:
         store.close()
 
@@ -173,16 +211,20 @@ async def test_real_session_hook_records_context_before_terminal(
             status="completed" if outcome == "clear" else outcome,
         )
         await recorder.observe(response)
-        assert response.chat_turn_id
         path = next((tmp_path / "transcripts").rglob("*.db"))
         state = _saved_context(
             path,
             request.request_context["_qwenpaw_transcript_turn_id"],
         )
+        assert isinstance(state, dict)
+        agent = state.get("agent")
+        assert isinstance(agent, dict)
         if outcome == "clear":
-            assert state["agent"]["state"]["context"] == []
+            agent_state = agent.get("state")
+            assert isinstance(agent_state, dict)
+            assert agent_state.get("context") == []
         else:
-            assert state["agent"]["summary"] == "saved"
+            assert agent.get("summary") == "saved"
         assert catalog.clone_session(
             source_session_id="session",
             source_user_id="user",
@@ -190,107 +232,8 @@ async def test_real_session_hook_records_context_before_terminal(
             target_session_id="fork",
             target_user_id="user",
             target_channel="console",
-            source_turn_id=response.chat_turn_id,
         )
         target = {**IDENTITY, "session_id": "fork"}
         assert catalog.read_runtime_state(**target).state == state
-    finally:
-        catalog.close()
-
-
-@pytest.mark.asyncio
-async def test_fork_uses_historical_context_and_excludes_future_turns(
-    tmp_path,
-):
-    catalog = TranscriptCatalog(tmp_path)
-    try:
-        for number in (1, 2):
-            turn_id = f"turn-{number}"
-            catalog.start_turn(**IDENTITY, turn_id=turn_id)
-            catalog.upsert_message(
-                session_id="session",
-                turn_id=turn_id,
-                ordinal=0,
-                message=Message(
-                    id=f"user-{number}",
-                    role="user",
-                    content=[TextContent(text=f"question {number}")],
-                ).completed(),
-            )
-            catalog.write_runtime_state(
-                **IDENTITY,
-                turn_id=turn_id,
-                state={"agent": {"turn": number}},
-            )
-            catalog.finish_turn(
-                session_id="session",
-                turn_id=turn_id,
-                status="completed",
-            )
-        manager = ChatManager(repo=JsonChatRepository(tmp_path / "chats.json"))
-        source = await manager.create_chat(ChatSpec(**IDENTITY, name="Source"))
-        tracker = SimpleNamespace(get_status=AsyncMock(return_value="idle"))
-        workspace = SimpleNamespace(
-            config=SimpleNamespace(backend="qwenpaw"),
-            task_tracker=tracker,
-            transcript_store=catalog,
-        )
-        forked = await fork_chat(
-            source.id,
-            ChatForkRequest(source_turn_id="turn-1"),
-            manager,
-            workspace,
-        )
-        assert forked.id != source.id
-        assert forked.meta["fork_source_turn_id"] == "turn-1"
-        assert forked.meta["fork_root_chat_id"] == source.id
-        assert await manager.get_chat(forked.id) == forked
-        target = {**IDENTITY, "session_id": forked.session_id}
-        assert catalog.read_runtime_state(**target).state == {
-            "agent": {"turn": 1},
-        }
-        page = catalog.get_page(**target)
-        assert [message.id for message in page.messages] == ["user-1"]
-        assert catalog.read_turn_context(**target, turn_id="turn-1").state == {
-            "agent": {"turn": 1},
-        }
-        # The target can continue independently from the selected context.
-        catalog.start_turn(**target, turn_id="fork-next")
-        catalog.write_runtime_state(
-            **target,
-            turn_id="fork-next",
-            state={"agent": {"turn": "fork-next"}},
-        )
-        catalog.finish_turn(
-            session_id=forked.session_id,
-            turn_id="fork-next",
-            status="completed",
-        )
-        assert catalog.read_runtime_state(**IDENTITY).state == {
-            "agent": {"turn": 2},
-        }
-        tracker.get_status.return_value = "running"
-        with pytest.raises(HTTPException) as busy:
-            await fork_chat(
-                source.id,
-                ChatForkRequest(source_turn_id="turn-1"),
-                manager,
-                workspace,
-            )
-        assert busy.value.detail == "chat_busy"
-        tracker.get_status.return_value = "idle"
-        with pytest.raises(HTTPException) as missing:
-            await fork_chat(
-                source.id,
-                ChatForkRequest(source_turn_id="absent"),
-                manager,
-                workspace,
-            )
-        assert missing.value.detail == "fork_turn_not_terminal"
-        assert len(await manager.list_chats()) == 2
-        catalog.delete_session("session")
-        assert catalog.read_runtime_state(**target).state == {
-            "agent": {"turn": "fork-next"},
-        }
     finally:
         catalog.close()

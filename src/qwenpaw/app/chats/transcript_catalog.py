@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import sqlite3
@@ -11,6 +10,7 @@ import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
+from uuid import uuid4
 
 from .transcript import (
     RuntimeSnapshot,
@@ -67,53 +67,122 @@ class TranscriptCatalog:
         self._conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
         self._conn.execute("PRAGMA journal_mode=DELETE")
         self._create_schema()
+        self._rebuild_from_chats()
 
     def _create_schema(self) -> None:
         with self._conn:
             self._conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS transcript_files (
-                    session_id       TEXT PRIMARY KEY,
+                    storage_id       TEXT PRIMARY KEY,
+                    session_id       TEXT NOT NULL,
                     user_id          TEXT NOT NULL,
                     channel          TEXT NOT NULL,
-                    file_key         TEXT NOT NULL UNIQUE
+                    UNIQUE(channel, user_id, session_id)
                 );
-
+                PRAGMA user_version=1;
                 """,
             )
+        columns = {
+            str(row[1])
+            for row in self._conn.execute(
+                "PRAGMA table_info(transcript_files)",
+            ).fetchall()
+        }
+        expected = {"storage_id", "session_id", "user_id", "channel"}
+        if columns != expected:
+            raise ValueError("unsupported transcript catalog schema")
 
-    @staticmethod
-    def _file_key(
+    def _store_path(self, storage_id: str) -> Path:
+        return self._transcript_dir / f"{storage_id}.db"
+
+    def _rebuild_from_chats(self) -> None:
+        """Rebuild missing catalog rows from chats.json and DB identity."""
+        path = self._workspace_dir / "chats.json"
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            return
+        for chat in raw.get("chats", []):
+            if not isinstance(chat, dict):
+                continue
+            storage_id = chat.get("storage_id")
+            session_id = chat.get("session_id")
+            user_id = chat.get("user_id")
+            channel = chat.get("channel")
+            if not (
+                isinstance(storage_id, str)
+                and storage_id
+                and isinstance(session_id, str)
+                and session_id
+                and isinstance(user_id, str)
+                and user_id
+                and isinstance(channel, str)
+                and channel
+            ):
+                continue
+            db_path = self._store_path(storage_id)
+            if not db_path.is_file():
+                continue
+            store = TranscriptStore(db_path, storage_id=storage_id)
+            try:
+                if not store.has_session(
+                    session_id=session_id,
+                    user_id=user_id,
+                    channel=channel,
+                ):
+                    raise ValueError("chat database identity mismatch")
+            finally:
+                store.close()
+            with self._conn:
+                self._conn.execute(
+                    "INSERT INTO transcript_files("
+                    "storage_id, session_id, user_id, channel) "
+                    "VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT(storage_id) DO UPDATE SET "
+                    "session_id = excluded.session_id, "
+                    "user_id = excluded.user_id, channel = excluded.channel",
+                    (storage_id, session_id, user_id, channel),
+                )
+
+    def _catalog_row(
+        self,
         *,
         session_id: str,
         user_id: str,
         channel: str,
-    ) -> str:
-        canonical = json.dumps(
-            [channel, user_id, session_id],
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-    def _store_path(self, file_key: str) -> Path:
-        return self._transcript_dir / file_key[:2] / f"{file_key}.db"
-
-    def _catalog_row(self, session_id: str) -> sqlite3.Row | None:
+    ) -> sqlite3.Row | None:
         return self._conn.execute(
-            "SELECT * FROM transcript_files WHERE session_id = ?",
-            (session_id,),
+            "SELECT * FROM transcript_files WHERE session_id = ? "
+            "AND user_id = ? AND channel = ?",
+            (session_id, user_id, channel),
         ).fetchone()
 
-    @staticmethod
-    def _assert_identity(
-        row: sqlite3.Row,
+    def _chat_storage_id(
+        self,
         *,
+        session_id: str,
         user_id: str,
         channel: str,
-    ) -> None:
-        if row["user_id"] != user_id or row["channel"] != channel:
-            raise ValueError("transcript session identity mismatch")
+    ) -> str | None:
+        path = self._workspace_dir / "chats.json"
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            return None
+        for chat in raw.get("chats", []):
+            if not isinstance(chat, dict):
+                continue
+            if (
+                chat.get("session_id") == session_id
+                and chat.get("user_id") == user_id
+                and chat.get("channel") == channel
+            ):
+                value = chat.get("storage_id")
+                if not value:
+                    raise ValueError("chat storage_id is missing")
+                return str(value)
+        return None
 
     def _ensure_catalog_session(
         self,
@@ -122,39 +191,56 @@ class TranscriptCatalog:
         user_id: str,
         channel: str,
         create: bool,
+        storage_id: str | None = None,
     ) -> sqlite3.Row | None:
-        row = self._catalog_row(session_id)
-        if row is not None:
-            self._assert_identity(row, user_id=user_id, channel=channel)
-            return row
-
-        if not create:
-            return None
-        file_key = self._file_key(
+        row = self._catalog_row(
             session_id=session_id,
             user_id=user_id,
             channel=channel,
         )
-        target = self._store_path(file_key)
-        if target.exists():
-            logger.warning(
-                "Removing orphan transcript file for session %s",
-                session_id,
+        if row is not None:
+            return row
+
+        if not create:
+            return None
+        storage_id = (
+            storage_id
+            or self._chat_storage_id(
+                session_id=session_id,
+                user_id=user_id,
+                channel=channel,
             )
-            target.unlink()
+            or str(uuid4())
+        )
+        target = self._store_path(storage_id)
+        if target.exists():
+            store = TranscriptStore(target, storage_id=storage_id)
+            try:
+                if not store.has_session(
+                    session_id=session_id,
+                    user_id=user_id,
+                    channel=channel,
+                ):
+                    raise ValueError("orphan transcript identity mismatch")
+            finally:
+                store.close()
         with self._conn:
             self._conn.execute(
                 "INSERT INTO transcript_files("
-                "session_id, user_id, channel, file_key) "
+                "session_id, user_id, channel, storage_id) "
                 "VALUES (?, ?, ?, ?)",
                 (
                     session_id,
                     user_id,
                     channel,
-                    file_key,
+                    storage_id,
                 ),
             )
-        return self._catalog_row(session_id)
+        return self._catalog_row(
+            session_id=session_id,
+            user_id=user_id,
+            channel=channel,
+        )
 
     @contextmanager
     def _lease(
@@ -164,6 +250,7 @@ class TranscriptCatalog:
         user_id: str,
         channel: str,
         create: bool,
+        storage_id: str | None = None,
     ) -> Iterator[_SessionHandle | None]:
         handle: _SessionHandle | None = None
         with self._condition:
@@ -174,20 +261,23 @@ class TranscriptCatalog:
                 user_id=user_id,
                 channel=channel,
                 create=create,
+                storage_id=storage_id,
             )
             if row is not None:
-                handle = self._handles.get(session_id)
+                storage_id = str(row["storage_id"])
+                handle = self._handles.get(storage_id)
                 if handle is None:
-                    path = self._store_path(str(row["file_key"]))
+                    path = self._store_path(storage_id)
                     path.parent.mkdir(parents=True, exist_ok=True)
                     handle = _SessionHandle(
                         TranscriptStore(
                             path,
+                            storage_id=storage_id,
                         ),
                     )
                     if self._recover_orphaned_turns:
                         handle.store.recover_running_turns()
-                    self._handles[session_id] = handle
+                    self._handles[storage_id] = handle
                 handle.active += 1
         if handle is None:
             yield None
@@ -198,24 +288,71 @@ class TranscriptCatalog:
             with self._condition:
                 handle.active -= 1
                 if handle.active == 0 and not handle.running_turns:
-                    self._handles.pop(session_id, None)
+                    if storage_id is not None:
+                        self._handles.pop(storage_id, None)
                     handle.close()
                 self._condition.notify_all()
 
-    def _release_turn(self, session_id: str, turn_id: str) -> None:
+    def _resolve_catalog_row(
+        self,
+        *,
+        session_id: str,
+        user_id: str | None = None,
+        channel: str | None = None,
+    ) -> sqlite3.Row | None:
+        if user_id is not None and channel is not None:
+            return self._catalog_row(
+                session_id=session_id,
+                user_id=user_id,
+                channel=channel,
+            )
+        rows = self._conn.execute(
+            "SELECT * FROM transcript_files WHERE session_id = ?",
+            (session_id,),
+        ).fetchall()
+        if len(rows) > 1:
+            raise ValueError("ambiguous transcript session identity")
+        return rows[0] if rows else None
+
+    def _release_turn(
+        self,
+        session_id: str,
+        turn_id: str,
+        *,
+        user_id: str | None = None,
+        channel: str | None = None,
+    ) -> None:
         with self._condition:
-            handle = self._handles.get(session_id)
+            row = self._resolve_catalog_row(
+                session_id=session_id,
+                user_id=user_id,
+                channel=channel,
+            )
+            if row is None:
+                return
+            storage_id = str(row["storage_id"])
+            handle = self._handles.get(storage_id)
             if handle is None:
                 return
             handle.running_turns.discard(turn_id)
             if handle.active == 0 and not handle.running_turns:
-                self._handles.pop(session_id, None)
+                self._handles.pop(storage_id, None)
                 handle.close()
             self._condition.notify_all()
 
-    def _identity_for_session(self, session_id: str) -> tuple[str, str] | None:
+    def _identity_for_session(
+        self,
+        session_id: str,
+        *,
+        user_id: str | None = None,
+        channel: str | None = None,
+    ) -> tuple[str, str] | None:
         with self._lock:
-            row = self._catalog_row(session_id)
+            row = self._resolve_catalog_row(
+                session_id=session_id,
+                user_id=user_id,
+                channel=channel,
+            )
             if row is not None:
                 return str(row["user_id"]), str(row["channel"])
             return None
@@ -240,6 +377,24 @@ class TranscriptCatalog:
             if handle is None:
                 return False
             return handle.store.has_session(**kwargs)
+
+    def storage_id_for(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        channel: str,
+    ) -> str:
+        """Return the immutable physical identity for a logical session."""
+        with self._lock:
+            row = self._catalog_row(
+                session_id=session_id,
+                user_id=user_id,
+                channel=channel,
+            )
+            if row is None:
+                raise KeyError(session_id)
+            return str(row["storage_id"])
 
     def import_legacy_messages(self, **kwargs: Any) -> bool:
         """Seed a new session database from legacy display history."""
@@ -425,7 +580,13 @@ class TranscriptCatalog:
 
     def _write_existing(self, method_name: str, **kwargs: Any) -> Any:
         session_id = str(kwargs["session_id"])
-        identity = self._identity_for_session(session_id)
+        route_user = kwargs.pop("user_id", None)
+        route_channel = kwargs.pop("channel", None)
+        identity = self._identity_for_session(
+            session_id,
+            user_id=route_user,
+            channel=route_channel,
+        )
         if identity is None:
             raise ValueError("transcript session does not exist")
         user_id, channel = identity
@@ -443,7 +604,12 @@ class TranscriptCatalog:
             except BaseException:
                 turn_id = kwargs.get("turn_id")
                 if turn_id is not None:
-                    self._release_turn(session_id, str(turn_id))
+                    self._release_turn(
+                        session_id,
+                        str(turn_id),
+                        user_id=user_id,
+                        channel=channel,
+                    )
                 raise
 
     def upsert_message(self, **kwargs: Any) -> None:
@@ -454,12 +620,20 @@ class TranscriptCatalog:
         self._release_turn(
             str(kwargs["session_id"]),
             str(kwargs["turn_id"]),
+            user_id=kwargs.get("user_id"),
+            channel=kwargs.get("channel"),
         )
 
     def read_replay_page(self, **kwargs: Any) -> list[tuple[int, str]]:
         """Read a bounded committed replay page under a session lease."""
         session_id = str(kwargs["session_id"])
-        identity = self._identity_for_session(session_id)
+        route_user = kwargs.pop("user_id", None)
+        route_channel = kwargs.pop("channel", None)
+        identity = self._identity_for_session(
+            session_id,
+            user_id=route_user,
+            channel=route_channel,
+        )
         if identity is None:
             raise ValueError("transcript session does not exist")
         user_id, channel = identity
@@ -567,11 +741,18 @@ class TranscriptCatalog:
         target_session_id: str,
         target_user_id: str,
         target_channel: str,
-        source_turn_id: str | None = None,
+        target_storage_id: str | None = None,
     ) -> bool:
         """Clone completed history and agent runtime into a new session."""
         with self._lock:
-            target_existed = self._catalog_row(target_session_id) is not None
+            target_existed = (
+                self._catalog_row(
+                    session_id=target_session_id,
+                    user_id=target_user_id,
+                    channel=target_channel,
+                )
+                is not None
+            )
         try:
             with self._lease(
                 session_id=source_session_id,
@@ -586,19 +767,10 @@ class TranscriptCatalog:
                     user_id=target_user_id,
                     channel=target_channel,
                     create=True,
+                    storage_id=target_storage_id,
                 ) as target:
                     if target is None:
                         raise RuntimeError("failed to create fork session")
-                    if source_turn_id is not None:
-                        target.store.fork_turn_from(
-                            source_path=source.store.path,
-                            source_session_id=source_session_id,
-                            target_session_id=target_session_id,
-                            target_user_id=target_user_id,
-                            target_channel=target_channel,
-                            turn_id=source_turn_id,
-                        )
-                        return True
                     return target.store.clone_completed_session_from(
                         source_path=source.store.path,
                         source_session_id=source_session_id,
@@ -608,7 +780,11 @@ class TranscriptCatalog:
                     )
         except BaseException:
             if not target_existed:
-                self.delete_session(target_session_id)
+                self.delete_session(
+                    target_session_id,
+                    target_user_id,
+                    target_channel,
+                )
             raise
 
     def session_message_payloads(
@@ -676,7 +852,13 @@ class TranscriptCatalog:
 
     def find_turn_for_message(self, **kwargs: Any) -> str | None:
         session_id = str(kwargs["session_id"])
-        identity = self._identity_for_session(session_id)
+        route_user = kwargs.pop("user_id", None)
+        route_channel = kwargs.pop("channel", None)
+        identity = self._identity_for_session(
+            session_id,
+            user_id=route_user,
+            channel=route_channel,
+        )
         if identity is None:
             return None
         with self._lease(
@@ -689,25 +871,35 @@ class TranscriptCatalog:
                 return None
             return handle.store.find_turn_for_message(**kwargs)
 
-    def delete_session(self, session_id: str) -> bool:
+    def delete_session(
+        self,
+        session_id: str,
+        user_id: str | None = None,
+        channel: str | None = None,
+    ) -> bool:
         """Close and delete one session-owned database."""
         with self._condition:
-            row = self._catalog_row(session_id)
+            row = self._resolve_catalog_row(
+                session_id=session_id,
+                user_id=user_id,
+                channel=channel,
+            )
             if row is None:
                 return False
-            handle = self._handles.get(session_id)
+            storage_id = str(row["storage_id"])
+            handle = self._handles.get(storage_id)
             while handle is not None and handle.active > 0:
                 self._condition.wait()
-                handle = self._handles.get(session_id)
+                handle = self._handles.get(storage_id)
             if handle is not None:
-                self._handles.pop(session_id, None)
-            path = self._store_path(str(row["file_key"]))
+                self._handles.pop(storage_id, None)
+            path = self._store_path(storage_id)
             if handle is not None:
                 handle.close()
             with self._conn:
                 self._conn.execute(
-                    "DELETE FROM transcript_files WHERE session_id = ?",
-                    (session_id,),
+                    "DELETE FROM transcript_files WHERE storage_id = ?",
+                    (storage_id,),
                 )
             path.unlink(missing_ok=True)
             self._condition.notify_all()

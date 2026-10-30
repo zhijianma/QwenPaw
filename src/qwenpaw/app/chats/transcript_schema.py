@@ -11,6 +11,7 @@ SCHEMA = """
 
 CREATE TABLE IF NOT EXISTS transcript_sessions (
     session_id       TEXT PRIMARY KEY,
+    storage_id       TEXT NOT NULL UNIQUE,
     user_id          TEXT NOT NULL,
     channel          TEXT NOT NULL,
     next_turn_seq    INTEGER NOT NULL DEFAULT 1
@@ -91,18 +92,28 @@ CREATE TABLE IF NOT EXISTS transcript_blocks (
         ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS context_blobs (
+CREATE TABLE IF NOT EXISTS state_objects (
     content_hash TEXT PRIMARY KEY NOT NULL,
-    codec TEXT NOT NULL CHECK(codec = 'session-json-v1'),
-    payload TEXT NOT NULL
+    codec TEXT NOT NULL CHECK(codec IN (
+        'json-v1', 'context-item-v1', 'context-ref-v1'
+    )),
+    payload TEXT NOT NULL CHECK(json_valid(payload)),
+    byte_length INTEGER NOT NULL CHECK(byte_length >= 0)
+);
+CREATE TABLE IF NOT EXISTS context_nodes (
+    node_hash TEXT PRIMARY KEY NOT NULL,
+    parent_node_hash TEXT REFERENCES context_nodes(node_hash),
+    item_hash TEXT NOT NULL REFERENCES state_objects(content_hash),
+    length INTEGER NOT NULL CHECK(length > 0)
 );
 CREATE TABLE IF NOT EXISTS context_revisions (
     session_id TEXT NOT NULL,
     revision_id TEXT NOT NULL,
     parent_revision_id TEXT,
     anchor_turn_id TEXT,
-    kind TEXT NOT NULL CHECK(kind IN ('turn_commit', 'clear')),
-    content_hash TEXT NOT NULL REFERENCES context_blobs(content_hash),
+    kind TEXT NOT NULL CHECK(kind IN (
+        'turn_commit', 'clear', 'migration_anchor'
+    )),
     context_generation INTEGER NOT NULL,
     current_usage_json TEXT,
     created_at TEXT NOT NULL,
@@ -114,6 +125,16 @@ CREATE TABLE IF NOT EXISTS context_revisions (
 );
 CREATE INDEX IF NOT EXISTS context_revisions_turn
     ON context_revisions(session_id, anchor_turn_id);
+CREATE TABLE IF NOT EXISTS revision_components (
+    session_id TEXT NOT NULL,
+    revision_id TEXT NOT NULL,
+    component_key TEXT NOT NULL,
+    content_hash TEXT NOT NULL REFERENCES state_objects(content_hash),
+    PRIMARY KEY(session_id, revision_id, component_key),
+    FOREIGN KEY(session_id, revision_id)
+        REFERENCES context_revisions(session_id, revision_id)
+        ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS current_context_revision (
     session_id TEXT PRIMARY KEY NOT NULL,
     revision_id TEXT NOT NULL,
@@ -153,9 +174,11 @@ def validate_database(connection: sqlite3.Connection) -> None:
         raise ValueError("unsupported conversation database schema")
     # Resolve all canonical columns before accepting a checkpoint or store.
     connection.execute(
-        "SELECT m.envelope_json, b.payload_json, b.version, r.content_hash "
-        "FROM transcript_messages m, transcript_blocks b, "
-        "context_revisions r LIMIT 0",
+        "SELECT s.storage_id, m.envelope_json, b.payload_json, b.version, "
+        "o.codec, n.node_hash, c.component_key "
+        "FROM transcript_sessions s, transcript_messages m, "
+        "transcript_blocks b, state_objects o, context_nodes n, "
+        "revision_components c LIMIT 0",
     )
 
 

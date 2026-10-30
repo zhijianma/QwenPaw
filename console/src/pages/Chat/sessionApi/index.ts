@@ -537,7 +537,6 @@ const buildResponseCard = (
           id: turnId
             ? `history-response:${turnId}`
             : `response_${generateId()}`,
-          chat_turn_id: turnId,
           output: normalizedMessages,
           object: "response",
           status: terminal?.status || "completed",

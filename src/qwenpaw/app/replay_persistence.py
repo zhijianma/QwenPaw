@@ -12,6 +12,8 @@ class ReplayReceipt:
 
     store: Any
     session_id: str
+    user_id: str
+    channel: str
     turn_id: str
     message_id: str
     ordinal: int
@@ -21,6 +23,8 @@ class ReplayReceipt:
     def read_page(self, through: int, after: int) -> list[tuple[int, str]]:
         return self.store.read_replay_page(
             session_id=self.session_id,
+            user_id=self.user_id,
+            channel=self.channel,
             turn_id=self.turn_id,
             through=through,
             after=after,

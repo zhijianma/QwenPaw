@@ -6,7 +6,6 @@ import {
   ChatSessionTransition,
   ReadyChatWelcome,
 } from "./components/ChatSessionTransition";
-import { ResponseForkAction } from "./components/ResponseForkAction";
 import { ChatWelcome } from "./components/ChatWelcome";
 import { useChatRouteResolution } from "./hooks/useChatRouteResolution";
 import { useAdvisorDecisionAvailability } from "./hooks/useAdvisorDecisionAvailability";
@@ -3173,55 +3172,6 @@ export default function ChatPage() {
     [message, t],
   );
 
-  const forkPendingRef = useRef(false);
-  const forkResponse = useCallback(
-    async (turnId: string) => {
-      if (forkPendingRef.current || !backendChatId) return;
-      const agentId = selectedAgentRef.current;
-      const sourceChatId = chatIdRef.current;
-      forkPendingRef.current = true;
-      try {
-        const fork = await chatApi.createChatFork(
-          backendChatId,
-          turnId,
-          agentId,
-        );
-        if (
-          selectedAgentRef.current !== agentId ||
-          chatIdRef.current !== sourceChatId
-        )
-          return;
-        await sessionApi.getSessionList();
-        if (
-          selectedAgentRef.current !== agentId ||
-          chatIdRef.current !== sourceChatId
-        )
-          return;
-        sessionApi.trackNavigatedSession(
-          fork.id,
-          setLastChatIdRef.current,
-          agentId,
-        );
-        sessionApi.preferredChatId = fork.id;
-        navigate(buildChatPath(fork.id));
-      } catch (error) {
-        const code = error instanceof Error ? error.message : "";
-        message.error(
-          t(
-            code === "fork_context_missing"
-              ? "chat.fork.contextMissing"
-              : code === "chat_busy"
-              ? "chat.fork.busy"
-              : "chat.fork.failed",
-          ),
-        );
-      } finally {
-        forkPendingRef.current = false;
-      }
-    },
-    [backendChatId, navigate, message, t],
-  );
-
   const customFetch = useCallback(
     async (
       data: {
@@ -4932,23 +4882,6 @@ export default function ChatPage() {
               void copyResponse(data);
             },
           },
-          ...(usesQwenPawBackend
-            ? [
-                {
-                  render: ({
-                    data,
-                  }: {
-                    data: { chat_turn_id?: string; status?: string };
-                  }) => (
-                    <ResponseForkAction
-                      data={data}
-                      disabled={Boolean(chatLoading) || hasQueueItems}
-                      onFork={forkResponse}
-                    />
-                  ),
-                },
-              ]
-            : []),
           {
             render: ({
               data,
@@ -5007,7 +4940,6 @@ export default function ChatPage() {
     cancelPendingHistoryInteraction,
     navigateToHistoryUserMessage,
     copyResponse,
-    forkResponse,
     chatLoading,
     handleFileUpload,
     t,

@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import threading
 from pathlib import Path
 
 import pytest
 
 from qwenpaw.app.chats import transcript_schema
+from qwenpaw.app.chats.models import ChatSpec
 from qwenpaw.app.chats.transcript_catalog import TranscriptCatalog
 from qwenpaw.schemas import Message, TextContent
 
@@ -48,17 +50,17 @@ def _finish(catalog: TranscriptCatalog, session_id: str) -> None:
     )
 
 
-def test_routes_sessions_to_hash_sharded_databases(tmp_path: Path) -> None:
+def test_routes_sessions_to_storage_id_databases(tmp_path: Path) -> None:
     catalog = TranscriptCatalog(tmp_path)
     _start(catalog, "session/one")
     _start(catalog, "session-two")
     _upsert(catalog, "session/one")
     _upsert(catalog, "session-two")
 
-    files = sorted((tmp_path / "transcripts").glob("*/*.db"))
+    files = sorted((tmp_path / "transcripts").glob("*.db"))
     assert len(files) == 2
     assert all("session" not in path.name for path in files)
-    assert all(len(path.parent.name) == 2 for path in files)
+    assert all(len(path.stem) == 36 for path in files)
 
     first = catalog.get_page(
         session_id="session/one",
@@ -79,6 +81,87 @@ def test_routes_sessions_to_hash_sharded_databases(tmp_path: Path) -> None:
         "message-session-two",
     ]
     catalog.close()
+
+
+def test_catalog_rebuilds_direct_path_and_allows_shared_session_id(
+    tmp_path: Path,
+) -> None:
+    storage_id = "11111111-1111-4111-8111-111111111111"
+    chat = ChatSpec(
+        storage_id=storage_id,
+        session_id="shared-group",
+        user_id="user-a",
+        channel="feishu",
+    )
+    chat_b = ChatSpec(
+        storage_id="22222222-2222-4222-8222-222222222222",
+        session_id="shared-group",
+        user_id="user-b",
+        channel="feishu",
+    )
+    (tmp_path / "chats.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "chats": [
+                    chat.model_dump(mode="json"),
+                    chat_b.model_dump(mode="json"),
+                ],
+            },
+        ),
+        encoding="utf-8",
+    )
+    catalog = TranscriptCatalog(tmp_path)
+    catalog.start_turn(
+        session_id="shared-group",
+        user_id="user-a",
+        channel="feishu",
+        turn_id="turn-a",
+    )
+    catalog.start_turn(
+        session_id="shared-group",
+        user_id="user-b",
+        channel="feishu",
+        turn_id="turn-b",
+    )
+    with pytest.raises(ValueError, match="ambiguous"):
+        catalog.finish_turn(
+            session_id="shared-group",
+            turn_id="turn-a",
+            status="completed",
+        )
+    catalog.finish_turn(
+        session_id="shared-group",
+        user_id="user-a",
+        channel="feishu",
+        turn_id="turn-a",
+        status="completed",
+    )
+    catalog.finish_turn(
+        session_id="shared-group",
+        user_id="user-b",
+        channel="feishu",
+        turn_id="turn-b",
+        status="completed",
+    )
+    assert (tmp_path / "transcripts" / f"{storage_id}.db").is_file()
+    catalog.close()
+
+    (tmp_path / "transcript_catalog.db").unlink()
+    reopened = TranscriptCatalog(tmp_path)
+    try:
+        assert reopened.has_session(
+            session_id="shared-group",
+            user_id="user-a",
+            channel="feishu",
+        )
+        assert reopened.has_session(
+            session_id="shared-group",
+            user_id="user-b",
+            channel="feishu",
+        )
+    finally:
+        reopened.close()
 
 
 def test_different_sessions_do_not_share_a_writer_lock(tmp_path: Path) -> None:
@@ -117,10 +200,14 @@ def test_idle_handles_close_without_losing_history(
 ) -> None:
     catalog = TranscriptCatalog(tmp_path)
     _start(catalog, "session-a")
-    handle = catalog._handles["session-a"]  # pylint: disable=protected-access
+    row = catalog._resolve_catalog_row(  # pylint: disable=protected-access
+        session_id="session-a",
+    )
+    storage_id = str(row["storage_id"])
+    handle = catalog._handles[storage_id]  # pylint: disable=protected-access
     _upsert(catalog, "session-a")
     assert (  # pylint: disable=protected-access
-        catalog._handles["session-a"] is handle
+        catalog._handles[storage_id] is handle
     )
     _finish(catalog, "session-a")
     assert not catalog._handles  # pylint: disable=protected-access
@@ -311,7 +398,11 @@ def test_failed_turn_write_releases_handle(
 ) -> None:
     catalog = TranscriptCatalog(tmp_path)
     _start(catalog, "session-a")
-    handle = catalog._handles["session-a"]  # pylint: disable=protected-access
+    row = catalog._resolve_catalog_row(  # pylint: disable=protected-access
+        session_id="session-a",
+    )
+    storage_id = str(row["storage_id"])
+    handle = catalog._handles[storage_id]  # pylint: disable=protected-access
 
     def fail_write(**_kwargs) -> None:
         raise RuntimeError("write failed")

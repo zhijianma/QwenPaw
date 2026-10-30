@@ -17,6 +17,7 @@ from ...schemas import Message, TextContent
 from ...token_usage.turn_usage import TURN_USAGE_META_KEY
 from .context_revisions import (
     commit_turn_revision,
+    read_revision_state,
     record_revision,
 )
 from .transcript_blocks import (
@@ -24,7 +25,6 @@ from .transcript_blocks import (
     message_envelope,
     write_message_blocks,
 )
-from .fork_turn import fork_turn
 from .transcript_schema import initialize_database, validate_database
 from .transcript_models import (
     RuntimeSnapshot,
@@ -57,8 +57,11 @@ class TranscriptStore:
     def __init__(
         self,
         db_path: str | Path,
+        *,
+        storage_id: str | None = None,
     ) -> None:
         self._path = Path(db_path).expanduser()
+        self._storage_id = storage_id or self._path.stem
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._closed = False
@@ -71,6 +74,12 @@ class TranscriptStore:
         self._conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
         try:
             initialize_database(self._conn)
+            if storage_id is None:
+                row = self._conn.execute(
+                    "SELECT storage_id FROM transcript_sessions LIMIT 1",
+                ).fetchone()
+                if row is not None:
+                    self._storage_id = str(row[0])
         except BaseException:
             self._conn.close()
             self._closed = True
@@ -131,8 +140,13 @@ class TranscriptStore:
         *,
         user_id: str,
         channel: str,
+        storage_id: str | None = None,
     ) -> None:
-        if row["user_id"] != user_id or row["channel"] != channel:
+        if (
+            row["user_id"] != user_id
+            or row["channel"] != channel
+            or (storage_id is not None and row["storage_id"] != storage_id)
+        ):
             raise ValueError("transcript session identity mismatch")
 
     def has_session(
@@ -151,6 +165,7 @@ class TranscriptStore:
                 session,
                 user_id=user_id,
                 channel=channel,
+                storage_id=self._storage_id,
             )
             return True
 
@@ -170,6 +185,7 @@ class TranscriptStore:
                 session,
                 user_id=user_id,
                 channel=channel,
+                storage_id=self._storage_id,
             )
             row = connection.execute(
                 "SELECT state_json, context_generation, current_usage_json "
@@ -204,6 +220,7 @@ class TranscriptStore:
                 session,
                 user_id=user_id,
                 channel=channel,
+                storage_id=self._storage_id,
             )
             row = connection.execute(
                 "SELECT context_generation, current_usage_json "
@@ -232,20 +249,28 @@ class TranscriptStore:
             session = self._session_row(session_id, connection)
             if session is None:
                 return None
-            self._assert_identity(session, user_id=user_id, channel=channel)
+            self._assert_identity(
+                session,
+                user_id=user_id,
+                channel=channel,
+                storage_id=self._storage_id,
+            )
             row = connection.execute(
-                "SELECT b.payload, r.context_generation, "
+                "SELECT r.revision_id, r.context_generation, "
                 "r.current_usage_json FROM turn_context_revision t "
                 "JOIN context_revisions r ON r.session_id = t.session_id "
                 "AND r.revision_id = t.revision_id "
-                "JOIN context_blobs b ON b.content_hash = r.content_hash "
                 "WHERE t.session_id = ? AND t.turn_id = ?",
                 (session_id, turn_id),
             ).fetchone()
             if row is None:
                 return None
             return RuntimeSnapshot(
-                state=json.loads(row["payload"]),
+                state=read_revision_state(
+                    connection,
+                    session_id=session_id,
+                    revision_id=str(row["revision_id"]),
+                ),
                 context_generation=int(row["context_generation"]),
                 current_usage=(
                     json.loads(row["current_usage_json"])
@@ -253,6 +278,41 @@ class TranscriptStore:
                     else None
                 ),
             )
+
+    def _ensure_migration_anchor(
+        self,
+        *,
+        session_id: str,
+        state: dict[str, Any],
+        generation: int,
+        usage_json: str | None,
+        created_at: str,
+    ) -> None:
+        latest = self._conn.execute(
+            "SELECT turn_id FROM transcript_turns "
+            "WHERE session_id = ? AND status != 'running' "
+            "ORDER BY turn_seq DESC LIMIT 1",
+            (session_id,),
+        ).fetchone()
+        if latest is None:
+            return
+        bound = self._conn.execute(
+            "SELECT 1 FROM turn_context_revision "
+            "WHERE session_id = ? AND turn_id = ?",
+            (session_id, latest[0]),
+        ).fetchone()
+        if bound is not None:
+            return
+        record_revision(
+            self._conn,
+            session_id=session_id,
+            turn_id=str(latest[0]),
+            state=state,
+            generation=generation,
+            usage_json=usage_json,
+            created_at=created_at,
+            migration_anchor=True,
+        )
 
     def write_runtime_state(
         self,
@@ -265,6 +325,7 @@ class TranscriptStore:
         reset_context: bool = False,
         only_if_missing: bool = False,
         turn_id: str | None = None,
+        migration_anchor: bool = False,
     ) -> tuple[int, bool]:
         """Persist one runtime snapshot and optionally start a new context."""
         state_json = json.dumps(
@@ -276,9 +337,9 @@ class TranscriptStore:
         with self._transaction():
             self._conn.execute(
                 "INSERT INTO transcript_sessions("
-                "session_id, user_id, channel) "
-                "VALUES (?, ?, ?) ON CONFLICT(session_id) DO NOTHING",
-                (session_id, user_id, channel),
+                "session_id, storage_id, user_id, channel) "
+                "VALUES (?, ?, ?, ?) ON CONFLICT(session_id) DO NOTHING",
+                (session_id, self._storage_id, user_id, channel),
             )
             session = self._session_row(session_id)
             if session is None:
@@ -287,6 +348,7 @@ class TranscriptStore:
                 session,
                 user_id=user_id,
                 channel=channel,
+                storage_id=self._storage_id,
             )
             existing = self._conn.execute(
                 "SELECT context_generation, current_usage_json "
@@ -294,6 +356,20 @@ class TranscriptStore:
                 (session_id,),
             ).fetchone()
             if existing is not None and only_if_missing:
+                if migration_anchor:
+                    self._ensure_migration_anchor(
+                        session_id=session_id,
+                        state=json.loads(
+                            self._conn.execute(
+                                "SELECT state_json FROM session_runtime "
+                                "WHERE session_id = ?",
+                                (session_id,),
+                            ).fetchone()[0],
+                        ),
+                        generation=int(existing["context_generation"]),
+                        usage_json=existing["current_usage_json"],
+                        created_at=timestamp,
+                    )
                 return int(existing["context_generation"]), False
 
             generation = int(existing["context_generation"]) if existing else 0
@@ -340,15 +416,24 @@ class TranscriptStore:
                     timestamp,
                 ),
             )
+            if migration_anchor and turn_id is None:
+                latest = self._conn.execute(
+                    "SELECT turn_id FROM transcript_turns "
+                    "WHERE session_id = ? AND status != 'running' "
+                    "ORDER BY turn_seq DESC LIMIT 1",
+                    (session_id,),
+                ).fetchone()
+                turn_id = str(latest[0]) if latest else None
             if turn_id is not None or reset_context:
                 record_revision(
                     self._conn,
                     session_id=session_id,
                     turn_id=turn_id,
-                    payload=state_json,
+                    state=state,
                     generation=generation,
                     usage_json=usage_json,
                     created_at=timestamp,
+                    migration_anchor=migration_anchor,
                 )
             else:
                 self._conn.execute(
@@ -372,9 +457,10 @@ class TranscriptStore:
         with self._transaction():
             self._conn.execute(
                 "INSERT INTO transcript_sessions("
-                "session_id, user_id, channel) VALUES (?, ?, ?) "
+                "session_id, storage_id, user_id, channel) "
+                "VALUES (?, ?, ?, ?) "
                 "ON CONFLICT(session_id) DO NOTHING",
-                (session_id, user_id, channel),
+                (session_id, self._storage_id, user_id, channel),
             )
             session = self._session_row(session_id)
             if session is None:
@@ -383,6 +469,7 @@ class TranscriptStore:
                 session,
                 user_id=user_id,
                 channel=channel,
+                storage_id=self._storage_id,
             )
             self._conn.execute(
                 "INSERT INTO session_runtime("
@@ -502,6 +589,7 @@ class TranscriptStore:
                         session,
                         user_id=user_id,
                         channel=channel,
+                        storage_id=self._storage_id,
                     )
                     self._conn.backup(snapshot)
                 with snapshot:
@@ -559,6 +647,7 @@ class TranscriptStore:
                     session,
                     user_id=user_id,
                     channel=channel,
+                    storage_id=self._storage_id,
                 )
                 with self._lock:
                     running_turns = self._conn.execute(
@@ -674,10 +763,11 @@ class TranscriptStore:
             with self._transaction():
                 self._conn.execute(
                     "INSERT INTO transcript_sessions("
-                    "session_id, user_id, channel, next_turn_seq) "
-                    "VALUES (?, ?, ?, ?)",
+                    "session_id, storage_id, user_id, channel, "
+                    "next_turn_seq) VALUES (?, ?, ?, ?, ?)",
                     (
                         target_session_id,
+                        self._storage_id,
                         target_user_id,
                         target_channel,
                         int(source["next_turn_seq"]),
@@ -741,35 +831,6 @@ class TranscriptStore:
         finally:
             self._conn.execute("DETACH DATABASE parent")
 
-    def fork_turn_from(
-        self,
-        *,
-        source_path: Path,
-        source_session_id: str,
-        target_session_id: str,
-        target_user_id: str,
-        target_channel: str,
-        turn_id: str,
-    ) -> None:
-        """Create an independent session at an exact completed boundary."""
-        with self._lock:
-            self._conn.execute(
-                "ATTACH DATABASE ? AS parent",
-                (str(source_path),),
-            )
-            try:
-                with self._transaction():
-                    fork_turn(
-                        self._conn,
-                        source_session_id=source_session_id,
-                        target_session_id=target_session_id,
-                        target_user_id=target_user_id,
-                        target_channel=target_channel,
-                        turn_id=turn_id,
-                    )
-            finally:
-                self._conn.execute("DETACH DATABASE parent")
-
     def message_payloads(
         self,
         *,
@@ -813,6 +874,15 @@ class TranscriptStore:
                     "WHERE status = 'running'",
                     (_utc_now(),),
                 )
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO turn_context_revision "
+                    "SELECT r.session_id, r.anchor_turn_id, r.revision_id "
+                    "FROM context_revisions r "
+                    "JOIN transcript_turns t "
+                    "ON t.session_id = r.session_id "
+                    "AND t.turn_id = r.anchor_turn_id "
+                    "WHERE t.status = 'cancelled'",
+                )
                 return cursor.rowcount
 
     def import_legacy_messages(
@@ -840,6 +910,7 @@ class TranscriptStore:
                     session,
                     user_id=user_id,
                     channel=channel,
+                    storage_id=self._storage_id,
                 )
                 existing_turn = self._conn.execute(
                     "SELECT 1 FROM transcript_turns WHERE session_id = ? "
@@ -856,9 +927,15 @@ class TranscriptStore:
             else:
                 self._conn.execute(
                     "INSERT INTO transcript_sessions("
-                    "session_id, user_id, channel, next_turn_seq) "
-                    "VALUES (?, ?, ?, ?)",
-                    (session_id, user_id, channel, len(turns) + 1),
+                    "session_id, storage_id, user_id, channel, "
+                    "next_turn_seq) VALUES (?, ?, ?, ?, ?)",
+                    (
+                        session_id,
+                        self._storage_id,
+                        user_id,
+                        channel,
+                        len(turns) + 1,
+                    ),
                 )
             for turn_seq, turn_messages in enumerate(turns, start=1):
                 first_metadata = turn_messages[0].metadata or {}
@@ -927,10 +1004,12 @@ class TranscriptStore:
         with self._transaction():
             self._conn.execute(
                 "INSERT INTO transcript_sessions("
-                "session_id, user_id, channel) VALUES (?, ?, ?) "
+                "session_id, storage_id, user_id, channel) "
+                "VALUES (?, ?, ?, ?) "
                 "ON CONFLICT(session_id) DO NOTHING",
                 (
                     session_id,
+                    self._storage_id,
                     user_id,
                     channel,
                 ),
@@ -942,6 +1021,7 @@ class TranscriptStore:
                 session,
                 user_id=user_id,
                 channel=channel,
+                storage_id=self._storage_id,
             )
             existing = self._conn.execute(
                 "SELECT turn_seq, replaces_turn_id FROM transcript_turns "
@@ -989,6 +1069,8 @@ class TranscriptStore:
         self,
         *,
         session_id: str,
+        user_id: str | None = None,
+        channel: str | None = None,
         turn_id: str,
         message: Message,
         ordinal: int,
@@ -996,6 +1078,7 @@ class TranscriptStore:
         finished_at: str | None = None,
     ) -> None:
         """Insert or update one complete display message snapshot."""
+        del user_id, channel
         payload = message_envelope(message)
         role = _enum_value(message.role)
         client_message_id = self._client_message_id(message)
@@ -1063,6 +1146,8 @@ class TranscriptStore:
         self,
         *,
         session_id: str,
+        user_id: str | None = None,
+        channel: str | None = None,
         turn_id: str,
         through: int,
         after: int,
@@ -1072,6 +1157,7 @@ class TranscriptStore:
         Envelope terminal message sequence numbers do not change when the
         containing response is finalized. Later completions are excluded.
         """
+        del user_id, channel
         result: list[tuple[int, str]] = []
         size = 0
         with self._read_connection() as connection:
@@ -1098,12 +1184,15 @@ class TranscriptStore:
         self,
         *,
         session_id: str,
+        user_id: str | None = None,
+        channel: str | None = None,
         turn_id: str,
         status: TurnStatus,
         error: dict[str, Any] | None = None,
         finished_at: str | None = None,
     ) -> None:
         """Set a terminal turn status and activate successful replacements."""
+        del user_id, channel
         if status == "running":
             raise ValueError("finish_turn requires a terminal status")
         error_json = (
@@ -1158,11 +1247,14 @@ class TranscriptStore:
         self,
         *,
         session_id: str,
+        user_id: str | None = None,
+        channel: str | None = None,
         turn_id: str,
         usage: dict[str, Any] | None,
         context_usage: dict[str, Any] | None,
     ) -> bool:
         """Attach one usage snapshot to the turn's closing assistant."""
+        del user_id, channel
         snapshot = {
             "usage": usage,
             "context_usage": context_usage,
@@ -1197,6 +1289,18 @@ class TranscriptStore:
                     session_id,
                     row["message_id"],
                 ),
+            )
+            usage_json = json.dumps(
+                snapshot,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            self._conn.execute(
+                "UPDATE context_revisions SET current_usage_json = ? "
+                "WHERE session_id = ? AND revision_id = ("
+                "SELECT revision_id FROM turn_context_revision "
+                "WHERE session_id = ? AND turn_id = ?)",
+                (usage_json, session_id, session_id, turn_id),
             )
             return True
 
@@ -1234,6 +1338,7 @@ class TranscriptStore:
                 session,
                 user_id=user_id,
                 channel=channel,
+                storage_id=self._storage_id,
             )
             snapshot_turn_seq = (
                 before.snapshot_turn_seq
@@ -1387,7 +1492,12 @@ class TranscriptStore:
             session = self._session_row(session_id, connection)
             if session is None:
                 return None
-            self._assert_identity(session, user_id=user_id, channel=channel)
+            self._assert_identity(
+                session,
+                user_id=user_id,
+                channel=channel,
+                storage_id=self._storage_id,
+            )
             row = connection.execute(
                 "SELECT payload_json FROM transcript_message_payloads "
                 "WHERE session_id = ? AND message_id = ? "
@@ -1426,6 +1536,7 @@ class TranscriptStore:
                 session,
                 user_id=user_id,
                 channel=channel,
+                storage_id=self._storage_id,
             )
             snapshot_turn_seq = (
                 before.snapshot_turn_seq
@@ -1521,10 +1632,13 @@ class TranscriptStore:
         self,
         *,
         session_id: str,
+        user_id: str | None = None,
+        channel: str | None = None,
         message_id: str | None = None,
         client_message_id: str | None = None,
     ) -> str | None:
         """Resolve a regeneration target to its transcript turn."""
+        del user_id, channel
         if not message_id and not client_message_id:
             return None
         with self._read_connection() as connection:

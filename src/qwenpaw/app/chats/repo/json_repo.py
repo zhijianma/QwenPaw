@@ -46,7 +46,25 @@ class JsonChatRepository(BaseChatRepository):
         """Load and validate chat specs as one worker-thread operation."""
         if not self._path.exists():
             return ChatsFile(version=1, chats=[])
-        return ChatsFile.model_validate(read_json(self._path))
+        raw = read_json(self._path)
+        changed = False
+        chats = raw.get("chats") if isinstance(raw, dict) else None
+        if isinstance(chats, list):
+            for chat in chats:
+                if isinstance(chat, dict) and not chat.get("storage_id"):
+                    chat["storage_id"] = str(uuid.uuid4())
+                    changed = True
+        result = ChatsFile.model_validate(raw)
+        storage_ids = [chat.storage_id for chat in result.chats]
+        if len(storage_ids) != len(set(storage_ids)):
+            raise ValueError("duplicate chat storage_id")
+        if changed:
+            write_json_atomic(
+                self._path,
+                result.model_dump(mode="json"),
+                sort_keys=True,
+            )
+        return result
 
     async def load(self) -> ChatsFile:
         """Load and validate chat specs without blocking the event loop.

@@ -523,22 +523,35 @@ class CheckpointService:
             if not isinstance(state, dict):
                 raise ValueError("session state must be an object")
             messages = session_state_to_messages(state)
+            catalog, owned = self._transcript_store()
+            try:
+                storage_id = catalog.storage_id_for(
+                    session_id=session_id,
+                    user_id=user_id,
+                    channel=channel,
+                )
+            finally:
+                if owned:
+                    catalog.close()
             with tempfile.TemporaryDirectory() as directory:
-                snapshot = TranscriptStore(Path(directory) / "session.db")
+                snapshot = TranscriptStore(
+                    Path(directory) / "session.db",
+                    storage_id=storage_id,
+                )
                 try:
-                    snapshot.replace_runtime_state(
-                        session_id=session_id,
-                        user_id=user_id,
-                        channel=channel,
-                        state=state,
-                        context_generation=0,
-                        current_usage=_legacy_current_usage(state),
-                    )
                     snapshot.import_legacy_messages(
                         session_id=session_id,
                         user_id=user_id,
                         channel=channel,
                         messages=messages,
+                    )
+                    snapshot.write_runtime_state(
+                        session_id=session_id,
+                        user_id=user_id,
+                        channel=channel,
+                        state=state,
+                        current_usage=_legacy_current_usage(state),
+                        migration_anchor=True,
                     )
                     database = snapshot.export_database(
                         session_id=session_id,

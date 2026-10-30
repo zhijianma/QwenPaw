@@ -24,8 +24,10 @@ async def test_command_keeps_projection_without_recharging_transcript():
     store = Mock(spec=TranscriptStore)
     workspace = object.__new__(Workspace)
     workspace.agent_id = f"agent-1"
-    workspace._service_manager = SimpleNamespace(
-        services={f"session": session, f"transcript_store": store},
+    workspace._service_manager = (  # pylint: disable=protected-access
+        SimpleNamespace(
+            services={f"session": session, f"transcript_store": store},
+        )
     )
     request = AgentRequest(
         session_id=f"session-1",
@@ -121,6 +123,8 @@ async def test_workspace_persists_and_caches_turn_usage(has_previous) -> None:
     )
     store.attach_turn_usage.assert_called_once_with(
         session_id="session-1",
+        user_id="user-1",
+        channel="console",
         turn_id="turn-1",
         usage=expected,
         context_usage=context_usage,

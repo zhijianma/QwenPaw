@@ -107,6 +107,16 @@ class ChatSpec(BaseModel):
         default_factory=lambda: str(uuid4()),
         description="Chat UUID identifier",
     )
+    storage_id: str = Field(
+        default_factory=lambda: str(uuid4()),
+        min_length=36,
+        max_length=36,
+        pattern=(
+            r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+            r"[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        ),
+        description="Immutable physical conversation storage identifier",
+    )
     name: str = Field(
         default="New Chat",
         max_length=CHAT_NAME_MAX_LENGTH,

@@ -63,8 +63,11 @@ async def test_database_session_imports_json_once_and_resets_context(
                     "state": {
                         "context": [
                             {
+                                "name": "assistant",
                                 "role": "assistant",
-                                "content": [],
+                                "content": [
+                                    {"type": "text", "text": "hello"},
+                                ],
                                 "metadata": {
                                     "qwenpaw_turn_usage": {
                                         "usage": {"total_tokens": 4},
@@ -133,6 +136,14 @@ async def test_database_session_imports_json_once_and_resets_context(
             "context_usage_ratio": 2,
         },
     }
+    anchor = catalog.read_turn_context(
+        session_id="session-1",
+        user_id="u",
+        channel="console",
+        turn_id="legacy:1",
+    )
+    assert anchor is not None
+    assert anchor.state == {"agent": state["agent"]}
 
     await session.set_current_usage(
         session_id="session-1",
@@ -420,9 +431,13 @@ async def test_get_current_usage_does_not_decode_runtime_state(
         usage={"total_tokens": 42},
         context_usage={"estimated_tokens": 21},
     )
-    row = catalog._catalog_row("session-1")
+    row = catalog._catalog_row(
+        session_id="session-1",
+        user_id="u",
+        channel="console",
+    )
     assert row is not None
-    database_path = catalog._store_path(str(row["file_key"]))
+    database_path = catalog._store_path(str(row["storage_id"]))
     with sqlite3.connect(database_path) as connection:
         connection.execute(
             "UPDATE session_runtime SET state_json = ? "

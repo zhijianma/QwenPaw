@@ -41,6 +41,32 @@ async def test_save_and_load_round_trip(repo: JsonChatRepository):
     assert loaded.chats[0].user_id == "u1"
 
 
+@pytest.mark.asyncio
+async def test_load_persists_storage_id_for_existing_chat(
+    repo: JsonChatRepository,
+):
+    repo.path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "chats": [
+                    {
+                        "session_id": "shared-group",
+                        "user_id": "u1",
+                        "channel": "feishu",
+                    },
+                ],
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = await repo.load()
+    persisted = json.loads(repo.path.read_text(encoding="utf-8"))
+
+    assert persisted["chats"][0]["storage_id"] == (loaded.chats[0].storage_id)
+
+
 # ---------------------------------------------------------------------------
 # get_chat / upsert_chat / delete_chats
 # ---------------------------------------------------------------------------

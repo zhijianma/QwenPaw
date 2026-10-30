@@ -119,6 +119,8 @@ class TranscriptRecorder:
                 ReplayReceipt(
                     self._store,
                     self._session_id,
+                    self._user_id,
+                    self._channel,
                     self._turn_id,
                     value.id,
                     self._ordinals[value.id],
@@ -131,7 +133,6 @@ class TranscriptRecorder:
             return
         if not isinstance(value, AgentResponse):
             return
-        value.chat_turn_id = self._turn_id
         for message in value.output:
             if not message.content:
                 continue
@@ -167,6 +168,8 @@ class TranscriptRecorder:
         await self._write(
             self._store.finish_turn,
             session_id=self._session_id,
+            user_id=self._user_id,
+            channel=self._channel,
             turn_id=self._turn_id,
             status=status,
             error=error,
@@ -191,6 +194,8 @@ class TranscriptRecorder:
         await self._write(
             self._store.upsert_message,
             session_id=self._session_id,
+            user_id=self._user_id,
+            channel=self._channel,
             turn_id=self._turn_id,
             message=message,
             ordinal=ordinal,
@@ -207,6 +212,8 @@ class TranscriptRecorder:
                 ReplayReceipt(
                     self._store,
                     self._session_id,
+                    self._user_id,
+                    self._channel,
                     self._turn_id,
                     message.id,
                     ordinal,
@@ -233,6 +240,8 @@ class TranscriptRecorder:
         return await self._write(
             self._store.find_turn_for_message,
             session_id=self._session_id,
+            user_id=self._user_id,
+            channel=self._channel,
             message_id=message_id,
             client_message_id=client_message_id,
         )

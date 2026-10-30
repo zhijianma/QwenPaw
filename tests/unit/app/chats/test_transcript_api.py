@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -22,7 +24,12 @@ from qwenpaw.app.chats.api import (
     get_chat_user_message_text,
 )
 from qwenpaw.app.chats.models import ChatSpec
-from qwenpaw.app.chats.session import DatabaseSession, SafeJSONSession
+from qwenpaw.app.chats.session import (
+    DatabaseSession,
+    LegacyConversationSnapshot,
+    SafeJSONSession,
+    session_filename,
+)
 from qwenpaw.app.chats.transcript import TranscriptStore
 from qwenpaw.app.chats.transcript_catalog import TranscriptCatalog
 from qwenpaw.schemas import Message, Role, RunStatus, TextContent
@@ -149,7 +156,9 @@ async def test_user_message_index_anchor_locates_unloaded_turn(
         mgr=manager,
         workspace=workspace,
     )
-    target = next(item for item in index.items if item.message_id == "message-2")
+    target = next(
+        item for item in index.items if item.message_id == "message-2"
+    )
     page = await get_chat_messages(
         chat_id="chat-1",
         before=target.anchor,
@@ -555,8 +564,9 @@ async def test_get_chat_reads_harness_runtime_instead_of_empty_transcript(
 
 
 @pytest.mark.asyncio
-async def test_get_chat_migrates_legacy_history_after_response(
+async def test_legacy_reads_return_before_shared_migration_finishes(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fallback = Msg(
         name="user",
@@ -564,22 +574,57 @@ async def test_get_chat_migrates_legacy_history_after_response(
         content=[{"type": "text", "text": "fallback"}],
     )
     state = AgentState(context=[fallback]).model_dump(mode="json")
-    session = SimpleNamespace(
-        get_session_state_dict=AsyncMock(
-            return_value={"agent": {"state": state}},
-        ),
+    legacy_dir = tmp_path / "sessions"
+    legacy_dir.mkdir()
+    (legacy_dir / session_filename("session-1", "user-1")).write_text(
+        json.dumps({"agent": {"state": state}}),
+        encoding="utf-8",
     )
     store = TranscriptCatalog(tmp_path)
-    tasks = BackgroundTasks()
+    session = DatabaseSession(
+        catalog=store,
+        legacy_save_dir=str(legacy_dir),
+    )
+    migration_started = asyncio.Event()
+    allow_migration = asyncio.Event()
+    migrate = getattr(session, "_migrate_legacy_snapshot")
+    migration_count = 0
+
+    async def delayed_migration(
+        *,
+        session_id: str,
+        user_id: str,
+        channel: str,
+        snapshot: LegacyConversationSnapshot,
+    ) -> bool:
+        nonlocal migration_count
+        migration_count += 1
+        migration_started.set()
+        await allow_migration.wait()
+        return await migrate(
+            session_id=session_id,
+            user_id=user_id,
+            channel=channel,
+            snapshot=snapshot,
+        )
+
+    monkeypatch.setattr(
+        session,
+        "_migrate_legacy_snapshot",
+        delayed_migration,
+    )
+    workspace = _workspace(store)
+    workspace.session = session
 
     history = await get_chat(
         chat_id="chat-1",
-        background_tasks=tasks,
+        background_tasks=BackgroundTasks(),
         include_app_owned=True,
         mgr=SimpleNamespace(get_chat=AsyncMock(return_value=_chat())),
         session=session,
-        workspace=_workspace(store),
+        workspace=workspace,
     )
+    await migration_started.wait()
 
     assert history.messages[0].content[0].text == "fallback"
     assert (
@@ -590,8 +635,41 @@ async def test_get_chat_migrates_legacy_history_after_response(
         )
         is None
     )
+    page_before_migration = await get_chat_messages(
+        chat_id="chat-1",
+        before=None,
+        after_message_id=None,
+        limit=5,
+        max_bytes=2 * 1024 * 1024,
+        include_app_owned=True,
+        mgr=SimpleNamespace(get_chat=AsyncMock(return_value=_chat())),
+        workspace=workspace,
+    )
+    assert page_before_migration.messages[0].content[0].text == "fallback"
+    index = await get_chat_user_messages(
+        chat_id="chat-1",
+        before=None,
+        limit=200,
+        include_app_owned=True,
+        mgr=SimpleNamespace(get_chat=AsyncMock(return_value=_chat())),
+        workspace=workspace,
+    )
+    assert index.items[0].preview == "fallback"
+    full = await get_chat_user_message_text(
+        chat_id="chat-1",
+        message_id=history.messages[0].id,
+        mgr=SimpleNamespace(get_chat=AsyncMock(return_value=_chat())),
+        workspace=workspace,
+    )
+    assert full == {"text": "fallback"}
+    assert migration_count == 1
 
-    await tasks()
+    allow_migration.set()
+    await session.ensure_legacy_migrated(
+        session_id="session-1",
+        user_id="user-1",
+        channel="console",
+    )
 
     page = store.get_page(
         session_id="session-1",
@@ -624,7 +702,8 @@ async def test_delete_chat_data_removes_all_persistence(
     )
 
     with patch(
-        "qwenpaw.app.chats.api.CHECKPOINT_RUNTIME." "delete_session_checkpoints",
+        "qwenpaw.app.chats.api.CHECKPOINT_RUNTIME."
+        "delete_session_checkpoints",
         checkpoint_delete,
     ):
         await _delete_chat_data(workspace, [_chat()])
@@ -653,7 +732,7 @@ async def test_delete_chat_data_removes_all_persistence(
 
 
 @pytest.mark.asyncio
-async def test_delete_keeps_data_while_another_chat_maps_same_session() -> None:
+async def test_delete_keeps_shared_session_data() -> None:
     first = _chat()
     second = first.model_copy(update={"id": "chat-2"})
     store = Mock(spec=TranscriptCatalog)
