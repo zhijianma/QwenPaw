@@ -7,10 +7,19 @@ import hashlib
 import json
 import sqlite3
 from copy import deepcopy
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 _CONTEXT_KEY = "agent.state.context"
+RevisionKind = Literal[
+    "turn_commit",
+    "snapshot",
+    "usage_update",
+    "state_update",
+    "clear",
+    "restore",
+    "migration_anchor",
+]
 
 
 def _canonical(value: Any) -> str:
@@ -129,9 +138,10 @@ def record_revision(
     generation: int,
     usage_json: str | None,
     created_at: str,
-    migration_anchor: bool = False,
+    kind: RevisionKind,
 ) -> str:
     """Append one immutable runtime revision in the transaction."""
+    migration_anchor = kind == "migration_anchor"
     if turn_id is not None:
         turn = connection.execute(
             "SELECT status FROM transcript_turns "
@@ -156,11 +166,6 @@ def record_revision(
         (session_id,),
     ).fetchone()
     revision_id = uuid4().hex
-    kind = "clear"
-    if migration_anchor:
-        kind = "migration_anchor"
-    elif turn_id is not None:
-        kind = "turn_commit"
     connection.execute(
         "INSERT INTO context_revisions("
         "session_id, revision_id, parent_revision_id, anchor_turn_id, "

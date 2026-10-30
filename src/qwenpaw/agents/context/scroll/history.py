@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from ....app.chats.event_schema import advance_projection_watermark
+
 from ..types import LogEntry
 
 logger = logging.getLogger(__name__)
@@ -841,7 +843,7 @@ class HistoryStore:
         ).hexdigest()
         identity = dedup_key or str(seq)
         key = f"recall:{session_id}:{identity}:{content_hash}"
-        self._conn.execute(
+        cursor = self._conn.execute(
             "INSERT OR IGNORE INTO event_log("
             "event_id, event_type, payload_version, payload_json, "
             "payload_hash, idempotency_key, recorded_at) "
@@ -854,6 +856,11 @@ class HistoryStore:
                 value["created_at"] or datetime.now(timezone.utc).isoformat(),
             ),
         )
+        if cursor.rowcount == 1 and cursor.lastrowid is not None:
+            advance_projection_watermark(
+                self._conn,
+                int(cursor.lastrowid),
+            )
 
     def _append_purge_fact(self, seqs: list[int]) -> None:
         """Append recall tombstones when facts share this database."""
@@ -905,7 +912,7 @@ class HistoryStore:
                 sort_keys=True,
             ).encode("utf-8"),
         ).hexdigest()
-        self._conn.execute(
+        cursor = self._conn.execute(
             "INSERT OR IGNORE INTO event_log("
             "event_id, event_type, payload_version, payload_json, "
             "payload_hash, idempotency_key, recorded_at) "
@@ -918,6 +925,11 @@ class HistoryStore:
                 datetime.now(timezone.utc).isoformat(),
             ),
         )
+        if cursor.rowcount == 1 and cursor.lastrowid is not None:
+            advance_projection_watermark(
+                self._conn,
+                int(cursor.lastrowid),
+            )
 
     def append(
         self,
@@ -1123,7 +1135,7 @@ class HistoryStore:
                 ).encode("utf-8"),
             ).hexdigest()
             with self._lock, _immediate_transaction(self._conn):
-                self._conn.execute(
+                cursor = self._conn.execute(
                     "INSERT OR IGNORE INTO event_log("
                     "event_id, event_type, payload_version, payload_json, "
                     "payload_hash, idempotency_key, recorded_at) "
@@ -1136,6 +1148,11 @@ class HistoryStore:
                         datetime.now(timezone.utc).isoformat(),
                     ),
                 )
+                if cursor.rowcount == 1 and cursor.lastrowid is not None:
+                    advance_projection_watermark(
+                        self._conn,
+                        int(cursor.lastrowid),
+                    )
         return inserted
 
     def update_entry(

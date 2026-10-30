@@ -350,6 +350,14 @@ class ChatStatusResponse(BaseModel):
     status: Literal["idle", "running"]
 
 
+class ChatForkRequest(BaseModel):
+    """Completed turn selected as a new conversation boundary."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    turn_id: str = Field(..., min_length=1)
+
+
 class ProjectDirEntryPayload(BaseModel):
     """One project-directory entry as sent by the client."""
 
@@ -621,6 +629,66 @@ async def create_chat(
         return await mgr.create_chat(spec)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{chat_id}/fork", response_model=ChatSpec)
+async def fork_chat_at_turn(
+    chat_id: str,
+    payload: ChatForkRequest,
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+) -> ChatSpec:
+    """Create an independent conversation at one completed turn."""
+    parent = await mgr.get_chat(chat_id)
+    if parent is None or _is_app_owned_chat(parent):
+        raise HTTPException(status_code=404, detail="Chat not found")
+    store = getattr(workspace, "transcript_store", None)
+    if store is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Conversation storage is not available",
+        )
+
+    child = ChatSpec(
+        name=f"{parent.name} (Fork)",
+        session_id=f"fork-{uuid4()}",
+        user_id=parent.user_id,
+        channel=parent.channel,
+        meta=dict(parent.meta),
+        source=parent.source,
+        group_id=parent.group_id,
+        parent_chat_id=parent.id,
+        fork_turn_id=payload.turn_id,
+    )
+    try:
+        turn_seq = await run_sync_io(
+            store.fork_at_turn,
+            source_session_id=parent.session_id,
+            source_user_id=parent.user_id,
+            source_channel=parent.channel,
+            source_chat_id=parent.id,
+            turn_id=payload.turn_id,
+            target_session_id=child.session_id,
+            target_user_id=child.user_id,
+            target_channel=child.channel,
+            target_storage_id=child.storage_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    child = child.model_copy(update={"fork_turn_seq": turn_seq})
+    try:
+        return await mgr.create_chat(child)
+    except BaseException:
+        await run_sync_io(
+            store.delete_session,
+            child.session_id,
+            child.user_id,
+            child.channel,
+        )
+        raise
 
 
 # ----- Chat group endpoints -----

@@ -172,6 +172,19 @@ class ChatSpec(BaseModel):
         default=None,
         description="Root session for a subagent chat tree",
     )
+    parent_chat_id: Optional[str] = Field(
+        default=None,
+        description="Immediate parent chat for a turn fork",
+    )
+    fork_turn_id: Optional[str] = Field(
+        default=None,
+        description="Completed parent turn used as the fork boundary",
+    )
+    fork_turn_seq: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Parent turn sequence used as the fork boundary",
+    )
 
     @field_validator("name", mode="before")
     @classmethod

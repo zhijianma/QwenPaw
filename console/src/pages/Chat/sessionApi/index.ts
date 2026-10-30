@@ -330,6 +330,9 @@ interface ExtendedSession extends IAgentScopeRuntimeWebUISession {
   groupId?: string | null;
   parentSessionId?: string | null;
   rootSessionId?: string | null;
+  parentChatId?: string | null;
+  forkTurnId?: string | null;
+  forkTurnSeq?: number | null;
   /** Cursor state for loading older durable transcript pages. */
   historyPage?: ChatHistoryMetadata;
   /** Current model-context state, independent from historical messages. */
@@ -820,6 +823,9 @@ const chatSpecToSession = (chat: ChatSpec): ExtendedSession =>
     groupId: chat.group_id ?? null,
     parentSessionId: chat.parent_session_id ?? null,
     rootSessionId: chat.root_session_id ?? null,
+    parentChatId: chat.parent_chat_id ?? null,
+    forkTurnId: chat.fork_turn_id ?? null,
+    forkTurnSeq: chat.fork_turn_seq ?? null,
     archived: chat.archived ?? false,
     archivedAt: chat.archived_at ?? null,
   }) as ExtendedSession;
@@ -1996,7 +2002,10 @@ class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
         a.source !== b.source ||
         a.groupId !== b.groupId ||
         a.parentSessionId !== b.parentSessionId ||
-        a.rootSessionId !== b.rootSessionId
+        a.rootSessionId !== b.rootSessionId ||
+        a.parentChatId !== b.parentChatId ||
+        a.forkTurnId !== b.forkTurnId ||
+        a.forkTurnSeq !== b.forkTurnSeq
       ) {
         return false;
       }

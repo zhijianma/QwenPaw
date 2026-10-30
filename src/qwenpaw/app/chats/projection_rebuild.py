@@ -15,6 +15,15 @@ from .context_revisions import read_revision_state
 from .transcript_blocks import block_identity, message_envelope
 
 
+def _canonical_json(value: Any) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
 def _object_json(connection: sqlite3.Connection, content_hash: str) -> Any:
     row = connection.execute(
         "SELECT payload FROM content_objects WHERE content_hash = ?",
@@ -197,11 +206,7 @@ def _project_usage(
         (
             session_id,
             row["turn_id"],
-            json.dumps(
-                usage,
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ),
+            _canonical_json(usage),
             int(row["seq"]),
         ),
     )
@@ -328,11 +333,7 @@ def rebuild_projections(connection: sqlite3.Connection) -> None:
             (
                 session_id,
                 int(revision["context_generation"]),
-                json.dumps(
-                    state,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                ),
+                _canonical_json(state),
                 revision["current_usage_json"],
                 revision["created_at"],
             ),

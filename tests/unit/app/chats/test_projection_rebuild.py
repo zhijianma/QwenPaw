@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Tests that mutable views can be recreated from conversation facts."""
 
+import sqlite3
 from pathlib import Path
 
 from qwenpaw.app.chats.transcript import TranscriptStore
@@ -51,6 +52,30 @@ def test_ui_and_runtime_projections_rebuild_from_events(
         )
         before = store.get_page(**_IDENTITY)
         assert before is not None
+        with sqlite3.connect(store.path) as connection:
+            event_seq = connection.execute(
+                "SELECT MAX(seq) FROM event_log",
+            ).fetchone()[0]
+            watermark = connection.execute(
+                "SELECT last_event_seq FROM projection_watermarks "
+                "WHERE projector_name = 'conversation'",
+            ).fetchone()[0]
+            assert watermark == event_seq
+            projection_queries = {
+                "transcript_messages": (
+                    "SELECT * FROM transcript_messages ORDER BY rowid"
+                ),
+                "session_runtime": (
+                    "SELECT * FROM session_runtime ORDER BY rowid"
+                ),
+                "projection_turn_usage": (
+                    "SELECT * FROM projection_turn_usage ORDER BY rowid"
+                ),
+            }
+            raw_before = {
+                table: connection.execute(query).fetchall()
+                for table, query in projection_queries.items()
+            }
 
         store.rebuild_projections()
 
@@ -59,6 +84,12 @@ def test_ui_and_runtime_projections_rebuild_from_events(
         assert after == before
         assert runtime is not None
         assert runtime.state == state
+        with sqlite3.connect(store.path) as connection:
+            raw_after = {
+                table: connection.execute(query).fetchall()
+                for table, query in projection_queries.items()
+            }
+        assert raw_after == raw_before
         assert [event.event_type for event in _events(store)] == [
             "session.created",
             "turn.started",
@@ -103,6 +134,16 @@ def test_recall_projection_rebuilds_inside_the_session_db(
             )
         finally:
             history.close()
+
+        with sqlite3.connect(path) as connection:
+            event_seq = connection.execute(
+                "SELECT MAX(seq) FROM event_log",
+            ).fetchone()[0]
+            watermark = connection.execute(
+                "SELECT last_event_seq FROM projection_watermarks "
+                "WHERE projector_name = 'conversation'",
+            ).fetchone()[0]
+            assert watermark == event_seq
 
         store.rebuild_projections()
 

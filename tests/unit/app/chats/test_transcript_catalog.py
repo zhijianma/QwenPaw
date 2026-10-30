@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import sqlite3
 import threading
 from pathlib import Path
 
@@ -13,6 +14,8 @@ import pytest
 from qwenpaw.app.chats import transcript_schema
 from qwenpaw.app.chats.models import ChatSpec
 from qwenpaw.app.chats.transcript_catalog import TranscriptCatalog
+from qwenpaw.agents.context.scroll.history import HistoryStore
+from qwenpaw.agents.context.types import LogEntry
 from qwenpaw.schemas import Message, TextContent
 
 
@@ -476,4 +479,165 @@ def test_clone_session_copies_completed_history_and_agent_runtime(
         turn_id="running-turn",
         status="cancelled",
     )
+    catalog.close()
+
+
+def test_fork_at_completed_turn_rebuilds_boundary_state(
+    tmp_path: Path,
+) -> None:
+    catalog = TranscriptCatalog(tmp_path)
+    source_storage_id = ""
+    source_path = Path()
+
+    for turn_seq in range(1, 4):
+        turn_id = f"turn-{turn_seq}"
+        catalog.start_turn(
+            session_id="parent",
+            user_id="user-1",
+            channel="console",
+            turn_id=turn_id,
+        )
+        if not source_storage_id:
+            source_storage_id = catalog.storage_id_for(
+                session_id="parent",
+                user_id="user-1",
+                channel="console",
+            )
+            source_path = tmp_path / "transcripts" / f"{source_storage_id}.db"
+        catalog.upsert_message(
+            session_id="parent",
+            turn_id=turn_id,
+            message=_message(f"message-{turn_seq}", f"text-{turn_seq}"),
+            ordinal=0,
+        )
+        history = HistoryStore(source_path)
+        history.append(
+            session_id="parent",
+            entry=LogEntry(
+                kind="model_turn",
+                role="user",
+                content=f"recall-{turn_seq}",
+            ),
+            dedup_key=f"recall-{turn_seq}",
+        )
+        history.close()
+        catalog.write_runtime_state(
+            session_id="parent",
+            user_id="user-1",
+            channel="console",
+            state={
+                "agent": {
+                    "scroll": {
+                        "index": {
+                            "session_id": "parent\x1fcontext:2",
+                        },
+                    },
+                },
+                "turn": turn_seq,
+            },
+            current_usage={"usage": {"total_tokens": turn_seq}},
+            reset_context=turn_seq == 2,
+            turn_id=turn_id,
+        )
+        catalog.finish_turn(
+            session_id="parent",
+            turn_id=turn_id,
+            status="completed",
+        )
+
+    boundary_runtime = catalog.read_turn_context(
+        session_id="parent",
+        user_id="user-1",
+        channel="console",
+        turn_id="turn-2",
+    )
+    assert boundary_runtime is not None
+    child_storage_id = "22222222-2222-4222-8222-222222222222"
+    fork_seq = catalog.fork_at_turn(
+        source_session_id="parent",
+        source_user_id="user-1",
+        source_channel="console",
+        source_chat_id="parent-chat",
+        turn_id="turn-2",
+        target_session_id="child",
+        target_user_id="user-1",
+        target_channel="console",
+        target_storage_id=child_storage_id,
+    )
+
+    assert fork_seq == 2
+    page = catalog.get_page(
+        session_id="child",
+        user_id="user-1",
+        channel="console",
+    )
+    assert page is not None
+    assert [message.id for message in page.messages] == [
+        "message-1",
+        "message-2",
+    ]
+    runtime = catalog.read_runtime_state(
+        session_id="child",
+        user_id="user-1",
+        channel="console",
+    )
+    assert runtime is not None
+    assert runtime.context_generation == boundary_runtime.context_generation
+    assert runtime.state == {
+        "agent": {
+            "scroll": {
+                "index": {
+                    "session_id": "child\x1fcontext:2",
+                },
+            },
+        },
+        "turn": 2,
+    }
+    assert runtime.current_usage == boundary_runtime.current_usage
+
+    child_path = tmp_path / "transcripts" / f"{child_storage_id}.db"
+    connection = sqlite3.connect(child_path)
+    try:
+        recalls = connection.execute(
+            "SELECT session_id, content FROM conversation_history "
+            "ORDER BY seq",
+        ).fetchall()
+        lineage = connection.execute(
+            "SELECT payload_json FROM event_log "
+            "WHERE event_type = 'session.forked'",
+        ).fetchone()
+    finally:
+        connection.close()
+    assert recalls == [("child", "recall-1"), ("child", "recall-2")]
+    assert lineage is not None
+    assert json.loads(lineage[0]) == {
+        "source_chat_id": "parent-chat",
+        "source_session_id": "parent",
+        "source_storage_id": source_storage_id,
+        "turn_id": "turn-2",
+        "turn_seq": 2,
+    }
+
+    catalog.start_turn(
+        session_id="child",
+        user_id="user-1",
+        channel="console",
+        turn_id="child-turn",
+    )
+    catalog.finish_turn(
+        session_id="child",
+        turn_id="child-turn",
+        status="completed",
+    )
+    parent = catalog.get_page(
+        session_id="parent",
+        user_id="user-1",
+        channel="console",
+    )
+    assert parent is not None
+    assert [message.id for message in parent.messages] == [
+        "message-1",
+        "message-2",
+        "message-3",
+    ]
     catalog.close()

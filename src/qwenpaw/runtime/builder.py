@@ -1088,8 +1088,13 @@ class AgentBuilder:
             else ""
         )
         session_id = getattr(ctx, "session_id", None) or "local"
-        user_id = getattr(ctx, "user_id", None) or session_id
-        channel = getattr(ctx, "channel", None) or "console"
+        request = getattr(ctx, "request", None)
+        user_id = (
+            getattr(request, "user_id", None) if request is not None else None
+        ) or session_id
+        channel = (
+            getattr(request, "channel", None) if request is not None else None
+        ) or "console"
         raw_generation = (getattr(ctx, "session_state", None) or {}).get(
             "_context_generation",
             0,

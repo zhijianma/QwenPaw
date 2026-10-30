@@ -29,6 +29,9 @@ export interface ChatSpec {
   group_id?: string | null;
   parent_session_id?: string | null;
   root_session_id?: string | null;
+  parent_chat_id?: string | null;
+  fork_turn_id?: string | null;
+  fork_turn_seq?: number | null;
 }
 
 export interface Message {

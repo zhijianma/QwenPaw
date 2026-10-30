@@ -44,6 +44,7 @@ import { useIsMobile } from "../../hooks/useIsMobile";
 import {
   CircleAlert as ExclamationCircleOutlined,
   Copy,
+  GitFork,
   Paperclip as SparkAttachmentLine,
   RotateCw,
   Settings as SettingOutlined,
@@ -269,6 +270,7 @@ import {
   toStoredName,
   copyText,
   extractCopyableText,
+  extractTranscriptTurnId,
   buildModelError,
   normalizeContentUrls,
   extractUserMessageText,
@@ -3172,6 +3174,48 @@ export default function ChatPage() {
     [message, t],
   );
 
+  const forkResponse = useCallback(
+    (response: CopyableResponse) => {
+      const turnId = extractTranscriptTurnId(response);
+      if (!backendChatId || !turnId) {
+        message.error(t("chat.forkUnavailable", "This turn cannot be forked"));
+        return;
+      }
+      Modal.confirm({
+        title: t("chat.forkTitle", "Fork from this turn?"),
+        content: t(
+          "chat.forkDescription",
+          "A new independent conversation will contain this turn and all earlier turns.",
+        ),
+        okText: t("chat.fork", "Fork"),
+        cancelText: t("common.cancel", "Cancel"),
+        onOk: async () => {
+          try {
+            const forked = await chatApi.forkChat(
+              backendChatId,
+              turnId,
+              selectedAgent,
+            );
+            sessionApi.preferredChatId = forked.id;
+            sessionApi.lastActiveChatId = forked.id;
+            setLastChatId(selectedAgent, forked.id);
+            await sessionApi.getSessionList();
+            navigate(buildChatPath(forked.id));
+            message.success(t("chat.forkCreated", "Fork created"));
+          } catch (error) {
+            message.error(
+              error instanceof Error
+                ? error.message
+                : t("chat.forkFailed", "Failed to fork conversation"),
+            );
+            throw error;
+          }
+        },
+      });
+    },
+    [backendChatId, message, navigate, selectedAgent, setLastChatId, t],
+  );
+
   const customFetch = useCallback(
     async (
       data: {
@@ -4882,6 +4926,20 @@ export default function ChatPage() {
               void copyResponse(data);
             },
           },
+          ...(usesQwenPawBackend
+            ? [
+                {
+                  icon: (
+                    <span title={t("chat.fork", "Fork")}>
+                      <GitFork />
+                    </span>
+                  ),
+                  onClick: ({ data }: { data: CopyableResponse }) => {
+                    forkResponse(data);
+                  },
+                },
+              ]
+            : []),
           {
             render: ({
               data,
@@ -4940,6 +4998,7 @@ export default function ChatPage() {
     cancelPendingHistoryInteraction,
     navigateToHistoryUserMessage,
     copyResponse,
+    forkResponse,
     chatLoading,
     handleFileUpload,
     t,

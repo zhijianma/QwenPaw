@@ -61,6 +61,7 @@ async def test_scroll_component_build_runs_in_worker_thread(
         session_id="session",
         agent_id="agent",
         session_state={"_context_generation": 3},
+        request=SimpleNamespace(user_id="channel-user", channel="feishu"),
     )
     config = SimpleNamespace(id="agent")
 
@@ -82,3 +83,5 @@ async def test_scroll_component_build_runs_in_worker_thread(
 
     assert await asyncio.wait_for(task, timeout=1) is result
     assert captured["context_generation"] == 3
+    assert captured["user_id"] == "channel-user"
+    assert captured["channel"] == "feishu"

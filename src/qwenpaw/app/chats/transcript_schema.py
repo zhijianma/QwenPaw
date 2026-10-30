@@ -113,7 +113,8 @@ CREATE TABLE IF NOT EXISTS context_revisions (
     parent_revision_id TEXT,
     anchor_turn_id TEXT,
     kind TEXT NOT NULL CHECK(kind IN (
-        'turn_commit', 'clear', 'migration_anchor'
+        'turn_commit', 'snapshot', 'usage_update', 'state_update',
+        'clear', 'restore', 'migration_anchor'
     )),
     context_generation INTEGER NOT NULL,
     current_usage_json TEXT,

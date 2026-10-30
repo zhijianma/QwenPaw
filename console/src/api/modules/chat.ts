@@ -107,6 +107,13 @@ export const chatApi = {
       body: JSON.stringify(chat),
     }),
 
+  forkChat: (chatId: string, turnId: string, agentId?: string) =>
+    request<ChatSpec>(`/chats/${encodeURIComponent(chatId)}/fork`, {
+      method: "POST",
+      headers: agentId ? { "X-Agent-Id": agentId } : undefined,
+      body: JSON.stringify({ turn_id: turnId }),
+    }),
+
   getChat: (
     chatId: string,
     options?: { signal?: AbortSignal; include_app_owned?: boolean },

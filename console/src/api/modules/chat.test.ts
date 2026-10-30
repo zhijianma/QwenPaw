@@ -298,6 +298,18 @@ describe("chatApi CRUD", () => {
     );
   });
 
+  it("forkChat sends the selected turn and agent scope", async () => {
+    await chatApi.forkChat("chat/1", "turn-2", "agent-a");
+    expect(request).toHaveBeenCalledWith(
+      "/chats/chat%2F1/fork",
+      expect.objectContaining({
+        method: "POST",
+        headers: { "X-Agent-Id": "agent-a" },
+        body: JSON.stringify({ turn_id: "turn-2" }),
+      }),
+    );
+  });
+
   it("deleteChat sends DELETE to the correct path", async () => {
     await chatApi.deleteChat("chat-1");
     expect(request).toHaveBeenCalledWith(

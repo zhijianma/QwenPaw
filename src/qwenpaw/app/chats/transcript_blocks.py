@@ -13,7 +13,12 @@ from ...schemas import Message
 
 def message_envelope(message: Message) -> str:
     """Serialize message metadata without duplicating block bodies."""
-    return message.model_dump_json(exclude={"content"})
+    return json.dumps(
+        message.model_dump(mode="json", exclude={"content"}),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
 def block_identity(session_id: str, message_id: str, ordinal: int) -> str:

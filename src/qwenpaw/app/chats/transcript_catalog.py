@@ -815,6 +815,65 @@ class TranscriptCatalog:
                 )
             raise
 
+    def fork_at_turn(
+        self,
+        *,
+        source_session_id: str,
+        source_user_id: str,
+        source_channel: str,
+        source_chat_id: str,
+        turn_id: str,
+        target_session_id: str,
+        target_user_id: str,
+        target_channel: str,
+        target_storage_id: str,
+    ) -> int:
+        """Create one independently rebuildable conversation at a turn."""
+        with self._lock:
+            target_existed = (
+                self._catalog_row(
+                    session_id=target_session_id,
+                    user_id=target_user_id,
+                    channel=target_channel,
+                )
+                is not None
+            )
+        try:
+            with self._lease(
+                session_id=source_session_id,
+                user_id=source_user_id,
+                channel=source_channel,
+                create=False,
+            ) as source:
+                if source is None:
+                    raise KeyError("source transcript session not found")
+                with self._lease(
+                    session_id=target_session_id,
+                    user_id=target_user_id,
+                    channel=target_channel,
+                    create=True,
+                    storage_id=target_storage_id,
+                ) as target:
+                    if target is None:
+                        raise RuntimeError("failed to create fork session")
+                    return target.store.fork_completed_turn_from(
+                        source_path=source.store.path,
+                        source_session_id=source_session_id,
+                        source_chat_id=source_chat_id,
+                        turn_id=turn_id,
+                        target_session_id=target_session_id,
+                        target_user_id=target_user_id,
+                        target_channel=target_channel,
+                    )
+        except BaseException:
+            if not target_existed:
+                self.delete_session(
+                    target_session_id,
+                    target_user_id,
+                    target_channel,
+                )
+            raise
+
     def session_message_payloads(
         self,
         *,

@@ -11,7 +11,7 @@ import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator, Literal
+from typing import Any, Iterator, Literal, cast
 from uuid import uuid4
 
 from ...constant import QWENPAW_CLIENT_MESSAGE_ID_KEY
@@ -22,6 +22,7 @@ from .context_revisions import (
     read_revision_state,
     record_revision,
 )
+from .event_schema import advance_projection_watermark
 from .transcript_blocks import (
     block_identity,
     copy_message_blocks,
@@ -200,7 +201,13 @@ class TranscriptStore:
         if cursor.rowcount == 1:
             if cursor.lastrowid is None:
                 raise RuntimeError("event append returned no sequence")
-            return int(cursor.lastrowid)
+            event_seq = int(cursor.lastrowid)
+            advance_projection_watermark(
+                self._conn,
+                event_seq,
+                updated_at=recorded_at,
+            )
+            return event_seq
         row = self._conn.execute(
             "SELECT seq, payload_hash FROM event_log "
             "WHERE idempotency_key = ?",
@@ -208,7 +215,13 @@ class TranscriptStore:
         ).fetchone()
         if row is None or row["payload_hash"] != payload_hash:
             raise ValueError("event idempotency conflict")
-        return int(row["seq"])
+        event_seq = int(row["seq"])
+        advance_projection_watermark(
+            self._conn,
+            event_seq,
+            updated_at=recorded_at,
+        )
+        return event_seq
 
     def _append_session_fact(
         self,
@@ -422,7 +435,7 @@ class TranscriptStore:
             generation=generation,
             usage_json=usage_json,
             created_at=created_at,
-            migration_anchor=True,
+            kind="migration_anchor",
         )
 
     def write_runtime_state(
@@ -437,13 +450,10 @@ class TranscriptStore:
         only_if_missing: bool = False,
         turn_id: str | None = None,
         migration_anchor: bool = False,
+        context_generation: int | None = None,
     ) -> tuple[int, bool]:
         """Persist one runtime snapshot and optionally start a new context."""
-        state_json = json.dumps(
-            state,
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
+        state_json = _canonical_json(state)
         timestamp = _utc_now()
         with self._transaction():
             self._conn.execute(
@@ -490,18 +500,16 @@ class TranscriptStore:
                 return int(existing["context_generation"]), False
 
             generation = int(existing["context_generation"]) if existing else 0
+            if context_generation is not None:
+                generation = context_generation
             usage_json = existing["current_usage_json"] if existing else None
             if current_usage is not None:
-                usage_json = json.dumps(
-                    current_usage,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                )
+                usage_json = _canonical_json(current_usage)
             if reset_context:
                 generation += 1
                 previous = json.loads(usage_json) if usage_json else {}
                 previous_context = previous.get("context_usage") or {}
-                usage_json = json.dumps(
+                usage_json = _canonical_json(
                     {
                         "usage": None,
                         "context_usage": {
@@ -513,8 +521,6 @@ class TranscriptStore:
                             "context_usage_ratio": 0,
                         },
                     },
-                    ensure_ascii=False,
-                    separators=(",", ":"),
                 )
             self._conn.execute(
                 "INSERT INTO session_runtime("
@@ -549,7 +555,15 @@ class TranscriptStore:
                 generation=generation,
                 usage_json=usage_json,
                 created_at=timestamp,
-                migration_anchor=migration_anchor,
+                kind=(
+                    "migration_anchor"
+                    if migration_anchor
+                    else "clear"
+                    if reset_context
+                    else "turn_commit"
+                    if turn_id is not None
+                    else "snapshot"
+                ),
             )
             reason = "turn_commit" if turn_id is not None else "snapshot"
             if reset_context:
@@ -621,11 +635,7 @@ class TranscriptStore:
                 (
                     session_id,
                     context_generation,
-                    json.dumps(
-                        state,
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    ),
+                    _canonical_json(state),
                     (usage_json),
                     timestamp,
                 ),
@@ -638,6 +648,7 @@ class TranscriptStore:
                 generation=context_generation,
                 usage_json=usage_json,
                 created_at=timestamp,
+                kind="restore",
             )
             self._append_fact(
                 event_type="runtime.committed",
@@ -676,11 +687,7 @@ class TranscriptStore:
                     current[key] = child
                 current = child
             current[path[-1]] = value
-            state_json = json.dumps(
-                state,
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
+            state_json = _canonical_json(state)
             timestamp = _utc_now()
             self._conn.execute(
                 "UPDATE session_runtime SET state_json = ?, updated_at = ? "
@@ -695,6 +702,7 @@ class TranscriptStore:
                 generation=int(row["context_generation"]),
                 usage_json=row["current_usage_json"],
                 created_at=timestamp,
+                kind="state_update",
             )
             self._append_fact(
                 event_type="runtime.committed",
@@ -715,10 +723,8 @@ class TranscriptStore:
         context_usage: dict[str, Any] | None,
     ) -> None:
         """Persist the current context projection independently of history."""
-        payload = json.dumps(
+        payload = _canonical_json(
             {"usage": usage, "context_usage": context_usage},
-            ensure_ascii=False,
-            separators=(",", ":"),
         )
         with self._transaction():
             row = self._conn.execute(
@@ -744,6 +750,7 @@ class TranscriptStore:
                 generation=int(row["context_generation"]),
                 usage_json=payload,
                 created_at=timestamp,
+                kind="usage_update",
             )
             self._append_fact(
                 event_type="runtime.committed",
@@ -1007,11 +1014,7 @@ class TranscriptStore:
                         (
                             target_session_id,
                             int(runtime["context_generation"]),
-                            json.dumps(
-                                state,
-                                ensure_ascii=False,
-                                separators=(",", ":"),
-                            ),
+                            _canonical_json(state),
                             runtime["current_usage_json"],
                             runtime["updated_at"],
                         ),
@@ -1019,6 +1022,337 @@ class TranscriptStore:
             return True
         finally:
             self._conn.execute("DETACH DATABASE parent")
+
+    @staticmethod
+    def _fork_history_session_id(
+        value: str,
+        *,
+        source_session_id: str,
+        target_session_id: str,
+    ) -> str:
+        """Retarget one Scroll history identity without changing generation."""
+        if value == source_session_id:
+            return target_session_id
+        prefix = f"{source_session_id}\x1fcontext:"
+        if value.startswith(prefix):
+            return f"{target_session_id}{value[len(source_session_id):]}"
+        return value
+
+    @classmethod
+    def _fork_runtime_state(
+        cls,
+        state: dict[str, Any],
+        *,
+        source_session_id: str,
+        target_session_id: str,
+    ) -> dict[str, Any]:
+        """Retarget the session identity embedded in Scroll bookkeeping."""
+        copied = json.loads(_canonical_json(state))
+        agent = copied.get("agent")
+        if not isinstance(agent, dict):
+            return copied
+        scroll = agent.get("scroll")
+        if not isinstance(scroll, dict):
+            return copied
+        index = scroll.get("index")
+        if isinstance(index, dict) and isinstance(
+            index.get("session_id"),
+            str,
+        ):
+            index["session_id"] = cls._fork_history_session_id(
+                index["session_id"],
+                source_session_id=source_session_id,
+                target_session_id=target_session_id,
+            )
+        return copied
+
+    def _fork_copy_turn(
+        self,
+        source: sqlite3.Connection,
+        turn: sqlite3.Row,
+        *,
+        source_session_id: str,
+        target_session_id: str,
+        target_user_id: str,
+        target_channel: str,
+    ) -> None:
+        """Copy one materialized turn as new append-only target facts."""
+        source_turn_id = str(turn["turn_id"])
+        self.start_turn(
+            session_id=target_session_id,
+            user_id=target_user_id,
+            channel=target_channel,
+            turn_id=source_turn_id,
+            replaces_turn_id=turn["replaces_turn_id"],
+            created_at=str(turn["created_at"]),
+        )
+        messages = source.execute(
+            "SELECT p.payload_json, m.ordinal, m.created_at, "
+            "m.finished_at FROM transcript_message_payloads p "
+            "JOIN transcript_messages m "
+            "ON m.session_id = p.session_id "
+            "AND m.message_id = p.message_id "
+            "WHERE m.session_id = ? AND m.turn_id = ? "
+            "ORDER BY m.ordinal",
+            (source_session_id, source_turn_id),
+        ).fetchall()
+        for row in messages:
+            message = Message.model_validate_json(row["payload_json"])
+            metadata = dict(message.metadata or {})
+            metadata.pop(TURN_USAGE_META_KEY, None)
+            self.upsert_message(
+                session_id=target_session_id,
+                turn_id=source_turn_id,
+                message=message.model_copy(update={"metadata": metadata}),
+                ordinal=int(row["ordinal"]),
+                created_at=str(row["created_at"]),
+                finished_at=row["finished_at"],
+            )
+
+        revision = source.execute(
+            "SELECT r.revision_id, r.context_generation, "
+            "r.current_usage_json, u.usage_json "
+            "FROM turn_context_revision t "
+            "JOIN context_revisions r ON r.session_id = t.session_id "
+            "AND r.revision_id = t.revision_id "
+            "LEFT JOIN projection_turn_usage u "
+            "ON u.session_id = t.session_id AND u.turn_id = t.turn_id "
+            "WHERE t.session_id = ? AND t.turn_id = ?",
+            (source_session_id, source_turn_id),
+        ).fetchone()
+        if revision is not None:
+            state = read_revision_state(
+                source,
+                session_id=source_session_id,
+                revision_id=str(revision["revision_id"]),
+            )
+            usage_json = (
+                revision["usage_json"] or revision["current_usage_json"]
+            )
+            self.write_runtime_state(
+                session_id=target_session_id,
+                user_id=target_user_id,
+                channel=target_channel,
+                state=self._fork_runtime_state(
+                    state,
+                    source_session_id=source_session_id,
+                    target_session_id=target_session_id,
+                ),
+                current_usage=(json.loads(usage_json) if usage_json else None),
+                turn_id=source_turn_id,
+                context_generation=int(revision["context_generation"]),
+            )
+
+        error = json.loads(turn["error_json"]) if turn["error_json"] else None
+        self.finish_turn(
+            session_id=target_session_id,
+            turn_id=source_turn_id,
+            status=cast(TurnStatus, str(turn["status"])),
+            error=error,
+            finished_at=turn["finished_at"],
+        )
+        usage = source.execute(
+            "SELECT usage_json FROM projection_turn_usage "
+            "WHERE session_id = ? AND turn_id = ?",
+            (source_session_id, source_turn_id),
+        ).fetchone()
+        if usage is not None:
+            snapshot = json.loads(usage["usage_json"])
+            self.attach_turn_usage(
+                session_id=target_session_id,
+                turn_id=source_turn_id,
+                usage=snapshot.get("usage"),
+                context_usage=snapshot.get("context_usage"),
+            )
+
+    def _fork_copy_recall_events(
+        self,
+        source: sqlite3.Connection,
+        *,
+        source_session_id: str,
+        target_session_id: str,
+        through_event_seq: int,
+    ) -> None:
+        """Copy Recall facts visible at the selected runtime boundary."""
+        recall_events = source.execute(
+            "SELECT event_type, payload_json, recorded_at "
+            "FROM event_log WHERE seq <= ? AND event_type IN "
+            "('recall.entry_committed', 'recall.entries_purged') "
+            "ORDER BY seq",
+            (through_event_seq,),
+        ).fetchall()
+        with self._transaction():
+            for event in recall_events:
+                payload = json.loads(event["payload_json"])
+                ref_key = (
+                    "entry_ref"
+                    if event["event_type"] == "recall.entry_committed"
+                    else "purge_ref"
+                )
+                source_object = source.execute(
+                    "SELECT codec, payload FROM content_objects "
+                    "WHERE content_hash = ?",
+                    (payload[ref_key],),
+                ).fetchone()
+                if source_object is None:
+                    raise ValueError("fork recall object is missing")
+                value = json.loads(bytes(source_object["payload"]).decode())
+                if ref_key == "entry_ref":
+                    history_session_id = self._fork_history_session_id(
+                        str(payload["history_session_id"]),
+                        source_session_id=source_session_id,
+                        target_session_id=target_session_id,
+                    )
+                    payload["history_session_id"] = history_session_id
+                    value["session_id"] = history_session_id
+                target_ref = self._write_fact_object(
+                    codec=str(source_object["codec"]),
+                    value=value,
+                )
+                payload[ref_key] = target_ref
+                key = (
+                    f"recall:{payload['history_session_id']}:"
+                    f"{payload['source_seq']}:{target_ref}"
+                    if ref_key == "entry_ref"
+                    else f"recall:purge:{target_ref}"
+                )
+                self._append_fact(
+                    event_type=str(event["event_type"]),
+                    payload=payload,
+                    idempotency_key=key,
+                    recorded_at=str(event["recorded_at"]),
+                )
+
+    def fork_completed_turn_from(
+        self,
+        *,
+        source_path: Path,
+        source_session_id: str,
+        source_chat_id: str,
+        turn_id: str,
+        target_session_id: str,
+        target_user_id: str,
+        target_channel: str,
+    ) -> int:
+        """Rebuild an independent conversation through one completed turn."""
+        if (
+            self._conn.execute(
+                "SELECT 1 FROM transcript_sessions LIMIT 1",
+            ).fetchone()
+            is not None
+        ):
+            raise ValueError("target transcript session already exists")
+
+        uri = f"{source_path.resolve().as_uri()}?mode=ro"
+        source = sqlite3.connect(uri, uri=True)
+        source.row_factory = sqlite3.Row
+        source.execute("PRAGMA query_only=ON")
+        source.execute("BEGIN")
+        try:
+            source_session = source.execute(
+                "SELECT storage_id FROM transcript_sessions "
+                "WHERE session_id = ?",
+                (source_session_id,),
+            ).fetchone()
+            if source_session is None:
+                raise KeyError("source transcript session not found")
+            boundary = source.execute(
+                "SELECT turn_seq, status FROM transcript_turns "
+                "WHERE session_id = ? AND turn_id = ?",
+                (source_session_id, turn_id),
+            ).fetchone()
+            if boundary is None:
+                raise KeyError("fork turn not found")
+            if boundary["status"] != "completed":
+                raise ValueError("fork turn must be completed")
+            turn_seq = int(boundary["turn_seq"])
+            boundary_revision = source.execute(
+                "SELECT r.revision_id FROM turn_context_revision t "
+                "JOIN context_revisions r "
+                "ON r.session_id = t.session_id "
+                "AND r.revision_id = t.revision_id "
+                "WHERE t.session_id = ? AND t.turn_id = ?",
+                (source_session_id, turn_id),
+            ).fetchone()
+            if boundary_revision is None:
+                raise ValueError("fork turn has no committed runtime")
+            boundary_event = source.execute(
+                "SELECT seq FROM event_log "
+                "WHERE event_type = 'runtime.committed' "
+                "AND json_extract(payload_json, '$.revision_id') = ? "
+                "ORDER BY seq DESC LIMIT 1",
+                (boundary_revision["revision_id"],),
+            ).fetchone()
+            if boundary_event is None:
+                raise ValueError("fork runtime event is missing")
+
+            with self._transaction():
+                timestamp = _utc_now()
+                self._conn.execute(
+                    "INSERT INTO transcript_sessions("
+                    "session_id, storage_id, user_id, channel) "
+                    "VALUES (?, ?, ?, ?)",
+                    (
+                        target_session_id,
+                        self._storage_id,
+                        target_user_id,
+                        target_channel,
+                    ),
+                )
+                self._append_session_fact(
+                    session_id=target_session_id,
+                    user_id=target_user_id,
+                    channel=target_channel,
+                    recorded_at=timestamp,
+                )
+                self._append_fact(
+                    event_type="session.forked",
+                    payload={
+                        "source_chat_id": source_chat_id,
+                        "source_session_id": source_session_id,
+                        "source_storage_id": str(source_session["storage_id"]),
+                        "turn_id": turn_id,
+                        "turn_seq": turn_seq,
+                    },
+                    idempotency_key="session:forked",
+                    recorded_at=timestamp,
+                    turn_id=turn_id,
+                )
+
+            from ...agents.context.scroll.history import HistoryStore
+
+            history = HistoryStore(self._path)
+            history.close()
+
+            turns = source.execute(
+                "SELECT * FROM transcript_turns WHERE session_id = ? "
+                "AND turn_seq <= ? ORDER BY turn_seq",
+                (source_session_id, turn_seq),
+            ).fetchall()
+            if any(row["status"] == "running" for row in turns):
+                raise ValueError("fork history contains a running turn")
+
+            for turn in turns:
+                self._fork_copy_turn(
+                    source,
+                    turn,
+                    source_session_id=source_session_id,
+                    target_session_id=target_session_id,
+                    target_user_id=target_user_id,
+                    target_channel=target_channel,
+                )
+
+            self._fork_copy_recall_events(
+                source,
+                source_session_id=source_session_id,
+                target_session_id=target_session_id,
+                through_event_seq=int(boundary_event["seq"]),
+            )
+
+            self.rebuild_projections()
+            return turn_seq
+        finally:
+            source.close()
 
     def message_payloads(
         self,
@@ -1697,11 +2031,7 @@ class TranscriptStore:
                     row["message_id"],
                 ),
             )
-            usage_json = json.dumps(
-                snapshot,
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
+            usage_json = _canonical_json(snapshot)
             usage_ref = self._write_fact_object(
                 codec="turn-usage-v1",
                 value=snapshot,

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 
 APPLICATION_ID = 0x51504345
 SCHEMA_VERSION = 1
@@ -49,6 +50,26 @@ _REQUIRED_TABLES = {
 }
 
 
+def advance_projection_watermark(
+    connection: sqlite3.Connection,
+    event_seq: int,
+    *,
+    updated_at: str | None = None,
+) -> None:
+    """Advance the inline conversation projector in the current transaction."""
+    timestamp = updated_at or datetime.now(timezone.utc).isoformat()
+    connection.execute(
+        "INSERT INTO projection_watermarks VALUES "
+        "('conversation', 1, ?, ?) "
+        "ON CONFLICT(projector_name) DO UPDATE SET "
+        "projector_version = excluded.projector_version, "
+        "last_event_seq = MAX(last_event_seq, excluded.last_event_seq), "
+        "updated_at = CASE WHEN excluded.last_event_seq >= last_event_seq "
+        "THEN excluded.updated_at ELSE updated_at END",
+        (event_seq, timestamp),
+    )
+
+
 def _user_tables(connection: sqlite3.Connection) -> set[str]:
     rows = connection.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table' "
@@ -91,6 +112,7 @@ def initialize_database(connection: sqlite3.Connection) -> None:
 __all__ = [
     "APPLICATION_ID",
     "SCHEMA_VERSION",
+    "advance_projection_watermark",
     "initialize_database",
     "validate_database",
 ]

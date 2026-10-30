@@ -148,6 +148,47 @@ def test_context_prefixes_and_same_turn_revisions_are_append_only(tmp_path):
         store.close()
 
 
+def test_runtime_revision_kinds_describe_the_actual_change(tmp_path):
+    path = tmp_path / "session.db"
+    store = TranscriptStore(path)
+    try:
+        store.write_runtime_state(**IDENTITY, state={"agent": {}})
+        store.update_runtime_state(
+            session_id="session",
+            path=["agent", "mode"],
+            value="coding",
+        )
+        store.set_current_usage(
+            session_id="session",
+            usage={"total_tokens": 1},
+            context_usage={"estimated_tokens": 1},
+        )
+        store.write_runtime_state(
+            **IDENTITY,
+            state={"agent": {}},
+            reset_context=True,
+        )
+        store.replace_runtime_state(
+            **IDENTITY,
+            state={"agent": {"restored": True}},
+            context_generation=0,
+            current_usage=None,
+        )
+        with sqlite3.connect(path) as connection:
+            kinds = connection.execute(
+                "SELECT kind FROM context_revisions ORDER BY rowid",
+            ).fetchall()
+        assert [row[0] for row in kinds] == [
+            "snapshot",
+            "state_update",
+            "usage_update",
+            "clear",
+            "restore",
+        ]
+    finally:
+        store.close()
+
+
 def test_unsupported_development_schema_is_not_modified(tmp_path):
     path = tmp_path / "session.db"
     with sqlite3.connect(path) as connection:
