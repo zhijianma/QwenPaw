@@ -99,7 +99,7 @@ def test_missing_turn_snapshot_does_not_reuse_current_context(tmp_path):
         store.close()
 
 
-def test_context_prefixes_and_same_turn_revision_are_deduplicated(tmp_path):
+def test_context_prefixes_and_same_turn_revisions_are_append_only(tmp_path):
     path = tmp_path / "session.db"
     store = TranscriptStore(path)
     try:
@@ -126,7 +126,7 @@ def test_context_prefixes_and_same_turn_revision_are_deduplicated(tmp_path):
                 connection.execute(
                     "SELECT COUNT(*) FROM context_revisions",
                 ).fetchone()[0]
-                == 1
+                == 2
             )
             assert (
                 connection.execute(
@@ -136,7 +136,7 @@ def test_context_prefixes_and_same_turn_revision_are_deduplicated(tmp_path):
             )
             assert (
                 connection.execute(
-                    "SELECT COUNT(*) FROM state_objects "
+                    "SELECT COUNT(*) FROM content_objects "
                     "WHERE codec = 'context-item-v1'",
                 ).fetchone()[0]
                 == 2

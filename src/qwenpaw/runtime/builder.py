@@ -1088,6 +1088,8 @@ class AgentBuilder:
             else ""
         )
         session_id = getattr(ctx, "session_id", None) or "local"
+        user_id = getattr(ctx, "user_id", None) or session_id
+        channel = getattr(ctx, "channel", None) or "console"
         raw_generation = (getattr(ctx, "session_state", None) or {}).get(
             "_context_generation",
             0,
@@ -1104,15 +1106,16 @@ class AgentBuilder:
 
         from ..agents.context import build_scroll_components
 
-        # history.db is shared across sessions in this workspace; rows are
-        # keyed by session_id (the conversation) and agent_id (which agent
-        # wrote them).
+        # Recall is projected inside the exact conversation database. The
+        # full identity prevents group-channel session collisions.
         return await run_sync_io(
             build_scroll_components,
             agent_config=agent_config,
             workspace_dir=workspace_dir,
             model=model,
             session_id=session_id,
+            user_id=user_id,
+            channel=channel,
             context_generation=context_generation,
             agent_id=agent_id,
             offloader=offloader,

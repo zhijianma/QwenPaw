@@ -59,15 +59,8 @@ def _extract_app_id_from_request(request: Request) -> str:
 
 
 def _get_session(request: Request) -> Any:
-    """Get or create a SafeJSONSession for PawApp storage."""
-    # pylint: disable=unused-argument
-    try:
-        from ..app.chats.session import SafeJSONSession
-        from ..constant import WORKING_DIR
-
-        return SafeJSONSession(save_dir=str(WORKING_DIR))
-    except Exception:
-        return None
+    """Return an explicitly injected session, if the host provides one."""
+    return getattr(request.app.state, "session", None)
 
 
 def _build_ctx(

@@ -7,7 +7,16 @@ The payload view is a read projection; no full message body is stored twice.
 
 import sqlite3
 
-SCHEMA = """
+from .event_schema import (
+    APPLICATION_ID,
+    SCHEMA as EVENT_SCHEMA,
+    SCHEMA_VERSION,
+    validate_database as validate_event_database,
+)
+
+SCHEMA = (
+    EVENT_SCHEMA
+    + """
 
 CREATE TABLE IF NOT EXISTS transcript_sessions (
     session_id       TEXT PRIMARY KEY,
@@ -92,18 +101,10 @@ CREATE TABLE IF NOT EXISTS transcript_blocks (
         ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS state_objects (
-    content_hash TEXT PRIMARY KEY NOT NULL,
-    codec TEXT NOT NULL CHECK(codec IN (
-        'json-v1', 'context-item-v1', 'context-ref-v1'
-    )),
-    payload TEXT NOT NULL CHECK(json_valid(payload)),
-    byte_length INTEGER NOT NULL CHECK(byte_length >= 0)
-);
 CREATE TABLE IF NOT EXISTS context_nodes (
     node_hash TEXT PRIMARY KEY NOT NULL,
     parent_node_hash TEXT REFERENCES context_nodes(node_hash),
-    item_hash TEXT NOT NULL REFERENCES state_objects(content_hash),
+    item_hash TEXT NOT NULL REFERENCES content_objects(content_hash),
     length INTEGER NOT NULL CHECK(length > 0)
 );
 CREATE TABLE IF NOT EXISTS context_revisions (
@@ -129,7 +130,7 @@ CREATE TABLE IF NOT EXISTS revision_components (
     session_id TEXT NOT NULL,
     revision_id TEXT NOT NULL,
     component_key TEXT NOT NULL,
-    content_hash TEXT NOT NULL REFERENCES state_objects(content_hash),
+    content_hash TEXT NOT NULL REFERENCES content_objects(content_hash),
     PRIMARY KEY(session_id, revision_id, component_key),
     FOREIGN KEY(session_id, revision_id)
         REFERENCES context_revisions(session_id, revision_id)
@@ -152,6 +153,15 @@ CREATE TABLE IF NOT EXISTS turn_context_revision (
     FOREIGN KEY(session_id, revision_id)
         REFERENCES context_revisions(session_id, revision_id)
 );
+CREATE TABLE IF NOT EXISTS projection_turn_usage (
+    session_id TEXT NOT NULL,
+    turn_id TEXT NOT NULL,
+    usage_json TEXT NOT NULL CHECK(json_valid(usage_json)),
+    event_seq INTEGER NOT NULL REFERENCES event_log(seq),
+    PRIMARY KEY(session_id, turn_id),
+    FOREIGN KEY(session_id, turn_id)
+        REFERENCES transcript_turns(session_id, turn_id) ON DELETE CASCADE
+);
 
 CREATE VIEW IF NOT EXISTS transcript_message_payloads AS
 SELECT m.*, json_set(m.envelope_json, '$.content', json((
@@ -163,22 +173,20 @@ SELECT m.*, json_set(m.envelope_json, '$.content', json((
     )
 ))) AS payload_json
 FROM transcript_messages m;
-PRAGMA user_version=1;
 """
+)
 
 
 def validate_database(connection: sqlite3.Connection) -> None:
-    """Reject unsupported development layouts without modifying their data."""
-    version = connection.execute("PRAGMA user_version").fetchone()[0]
-    if version != 1:
-        raise ValueError("unsupported conversation database schema")
+    """Accept only the fresh event store with complete UI projections."""
+    validate_event_database(connection)
     # Resolve all canonical columns before accepting a checkpoint or store.
     connection.execute(
         "SELECT s.storage_id, m.envelope_json, b.payload_json, b.version, "
-        "o.codec, n.node_hash, c.component_key "
+        "o.codec, n.node_hash, c.component_key, u.event_seq "
         "FROM transcript_sessions s, transcript_messages m, "
-        "transcript_blocks b, state_objects o, context_nodes n, "
-        "revision_components c LIMIT 0",
+        "transcript_blocks b, content_objects o, context_nodes n, "
+        "revision_components c, projection_turn_usage u LIMIT 0",
     )
 
 
@@ -188,6 +196,8 @@ def initialize_database(connection: sqlite3.Connection) -> None:
         "SELECT 1 FROM sqlite_master WHERE type = 'table' LIMIT 1",
     ).fetchone()
     if existing is None:
-        connection.execute("PRAGMA journal_mode=DELETE")
         connection.executescript(SCHEMA)
+        connection.execute(f"PRAGMA application_id={APPLICATION_ID}")
+        connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+        connection.commit()
     validate_database(connection)

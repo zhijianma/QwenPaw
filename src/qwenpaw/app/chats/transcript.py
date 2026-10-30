@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import tempfile
@@ -11,6 +12,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, Literal
+from uuid import uuid4
 
 from ...constant import QWENPAW_CLIENT_MESSAGE_ID_KEY
 from ...schemas import Message, TextContent
@@ -21,6 +23,7 @@ from .context_revisions import (
     record_revision,
 )
 from .transcript_blocks import (
+    block_identity,
     copy_message_blocks,
     message_envelope,
     write_message_blocks,
@@ -34,6 +37,7 @@ from .transcript_models import (
     TranscriptUserMessagePage,
 )
 from .transcript_paging import TranscriptPageBuilder
+from .projection_rebuild import rebuild_projections
 
 _BUSY_TIMEOUT_MS = 5000
 TurnStatus = Literal["running", "completed", "failed", "cancelled"]
@@ -48,6 +52,23 @@ def _utc_now() -> str:
 def _enum_value(value: Any) -> str:
     raw = getattr(value, "value", value)
     return str(raw or "")
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _content_hash(codec: str, payload: bytes) -> str:
+    digest = hashlib.sha256()
+    digest.update(codec.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(payload)
+    return digest.hexdigest()
 
 
 # pylint: disable=too-many-public-methods
@@ -74,6 +95,7 @@ class TranscriptStore:
         self._conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
         try:
             initialize_database(self._conn)
+            self._conn.execute("PRAGMA journal_mode=WAL")
             if storage_id is None:
                 row = self._conn.execute(
                     "SELECT storage_id FROM transcript_sessions LIMIT 1",
@@ -122,6 +144,91 @@ class TranscriptStore:
                 self._conn.rollback()
                 raise
             self._conn.commit()
+
+    def _write_fact_object(self, *, codec: str, value: Any) -> str:
+        payload = _canonical_json(value).encode("utf-8")
+        content_hash = _content_hash(codec, payload)
+        self._conn.execute(
+            "INSERT OR IGNORE INTO content_objects("
+            "content_hash, codec, payload, byte_length) "
+            "VALUES (?, ?, ?, ?)",
+            (content_hash, codec, payload, len(payload)),
+        )
+        return content_hash
+
+    def _append_fact(
+        self,
+        *,
+        event_type: str,
+        payload: dict[str, Any],
+        idempotency_key: str,
+        recorded_at: str,
+        turn_id: str | None = None,
+        message_id: str | None = None,
+        block_id: str | None = None,
+    ) -> int:
+        payload_json = _canonical_json(payload)
+        envelope = {
+            "block_id": block_id,
+            "event_type": event_type,
+            "message_id": message_id,
+            "payload": payload,
+            "payload_version": 1,
+            "turn_id": turn_id,
+        }
+        payload_hash = hashlib.sha256(
+            _canonical_json(envelope).encode("utf-8"),
+        ).hexdigest()
+        cursor = self._conn.execute(
+            "INSERT INTO event_log("
+            "event_id, event_type, payload_version, turn_id, message_id, "
+            "block_id, payload_json, payload_hash, idempotency_key, "
+            "recorded_at) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(idempotency_key) DO NOTHING",
+            (
+                uuid4().hex,
+                event_type,
+                turn_id,
+                message_id,
+                block_id,
+                payload_json,
+                payload_hash,
+                idempotency_key,
+                recorded_at,
+            ),
+        )
+        if cursor.rowcount == 1:
+            if cursor.lastrowid is None:
+                raise RuntimeError("event append returned no sequence")
+            return int(cursor.lastrowid)
+        row = self._conn.execute(
+            "SELECT seq, payload_hash FROM event_log "
+            "WHERE idempotency_key = ?",
+            (idempotency_key,),
+        ).fetchone()
+        if row is None or row["payload_hash"] != payload_hash:
+            raise ValueError("event idempotency conflict")
+        return int(row["seq"])
+
+    def _append_session_fact(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        channel: str,
+        recorded_at: str,
+    ) -> None:
+        self._append_fact(
+            event_type="session.created",
+            payload={
+                "channel": channel,
+                "session_id": session_id,
+                "storage_id": self._storage_id,
+                "user_id": user_id,
+            },
+            idempotency_key="session:created",
+            recorded_at=recorded_at,
+        )
 
     def _session_row(
         self,
@@ -257,9 +364,13 @@ class TranscriptStore:
             )
             row = connection.execute(
                 "SELECT r.revision_id, r.context_generation, "
-                "r.current_usage_json FROM turn_context_revision t "
+                "COALESCE(u.usage_json, r.current_usage_json) "
+                "AS current_usage_json FROM turn_context_revision t "
                 "JOIN context_revisions r ON r.session_id = t.session_id "
                 "AND r.revision_id = t.revision_id "
+                "LEFT JOIN projection_turn_usage u "
+                "ON u.session_id = t.session_id "
+                "AND u.turn_id = t.turn_id "
                 "WHERE t.session_id = ? AND t.turn_id = ?",
                 (session_id, turn_id),
             ).fetchone()
@@ -350,6 +461,12 @@ class TranscriptStore:
                 channel=channel,
                 storage_id=self._storage_id,
             )
+            self._append_session_fact(
+                session_id=session_id,
+                user_id=user_id,
+                channel=channel,
+                recorded_at=timestamp,
+            )
             existing = self._conn.execute(
                 "SELECT context_generation, current_usage_json "
                 "FROM session_runtime WHERE session_id = ?",
@@ -424,23 +541,32 @@ class TranscriptStore:
                     (session_id,),
                 ).fetchone()
                 turn_id = str(latest[0]) if latest else None
-            if turn_id is not None or reset_context:
-                record_revision(
-                    self._conn,
-                    session_id=session_id,
-                    turn_id=turn_id,
-                    state=state,
-                    generation=generation,
-                    usage_json=usage_json,
-                    created_at=timestamp,
-                    migration_anchor=migration_anchor,
-                )
-            else:
-                self._conn.execute(
-                    "DELETE FROM current_context_revision "
-                    "WHERE session_id = ?",
-                    (session_id,),
-                )
+            revision_id = record_revision(
+                self._conn,
+                session_id=session_id,
+                turn_id=turn_id,
+                state=state,
+                generation=generation,
+                usage_json=usage_json,
+                created_at=timestamp,
+                migration_anchor=migration_anchor,
+            )
+            reason = "turn_commit" if turn_id is not None else "snapshot"
+            if reset_context:
+                reason = "clear"
+            elif migration_anchor:
+                reason = "migration"
+            self._append_fact(
+                event_type="runtime.committed",
+                payload={
+                    "generation": generation,
+                    "reason": reason,
+                    "revision_id": revision_id,
+                },
+                idempotency_key=f"runtime:{revision_id}",
+                recorded_at=timestamp,
+                turn_id=turn_id,
+            )
             return generation, True
 
     def replace_runtime_state(
@@ -454,6 +580,12 @@ class TranscriptStore:
         current_usage: dict[str, Any] | None,
     ) -> None:
         """Replace a runtime snapshot while preserving its generation."""
+        timestamp = _utc_now()
+        usage_json = (
+            _canonical_json(current_usage)
+            if current_usage is not None
+            else None
+        )
         with self._transaction():
             self._conn.execute(
                 "INSERT INTO transcript_sessions("
@@ -470,6 +602,12 @@ class TranscriptStore:
                 user_id=user_id,
                 channel=channel,
                 storage_id=self._storage_id,
+            )
+            self._append_session_fact(
+                session_id=session_id,
+                user_id=user_id,
+                channel=channel,
+                recorded_at=timestamp,
             )
             self._conn.execute(
                 "INSERT INTO session_runtime("
@@ -488,21 +626,28 @@ class TranscriptStore:
                         ensure_ascii=False,
                         separators=(",", ":"),
                     ),
-                    (
-                        json.dumps(
-                            current_usage,
-                            ensure_ascii=False,
-                            separators=(",", ":"),
-                        )
-                        if current_usage is not None
-                        else None
-                    ),
-                    _utc_now(),
+                    (usage_json),
+                    timestamp,
                 ),
             )
-            self._conn.execute(
-                "DELETE FROM current_context_revision WHERE session_id = ?",
-                (session_id,),
+            revision_id = record_revision(
+                self._conn,
+                session_id=session_id,
+                turn_id=None,
+                state=state,
+                generation=context_generation,
+                usage_json=usage_json,
+                created_at=timestamp,
+            )
+            self._append_fact(
+                event_type="runtime.committed",
+                payload={
+                    "generation": context_generation,
+                    "reason": "restore",
+                    "revision_id": revision_id,
+                },
+                idempotency_key=f"runtime:{revision_id}",
+                recorded_at=timestamp,
             )
 
     def update_runtime_state(
@@ -515,7 +660,8 @@ class TranscriptStore:
         """Update one nested value in an existing runtime snapshot."""
         with self._transaction():
             row = self._conn.execute(
-                "SELECT state_json FROM session_runtime "
+                "SELECT state_json, context_generation, current_usage_json "
+                "FROM session_runtime "
                 "WHERE session_id = ?",
                 (session_id,),
             ).fetchone()
@@ -535,14 +681,30 @@ class TranscriptStore:
                 ensure_ascii=False,
                 separators=(",", ":"),
             )
+            timestamp = _utc_now()
             self._conn.execute(
                 "UPDATE session_runtime SET state_json = ?, updated_at = ? "
                 "WHERE session_id = ?",
-                (state_json, _utc_now(), session_id),
+                (state_json, timestamp, session_id),
             )
-            self._conn.execute(
-                "DELETE FROM current_context_revision WHERE session_id = ?",
-                (session_id,),
+            revision_id = record_revision(
+                self._conn,
+                session_id=session_id,
+                turn_id=None,
+                state=state,
+                generation=int(row["context_generation"]),
+                usage_json=row["current_usage_json"],
+                created_at=timestamp,
+            )
+            self._append_fact(
+                event_type="runtime.committed",
+                payload={
+                    "generation": int(row["context_generation"]),
+                    "reason": "state_update",
+                    "revision_id": revision_id,
+                },
+                idempotency_key=f"runtime:{revision_id}",
+                recorded_at=timestamp,
             )
 
     def set_current_usage(
@@ -559,13 +721,40 @@ class TranscriptStore:
             separators=(",", ":"),
         )
         with self._transaction():
+            row = self._conn.execute(
+                "SELECT state_json, context_generation "
+                "FROM session_runtime WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(session_id)
+            timestamp = _utc_now()
             cursor = self._conn.execute(
                 "UPDATE session_runtime SET current_usage_json = ?, "
                 "updated_at = ? WHERE session_id = ?",
-                (payload, _utc_now(), session_id),
+                (payload, timestamp, session_id),
             )
             if cursor.rowcount != 1:
                 raise KeyError(session_id)
+            revision_id = record_revision(
+                self._conn,
+                session_id=session_id,
+                turn_id=None,
+                state=json.loads(row["state_json"]),
+                generation=int(row["context_generation"]),
+                usage_json=payload,
+                created_at=timestamp,
+            )
+            self._append_fact(
+                event_type="runtime.committed",
+                payload={
+                    "generation": int(row["context_generation"]),
+                    "reason": "usage_update",
+                    "revision_id": revision_id,
+                },
+                idempotency_key=f"runtime:{revision_id}",
+                recorded_at=timestamp,
+            )
 
     def export_database(
         self,
@@ -861,19 +1050,33 @@ class TranscriptStore:
     def recover_running_turns(self) -> int:
         """Cancel turns left running by a previous process."""
         with self._lock:
-            orphan = self._conn.execute(
-                "SELECT 1 FROM transcript_turns WHERE status = 'running' "
-                "LIMIT 1",
-            ).fetchone()
-            if orphan is None:
+            orphans = self._conn.execute(
+                "SELECT turn_id FROM transcript_turns "
+                "WHERE status = 'running' ORDER BY turn_seq",
+            ).fetchall()
+            if not orphans:
                 return 0
             with self._transaction():
+                timestamp = _utc_now()
                 cursor = self._conn.execute(
                     "UPDATE transcript_turns SET status = 'cancelled', "
                     "finished_at = COALESCE(finished_at, ?) "
                     "WHERE status = 'running'",
-                    (_utc_now(),),
+                    (timestamp,),
                 )
+                for orphan in orphans:
+                    turn_id = str(orphan["turn_id"])
+                    self._append_fact(
+                        event_type="turn.cancelled",
+                        payload={
+                            "error": None,
+                            "finished_at": timestamp,
+                            "status": "cancelled",
+                        },
+                        idempotency_key=f"turn:{turn_id}:terminal",
+                        recorded_at=timestamp,
+                        turn_id=turn_id,
+                    )
                 self._conn.execute(
                     "INSERT OR IGNORE INTO turn_context_revision "
                     "SELECT r.session_id, r.anchor_turn_id, r.revision_id "
@@ -884,6 +1087,11 @@ class TranscriptStore:
                     "WHERE t.status = 'cancelled'",
                 )
                 return cursor.rowcount
+
+    def rebuild_projections(self) -> None:
+        """Recreate UI and runtime projections from append-only facts."""
+        with self._transaction():
+            rebuild_projections(self._conn)
 
     def import_legacy_messages(
         self,
@@ -937,6 +1145,12 @@ class TranscriptStore:
                         len(turns) + 1,
                     ),
                 )
+            self._append_session_fact(
+                session_id=session_id,
+                user_id=user_id,
+                channel=channel,
+                recorded_at=now,
+            )
             for turn_seq, turn_messages in enumerate(turns, start=1):
                 first_metadata = turn_messages[0].metadata or {}
                 last_metadata = turn_messages[-1].metadata or {}
@@ -958,6 +1172,17 @@ class TranscriptStore:
                         created_at,
                         finished_at,
                     ),
+                )
+                self._append_fact(
+                    event_type="turn.started",
+                    payload={
+                        "created_at": created_at,
+                        "replaces_turn_id": None,
+                        "turn_seq": turn_seq,
+                    },
+                    idempotency_key=f"turn:{turn_id}:started",
+                    recorded_at=created_at,
+                    turn_id=turn_id,
                 )
                 for ordinal, message in enumerate(turn_messages):
                     metadata = message.metadata or {}
@@ -987,6 +1212,91 @@ class TranscriptStore:
                             for block in message.content
                         ],
                     )
+                    envelope_ref = self._write_fact_object(
+                        codec="message-envelope-v1",
+                        value=json.loads(message_envelope(message)),
+                    )
+                    block_refs = []
+                    for block_ordinal, block_model in enumerate(
+                        message.content,
+                    ):
+                        block = block_model.model_dump(mode="json")
+                        block_id = block_identity(
+                            session_id,
+                            message.id,
+                            block_ordinal,
+                        )
+                        content_ref = self._write_fact_object(
+                            codec="message-block-v1",
+                            value=block,
+                        )
+                        block_refs.append(content_ref)
+                        self._append_fact(
+                            event_type="block.committed",
+                            payload={
+                                "content_ref": content_ref,
+                                "kind": str(
+                                    block.get("type") or "unknown",
+                                ),
+                                "ordinal": block_ordinal,
+                            },
+                            idempotency_key=(
+                                f"block:{block_id}:{content_ref}"
+                            ),
+                            recorded_at=created_at,
+                            turn_id=turn_id,
+                            message_id=message.id,
+                            block_id=block_id,
+                        )
+                    snapshot_hash = hashlib.sha256(
+                        _canonical_json(
+                            {
+                                "blocks": block_refs,
+                                "envelope": envelope_ref,
+                                "finished_at": metadata.get("finished_at"),
+                                "ordinal": ordinal,
+                            },
+                        ).encode("utf-8"),
+                    ).hexdigest()
+                    self._append_fact(
+                        event_type="message.committed",
+                        payload={
+                            "block_refs": block_refs,
+                            "client_message_id": self._client_message_id(
+                                message,
+                            ),
+                            "created_at": str(
+                                metadata.get("timestamp") or created_at,
+                            ),
+                            "envelope_ref": envelope_ref,
+                            "finished_at": metadata.get("finished_at"),
+                            "ordinal": ordinal,
+                            "role": _enum_value(message.role),
+                        },
+                        idempotency_key=(
+                            f"message:{message.id}:{snapshot_hash}"
+                        ),
+                        recorded_at=created_at,
+                        turn_id=turn_id,
+                        message_id=message.id,
+                    )
+                self._append_fact(
+                    event_type="turn.completed",
+                    payload={
+                        "error": None,
+                        "finished_at": finished_at,
+                        "status": "completed",
+                    },
+                    idempotency_key=f"turn:{turn_id}:terminal",
+                    recorded_at=finished_at,
+                    turn_id=turn_id,
+                )
+            self._append_fact(
+                event_type="migration.json_imported",
+                payload={"message_count": len(messages)},
+                idempotency_key="migration:json",
+                recorded_at=now,
+            )
         return True
 
     def start_turn(
@@ -1023,14 +1333,33 @@ class TranscriptStore:
                 channel=channel,
                 storage_id=self._storage_id,
             )
+            self._append_session_fact(
+                session_id=session_id,
+                user_id=user_id,
+                channel=channel,
+                recorded_at=timestamp,
+            )
             existing = self._conn.execute(
-                "SELECT turn_seq, replaces_turn_id FROM transcript_turns "
+                "SELECT turn_seq, replaces_turn_id, created_at "
+                "FROM transcript_turns "
                 "WHERE session_id = ? AND turn_id = ?",
                 (session_id, turn_id),
             ).fetchone()
             if existing is not None:
                 if existing["replaces_turn_id"] != replaces_turn_id:
                     raise ValueError("transcript replacement target mismatch")
+                original_timestamp = str(existing["created_at"])
+                self._append_fact(
+                    event_type="turn.started",
+                    payload={
+                        "created_at": original_timestamp,
+                        "replaces_turn_id": replaces_turn_id,
+                        "turn_seq": int(existing["turn_seq"]),
+                    },
+                    idempotency_key=f"turn:{turn_id}:started",
+                    recorded_at=original_timestamp,
+                    turn_id=turn_id,
+                )
                 return
 
             if replaces_turn_id is not None:
@@ -1055,6 +1384,17 @@ class TranscriptStore:
                     replaces_turn_id,
                     timestamp,
                 ),
+            )
+            self._append_fact(
+                event_type="turn.started",
+                payload={
+                    "created_at": timestamp,
+                    "replaces_turn_id": replaces_turn_id,
+                    "turn_seq": turn_seq,
+                },
+                idempotency_key=f"turn:{turn_id}:started",
+                recorded_at=timestamp,
+                turn_id=turn_id,
             )
             self._conn.execute(
                 "UPDATE transcript_sessions SET "
@@ -1083,6 +1423,7 @@ class TranscriptStore:
         role = _enum_value(message.role)
         client_message_id = self._client_message_id(message)
         timestamp = created_at or _utc_now()
+        blocks = [block.model_dump(mode="json") for block in message.content]
         with self._transaction():
             turn = self._conn.execute(
                 "SELECT 1 FROM transcript_turns "
@@ -1093,13 +1434,15 @@ class TranscriptStore:
                 raise ValueError("transcript turn does not exist")
             existing = self._conn.execute(
                 "SELECT turn_id, ordinal, role, envelope_json, "
-                "client_message_id, finished_at "
+                "client_message_id, created_at, finished_at "
                 "FROM transcript_messages "
                 "WHERE session_id = ? AND message_id = ?",
                 (session_id, message.id),
             ).fetchone()
             if existing is not None and existing["turn_id"] != turn_id:
                 raise ValueError("transcript message belongs to another turn")
+            if existing is not None:
+                timestamp = str(existing["created_at"])
 
             self._conn.execute(
                 "INSERT INTO transcript_messages("
@@ -1137,9 +1480,62 @@ class TranscriptStore:
                 self._conn,
                 session_id=session_id,
                 message_id=message.id,
-                content=[
-                    block.model_dump(mode="json") for block in message.content
-                ],
+                content=blocks,
+            )
+            envelope_ref = self._write_fact_object(
+                codec="message-envelope-v1",
+                value=json.loads(payload),
+            )
+            block_refs = []
+            for block_ordinal, block in enumerate(blocks):
+                block_id = block_identity(
+                    session_id,
+                    message.id,
+                    block_ordinal,
+                )
+                content_ref = self._write_fact_object(
+                    codec="message-block-v1",
+                    value=block,
+                )
+                block_refs.append(content_ref)
+                self._append_fact(
+                    event_type="block.committed",
+                    payload={
+                        "content_ref": content_ref,
+                        "kind": str(block.get("type") or "unknown"),
+                        "ordinal": block_ordinal,
+                    },
+                    idempotency_key=(f"block:{block_id}:{content_ref}"),
+                    recorded_at=timestamp,
+                    turn_id=turn_id,
+                    message_id=message.id,
+                    block_id=block_id,
+                )
+            snapshot_hash = hashlib.sha256(
+                _canonical_json(
+                    {
+                        "blocks": block_refs,
+                        "envelope": envelope_ref,
+                        "finished_at": finished_at,
+                        "ordinal": ordinal,
+                    },
+                ).encode("utf-8"),
+            ).hexdigest()
+            self._append_fact(
+                event_type="message.committed",
+                payload={
+                    "block_refs": block_refs,
+                    "client_message_id": client_message_id,
+                    "created_at": timestamp,
+                    "envelope_ref": envelope_ref,
+                    "finished_at": finished_at,
+                    "ordinal": ordinal,
+                    "role": role,
+                },
+                idempotency_key=f"message:{message.id}:{snapshot_hash}",
+                recorded_at=timestamp,
+                turn_id=turn_id,
+                message_id=message.id,
             )
 
     def read_replay_page(
@@ -1225,6 +1621,17 @@ class TranscriptStore:
                 "finished_at = ? WHERE session_id = ? AND turn_id = ?",
                 (status, error_json, timestamp, session_id, turn_id),
             )
+            self._append_fact(
+                event_type=f"turn.{status}",
+                payload={
+                    "error": error,
+                    "finished_at": timestamp,
+                    "status": status,
+                },
+                idempotency_key=f"turn:{turn_id}:terminal",
+                recorded_at=timestamp,
+                turn_id=turn_id,
+            )
             commit_turn_revision(
                 self._conn,
                 session_id=session_id,
@@ -1295,12 +1702,25 @@ class TranscriptStore:
                 ensure_ascii=False,
                 separators=(",", ":"),
             )
+            usage_ref = self._write_fact_object(
+                codec="turn-usage-v1",
+                value=snapshot,
+            )
+            timestamp = _utc_now()
+            event_seq = self._append_fact(
+                event_type="turn.usage_attached",
+                payload={"usage_ref": usage_ref},
+                idempotency_key=f"turn:{turn_id}:usage:{usage_ref}",
+                recorded_at=timestamp,
+                turn_id=turn_id,
+                message_id=str(row["message_id"]),
+            )
             self._conn.execute(
-                "UPDATE context_revisions SET current_usage_json = ? "
-                "WHERE session_id = ? AND revision_id = ("
-                "SELECT revision_id FROM turn_context_revision "
-                "WHERE session_id = ? AND turn_id = ?)",
-                (usage_json, session_id, session_id, turn_id),
+                "INSERT INTO projection_turn_usage VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(session_id, turn_id) DO UPDATE SET "
+                "usage_json=excluded.usage_json, "
+                "event_seq=excluded.event_seq",
+                (session_id, turn_id, usage_json, event_seq),
             )
             return True
 

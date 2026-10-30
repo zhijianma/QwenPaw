@@ -34,10 +34,16 @@ def _write_object(
 ) -> str:
     payload = _canonical(value)
     content_hash = _digest(f"{codec}\0{payload}")
+    encoded = payload.encode("utf-8")
     connection.execute(
-        "INSERT OR IGNORE INTO state_objects("
+        "INSERT OR IGNORE INTO content_objects("
         "content_hash, codec, payload, byte_length) VALUES (?, ?, ?, ?)",
-        (content_hash, codec, payload, len(payload.encode("utf-8"))),
+        (
+            content_hash,
+            codec,
+            encoded,
+            len(encoded),
+        ),
     )
     return content_hash
 
@@ -114,26 +120,6 @@ def _write_components(
         )
 
 
-def _prune_unreachable(connection: sqlite3.Connection) -> None:
-    connection.execute(
-        "WITH RECURSIVE reachable(node_hash) AS ("
-        "SELECT json_extract(o.payload, '$.head') "
-        "FROM revision_components c JOIN state_objects o "
-        "ON o.content_hash = c.content_hash "
-        "WHERE o.codec = 'context-ref-v1' "
-        "AND json_extract(o.payload, '$.head') IS NOT NULL "
-        "UNION SELECT n.parent_node_hash FROM context_nodes n "
-        "JOIN reachable r ON r.node_hash = n.node_hash "
-        "WHERE n.parent_node_hash IS NOT NULL"
-        ") DELETE FROM context_nodes WHERE node_hash NOT IN reachable",
-    )
-    connection.execute(
-        "DELETE FROM state_objects WHERE content_hash NOT IN ("
-        "SELECT content_hash FROM revision_components) "
-        "AND content_hash NOT IN (SELECT item_hash FROM context_nodes)",
-    )
-
-
 def record_revision(
     connection: sqlite3.Connection,
     *,
@@ -145,7 +131,7 @@ def record_revision(
     created_at: str,
     migration_anchor: bool = False,
 ) -> str:
-    """Record or replace one provisional revision in the transaction."""
+    """Append one immutable runtime revision in the transaction."""
     if turn_id is not None:
         turn = connection.execute(
             "SELECT status FROM transcript_turns "
@@ -164,61 +150,33 @@ def record_revision(
             )
             raise ValueError(message)
 
-    existing = None
-    if turn_id is not None:
-        existing = connection.execute(
-            "SELECT revision_id FROM context_revisions "
-            "WHERE session_id = ? AND anchor_turn_id = ?",
-            (session_id, turn_id),
-        ).fetchone()
-
-    if existing is None:
-        parent = connection.execute(
-            "SELECT revision_id FROM current_context_revision "
-            "WHERE session_id = ?",
-            (session_id,),
-        ).fetchone()
-        revision_id = uuid4().hex
-        kind = "clear"
-        if migration_anchor:
-            kind = "migration_anchor"
-        elif turn_id is not None:
-            kind = "turn_commit"
-        connection.execute(
-            "INSERT INTO context_revisions("
-            "session_id, revision_id, parent_revision_id, anchor_turn_id, "
-            "kind, context_generation, current_usage_json, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                session_id,
-                revision_id,
-                parent[0] if parent else None,
-                turn_id,
-                kind,
-                generation,
-                usage_json,
-                created_at,
-            ),
-        )
-    else:
-        revision_id = str(existing[0])
-        connection.execute(
-            "DELETE FROM revision_components "
-            "WHERE session_id = ? AND revision_id = ?",
-            (session_id, revision_id),
-        )
-        connection.execute(
-            "UPDATE context_revisions SET context_generation = ?, "
-            "current_usage_json = ?, created_at = ? "
-            "WHERE session_id = ? AND revision_id = ?",
-            (
-                generation,
-                usage_json,
-                created_at,
-                session_id,
-                revision_id,
-            ),
-        )
+    parent = connection.execute(
+        "SELECT revision_id FROM current_context_revision "
+        "WHERE session_id = ?",
+        (session_id,),
+    ).fetchone()
+    revision_id = uuid4().hex
+    kind = "clear"
+    if migration_anchor:
+        kind = "migration_anchor"
+    elif turn_id is not None:
+        kind = "turn_commit"
+    connection.execute(
+        "INSERT INTO context_revisions("
+        "session_id, revision_id, parent_revision_id, anchor_turn_id, "
+        "kind, context_generation, current_usage_json, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            session_id,
+            revision_id,
+            parent[0] if parent else None,
+            turn_id,
+            kind,
+            generation,
+            usage_json,
+            created_at,
+        ),
+    )
 
     _write_components(
         connection,
@@ -226,8 +184,6 @@ def record_revision(
         revision_id=revision_id,
         state=state,
     )
-    if existing is not None:
-        _prune_unreachable(connection)
     connection.execute(
         "INSERT INTO current_context_revision VALUES (?, ?) "
         "ON CONFLICT(session_id) DO UPDATE SET "
@@ -264,12 +220,12 @@ def _read_object(
     content_hash: str,
 ) -> tuple[str, Any]:
     row = connection.execute(
-        "SELECT codec, payload FROM state_objects WHERE content_hash = ?",
+        "SELECT codec, payload FROM content_objects WHERE content_hash = ?",
         (content_hash,),
     ).fetchone()
     if row is None:
         raise ValueError("revision object is missing")
-    return str(row[0]), json.loads(row[1])
+    return str(row[0]), json.loads(bytes(row[1]).decode("utf-8"))
 
 
 def _read_context(

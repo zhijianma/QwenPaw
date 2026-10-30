@@ -25,6 +25,34 @@ logger = logging.getLogger(__name__)
 _BUSY_TIMEOUT_MS = 5_000
 
 
+def resolve_session_database_path(
+    workspace_dir: str | Path,
+    *,
+    session_id: str,
+    user_id: str,
+    channel: str,
+) -> Path | None:
+    """Resolve one exact conversation identity without creating storage."""
+    workspace = Path(workspace_dir).expanduser()
+    catalog_path = workspace / "transcript_catalog.db"
+    if not catalog_path.is_file():
+        return None
+    uri = f"{catalog_path.resolve().as_uri()}?mode=ro"
+    connection = sqlite3.connect(uri, uri=True)
+    try:
+        row = connection.execute(
+            "SELECT storage_id FROM transcript_files "
+            "WHERE session_id = ? AND user_id = ? AND channel = ?",
+            (session_id, user_id, channel),
+        ).fetchone()
+    finally:
+        connection.close()
+    if row is None:
+        return None
+    path = workspace / "transcripts" / f"{row[0]}.db"
+    return path if path.is_file() else None
+
+
 class _SessionHandle:
     """One session store with lease accounting."""
 
@@ -902,6 +930,8 @@ class TranscriptCatalog:
                     (storage_id,),
                 )
             path.unlink(missing_ok=True)
+            path.with_name(f"{path.name}-wal").unlink(missing_ok=True)
+            path.with_name(f"{path.name}-shm").unlink(missing_ok=True)
             self._condition.notify_all()
             return True
 
@@ -922,4 +952,4 @@ class TranscriptCatalog:
             self._conn.close()
 
 
-__all__ = ["TranscriptCatalog"]
+__all__ = ["TranscriptCatalog", "resolve_session_database_path"]

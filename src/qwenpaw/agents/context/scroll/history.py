@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Durable, file-backed conversation history shared across sessions."""
+"""Recall projection stored inside one conversation database."""
 
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
 import random
@@ -17,6 +18,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from ..types import LogEntry
 
@@ -268,7 +270,7 @@ def backup_history_database(
 
 
 class HistoryStore:
-    """Owns the *read-write* connection to the ``conversation_history`` file.
+    """Own the read-write connection to one recall projection.
 
     Every event the agent appends is write-through-persisted here with full
     structure (blocks, tool args, state) so a later session can retrieve it.
@@ -770,6 +772,153 @@ class HistoryStore:
             dedup_key,
         )
 
+    def _append_conversation_fact(
+        self,
+        *,
+        session_id: str,
+        agent_id: str | None,
+        seq: int,
+        dedup_key: str | None,
+    ) -> None:
+        """Append a recall snapshot when this is a conversation database."""
+        available = self._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'event_log'",
+        ).fetchone()
+        if available is None:
+            return
+        row = self._conn.execute(
+            "SELECT * FROM conversation_history WHERE seq = ?",
+            (seq,),
+        ).fetchone()
+        if row is None:
+            return
+        value = {name: row[name] for name in _INSERT_COLUMNS}
+        object_json = json.dumps(
+            value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        encoded = object_json.encode("utf-8")
+        digest = hashlib.sha256()
+        digest.update(b"recall-entry-v1\0")
+        digest.update(encoded)
+        content_hash = digest.hexdigest()
+        self._conn.execute(
+            "INSERT OR IGNORE INTO content_objects("
+            "content_hash, codec, payload, byte_length) "
+            "VALUES (?, 'recall-entry-v1', ?, ?)",
+            (content_hash, encoded, len(encoded)),
+        )
+        payload = {
+            "agent_id": agent_id,
+            "entry_ref": content_hash,
+            "history_session_id": session_id,
+            "source_seq": seq,
+        }
+        payload_json = json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        envelope = {
+            "block_id": None,
+            "event_type": "recall.entry_committed",
+            "message_id": None,
+            "payload": payload,
+            "payload_version": 1,
+            "turn_id": None,
+        }
+        payload_hash = hashlib.sha256(
+            json.dumps(
+                envelope,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8"),
+        ).hexdigest()
+        identity = dedup_key or str(seq)
+        key = f"recall:{session_id}:{identity}:{content_hash}"
+        self._conn.execute(
+            "INSERT OR IGNORE INTO event_log("
+            "event_id, event_type, payload_version, payload_json, "
+            "payload_hash, idempotency_key, recorded_at) "
+            "VALUES (?, 'recall.entry_committed', 1, ?, ?, ?, ?)",
+            (
+                uuid4().hex,
+                payload_json,
+                payload_hash,
+                key,
+                value["created_at"] or datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+
+    def _append_purge_fact(self, seqs: list[int]) -> None:
+        """Append recall tombstones when facts share this database."""
+        if not seqs:
+            return
+        available = self._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'event_log'",
+        ).fetchone()
+        if available is None:
+            return
+        value = {"seqs": sorted(seqs)}
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        digest = hashlib.sha256()
+        digest.update(b"recall-purge-v1\0")
+        digest.update(encoded)
+        content_hash = digest.hexdigest()
+        self._conn.execute(
+            "INSERT OR IGNORE INTO content_objects("
+            "content_hash, codec, payload, byte_length) "
+            "VALUES (?, 'recall-purge-v1', ?, ?)",
+            (content_hash, encoded, len(encoded)),
+        )
+        payload = {"purge_ref": content_hash}
+        payload_json = json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        envelope = {
+            "block_id": None,
+            "event_type": "recall.entries_purged",
+            "message_id": None,
+            "payload": payload,
+            "payload_version": 1,
+            "turn_id": None,
+        }
+        payload_hash = hashlib.sha256(
+            json.dumps(
+                envelope,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8"),
+        ).hexdigest()
+        self._conn.execute(
+            "INSERT OR IGNORE INTO event_log("
+            "event_id, event_type, payload_version, payload_json, "
+            "payload_hash, idempotency_key, recorded_at) "
+            "VALUES (?, 'recall.entries_purged', 1, ?, ?, ?, ?)",
+            (
+                uuid4().hex,
+                payload_json,
+                payload_hash,
+                f"recall:purge:{content_hash}",
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+
     def append(
         self,
         *,
@@ -815,6 +964,12 @@ class HistoryStore:
                     "VALUES (?, ?)",
                     (seq, entry.content or ""),
                 )
+            self._append_conversation_fact(
+                session_id=session_id,
+                agent_id=agent_id,
+                seq=seq,
+                dedup_key=dedup_key,
+            )
             return seq
 
     def append_many(
@@ -862,6 +1017,125 @@ class HistoryStore:
                         "VALUES (?, ?)",
                         (seq, entry.content or ""),
                     )
+                self._append_conversation_fact(
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    seq=seq,
+                    dedup_key=dedup_key,
+                )
+        return inserted
+
+    def import_legacy_database(
+        self,
+        source_path: str | Path,
+        *,
+        session_id: str,
+        agent_id: str | None = None,
+    ) -> int:
+        """Import one exact session from the former workspace history DB."""
+        source = Path(source_path).expanduser()
+        if not source.is_file() or source.resolve() == self._path.resolve():
+            return 0
+        marker_key = f"migration:history:{session_id}"
+        event_store = self._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'event_log'",
+        ).fetchone()
+        if event_store is not None:
+            migrated = self._conn.execute(
+                "SELECT 1 FROM event_log WHERE idempotency_key = ?",
+                (marker_key,),
+            ).fetchone()
+            if migrated is not None:
+                return 0
+        uri = f"{source.resolve().as_uri()}?mode=ro"
+        connection = sqlite3.connect(uri, uri=True)
+        connection.row_factory = sqlite3.Row
+        try:
+            exists = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                "AND name = 'conversation_history'",
+            ).fetchone()
+            if exists is None:
+                return 0
+            rows = connection.execute(
+                "SELECT * FROM conversation_history "
+                "WHERE session_id = ? ORDER BY seq",
+                (session_id,),
+            ).fetchall()
+        finally:
+            connection.close()
+        entries_by_agent: dict[
+            str | None,
+            list[tuple[LogEntry, str | None]],
+        ] = {}
+        for row in rows:
+            entry = LogEntry(
+                kind=str(row["kind"]),
+                role=row["role"],
+                name=row["name"],
+                content=row["content"],
+                metadata=_from_json(row["metadata"]) or {},
+                tool_call_id=row["tool_call_id"],
+                tool_input=_from_json(row["tool_input"]),
+                tool_state=row["tool_state"],
+                headline=row["headline"],
+                blocks=_from_json(row["blocks"]),
+                created_at=row["created_at"],
+            )
+            owner = row["agent_id"] or agent_id
+            entries_by_agent.setdefault(owner, []).append(
+                (entry, row["dedup_key"]),
+            )
+        inserted = sum(
+            self.append_many(
+                session_id=session_id,
+                entries=entries,
+                agent_id=owner,
+            )
+            for owner, entries in entries_by_agent.items()
+        )
+        if event_store is not None:
+            payload = {
+                "history_session_id": session_id,
+                "row_count": len(rows),
+            }
+            payload_json = json.dumps(
+                payload,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            envelope = {
+                "block_id": None,
+                "event_type": "migration.history_imported",
+                "message_id": None,
+                "payload": payload,
+                "payload_version": 1,
+                "turn_id": None,
+            }
+            payload_hash = hashlib.sha256(
+                json.dumps(
+                    envelope,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ).encode("utf-8"),
+            ).hexdigest()
+            with self._lock, _immediate_transaction(self._conn):
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO event_log("
+                    "event_id, event_type, payload_version, payload_json, "
+                    "payload_hash, idempotency_key, recorded_at) "
+                    "VALUES (?, 'migration.history_imported', 1, ?, ?, ?, ?)",
+                    (
+                        uuid4().hex,
+                        payload_json,
+                        payload_hash,
+                        marker_key,
+                        datetime.now(timezone.utc).isoformat(),
+                    ),
+                )
         return inserted
 
     def update_entry(
@@ -938,6 +1212,18 @@ class HistoryStore:
                     "VALUES (?, ?)",
                     (seq, content or ""),
                 )
+            current = self._conn.execute(
+                "SELECT session_id, agent_id, dedup_key "
+                "FROM conversation_history WHERE seq = ?",
+                (seq,),
+            ).fetchone()
+            if current is not None:
+                self._append_conversation_fact(
+                    session_id=str(current["session_id"]),
+                    agent_id=current["agent_id"],
+                    seq=seq,
+                    dedup_key=current["dedup_key"],
+                )
 
     # --- read path -----------------------------------------------------
 
@@ -957,11 +1243,23 @@ class HistoryStore:
         with self._lock, _immediate_transaction(
             self._conn,
         ):
+            rows = self._conn.execute(
+                "SELECT seq FROM conversation_history "
+                "WHERE session_id = ? AND agent_id IS NULL",
+                (session_id,),
+            ).fetchall()
             cur = self._conn.execute(
                 "UPDATE conversation_history SET agent_id = ? "
                 "WHERE session_id = ? AND agent_id IS NULL",
                 (agent_id, session_id),
             )
+            for row in rows:
+                self._append_conversation_fact(
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    seq=int(row["seq"]),
+                    dedup_key=None,
+                )
             return int(cur.rowcount)
 
     def reconcile_session_rows(
@@ -1213,6 +1511,9 @@ class HistoryStore:
                         if self._fts:
                             for row in doomed:
                                 self._delete_fts_row(row)
+                        self._append_purge_fact(
+                            [int(row["seq"]) for row in doomed],
+                        )
                         self._conn.execute(
                             "DELETE FROM conversation_history WHERE " + where,
                             params,
@@ -1282,3 +1583,12 @@ def _to_json(value) -> str | None:
     if isinstance(value, str):
         return value
     return json.dumps(value, default=str)
+
+
+def _from_json(value: str | None) -> Any:
+    if value is None:
+        return None
+    try:
+        return json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return value

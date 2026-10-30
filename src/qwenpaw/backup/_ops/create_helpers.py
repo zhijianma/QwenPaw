@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 import tempfile
 import zipfile
 from pathlib import Path
@@ -29,6 +30,63 @@ logger = logging.getLogger(__name__)
 
 class BackupCancelled(Exception):
     """Raised when cooperative cancellation stops archive creation."""
+
+
+def _backup_session_database(
+    source: Path,
+    target: Path,
+    *,
+    check_cancelled: Any,
+) -> None:
+    """Create and verify a transactionally consistent SQLite snapshot."""
+    source_connection = sqlite3.connect(str(source))
+    target_connection = sqlite3.connect(str(target))
+    try:
+        source_connection.backup(
+            target_connection,
+            pages=128,
+            progress=lambda _status, _remaining, _total: check_cancelled(),
+        )
+        result = target_connection.execute("PRAGMA quick_check").fetchone()
+        if result is None or result[0] != "ok":
+            raise sqlite3.DatabaseError("conversation backup check failed")
+    finally:
+        target_connection.close()
+        source_connection.close()
+
+
+def _snapshot_session_databases(
+    zf: zipfile.ZipFile,
+    *,
+    workspace: Path,
+    agent_id: str,
+    snapshot_dir: str,
+    check_cancelled: Any,
+) -> tuple[set[Path], set[Path], int]:
+    """Add consistent session DB snapshots and return paths to skip."""
+    databases = sorted((workspace / "transcripts").glob("*.db"))
+    catalog = workspace / "transcript_catalog.db"
+    if catalog.is_file():
+        databases.append(catalog)
+    paths = {database.resolve() for database in databases}
+    sidecars = {
+        sidecar.resolve()
+        for database in databases
+        for sidecar in history_sidecar_paths(database)
+    }
+    for index, database in enumerate(databases):
+        relative = database.relative_to(workspace)
+        snapshot = Path(snapshot_dir) / f"session-{index}-{database.name}"
+        _backup_session_database(
+            database,
+            snapshot,
+            check_cancelled=check_cancelled,
+        )
+        zf.write(
+            snapshot,
+            f"{PREFIX_WORKSPACES}{agent_id}/{relative.as_posix()}",
+        )
+    return paths, sidecars, len(databases)
 
 
 def add_agent_workspaces(  # pylint: disable=too-many-branches
@@ -86,6 +144,18 @@ def add_agent_workspaces(  # pylint: disable=too-many-branches
                         f"{PREFIX_WORKSPACES}{aid}/{history_filename}",
                     )
                     file_count += 1
+                (
+                    session_paths,
+                    session_sidecars,
+                    snapshot_count,
+                ) = _snapshot_session_databases(
+                    zf,
+                    workspace=ws,
+                    agent_id=aid,
+                    snapshot_dir=snapshot_dir,
+                    check_cancelled=check_cancelled,
+                )
+                file_count += snapshot_count
                 for entry in sorted(ws.rglob("*")):
                     if stop_event and stop_event.is_set():
                         return False
@@ -94,6 +164,8 @@ def add_agent_workspaces(  # pylint: disable=too-many-branches
                         not entry.is_file()
                         or resolved_entry in sidecars
                         or resolved_entry == history_db
+                        or resolved_entry in session_paths
+                        or resolved_entry in session_sidecars
                     ):
                         continue
                     relative = entry.relative_to(ws)

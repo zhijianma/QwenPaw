@@ -67,7 +67,7 @@ class ChatManager:  # pylint: disable=too-many-public-methods
     """Manages chat specifications in repository.
 
     Only handles ChatSpec CRUD operations.
-    Does NOT manage Redis session state - that's handled by SafeJSONSession.
+    Runtime state is owned by the workspace DatabaseSession service.
 
     Similar to CronManager's role in crons module.
     """
