@@ -10,6 +10,7 @@ from fastapi import HTTPException
 
 from qwenpaw.app.chats.api import (
     get_chat_thinking,
+    set_decision_settings,
     set_chat_model,
     set_chat_thinking,
 )
@@ -344,6 +345,60 @@ async def test_first_message_persists_thinking_without_project_dirs(tmp_path):
         updated = await _persist_pending_project_dirs(workspace, chat, body)
     assert session_preference(updated.meta, f"p:m").level == f"high"
     assert f"session_thinking" not in body[f"meta"][f"request_context"]
+
+
+@pytest.mark.asyncio
+async def test_first_message_persists_decision_setting(tmp_path):
+    manager = ChatManager(repo=JsonChatRepository(tmp_path / f"chats.json"))
+    chat = await manager.create_chat(ChatSpec(session_id=f"new", user_id=f"u"))
+    body = {
+        f"meta": {
+            f"request_context": {
+                f"session_decision_enabled": True,
+            },
+        },
+    }
+
+    updated = await _persist_pending_project_dirs(
+        SimpleNamespace(chat_manager=manager),
+        chat,
+        body,
+    )
+
+    assert updated.meta[f"runtime_context"][f"decision_enabled"] is True
+    assert body[f"meta"][f"request_context"] == {}
+
+
+@pytest.mark.asyncio
+async def test_existing_session_updates_decision_setting(tmp_path):
+    manager = ChatManager(repo=JsonChatRepository(tmp_path / f"chats.json"))
+    chat = await manager.create_chat(ChatSpec(session_id=f"one", user_id=f"u"))
+    settings = {
+        f"configured": True,
+        f"override": True,
+        f"enabled": True,
+    }
+
+    with (
+        patch(
+            f"qwenpaw.config.config.load_agent_config",
+            return_value=SimpleNamespace(),
+        ),
+        patch(
+            f"qwenpaw.services.session_thinking.decision_settings",
+            return_value=settings,
+        ),
+    ):
+        result = await set_decision_settings(
+            chat.id,
+            True,
+            manager,
+            SimpleNamespace(agent_id=f"agent"),
+        )
+
+    updated = await manager.get_chat(chat.id)
+    assert result == settings
+    assert updated.meta[f"runtime_context"][f"decision_enabled"] is True
 
 
 @pytest.mark.asyncio

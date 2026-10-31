@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 
 from ..hooks.base import LifecycleHook
-from ..hooks.session.signals import SESSION_SAVE_SUCCEEDED_KEY
+from .._session_signals import SESSION_SAVE_SUCCEEDED_KEY
 from ..runtime.hooks import HookContext, HookResult
 from ..runtime.phases import Phase
 

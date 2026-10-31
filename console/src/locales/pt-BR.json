@@ -3594,6 +3594,7 @@
     "sidebarPreview": "Itens visíveis"
   },
   "chat": {
+    "sessionLoadFailed": "Não foi possível carregar a conversa. Abra-a novamente.",
     "longTextPaste": {
       "title": "Colar texto longo",
       "asText": "Colar como texto",
@@ -3614,6 +3615,10 @@
     },
     "modelSelectTooltip": "Selecionar Modelo",
     "chatHistoryTooltip": "Chat history",
+    "olderHistoryLoadFailed": "Falha ao carregar mensagens anteriores",
+    "messageNavigation": {
+      "title": "Navegação ({{count}})"
+    },
     "messageDisplay": {
       "stepsRunning": "Em execução… · {{count}} etapas",
       "stepsCanceled": "Cancelado · {{count}} etapas",
@@ -3770,6 +3775,7 @@
     },
     "regenerate": "Gerar novamente",
     "regenerateUnavailable": "Esta interação antiga não tem ID de solicitação. Envie uma nova mensagem para continuar.",
+    "canceledWithoutReply": "Cancelado pelo usuário, sem resposta",
     "turnCanceled": "Interrompido"
   },
   "security": {

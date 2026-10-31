@@ -3340,6 +3340,7 @@
     "sidebarPreview": "表示中の項目"
   },
   "chat": {
+    "sessionLoadFailed": "会話を読み込めませんでした。もう一度開いてください。",
     "longTextPaste": {
       "title": "長いテキストを貼り付け",
       "asText": "テキストとして貼り付け",
@@ -3360,6 +3361,10 @@
     },
     "modelSelectTooltip": "モデルを選択",
     "chatHistoryTooltip": "チャット履歴",
+    "olderHistoryLoadFailed": "過去のメッセージを読み込めませんでした",
+    "messageNavigation": {
+      "title": "ナビゲーション ({{count}})"
+    },
     "messageDisplay": {
       "stepsRunning": "実行中… · {{count}} ステップ",
       "stepsCanceled": "キャンセル済み · {{count}} ステップ",
@@ -3516,6 +3521,7 @@
     },
     "regenerate": "再生成",
     "regenerateUnavailable": "この過去のターンにはリクエスト ID がありません。新しいメッセージを送信してください。",
+    "canceledWithoutReply": "ユーザーがキャンセルしました（返信なし）",
     "turnCanceled": "停止済み"
   },
   "security": {

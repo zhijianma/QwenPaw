@@ -1142,6 +1142,7 @@
     "acceptInvitation": "Bergabung melalui undangan"
   },
   "chat": {
+    "sessionLoadFailed": "Percakapan tidak dapat dimuat. Silakan buka kembali.",
     "longTextPaste": {
       "title": "Tempel teks panjang",
       "asText": "Tempel sebagai teks",
@@ -1162,6 +1163,10 @@
     },
     "modelSelectTooltip": "Pilih model",
     "chatHistoryTooltip": "Riwayat chat",
+    "olderHistoryLoadFailed": "Gagal memuat pesan sebelumnya",
+    "messageNavigation": {
+      "title": "Navigasi ({{count}})"
+    },
     "messageDisplay": {
       "stepsRunning": "Berjalan… · {{count}} langkah",
       "stepsCanceled": "Dibatalkan · {{count}} langkah",
@@ -1313,6 +1318,7 @@
     },
     "regenerate": "Buat ulang",
     "regenerateUnavailable": "Giliran lama ini tidak memiliki ID permintaan. Kirim pesan baru untuk melanjutkan.",
+    "canceledWithoutReply": "Dibatalkan pengguna, tanpa balasan",
     "turnCanceled": "Dihentikan"
   },
   "modelSelector": {

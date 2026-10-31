@@ -3357,6 +3357,7 @@
     "sidebarPreview": "Видимые пункты"
   },
   "chat": {
+    "sessionLoadFailed": "Не удалось загрузить диалог. Откройте его снова.",
     "longTextPaste": {
       "title": "Вставить длинный текст",
       "asText": "Вставить как текст",
@@ -3377,6 +3378,10 @@
     },
     "modelSelectTooltip": "Выбор модели",
     "chatHistoryTooltip": "История чатов",
+    "olderHistoryLoadFailed": "Не удалось загрузить предыдущие сообщения",
+    "messageNavigation": {
+      "title": "Навигация ({{count}})"
+    },
     "messageDisplay": {
       "stepsRunning": "Выполняется… · шагов: {{count}}",
       "stepsCanceled": "Отменено · шагов: {{count}}",
@@ -3533,6 +3538,7 @@
     },
     "regenerate": "Создать заново",
     "regenerateUnavailable": "У этого старого сообщения нет ID запроса. Отправьте новое сообщение.",
+    "canceledWithoutReply": "Отменено пользователем без ответа",
     "turnCanceled": "Остановлено"
   },
   "security": {

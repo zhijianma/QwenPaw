@@ -258,11 +258,55 @@ describe("chatApi CRUD", () => {
     );
   });
 
+  it("getChatMessages encodes cursor, limit, and signal", async () => {
+    const controller = new AbortController();
+
+    await chatApi.getChatMessages("chat/1", {
+      before: "42:0",
+      limit: 25,
+      signal: controller.signal,
+      include_app_owned: false,
+    });
+
+    expect(request).toHaveBeenCalledWith(
+      "/chats/chat%2F1/messages?before=42%3A0&limit=25&include_app_owned=false",
+      expect.objectContaining({ signal: controller.signal }),
+    );
+  });
+
+  it("getChatUserMessages encodes cursor, limit, and signal", async () => {
+    const controller = new AbortController();
+
+    await chatApi.getChatUserMessages("chat/1", {
+      before: "cursor",
+      limit: 500,
+      signal: controller.signal,
+      include_app_owned: false,
+    });
+
+    expect(request).toHaveBeenCalledWith(
+      "/chats/chat%2F1/user-messages?before=cursor&limit=500&include_app_owned=false",
+      expect.objectContaining({ signal: controller.signal }),
+    );
+  });
+
   it("updateChat sends PUT to the correct path", async () => {
     await chatApi.updateChat("chat-1", { name: "New Name" });
     expect(request).toHaveBeenCalledWith(
       "/chats/chat-1",
       expect.objectContaining({ method: "PUT" }),
+    );
+  });
+
+  it("forkChat sends the selected turn and agent scope", async () => {
+    await chatApi.forkChat("chat/1", "turn-2", "agent-a");
+    expect(request).toHaveBeenCalledWith(
+      "/chats/chat%2F1/fork",
+      expect.objectContaining({
+        method: "POST",
+        headers: { "X-Agent-Id": "agent-a" },
+        body: JSON.stringify({ turn_id: "turn-2" }),
+      }),
     );
   });
 

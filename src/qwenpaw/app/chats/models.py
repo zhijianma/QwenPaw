@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Chat models with UUID management."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -106,6 +107,16 @@ class ChatSpec(BaseModel):
         default_factory=lambda: str(uuid4()),
         description="Chat UUID identifier",
     )
+    storage_id: str = Field(
+        default_factory=lambda: str(uuid4()),
+        min_length=36,
+        max_length=36,
+        pattern=(
+            r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+            r"[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        ),
+        description="Immutable physical conversation storage identifier",
+    )
     name: str = Field(
         default="New Chat",
         max_length=CHAT_NAME_MAX_LENGTH,
@@ -160,6 +171,19 @@ class ChatSpec(BaseModel):
     root_session_id: Optional[str] = Field(
         default=None,
         description="Root session for a subagent chat tree",
+    )
+    parent_chat_id: Optional[str] = Field(
+        default=None,
+        description="Immediate parent chat for a turn fork",
+    )
+    fork_turn_id: Optional[str] = Field(
+        default=None,
+        description="Completed parent turn used as the fork boundary",
+    )
+    fork_turn_seq: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Parent turn sequence used as the fork boundary",
     )
 
     @field_validator("name", mode="before")
@@ -243,6 +267,13 @@ class ChatGroupOrderUpdate(BaseModel):
     group_ids: list[str] = Field(min_length=2)
 
 
+class ChatContextState(BaseModel):
+    """Current model-context projection, separate from message history."""
+
+    generation: int = Field(default=0, ge=0)
+    usage: Optional[dict[str, Any]] = None
+
+
 class ChatHistory(BaseModel):
     """Complete chat view with spec and state."""
 
@@ -251,6 +282,39 @@ class ChatHistory(BaseModel):
         default="idle",
         description="Conversation status: idle or running",
     )
+    history: Optional["ChatHistoryMetadata"] = None
+    context_state: Optional[ChatContextState] = None
+
+
+class ChatHistoryMetadata(BaseModel):
+    """Cursor metadata for a transcript page."""
+
+    has_more: bool = False
+    next_before: Optional[str] = None
+    snapshot: Optional[str] = None
+
+
+class ChatMessagePage(ChatHistoryMetadata):
+    """One byte-bounded page of durable chat messages."""
+
+    messages: list[Message] = Field(default_factory=list)
+
+
+class ChatUserMessage(BaseModel):
+    """One lightweight user-message navigation entry."""
+
+    message_id: str
+    client_message_id: str | None = None
+    preview: str
+    created_at: str
+    anchor: str
+
+
+class ChatUserMessagePage(ChatHistoryMetadata):
+    """One stable page of user-message navigation entries."""
+
+    items: list[ChatUserMessage] = Field(default_factory=list)
+    total: int = 0
 
 
 class BatchFailure(BaseModel):

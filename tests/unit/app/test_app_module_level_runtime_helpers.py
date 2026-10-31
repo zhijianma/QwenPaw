@@ -556,13 +556,13 @@ async def test_shared_stop_preserves_other_clients(runtime_request):
 
 
 # ---------------------------------------------------------------------------
-# _sync_scroll_history_on_startup failure leg
+# _sync_scroll_history_on_startup is intentionally lazy
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_scroll_sync_failure_never_blocks_startup(monkeypatch) -> None:
-    """A broken session sync is logged, not propagated out of startup."""
+    """Legacy sync is no longer invoked during application startup."""
     from qwenpaw.agents.context.scroll import sync as scroll_sync
 
     def boom() -> None:
@@ -574,7 +574,7 @@ async def test_scroll_sync_failure_never_blocks_startup(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_scroll_sync_success_runs_the_migration(monkeypatch) -> None:
+async def test_scroll_sync_success_stays_lazy(monkeypatch) -> None:
     from qwenpaw.agents.context.scroll import sync as scroll_sync
 
     ran: List[str] = []
@@ -586,4 +586,4 @@ async def test_scroll_sync_success_runs_the_migration(monkeypatch) -> None:
 
     await app_module._sync_scroll_history_on_startup()
 
-    assert ran == ["synced"]
+    assert ran == []

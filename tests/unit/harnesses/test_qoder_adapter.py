@@ -45,7 +45,29 @@ from qwenpaw.harnesses.qoder.adapter import QoderAdapter
 from qwenpaw.harnesses.qoder.projection import materialize_skill_plugin
 from qwenpaw.harnesses.registry import create_adapter, get_provider
 from qwenpaw.security.tool_guard.approval import ApprovalDecision
-from qwenpaw.utils.io_utils import write_json_atomic
+
+
+@pytest.fixture(autouse=True)
+def persisted_sdk_history(monkeypatch):
+    """Provide the durable transcript written by the SDK client double."""
+    reads = 0
+
+    def read_history(*_args):
+        nonlocal reads
+        reads += 1
+        return [
+            SessionMessage(
+                type="assistant",
+                uuid=f"persisted-message-{reads}",
+                session_id="qoder-session",
+                message={"id": "model-response-1", "content": "Done"},
+            )
+        ]
+
+    monkeypatch.setattr(
+        "qwenpaw.harnesses.qoder.adapter.get_session_messages",
+        read_history,
+    )
 
 
 class FakeQoderClient:
@@ -70,6 +92,8 @@ class FakeQoderClient:
             AssistantMessage(
                 content=[TextBlock(text="Done")],
                 model="qoder-test",
+                uuid="wire-message-1",
+                message_id="model-response-1",
             ),
             ResultMessage(
                 subtype="success",
@@ -165,14 +189,10 @@ def test_skill_projection_uses_portable_copies_with_spaced_paths(
     assert projected.read_text(encoding="utf-8").startswith("---")
 
 
-def test_loads_persisted_qoder_sessions(tmp_path: Path) -> None:
-    write_json_atomic(
-        tmp_path / "qoder_sessions.json",
-        {"chat-1": "550e8400-e29b-41d4-a716-446655440000"},
-    )
-
+def test_restores_durable_qoder_binding(tmp_path: Path) -> None:
     adapter = QoderAdapter(tmp_path)
 
+    adapter.bind_session("chat-1", "550e8400-e29b-41d4-a716-446655440000")
     assert adapter._sessions == {
         "chat-1": "550e8400-e29b-41d4-a716-446655440000",
     }
@@ -320,7 +340,9 @@ async def test_models_and_turns_use_sdk_capabilities(tmp_path: Path) -> None:
     assert models[0].id == "auto"
     assert models[0].default_reasoning_effort == "high"
     assert [event.kind for event in events] == [
+        HarnessEventKind.SESSION_BOUND,
         HarnessEventKind.TEXT_DELTA,
+        HarnessEventKind.TURN_BOUNDARY,
         HarnessEventKind.COMPLETED,
     ]
     turn_client = clients[-1]
@@ -333,7 +355,7 @@ async def test_models_and_turns_use_sdk_capabilities(tmp_path: Path) -> None:
     }
     assert turn_client.options.include_partial_messages is True
     assert turn_client.prompts == [("Fix it", "default")]
-    assert (tmp_path / "qoder_sessions.json").is_file()
+    assert not (tmp_path / "qoder_sessions.json").exists()
 
 
 @pytest.mark.asyncio

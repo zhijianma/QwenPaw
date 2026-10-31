@@ -73,6 +73,7 @@ def _message_turn_usage(msg: Any) -> dict[str, Any] | None:
 def add_session_cache_usage(
     turn: dict[str, Any] | None,
     messages: Any,
+    previous_usage: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Add token-weighted cache totals for the current durable session."""
     if turn is None:
@@ -80,8 +81,19 @@ def add_session_cache_usage(
     cache_read = 0
     cache_eligible = 0
     cache_observed = False
+    if previous_usage is not None:
+        cache_read = int(
+            previous_usage.get(f"session_cache_read_tokens", 0) or 0,
+        )
+        cache_eligible = int(
+            previous_usage.get(f"session_cache_eligible_input_tokens", 0) or 0,
+        )
+        cache_observed = bool(
+            previous_usage.get(f"session_cache_observed", False),
+        )
     current = find_turn_closing_assistant_in_context(messages)
-    for msg in reversed(messages or []):
+    history = () if previous_usage is not None else messages or []
+    for msg in reversed(history):
         if msg is current:
             continue
         usage = _message_turn_usage(msg)
@@ -185,6 +197,7 @@ async def resolve_turn_usage(
     session: Any,
     user_id: str,
     channel: str,
+    estimate_missing_usage: bool = True,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, Any | None]:
     """Resolve turn/ctx from provider usage + full agent-state estimate."""
     turn = TokenRecordingModelWrapper.pop_usage_for_session(session_id)
@@ -221,9 +234,9 @@ async def resolve_turn_usage(
         "max_input_length": stats["max_input_length"],
         "context_usage_ratio": stats["context_usage_ratio"],
     }
-    if turn is None:
+    if turn is None and estimate_missing_usage:
         turn = _turn_from_stats(stats)
-    else:
+    elif turn is not None:
         turn = reconcile_turn_completion_from_stats(turn, stats)
     turn = add_session_cache_usage(
         turn,

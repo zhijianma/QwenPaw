@@ -17,7 +17,8 @@ from qwenpaw.app.chats.manager import ChatManager
 from qwenpaw.app.agent_context import scoped_session_id
 from qwenpaw.modes.mission import MissionMode
 from qwenpaw.app.chats.repo import JsonChatRepository
-from qwenpaw.app.chats.session import SafeJSONSession
+from qwenpaw.app.chats.session import DatabaseSession
+from qwenpaw.app.chats.transcript_catalog import TranscriptCatalog
 from qwenpaw.app.crons.manager import CronManager
 from qwenpaw.app.driver_config_service import DriverConfigService
 from qwenpaw.drivers.adapters.mcp_legacy_config import (
@@ -159,7 +160,10 @@ def _workspace(tmp_path: Path):
     return SimpleNamespace(
         workspace_dir=root,
         agent_id="agent-1",
-        session=SafeJSONSession(str(root / "sessions")),
+        session=DatabaseSession(
+            catalog=TranscriptCatalog(root),
+            legacy_save_dir=str(root / "sessions"),
+        ),
         chat_manager=ChatManager(
             repo=JsonChatRepository(root / "chats.json"),
         ),

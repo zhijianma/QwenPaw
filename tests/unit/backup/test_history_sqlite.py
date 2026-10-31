@@ -18,6 +18,7 @@ from qwenpaw.agents.context.types import LogEntry
 from qwenpaw.backup._ops import restore
 from qwenpaw.backup._ops.create_helpers import add_agent_workspaces
 from qwenpaw.backup.models import BackupValidationError
+from qwenpaw.app.chats.transcript import TranscriptStore
 
 
 def _agent_json(db_filename: str = "history.db") -> str:
@@ -140,6 +141,51 @@ def test_workspace_backup_fails_when_history_is_invalid(
                     ),
                 ],
             )
+
+
+def test_workspace_backup_snapshots_live_conversation_databases(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    path = workspace / "transcripts" / "storage.db"
+    store = TranscriptStore(path, storage_id="storage")
+    store.write_runtime_state(
+        session_id="session",
+        user_id="user",
+        channel="console",
+        state={"agent": {"saved": True}},
+    )
+    buffer = io.BytesIO()
+    try:
+        with zipfile.ZipFile(buffer, "w") as archive:
+            assert add_agent_workspaces(
+                archive,
+                [("agent", SimpleNamespace(workspace_dir=str(workspace)))],
+            )
+    finally:
+        store.close()
+
+    buffer.seek(0)
+    with zipfile.ZipFile(buffer) as archive:
+        payload = archive.read(
+            "data/workspaces/agent/transcripts/storage.db",
+        )
+        assert not any(
+            name.endswith(("-wal", "-shm")) for name in archive.namelist()
+        )
+    restored = tmp_path / "conversation.db"
+    restored.write_bytes(payload)
+    reopened = TranscriptStore(restored, storage_id="storage")
+    try:
+        snapshot = reopened.read_runtime_state(
+            session_id="session",
+            user_id="user",
+            channel="console",
+        )
+        assert snapshot is not None
+        assert snapshot.state == {"agent": {"saved": True}}
+    finally:
+        reopened.close()
 
 
 def test_restore_rejects_invalid_history_before_commit(

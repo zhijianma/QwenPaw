@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from qwenpaw.agents.command_handler import CommandHandler
+from qwenpaw.app.chats.transcript_catalog import TranscriptCatalog
 
 
 def _config(strategy="scroll"):
@@ -41,16 +42,25 @@ def _handler(tmp_path, *, strategy="scroll", workspace=True, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_builds_scroll_manager_under_scroll(tmp_path, monkeypatch):
+    catalog = TranscriptCatalog(tmp_path)
+    catalog.ensure_session_database(
+        session_id="sess-x",
+        user_id="sess-x",
+        channel="",
+    )
     handler = _handler(tmp_path, strategy="scroll", monkeypatch=monkeypatch)
+    handler._context_generation = 2
     mgr = await handler._build_standalone_scroll_manager(_config("scroll"))
     try:
         assert mgr is not None
         # Bound to the authoritative session id, not state.session_id.
-        assert mgr._session_id == "sess-x"
-        assert (tmp_path / "history.db").exists()
+        assert mgr._session_id == "sess-x\x1fcontext:2"
+        assert not (tmp_path / "history.db").exists()
+        assert list((tmp_path / "transcripts").glob("*.db"))
     finally:
         if mgr is not None:
             mgr.close()
+        catalog.close()
 
 
 @pytest.mark.asyncio

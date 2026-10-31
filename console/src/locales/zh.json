@@ -4049,6 +4049,7 @@
     "system": "跟随系统"
   },
   "chat": {
+    "sessionLoadFailed": "会话加载失败，请重新打开此会话。",
     "sessionSettings": {
       "advanced": "高级选项",
       "decisionEnabled": "使用决策模型"
@@ -4071,6 +4072,10 @@
     "newTask": "新建任务",
     "newChat": "新对话",
     "chatHistoryTooltip": "聊天历史",
+    "olderHistoryLoadFailed": "无法加载更早的消息",
+    "messageNavigation": {
+      "title": "导航 ({{count}})"
+    },
     "messageDisplay": {
       "stepsRunning": "正在执行中… · {{count}} 个步骤",
       "stepsCanceled": "已取消 · {{count}} 个步骤",
@@ -4265,6 +4270,7 @@
     },
     "regenerate": "重新生成",
     "regenerateUnavailable": "该历史回合没有请求标识，请发送新消息继续。",
+    "canceledWithoutReply": "用户取消无回复",
     "turnCanceled": "已停止"
   },
   "security": {

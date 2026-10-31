@@ -17,6 +17,10 @@ from datetime import datetime, timezone
 from functools import wraps
 from typing import Any, AsyncGenerator, Callable, Dict
 
+from ..constant import (
+    TOOL_RESULT_SNAPSHOT_GROWTH,
+    TOOL_RESULT_SNAPSHOT_MIN_BYTES,
+)
 from .message_convert import _media_type_to_block_type
 
 logger = logging.getLogger(__name__)
@@ -414,6 +418,8 @@ class Envelope:
                 "message": plugin_call_message,
                 "output_text_fragments": [],
                 "output_data_blocks": {},
+                "accumulated_bytes": 0,
+                "last_emitted_bytes": 0,
             }
 
         elif evt_type == EventType.TOOL_CALL_DELTA.value:
@@ -469,6 +475,8 @@ class Envelope:
                     "argument_fragments": [],
                     "output_text_fragments": [],
                     "output_data_blocks": {},
+                    "accumulated_bytes": 0,
+                    "last_emitted_bytes": 0,
                 }
                 self._tool_calls[call_id] = state
 
@@ -501,13 +509,18 @@ class Envelope:
             state["output_message"] = out_message
             state["output_text_fragments"] = []
             state["output_data_blocks"] = {}
+            state["accumulated_bytes"] = 0
+            state["last_emitted_bytes"] = 0
 
         elif evt_type == EventType.TOOL_RESULT_TEXT_DELTA.value:
             call_id = event.tool_call_id
             state = self._tool_calls.get(call_id)
             if state is None:
                 return
-            state["output_text_fragments"].append(event.delta or "")
+            delta = event.delta or ""
+            state["output_text_fragments"].append(delta)
+            if not self._should_emit_tool_snapshot(state, len(delta)):
+                return
 
             delta_content = self._build_tool_result_content(
                 call_id,
@@ -556,6 +569,12 @@ class Envelope:
                     "type": block_type,
                     "source": source,
                 }
+
+            if not self._should_emit_tool_snapshot(
+                state,
+                len(b64 or "") + len(url or ""),
+            ):
+                return
 
             delta_content = self._build_tool_result_content(
                 call_id,
@@ -727,6 +746,39 @@ class Envelope:
             )
 
     # ------------------------------------------------------------------
+    # Tool result snapshot emission gate
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _should_emit_tool_snapshot(
+        state: Dict[str, Any],
+        added_bytes: int,
+    ) -> bool:
+        """Return whether a full tool result snapshot should be emitted.
+
+        A snapshot re-serializes the whole accumulated output, so one per
+        delta makes the bytes retained for reconnect replay quadratic in
+        the delta count.  Emitting on a geometric byte interval pins the
+        amplification near the growth factor instead, and the first delta
+        always emits so output shows up as soon as there is any.
+
+        Only emission is gated: callers accumulate first, because the
+        cancel-save path and ``TOOL_RESULT_END`` read accumulated state.
+        """
+        accumulated = state.get("accumulated_bytes", 0) + added_bytes
+        state["accumulated_bytes"] = accumulated
+        last_emitted = state.get("last_emitted_bytes", 0)
+        if last_emitted:
+            threshold = max(
+                TOOL_RESULT_SNAPSHOT_MIN_BYTES,
+                last_emitted * TOOL_RESULT_SNAPSHOT_GROWTH,
+            )
+            if accumulated < threshold:
+                return False
+        state["last_emitted_bytes"] = accumulated
+        return True
+
+    # ------------------------------------------------------------------
     # Tool result content builder
     # ------------------------------------------------------------------
 
@@ -863,33 +915,131 @@ class Envelope:
         async for obj in self._finalize_response():
             yield obj
 
+    def _terminal_message_status(self) -> Any:
+        from ..schemas import RunStatus
+
+        if self._cancelled:
+            return RunStatus.Cancelled
+        if self._error_text:
+            return RunStatus.Failed
+        return RunStatus.Completed
+
+    async def _finalize_open_reasoning(
+        self,
+    ) -> AsyncGenerator[Any, None]:
+        from ..schemas import ContentType, RunStatus, TextContent
+
+        status = self._terminal_message_status()
+        for state in self._reasoning_blocks.values():
+            message = state.get("envelope")
+            if message is None or message.status != RunStatus.InProgress:
+                continue
+            text = "".join(state.pop("text_fragments", []))
+            if text and not message.content:
+                content = TextContent(
+                    type=ContentType.TEXT,
+                    text=text,
+                    delta=False,
+                    index=0,
+                    msg_id=message.id,
+                    status=status,
+                )
+                message.content.append(content.model_copy(deep=True))
+                yield self._tag_seq(content)
+            if not message.content:
+                continue
+            message.status = status
+            self._response.output.append(message)
+            yield self._tag_seq(message)
+
+    async def _finalize_open_tools(self) -> AsyncGenerator[Any, None]:
+        from ..schemas import (
+            ContentType,
+            DataContent,
+            FunctionCall,
+            FunctionCallOutput,
+            RunStatus,
+        )
+
+        status = self._terminal_message_status()
+        for call_id, state in self._tool_calls.items():
+            call_message = state.get("message")
+            if (
+                call_message is not None
+                and call_message.status == RunStatus.InProgress
+            ):
+                arguments = "".join(state.pop("argument_fragments", []))
+                content = DataContent(
+                    type=ContentType.DATA,
+                    data=FunctionCall(
+                        call_id=call_id,
+                        name=state["name"],
+                        arguments=arguments,
+                    ).model_dump(),
+                    delta=False,
+                    index=0,
+                    msg_id=call_message.id,
+                    status=status,
+                )
+                call_message.content = [content.model_copy(deep=True)]
+                call_message.status = status
+                yield self._tag_seq(content)
+                self._response.output.append(call_message)
+                yield self._tag_seq(call_message)
+
+            output_message = state.get("output_message")
+            if (
+                output_message is None
+                or output_message.status != RunStatus.InProgress
+            ):
+                continue
+            content = self._build_tool_result_content(
+                call_id,
+                state,
+                ContentType,
+                FunctionCallOutput,
+                tool_state=status.value,
+            )
+            content.msg_id = output_message.id
+            content.status = status
+            output_message.content = [content.model_copy(deep=True)]
+            output_message.status = status
+            yield self._tag_seq(content)
+            self._response.output.append(output_message)
+            yield self._tag_seq(output_message)
+
     async def _finalize_response(self) -> AsyncGenerator[Any, None]:
         from ..schemas import ContentType, RunStatus, TextContent
 
         if self._finalized:
             return
 
+        async for obj in self._finalize_open_reasoning():
+            yield obj
+        async for obj in self._finalize_open_tools():
+            yield obj
+
         if self._message_started:
             # Back-fill any partially accumulated text blocks that were
             # not finalized (TEXT_BLOCK_END never fired, e.g. on cancel).
-            if not self._completed_message.content:
-                for state in self._text_blocks.values():
-                    text = "".join(state.get("text_fragments", []))
-                    if text:
-                        self._completed_message.content.append(
-                            TextContent(
-                                type=ContentType.TEXT,
-                                text=text,
-                                delta=False,
-                                index=state.get("index", 0),
-                            ),
-                        )
+            for state in self._text_blocks.values():
+                fragments = state.pop("text_fragments", None)
+                if fragments is None:
+                    continue
+                text = "".join(fragments)
+                if text:
+                    self._completed_message.content.append(
+                        TextContent(
+                            type=ContentType.TEXT,
+                            text=text,
+                            delta=False,
+                            index=state.get("index", 0),
+                        ),
+                    )
 
             if self._completed_message.content:
                 self._completed_message.status = (
-                    RunStatus.Cancelled
-                    if self._cancelled
-                    else RunStatus.Completed
+                    self._terminal_message_status()
                 )
                 self._response.output.append(self._completed_message)
                 yield self._tag_seq(self._completed_message)

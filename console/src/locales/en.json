@@ -4192,6 +4192,7 @@
     "system": "System"
   },
   "chat": {
+    "sessionLoadFailed": "Could not load this conversation. Please reopen it.",
     "sessionSettings": {
       "advanced": "Advanced options",
       "decisionEnabled": "Use decision model"
@@ -4215,6 +4216,10 @@
     "newTask": "New task",
     "newChat": "New chat",
     "chatHistoryTooltip": "Chat history",
+    "olderHistoryLoadFailed": "Failed to load older messages",
+    "messageNavigation": {
+      "title": "Navigation ({{count}})"
+    },
     "messageDisplay": {
       "stepsRunning": "Running… · {{count}} steps",
       "stepsCanceled": "Canceled · {{count}} steps",
@@ -4409,6 +4414,7 @@
     },
     "regenerate": "Regenerate",
     "regenerateUnavailable": "This older turn has no receipt ID. Send a new message to continue.",
+    "canceledWithoutReply": "Canceled by user; no reply",
     "turnCanceled": "Canceled"
   },
   "security": {

@@ -20,6 +20,10 @@ import uuid
 from contextlib import aclosing
 from typing import Any, AsyncGenerator
 
+from .._session_signals import (
+    TRANSCRIPT_RECORDING_READY_KEY,
+    TRANSCRIPT_TURN_ID_CONTEXT_KEY,
+)
 from ..agents.acp.meta import ACP_EPHEMERAL_META_KEY
 from ..exceptions import ConfigurationException
 from ..utils.daily_telemetry import record_agent_activity
@@ -360,12 +364,27 @@ class Runtime:
             )
             user_id = getattr(request, "user_id", "") or ctx.session_id
             channel = getattr(request, "channel", "") or ""
+            save = session.save_session_state
+            save_kwargs = {}
+            turn_id = (request_context or {}).get(
+                TRANSCRIPT_TURN_ID_CONTEXT_KEY,
+            )
+            if (
+                turn_id
+                and request_context.get(TRANSCRIPT_RECORDING_READY_KEY)
+                and callable(
+                    getattr(type(session), "save_turn_session_state", None),
+                )
+            ):
+                save = session.save_turn_session_state
+                save_kwargs["turn_id"] = str(turn_id)
             await asyncio.shield(
-                session.save_session_state(
+                save(
                     session_id=ctx.session_id,
                     user_id=user_id,
                     channel=channel,
                     agent=proxy,
+                    **save_kwargs,
                 ),
             )
             logger.info(
