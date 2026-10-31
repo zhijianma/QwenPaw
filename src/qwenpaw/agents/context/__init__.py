@@ -20,7 +20,6 @@ from pathlib import Path
 from typing import Any
 
 from .base import ContextManager
-from ...config.history_path import resolve_history_db_path
 
 logger = logging.getLogger(__name__)
 
@@ -178,11 +177,6 @@ def build_scroll_components(
             session_id
             if context_generation <= 0
             else f"{session_id}\x1fcontext:{context_generation}"
-        )
-        history.import_legacy_database(
-            resolve_history_db_path(workspace_dir, sc.db_filename),
-            session_id=history_session_id,
-            agent_id=agent_id,
         )
         manager = ScrollContextManager(
             history=history,

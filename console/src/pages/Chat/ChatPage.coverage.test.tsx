@@ -7,7 +7,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { forwardRef, useImperativeHandle, useEffect } from "react";
 import { screen, waitFor, act, fireEvent } from "@testing-library/react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
+import { Modal } from "antd";
 import { renderWithProviders } from "@/test/common_setup";
 import { useMessageQueueStore } from "@/stores/messageQueueStore";
 import ChatPage from "./index";
@@ -184,6 +185,7 @@ vi.mock("@/api/modules/chat", () => ({
     filePreviewUrl: mockFilePreviewUrl,
     getChatStatus: mockGetChatStatus,
     stopChat: vi.fn(() => Promise.resolve()),
+    forkChat: vi.fn(),
   },
 }));
 
@@ -228,7 +230,7 @@ vi.mock("@/contexts/ThemeContext", () => ({
 
 vi.mock("./sessionApi", () => ({
   default: {
-    loadUserMessageIndex: vi.fn(async () => []),
+    loadUserMessageIndexPage: vi.fn(async () => ({ items: [], total: 0 })),
     loadHistoryAtAnchor: vi.fn(async () => ({ messages: [], noMore: true })),
     onSessionIdResolved: null,
     onSessionRemoved: null,
@@ -271,6 +273,7 @@ vi.mock("./sessionApi", () => ({
       userId: "test-user",
       channel: "console",
     })),
+    getSessionList: vi.fn(async () => []),
     triggerResolve: vi.fn(),
     isSessionSwitching: false,
     isUnresolvedLocalSession: vi.fn(() => false),
@@ -1292,6 +1295,61 @@ describe("ChatPage coverage", () => {
     });
   });
 
+  it("closes and navigates after fork without awaiting sidebar refresh", async () => {
+    const { chatApi } = await import("@/api/modules/chat");
+    const childId = "44444444-4444-4444-8444-444444444444";
+    vi.mocked(chatApi.forkChat).mockResolvedValue({ id: childId } as never);
+    const destroy = vi.fn();
+    const confirm = vi.spyOn(Modal, "confirm").mockReturnValue({
+      destroy,
+      update: vi.fn(),
+    });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let rejectRefresh!: (reason: Error) => void;
+    const refresh = new Promise<never>((_, reject) => {
+      rejectRefresh = reject;
+    });
+    vi.mocked(sessionApi.getSessionList).mockReturnValueOnce(refresh);
+    function Harness() {
+      const location = useLocation();
+      return (
+        <>
+          <output data-testid="route">{location.pathname}</output>
+          <ChatPage />
+        </>
+      );
+    }
+    try {
+      renderWithProviders(<Harness />, {
+        initialEntries: ["/chat/test-session"],
+      });
+      await screen.findByTestId("chat-ui");
+      await act(async () => {});
+      await act(async () => {
+        capturedOptions.actions.list[1].onClick({
+          data: { id: "history-response:legacy:5" },
+        });
+      });
+      expect(confirm).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        await confirm.mock.calls[0][0].onOk?.();
+      });
+      expect(destroy).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("route")).toHaveTextContent(`/chat/${childId}`);
+      expect(chatApi.forkChat).toHaveBeenCalledTimes(1);
+      await act(async () => rejectRefresh(new Error("sidebar unavailable")));
+      expect(screen.getByTestId("route")).toHaveTextContent(`/chat/${childId}`);
+      expect(chatApi.forkChat).toHaveBeenCalledTimes(1);
+      expect(warning).toHaveBeenCalledWith(
+        "Failed to refresh chats after fork",
+        expect.any(Error),
+      );
+    } finally {
+      confirm.mockRestore();
+      warning.mockRestore();
+    }
+  });
+
   // ── actions list: timestamp render ─────────────────────────────────────
   it("actions list timestamp render returns element", async () => {
     renderWithProviders(<ChatPage />, {
@@ -2207,7 +2265,7 @@ describe("ChatPage coverage", () => {
 
     expect(capturedOptions?.actions?.replace).toBe(false);
     expect(capturedOptions?.actions?.right).toBe(false);
-    expect(capturedOptions?.actions?.list).toHaveLength(2);
+    expect(capturedOptions?.actions?.list).toHaveLength(3);
   });
 
   // ── customToolRenderConfig ─────────────────────────────────────────────

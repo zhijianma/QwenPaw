@@ -10,20 +10,31 @@ import os
 import re
 import logging
 import shutil
+import sqlite3
+from copy import deepcopy
 
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Sequence, Union
 
+from agentscope.message import Msg
+
 from qwenpaw.exceptions import ConfigurationException, LegacyMigrationError
 from ...schemas import Message
 from ...exceptions import AgentStateError
+from ...config.history_path import resolve_history_db_path
 from ...utils.io_utils import (
     get_path_lock,
     run_sync_io,
     write_json_atomic_async,
 )
 from ...utils.json_utils import safe_json_loads as _safe_json_loads
+from .legacy_reconstruction import read_legacy_timeline
+from .provider_migration import (
+    recover_codex_boundaries,
+    recover_qoder_boundaries,
+)
+from .utils import agentscope_msg_to_message
 
 logger = logging.getLogger(__name__)
 
@@ -533,9 +544,11 @@ class DatabaseSession:
         *,
         catalog: "TranscriptCatalog",
         legacy_save_dir: str,
+        history_db_filename: str = "history.db",
     ) -> None:
         self._catalog = catalog
         self._legacy_save_dir = Path(legacy_save_dir)
+        self._history_db_filename = history_db_filename
         self._migration_lock = asyncio.Lock()
         self._migration_tasks: dict[
             tuple[str, str, str],
@@ -623,14 +636,45 @@ class DatabaseSession:
         channel: str,
         snapshot: LegacyConversationSnapshot,
     ) -> bool:
-        if snapshot.messages:
-            await run_sync_io(
+        history_path = resolve_history_db_path(
+            self._legacy_save_dir.parent,
+            self._history_db_filename,
+        )
+        messages, approximate = await run_sync_io(
+            read_legacy_timeline,
+            path=history_path,
+            session_id=session_id,
+            state=snapshot.state,
+            fallback=snapshot.messages,
+        )
+        imported = False
+        if messages:
+            imported = await run_sync_io(
                 self._catalog.import_legacy_messages,
                 session_id=session_id,
                 user_id=user_id,
                 channel=channel,
-                messages=snapshot.messages,
+                messages=messages,
             )
+        await run_sync_io(
+            self._import_legacy_history,
+            session_id=session_id,
+            user_id=user_id,
+            channel=channel,
+            messages=messages,
+        )
+        if imported:
+            for turn_seq, state in enumerate(approximate, start=1):
+                await run_sync_io(
+                    self._catalog.write_runtime_state,
+                    session_id=session_id,
+                    user_id=user_id,
+                    channel=channel,
+                    state=state,
+                    turn_id=f"legacy:{turn_seq}",
+                    migration_approximate=True,
+                    exact_current_usage=True,
+                )
         _, inserted = await run_sync_io(
             self._catalog.write_runtime_state,
             session_id=session_id,
@@ -638,10 +682,132 @@ class DatabaseSession:
             channel=channel,
             state=snapshot.state,
             current_usage=_legacy_current_usage(snapshot.state),
-            only_if_missing=True,
+            only_if_missing=not imported,
             migration_anchor=True,
         )
+        await run_sync_io(
+            self._import_legacy_provider_binding,
+            session_id=session_id,
+            user_id=user_id,
+            channel=channel,
+        )
+        await run_sync_io(
+            recover_qoder_boundaries,
+            self._catalog,
+            dict(session_id=session_id, user_id=user_id, channel=channel),
+        )
+        config_path = self._legacy_save_dir.parent / "agent.json"
+        config = (
+            await run_sync_io(_read_session_json, str(config_path))
+            if await run_sync_io(config_path.is_file) else {}
+        )
+        try:
+            await recover_codex_boundaries(
+                self._catalog,
+                dict(session_id=session_id, user_id=user_id, channel=channel),
+                binary=(config.get("backend_settings") or {}).get("binary"),
+            )
+        except (OSError, ValueError, RuntimeError):
+            logger.warning("Cannot recover Codex boundaries", exc_info=True)
         return inserted
+
+    def _import_legacy_provider_binding(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        channel: str,
+    ) -> None:
+        """Import an exact old binding once; never infer Turn boundaries."""
+        identity = {
+            "session_id": session_id,
+            "user_id": user_id,
+            "channel": channel,
+        }
+        if self._catalog.read_provider_state(**identity)["binding"]:
+            return
+        bindings = []
+        for provider, filename in (
+            ("codex", "codex_sessions.json"),
+            ("qoder", "qoder_sessions.json"),
+        ):
+            path = self._legacy_save_dir.parent / "harnesses" / filename
+            if not path.is_file():
+                continue
+            external_id = _read_session_json(str(path)).get(session_id)
+            if external_id:
+                bindings.append(
+                    {
+                        "provider": provider,
+                        "external_session_id": str(external_id),
+                    }
+                )
+        if len(bindings) > 1:
+            raise ValueError("ambiguous legacy provider session binding")
+        if bindings:
+            self._catalog.record_provider_fact(
+                **identity,
+                kind="session_bound",
+                data=bindings[0],
+            )
+
+    def _import_legacy_history(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        channel: str,
+        messages: list[Message],
+    ) -> None:
+        """Import old recall only while the JSON session is migrating."""
+        from ...agents.context.scroll.history import HistoryStore
+        from .transcript_catalog import resolve_session_database_path
+
+        source = resolve_history_db_path(
+            self._legacy_save_dir.parent,
+            self._history_db_filename,
+        )
+        self._catalog.ensure_session_database(
+            session_id=session_id,
+            user_id=user_id,
+            channel=channel,
+        )
+        target = resolve_session_database_path(
+            self._legacy_save_dir.parent,
+            session_id=session_id,
+            user_id=user_id,
+            channel=channel,
+        )
+        if target is None:
+            raise FileNotFoundError("conversation database is missing")
+        turn_by_key: dict[str, str] = {}
+        turn_seq = 0
+        for message in messages:
+            if turn_seq == 0 or getattr(message.role, "value", None) == "user":
+                turn_seq += 1
+            turn_id = f"legacy:{turn_seq}"
+            turn_by_key[str(message.id)] = turn_id
+            original_id = (message.metadata or {}).get("original_id")
+            if original_id:
+                turn_by_key[str(original_id)] = turn_id
+            for block in message.content:
+                call_id = (
+                    block.get("id") or block.get("tool_call_id")
+                    if isinstance(block, dict)
+                    else getattr(block, "id", None)
+                    or getattr(block, "tool_call_id", None)
+                )
+                if call_id:
+                    turn_by_key[str(call_id)] = turn_id
+        history = HistoryStore(target)
+        try:
+            history.import_legacy_database(
+                source,
+                session_id=session_id,
+                turn_by_key=turn_by_key,
+            )
+        finally:
+            history.close()
 
     def _migration_finished(
         self,
@@ -728,7 +894,12 @@ class DatabaseSession:
                 user_id=user_id,
                 channel=channel,
             )
-            if current is not None:
+            if current is not None and await run_sync_io(
+                self._history_import_complete,
+                session_id=session_id,
+                user_id=user_id,
+                channel=channel,
+            ):
                 return False
             snapshot = await self.get_legacy_snapshot(
                 session_id=session_id,
@@ -747,6 +918,32 @@ class DatabaseSession:
         except Exception as exc:
             raise LegacyMigrationError(session_id) from exc
 
+    def _history_import_complete(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        channel: str,
+    ) -> bool:
+        """Check the durable marker before skipping an old JSON import."""
+        from .transcript_catalog import resolve_session_database_path
+
+        target = resolve_session_database_path(
+            self._legacy_save_dir.parent,
+            session_id=session_id,
+            user_id=user_id,
+            channel=channel,
+        )
+        if target is None:
+            return False
+        uri = f"{target.resolve().as_uri()}?mode=ro"
+        with sqlite3.connect(uri, uri=True) as connection:
+            row = connection.execute(
+                "SELECT 1 FROM event_log WHERE idempotency_key = ?",
+                (f"migration:history:{session_id}",),
+            ).fetchone()
+        return row is not None
+
     async def _import_legacy(
         self,
         *,
@@ -759,6 +956,54 @@ class DatabaseSession:
             user_id=user_id,
             channel=channel,
         )
+
+    async def import_session_history(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        channel: str,
+        state: dict[str, Any],
+    ) -> None:
+        """Seed imported display history and resumable turn revisions."""
+        context = state["agent"]["state"]["context"]
+        messages = agentscope_msg_to_message(
+            [Msg.model_validate(raw) for raw in context],
+        )
+        identity = dict(
+            session_id=session_id,
+            user_id=user_id,
+            channel=channel,
+        )
+        async with self._migration_lock:
+            await run_sync_io(
+                self._catalog.import_legacy_messages,
+                **identity,
+                messages=messages,
+            )
+            boundaries = [
+                index
+                for index, raw in enumerate(context)
+                if index and raw.get("role") == "user"
+            ] + [len(context)]
+            for turn_seq, end in enumerate(boundaries, start=1):
+                turn_id = f"legacy:{turn_seq}"
+                existing = await run_sync_io(
+                    self._catalog.read_turn_context,
+                    **identity,
+                    turn_id=turn_id,
+                )
+                if existing is not None:
+                    continue
+                snapshot = deepcopy(state)
+                snapshot["agent"]["state"]["context"] = context[:end]
+                await run_sync_io(
+                    self._catalog.write_runtime_state,
+                    **identity,
+                    state=snapshot,
+                    turn_id=turn_id,
+                    migration_approximate=True,
+                )
 
     async def save_session_state(
         self,

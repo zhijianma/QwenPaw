@@ -476,14 +476,11 @@ class Workspace:  # pylint: disable=too-many-public-methods
                 cwd=self.workspace_dir.resolve(),
                 settings=settings,
             )
-            async for item in stream:
-                yield item
-            return
+        else:
+            from ...runtime import Runtime
 
-        from ...runtime import Runtime
-
-        rt = Runtime(workspace=self, app_services=self._app_services)
-        stream = rt.run(request)
+            rt = Runtime(workspace=self, app_services=self._app_services)
+            stream = rt.run(request)
         transcript_store = self.transcript_store
         legacy_messages = []
         if (
@@ -716,6 +713,10 @@ class Workspace:  # pylint: disable=too-many-public-methods
                 init_args=lambda ws: {
                     "catalog": ws.transcript_store,
                     "legacy_save_dir": str(ws.workspace_dir / "sessions"),
+                    "history_db_filename": (
+                        ws.config.running.light_context_config
+                        .scroll_config.db_filename
+                    ),
                 },
                 dependencies=["transcript_store"],
                 priority=15,

@@ -80,6 +80,21 @@ async def test_create_and_get_chat_round_trip(manager: ChatManager):
     assert fetched.name == "Hello"
     assert fetched.session_id == "console:u1"
 
+    children = await asyncio.gather(*(
+        manager.create_chat(_make_spec(session_id=f"fork-{index}").model_copy(
+            update={"parent_chat_id": created.id},
+        ))
+        for index in range(2)
+    ))
+    assert [chat.name for chat in children] == ["Hello (1)", "Hello (2)"]
+    nested = await manager.create_chat(
+        _make_spec(session_id="nested").model_copy(
+            update={"parent_chat_id": children[0].id},
+        ),
+    )
+    assert nested.name == "Hello (3)"
+    assert (await manager.get_chat(nested.id)).name == "Hello (3)"
+
 
 @pytest.mark.asyncio
 async def test_create_chat_rejects_unknown_group(manager: ChatManager):

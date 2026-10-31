@@ -781,6 +781,7 @@ class HistoryStore:
         agent_id: str | None,
         seq: int,
         dedup_key: str | None,
+        turn_id: str | None = None,
     ) -> None:
         """Append a recall snapshot when this is a conversation database."""
         available = self._conn.execute(
@@ -831,7 +832,7 @@ class HistoryStore:
             "message_id": None,
             "payload": payload,
             "payload_version": 1,
-            "turn_id": None,
+            "turn_id": turn_id,
         }
         payload_hash = hashlib.sha256(
             json.dumps(
@@ -845,11 +846,12 @@ class HistoryStore:
         key = f"recall:{session_id}:{identity}:{content_hash}"
         cursor = self._conn.execute(
             "INSERT OR IGNORE INTO event_log("
-            "event_id, event_type, payload_version, payload_json, "
+            "event_id, event_type, payload_version, turn_id, payload_json, "
             "payload_hash, idempotency_key, recorded_at) "
-            "VALUES (?, 'recall.entry_committed', 1, ?, ?, ?, ?)",
+            "VALUES (?, 'recall.entry_committed', 1, ?, ?, ?, ?, ?)",
             (
                 uuid4().hex,
+                turn_id,
                 payload_json,
                 payload_hash,
                 key,
@@ -990,6 +992,7 @@ class HistoryStore:
         session_id: str,
         entries: Sequence[tuple[LogEntry, str | None]],
         agent_id: str | None = None,
+        turn_by_key: dict[str, str] | None = None,
     ) -> int:
         """Append a group of events in one transaction.
 
@@ -1034,6 +1037,7 @@ class HistoryStore:
                     agent_id=agent_id,
                     seq=seq,
                     dedup_key=dedup_key,
+                    turn_id=(turn_by_key or {}).get(dedup_key or ""),
                 )
         return inserted
 
@@ -1043,10 +1047,11 @@ class HistoryStore:
         *,
         session_id: str,
         agent_id: str | None = None,
+        turn_by_key: dict[str, str] | None = None,
     ) -> int:
         """Import one exact session from the former workspace history DB."""
         source = Path(source_path).expanduser()
-        if not source.is_file() or source.resolve() == self._path.resolve():
+        if source.resolve() == self._path.resolve():
             return 0
         marker_key = f"migration:history:{session_id}"
         event_store = self._conn.execute(
@@ -1060,27 +1065,29 @@ class HistoryStore:
             ).fetchone()
             if migrated is not None:
                 return 0
-        uri = f"{source.resolve().as_uri()}?mode=ro"
-        connection = sqlite3.connect(uri, uri=True)
-        connection.row_factory = sqlite3.Row
-        try:
-            exists = connection.execute(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' "
-                "AND name = 'conversation_history'",
-            ).fetchone()
-            if exists is None:
-                return 0
-            rows = connection.execute(
-                "SELECT * FROM conversation_history "
-                "WHERE session_id = ? ORDER BY seq",
-                (session_id,),
-            ).fetchall()
-        finally:
-            connection.close()
+        rows: list[sqlite3.Row] = []
+        if source.is_file():
+            uri = f"{source.resolve().as_uri()}?mode=ro"
+            connection = sqlite3.connect(uri, uri=True)
+            connection.row_factory = sqlite3.Row
+            try:
+                exists = connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                    "AND name = 'conversation_history'",
+                ).fetchone()
+                if exists is not None:
+                    rows = connection.execute(
+                        "SELECT * FROM conversation_history "
+                        "WHERE session_id = ? ORDER BY seq",
+                        (session_id,),
+                    ).fetchall()
+            finally:
+                connection.close()
         entries_by_agent: dict[
             str | None,
             list[tuple[LogEntry, str | None]],
         ] = {}
+        matched_turns: dict[str, str] = {}
         for row in rows:
             entry = LogEntry(
                 kind=str(row["kind"]),
@@ -1096,14 +1103,23 @@ class HistoryStore:
                 created_at=row["created_at"],
             )
             owner = row["agent_id"] or agent_id
+            stable_key = row["dedup_key"] or f"legacy:seq:{row['seq']}"
+            matched = (turn_by_key or {}).get(str(row["dedup_key"] or ""))
+            if matched is None:
+                matched = (turn_by_key or {}).get(
+                    str(row["tool_call_id"] or ""),
+                )
+            if matched is not None:
+                matched_turns[stable_key] = matched
             entries_by_agent.setdefault(owner, []).append(
-                (entry, row["dedup_key"]),
+                (entry, stable_key),
             )
         inserted = sum(
             self.append_many(
                 session_id=session_id,
                 entries=entries,
                 agent_id=owner,
+                turn_by_key=matched_turns,
             )
             for owner, entries in entries_by_agent.items()
         )

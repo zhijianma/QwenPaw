@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import sqlite3
 from datetime import datetime, timezone
@@ -12,7 +11,7 @@ from typing import Any
 from ...schemas import Message
 from ...token_usage.turn_usage import TURN_USAGE_META_KEY
 from .context_revisions import read_revision_state
-from .transcript_blocks import block_identity, message_envelope
+from .transcript_blocks import message_envelope, write_message_blocks
 
 
 def _canonical_json(value: Any) -> str:
@@ -94,34 +93,14 @@ def _project_message(
             payload.get("finished_at"),
         ),
     )
-    connection.execute(
-        "DELETE FROM transcript_blocks "
-        "WHERE session_id = ? AND message_id = ?",
-        (session_id, message_id),
+    write_message_blocks(
+        connection,
+        session_id=session_id,
+        message_id=message_id,
+        content=[
+            _object_json(connection, str(ref)) for ref in payload["block_refs"]
+        ],
     )
-    for ordinal, content_ref in enumerate(payload["block_refs"]):
-        block = _object_json(connection, str(content_ref))
-        block_json = json.dumps(
-            block,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        )
-        encoded = block_json.encode("utf-8")
-        connection.execute(
-            "INSERT INTO transcript_blocks VALUES "
-            "(?, ?, ?, ?, ?, ?, ?, ?, 1)",
-            (
-                session_id,
-                message_id,
-                block_identity(session_id, message_id, ordinal),
-                ordinal,
-                str(block.get("type") or "unknown"),
-                hashlib.sha256(encoded).hexdigest(),
-                block_json,
-                len(encoded),
-            ),
-        )
 
 
 def _project_terminal(

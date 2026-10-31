@@ -225,6 +225,25 @@ class ChatManager:  # pylint: disable=too-many-public-methods
                     update={"group_id": _default_group_id(spec.source)},
                 )
             await self._validate_group_id_locked(spec.group_id)
+            if spec.parent_chat_id:
+                chats = (await self._repo.load()).chats
+                by_id = {chat.id: chat for chat in chats}
+                root = by_id.get(spec.parent_chat_id)
+                if root is not None:
+                    while root.parent_chat_id in by_id:
+                        root = by_id[root.parent_chat_id]
+                    prefix = f"{root.name} ("
+                    numbers = [
+                        int(chat.name[len(prefix):-1])
+                        for chat in chats
+                        if chat.name.startswith(prefix)
+                        and chat.name.endswith(")")
+                        and chat.name[len(prefix):-1].isdecimal()
+                    ]
+                    number = max(numbers, default=0) + 1
+                    spec = spec.model_copy(
+                        update={"name": f"{root.name} ({number})"},
+                    )
             await self._repo.upsert_chat(spec)
             return spec
 

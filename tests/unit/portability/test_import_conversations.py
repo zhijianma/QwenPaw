@@ -10,7 +10,8 @@ import pytest
 
 from qwenpaw.app.chats.manager import ChatManager
 from qwenpaw.app.chats.repo import JsonChatRepository
-from qwenpaw.app.chats.session import SafeJSONSession
+from qwenpaw.app.chats.session import DatabaseSession
+from qwenpaw.app.chats.transcript_catalog import TranscriptCatalog
 from qwenpaw.harnesses.events import HarnessHistoryItem, HarnessHistoryKind
 from qwenpaw.harnesses.session import HarnessSessionBridge
 from qwenpaw.portability.import_conversations import (
@@ -25,7 +26,10 @@ def _workspace(tmp_path: Path) -> SimpleNamespace:
     root = tmp_path / "workspace"
     root.mkdir()
     return SimpleNamespace(
-        session=SafeJSONSession(str(root / "sessions")),
+        session=DatabaseSession(
+            catalog=TranscriptCatalog(root),
+            legacy_save_dir=str(root / "sessions"),
+        ),
         chat_manager=ChatManager(repo=JsonChatRepository(root / "chats.json")),
     )
 
@@ -211,3 +215,57 @@ async def test_cancel_after_chat_commit_preserves_history_for_retry(
 
     assert retry.skipped == ["committed"]
     assert len(await workspace.chat_manager.list_chats(archived=None)) == 1
+
+
+@pytest.mark.asyncio
+async def test_imported_turns_fork_with_matching_context(tmp_path):
+    workspace = _workspace(tmp_path)
+    history = []
+    for index in range(1, 6):
+        history.extend(
+            [
+                HarnessHistoryItem(
+                    kind=HarnessHistoryKind.USER,
+                    text=f"question {index}",
+                ),
+                HarnessHistoryItem(
+                    kind=HarnessHistoryKind.MESSAGE,
+                    text=f"answer {index}",
+                    item_id=f"answer-{index}",
+                ),
+            ]
+        )
+    source = SourceSession(source_id="five", history=history)
+    result = await _import(workspace, _inventory([source]), [source])
+    assert result.imported == ["five"]
+    session_id = _session_key("codex", "five")
+    catalog = workspace.session._catalog
+    identity = dict(
+        session_id=session_id,
+        user_id=session_id,
+        channel="console",
+    )
+    full = await workspace.session.get_session_state_dict(**identity)
+    for index in range(1, 6):
+        child = f"child-{index}"
+        catalog.fork_at_turn(
+            source_session_id=session_id,
+            source_user_id=session_id,
+            source_channel="console",
+            source_chat_id="source",
+            turn_id=f"legacy:{index}",
+            target_session_id=child,
+            target_user_id=child,
+            target_channel="console",
+            target_storage_id=child,
+        )
+        state = await workspace.session.get_session_state_dict(
+            child,
+            child,
+            "console",
+        )
+        assert state["agent"]["state"]["context"] == (
+            full["agent"]["state"]["context"][: index * 2]
+        )
+    assert not list((tmp_path / "workspace" / "sessions").rglob("*.json"))
+    catalog.close()

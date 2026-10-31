@@ -107,6 +107,14 @@ export const chatApi = {
       body: JSON.stringify(chat),
     }),
 
+  forkCapability: (chatId: string, turnId: string, agentId?: string) =>
+    request<{ can_fork: boolean; reason: string | null }>(
+      `/chats/${encodeURIComponent(
+        chatId,
+      )}/fork-capability?turn_id=${encodeURIComponent(turnId)}`,
+      { headers: agentId ? { "X-Agent-Id": agentId } : undefined },
+    ),
+
   forkChat: (chatId: string, turnId: string, agentId?: string) =>
     request<ChatSpec>(`/chats/${encodeURIComponent(chatId)}/fork`, {
       method: "POST",

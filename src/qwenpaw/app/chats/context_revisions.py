@@ -19,6 +19,7 @@ RevisionKind = Literal[
     "clear",
     "restore",
     "migration_anchor",
+    "migration_approximate",
 ]
 
 
@@ -141,7 +142,7 @@ def record_revision(
     kind: RevisionKind,
 ) -> str:
     """Append one immutable runtime revision in the transaction."""
-    migration_anchor = kind == "migration_anchor"
+    migration_anchor = kind in {"migration_anchor", "migration_approximate"}
     if turn_id is not None:
         turn = connection.execute(
             "SELECT status FROM transcript_turns "

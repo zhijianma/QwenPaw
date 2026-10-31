@@ -3175,13 +3175,29 @@ export default function ChatPage() {
   );
 
   const forkResponse = useCallback(
-    (response: CopyableResponse) => {
+    async (response: CopyableResponse) => {
       const turnId = extractTranscriptTurnId(response);
       if (!backendChatId || !turnId) {
         message.error(t("chat.forkUnavailable", "This turn cannot be forked"));
         return;
       }
-      Modal.confirm({
+      if (!usesQwenPawBackend) {
+        try {
+          const capability = await chatApi.forkCapability(
+            backendChatId,
+            turnId,
+            selectedAgent,
+          );
+          if (!capability.can_fork) {
+            message.warning(capability.reason || t("chat.forkUnavailable"));
+            return;
+          }
+        } catch (error) {
+          message.error(error instanceof Error ? error.message : String(error));
+          return;
+        }
+      }
+      const confirmation = Modal.confirm({
         title: t("chat.forkTitle", "Fork from this turn?"),
         content: t(
           "chat.forkDescription",
@@ -3199,9 +3215,12 @@ export default function ChatPage() {
             sessionApi.preferredChatId = forked.id;
             sessionApi.lastActiveChatId = forked.id;
             setLastChatId(selectedAgent, forked.id);
-            await sessionApi.getSessionList();
+            confirmation.destroy();
             navigate(buildChatPath(forked.id));
             message.success(t("chat.forkCreated", "Fork created"));
+            void sessionApi.getSessionList().catch((error) => {
+              console.warn("Failed to refresh chats after fork", error);
+            });
           } catch (error) {
             message.error(
               error instanceof Error
@@ -3213,7 +3232,15 @@ export default function ChatPage() {
         },
       });
     },
-    [backendChatId, message, navigate, selectedAgent, setLastChatId, t],
+    [
+      backendChatId,
+      message,
+      navigate,
+      selectedAgent,
+      setLastChatId,
+      t,
+      usesQwenPawBackend,
+    ],
   );
 
   const customFetch = useCallback(
@@ -4926,7 +4953,9 @@ export default function ChatPage() {
               void copyResponse(data);
             },
           },
-          ...(usesQwenPawBackend
+          ...(usesQwenPawBackend ||
+          (backendCapabilities?.fork_mode &&
+            backendCapabilities.fork_mode !== "none")
             ? [
                 {
                   icon: (

@@ -102,9 +102,9 @@ class TranscriptRecorder:
         for message in getattr(self._request, "input", None) or []:
             if isinstance(message, Message):
                 await self._record_message(message)
-        self._request.request_context[
-            TRANSCRIPT_RECORDING_READY_KEY
-        ] = not self._degraded
+        self._request.request_context[TRANSCRIPT_RECORDING_READY_KEY] = (
+            not self._degraded
+        )
 
     async def observe(self, value: Any) -> None:
         """Record normalized message snapshots and terminal responses."""
@@ -149,6 +149,17 @@ class TranscriptRecorder:
                 ),
                 finished_at=value.completed_at,
             )
+            if not self._degraded:
+                for message in value.output:
+                    if message.id not in self._ordinals:
+                        continue
+                    message.metadata = {
+                        **dict(message.metadata or {}),
+                        "qwenpaw_transcript_position": {
+                            "turn_id": self._turn_id,
+                            "ordinal": self._ordinals[message.id],
+                        },
+                    }
 
     async def finish(
         self,

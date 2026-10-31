@@ -399,6 +399,47 @@ class TranscriptCatalog:
             with self._condition:
                 handle.running_turns.add(str(kwargs["turn_id"]))
 
+    def read_provider_state(self, **identity: Any) -> dict[str, Any]:
+        """Read native session and Turn bindings for one conversation."""
+        with self._lease(create=False, **identity) as handle:
+            if handle is None:
+                return {
+                    "binding": None,
+                    "boundaries": {},
+                    "has_history": False,
+                }
+            return handle.store.read_provider_state(
+                session_id=identity["session_id"],
+            )
+
+    def read_legacy_turn_blocks(self, **identity: Any) -> dict:
+        """Read imported turns under the conversation identity lease."""
+        with self._lease(create=False, **identity) as handle:
+            if handle is None:
+                return {}
+            return handle.store.read_legacy_turn_blocks(
+                session_id=identity["session_id"],
+            )
+
+    def record_provider_fact(
+        self,
+        *,
+        kind: str,
+        data: dict[str, Any],
+        turn_id: str | None = None,
+        **identity: Any,
+    ) -> None:
+        """Persist provider facts in the session-owned event database."""
+        with self._lease(create=False, **identity) as handle:
+            if handle is None:
+                raise ValueError("provider conversation database is missing")
+            handle.store.record_provider_fact(
+                session_id=identity["session_id"],
+                kind=kind,
+                data=data,
+                turn_id=turn_id,
+            )
+
     def has_session(self, **kwargs: Any) -> bool:
         """Return whether a durable transcript session already exists."""
         with self._lease(create=False, **kwargs) as handle:
@@ -435,6 +476,22 @@ class TranscriptCatalog:
             if handle is None:
                 raise RuntimeError("failed to create transcript session")
             return handle.store.import_legacy_messages(**kwargs)
+
+    def ensure_session_database(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        channel: str,
+    ) -> None:
+        """Create the empty destination before legacy Recall import."""
+        with self._lease(
+            session_id=session_id,
+            user_id=user_id,
+            channel=channel,
+            create=True,
+        ):
+            pass
 
     def read_runtime_state(
         self,
@@ -827,6 +884,7 @@ class TranscriptCatalog:
         target_user_id: str,
         target_channel: str,
         target_storage_id: str,
+        native_context: bool = False,
     ) -> int:
         """Create one independently rebuildable conversation at a turn."""
         with self._lock:
@@ -864,6 +922,7 @@ class TranscriptCatalog:
                         target_session_id=target_session_id,
                         target_user_id=target_user_id,
                         target_channel=target_channel,
+                        native_context=native_context,
                     )
         except BaseException:
             if not target_existed:

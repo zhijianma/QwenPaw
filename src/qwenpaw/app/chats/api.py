@@ -20,6 +20,10 @@ from fastapi import (
 from pydantic import BaseModel, ConfigDict, Field
 
 from .session import DatabaseSession, LegacyConversationSnapshot
+from .provider_migration import (
+    recover_codex_boundaries,
+    recover_qoder_boundaries,
+)
 from .manager import ChatManager, MAX_BATCH_SIZE
 from .models import (
     BatchArchiveResult,
@@ -48,6 +52,7 @@ from .resolver import (
     is_app_owned_chat as _is_app_owned_chat,
 )
 from ...config.utils import load_config
+from ...harnesses.registry import get_provider
 from ...constant import QWENPAW_CLIENT_MESSAGE_ID_KEY
 from ...utils.io_utils import run_sync_io
 from ...services.project_directory import (
@@ -631,6 +636,66 @@ async def create_chat(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.get("/{chat_id}/fork-capability")
+async def get_fork_capability(
+    chat_id: str,
+    turn_id: str,
+    mgr: ChatManager = Depends(get_chat_manager),
+    workspace=Depends(get_workspace),
+) -> dict:
+    """Report exact native fork availability for one completed turn."""
+    chat = await mgr.get_chat(chat_id)
+    if chat is None or _is_app_owned_chat(chat):
+        raise HTTPException(404, "Chat not found")
+    backend = workspace.config.backend
+    if backend == "qwenpaw":
+        return {"can_fork": True, "reason": None}
+    mode = get_provider(backend).capabilities.fork_mode
+    if mode == "none":
+        return {"can_fork": False, "reason": "Backend cannot fork"}
+    if backend == "qoder":
+        try:
+            await run_sync_io(
+                recover_qoder_boundaries,
+                workspace.transcript_store,
+                dict(session_id=chat.session_id, user_id=chat.user_id,
+                     channel=chat.channel),
+            )
+        except (OSError, ValueError, ImportError):
+            logger.warning("Cannot recover Qoder boundaries", exc_info=True)
+    if backend == "codex":
+        try:
+            await recover_codex_boundaries(
+                workspace.transcript_store,
+                dict(session_id=chat.session_id, user_id=chat.user_id,
+                     channel=chat.channel),
+                binary=workspace.config.backend_settings.get("binary"),
+            )
+        except (OSError, ValueError, RuntimeError):
+            logger.warning("Cannot recover Codex boundaries", exc_info=True)
+    state = await run_sync_io(
+        workspace.transcript_store.read_provider_state,
+        session_id=chat.session_id,
+        user_id=chat.user_id,
+        channel=chat.channel,
+    )
+    anchor = state["boundaries"].get(turn_id)
+    available = bool(anchor and anchor["provider"] == backend)
+    if mode == "latest":
+        available = available and turn_id == next(
+            reversed(state["boundaries"]),
+            None,
+        )
+    return {
+        "can_fork": available,
+        "reason": (
+            None
+            if available
+            else ("This turn has no completed native fork boundary")
+        ),
+    }
+
+
 @router.post("/{chat_id}/fork", response_model=ChatSpec)
 async def fork_chat_at_turn(
     chat_id: str,
@@ -649,8 +714,27 @@ async def fork_chat_at_turn(
             detail="Conversation storage is not available",
         )
 
+    backend = workspace.config.backend
+    boundary = None
+    if backend != "qwenpaw":
+        capability = await get_fork_capability(
+            chat_id,
+            payload.turn_id,
+            mgr,
+            workspace,
+        )
+        if not capability["can_fork"]:
+            raise HTTPException(409, capability["reason"])
+        state = await run_sync_io(
+            store.read_provider_state,
+            session_id=parent.session_id,
+            user_id=parent.user_id,
+            channel=parent.channel,
+        )
+        boundary = state["boundaries"][payload.turn_id]
+
     child = ChatSpec(
-        name=f"{parent.name} (Fork)",
+        name=parent.name,
         session_id=f"fork-{uuid4()}",
         user_id=parent.user_id,
         channel=parent.channel,
@@ -672,6 +756,7 @@ async def fork_chat_at_turn(
             target_user_id=child.user_id,
             target_channel=child.channel,
             target_storage_id=child.storage_id,
+            native_context=boundary is not None,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -679,15 +764,49 @@ async def fork_chat_at_turn(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     child = child.model_copy(update={"fork_turn_seq": turn_seq})
+    external_id = None
     try:
+        if boundary is not None:
+            settings = dict(workspace.config.backend_settings)
+            adapter = await workspace.harness_runtime.adapter(
+                backend,
+                settings,
+            )
+            external_id = await adapter.fork_session(
+                boundary=boundary,
+                cwd=workspace.workspace_dir.resolve(),
+                settings=settings,
+            )
+            await run_sync_io(
+                store.record_provider_fact,
+                session_id=child.session_id,
+                user_id=child.user_id,
+                channel=child.channel,
+                kind="session_bound",
+                data={"provider": backend, "external_session_id": external_id},
+            )
         return await mgr.create_chat(child)
-    except BaseException:
+    except BaseException as exc:
+        if external_id:
+            logger.error(
+                "Native %s fork %s could not be registered for chat %s; "
+                "the provider branch is retained for recovery",
+                backend,
+                external_id,
+                child.id,
+                exc_info=True,
+            )
         await run_sync_io(
             store.delete_session,
             child.session_id,
             child.user_id,
             child.channel,
         )
+        if boundary is not None and isinstance(exc, Exception):
+            raise HTTPException(
+                409,
+                f"Native fork failed: {exc}",
+            ) from exc
         raise
 
 
@@ -1370,19 +1489,21 @@ async def get_chat(
     status = await workspace.task_tracker.get_status(chat_id)
     backend = workspace.config.backend
 
-    if backend == "qwenpaw":
-        transcript_page = await _read_history_page(
-            workspace,
-            chat_spec,
+    transcript_page = await _read_history_page(
+        workspace,
+        chat_spec,
+    )
+    if transcript_page is not None and (
+        backend == "qwenpaw" or transcript_page.messages
+    ):
+        context_state = await _read_context_state(session, chat_spec)
+        return ChatHistory(
+            messages=transcript_page.messages,
+            status=status,
+            history=_history_metadata(transcript_page),
+            context_state=context_state,
         )
-        if transcript_page is not None:
-            context_state = await _read_context_state(session, chat_spec)
-            return ChatHistory(
-                messages=transcript_page.messages,
-                status=status,
-                history=_history_metadata(transcript_page),
-                context_state=context_state,
-            )
+    if backend == "qwenpaw":
         if hasattr(session, "get_legacy_snapshot"):
             snapshot = await _read_legacy_snapshot(session, chat_spec)
             if snapshot is not None:

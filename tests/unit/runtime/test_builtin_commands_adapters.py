@@ -115,7 +115,11 @@ def _session_ctx(
     )
     ctx = SimpleNamespace(
         workspace=workspace,
-        request=SimpleNamespace(user_id="user-1", channel="console"),
+        request=SimpleNamespace(
+            user_id="user-1",
+            channel="console",
+            request_context={},
+        ),
         session_id="session-1",
         agent_id="agent-1",
     )

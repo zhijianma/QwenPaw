@@ -604,6 +604,7 @@ def _make_conversation_adapter(
             workspace_dir=ws_dir,
             scroll_state=existing_scroll,
             session_id=getattr(ctx, "session_id", None),
+            context_generation=int(payload.get("_context_generation", 0)),
             prompt_context=ctx,
             reme_action_authorizer=lambda action, kwargs: (
                 _request_reme_action_approval(ctx, action, kwargs)

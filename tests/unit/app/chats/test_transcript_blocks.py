@@ -64,6 +64,8 @@ def test_bodies_have_one_source_and_stable_versions(store):
     )
     _save(store, changed)
     updated = _blocks(store)
+    store.rebuild_projections()
+    assert _blocks(store) == updated
     assert updated[0][0] == original[0][0]
     assert updated[0][1] == 2
     assert updated[1] == original[1]

@@ -15,7 +15,7 @@ from agentscope.message import HintBlock, Msg, TextBlock
 from reme.config import parse_action, parse_kwargs
 
 from ..config.config import get_model_max_input_length, load_agent_config
-from ..config.history_path import resolve_history_db_path
+from ..app.chats.transcript_catalog import resolve_session_database_path
 from ..constant import DEBUG_HISTORY_FILE, MAX_LOAD_HISTORY_COUNT
 from ..exceptions import SystemCommandException
 from ..loop.gates.runner import clear_pending_gate_state
@@ -171,6 +171,7 @@ class CommandHandler(ConversationCommandHandlerMixin):
         workspace_dir: str | None = None,
         scroll_state: dict | None = None,
         session_id: str | None = None,
+        context_generation: int = 0,
         prompt_context: Any = None,
         reme_action_authorizer: ReMeActionAuthorizer | None = None,
     ):
@@ -193,7 +194,7 @@ class CommandHandler(ConversationCommandHandlerMixin):
                 exclusive with ``agent``.
             agent_id: Agent ID for config loading (standalone mode).
             workspace_dir: Workspace directory (standalone mode) — needed to
-                open the scroll ``history.db`` when ``/compact`` runs under the
+                open the conversation DB when ``/compact`` runs under the
                 scroll strategy.
             scroll_state: The session's persisted scroll checkpoint block, used
                 to seed a standalone ``/compact`` so its eviction index stays
@@ -215,6 +216,7 @@ class CommandHandler(ConversationCommandHandlerMixin):
         self._workspace_dir = workspace_dir
         self._scroll_state = scroll_state
         self._session_id = session_id
+        self._context_generation = context_generation
         self._prompt_context = prompt_context
         self._reme_action_authorizer = reme_action_authorizer
         # Set by a standalone scroll ``/compact`` to the manager's refreshed
@@ -629,7 +631,7 @@ class CommandHandler(ConversationCommandHandlerMixin):
 
         Returns ``None`` unless the strategy is ``scroll`` and a workspace is
         known — in which case the caller stays on native compression. The
-        manager opens the workspace ``history.db``; the caller must
+        manager opens the conversation database; the caller must
         ``close()`` it. No model is needed at construction (compaction reads it
         from the agent passed to ``compress``).
         """
@@ -643,14 +645,6 @@ class CommandHandler(ConversationCommandHandlerMixin):
             from .context.scroll.history import HistoryStore
             from .context.scroll.manager import ScrollContextManager
 
-            sc = lcc.scroll_config
-            history = await run_sync_io(
-                HistoryStore,
-                resolve_history_db_path(
-                    self._workspace_dir,
-                    sc.db_filename,
-                ),
-            )
             # Must match the id normal turns persist under (the builder uses
             # ``ctx.session_id``), so these rows align with the live history.
             session_id = (
@@ -658,6 +652,21 @@ class CommandHandler(ConversationCommandHandlerMixin):
                 or getattr(self._state, "session_id", "")
                 or "local"
             )
+            request = getattr(self._prompt_context, "request", None)
+            db_path = await run_sync_io(
+                resolve_session_database_path,
+                self._workspace_dir,
+                session_id=session_id,
+                user_id=getattr(request, "user_id", "") or session_id,
+                channel=getattr(request, "channel", "") or "",
+            )
+            if db_path is None:
+                raise FileNotFoundError("conversation database is missing")
+            history = await run_sync_io(HistoryStore, db_path)
+            if self._context_generation > 0:
+                session_id = (
+                    f"{session_id}\x1fcontext:{self._context_generation}"
+                )
             return ScrollContextManager(
                 history=history,
                 session_id=session_id,

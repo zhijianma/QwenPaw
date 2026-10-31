@@ -32,6 +32,8 @@ from qwenpaw.app.chats.session import (
     session_relative_paths,
 )
 from qwenpaw.app.chats.transcript_catalog import TranscriptCatalog
+from qwenpaw.agents.context.scroll.history import HistoryStore
+from qwenpaw.agents.context.types import LogEntry
 from qwenpaw.exceptions import AgentStateError
 
 
@@ -46,6 +48,104 @@ class _StateModule:
 
     def load_state_dict(self, state: dict) -> None:
         self._state = dict(state)
+
+
+@pytest.mark.asyncio
+async def test_json_migration_imports_recall_once(tmp_path: Path) -> None:
+    """Legacy recall follows the JSON import and stable message identity."""
+    legacy_dir = tmp_path / "sessions"
+    legacy_dir.mkdir()
+    state = {
+        "agent": {
+            "state": {
+                "context": [
+                    {
+                        "id": "old-message",
+                        "name": "user",
+                        "role": "user",
+                        "content": [{"type": "text", "text": "hello"}],
+                    }
+                ],
+            },
+        },
+    }
+    (legacy_dir / "session.json").write_text(
+        json.dumps(state),
+        encoding="utf-8",
+    )
+    harness_dir = tmp_path / "harnesses"
+    harness_dir.mkdir()
+    (harness_dir / "codex_sessions.json").write_text(
+        json.dumps({"session": "native-thread-id"}),
+        encoding="utf-8",
+    )
+    source = HistoryStore(tmp_path / "history.db")
+    try:
+        source.append(
+            session_id="session",
+            entry=LogEntry(kind="model_turn", content="hello"),
+            dedup_key="old-message",
+        )
+        source.append(
+            session_id="session",
+            entry=LogEntry(kind="context_msg", content="unmatched"),
+        )
+    finally:
+        source.close()
+
+    catalog = TranscriptCatalog(tmp_path)
+    session = DatabaseSession(
+        catalog=catalog,
+        legacy_save_dir=str(legacy_dir),
+    )
+    try:
+        await session.ensure_legacy_migrated(
+            session_id="session",
+            user_id="",
+            channel="",
+        )
+        await session.ensure_legacy_migrated(
+            session_id="session",
+            user_id="",
+            channel="",
+        )
+        db_path = (
+            tmp_path
+            / "transcripts"
+            / (
+                catalog.storage_id_for(
+                    session_id="session",
+                    user_id="",
+                    channel="",
+                )
+                + ".db"
+            )
+        )
+        with sqlite3.connect(db_path) as connection:
+            rows = connection.execute(
+                "SELECT seq, turn_id FROM event_log "
+                "WHERE event_type = 'recall.entry_committed' "
+                "ORDER BY seq",
+            ).fetchall()
+            runtime_seq = connection.execute(
+                "SELECT seq FROM event_log "
+                "WHERE event_type = 'runtime.committed' "
+                "ORDER BY seq DESC LIMIT 1",
+            ).fetchone()[0]
+        assert [row[1] for row in rows] == ["legacy:1", None]
+        assert rows[-1][0] < runtime_seq
+        provider = catalog.read_provider_state(
+            session_id="session",
+            user_id="",
+            channel="",
+        )
+        assert provider["binding"] == {
+            "provider": "codex",
+            "external_session_id": "native-thread-id",
+        }
+        assert provider["boundaries"] == {}
+    finally:
+        catalog.close()
 
 
 @pytest.mark.asyncio

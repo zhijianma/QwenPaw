@@ -223,6 +223,92 @@ class TranscriptStore:
         )
         return event_seq
 
+    def read_provider_state(self, *, session_id: str) -> dict[str, Any]:
+        """Read external identities directly from immutable provider facts."""
+        with self._read_connection() as connection:
+            rows = connection.execute(
+                "SELECT event_type, turn_id, payload_json FROM event_log "
+                "WHERE event_type IN "
+                "('provider.session_bound', 'provider.turn_boundary') "
+                "ORDER BY seq",
+            ).fetchall()
+            completed = {
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT turn_id FROM transcript_turns "
+                    "WHERE session_id = ? AND status = 'completed'",
+                    (session_id,),
+                )
+            }
+            has_history = (
+                connection.execute(
+                    "SELECT 1 FROM transcript_turns WHERE session_id = ? "
+                    "AND status != 'running' LIMIT 1",
+                    (session_id,),
+                ).fetchone()
+                is not None
+            )
+        binding = None
+        boundaries = {}
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            if row["event_type"] == "provider.session_bound":
+                binding = payload
+            elif row["turn_id"] in completed:
+                boundaries[str(row["turn_id"])] = payload
+        return {
+            "binding": binding,
+            "boundaries": boundaries,
+            "has_history": has_history,
+        }
+
+    def read_legacy_turn_blocks(self, *, session_id: str) -> dict:
+        """Read completed imported turns for exact provider matching."""
+        with self._read_connection() as connection:
+            rows = connection.execute(
+                "SELECT t.turn_id, m.role, b.payload_json "
+                "FROM transcript_turns t "
+                "JOIN transcript_messages m ON m.session_id=t.session_id "
+                "AND m.turn_id=t.turn_id "
+                "JOIN transcript_blocks b ON b.session_id=m.session_id "
+                "AND b.message_id=m.message_id "
+                "WHERE t.session_id=? AND t.status='completed' "
+                "AND t.turn_id LIKE 'legacy:%' "
+                "AND m.superseded_at IS NULL "
+                "ORDER BY t.turn_seq, m.ordinal, b.ordinal",
+                (session_id,),
+            ).fetchall()
+        turns = {}
+        for row in rows:
+            turns.setdefault(row["turn_id"], []).append(
+                (row["role"], json.loads(row["payload_json"])),
+            )
+        return turns
+
+    def record_provider_fact(
+        self,
+        *,
+        session_id: str,
+        kind: str,
+        data: dict[str, Any],
+        turn_id: str | None = None,
+    ) -> None:
+        """Append a provider identity or exact fork boundary."""
+        if kind not in {"session_bound", "turn_boundary"}:
+            raise ValueError("invalid provider fact kind")
+        with self._transaction():
+            self._append_fact(
+                event_type=f"provider.{kind}",
+                payload=data,
+                idempotency_key=(
+                    f"provider:boundary:{turn_id}"
+                    if kind == "turn_boundary"
+                    else uuid4().hex
+                ),
+                recorded_at=_utc_now(),
+                turn_id=turn_id,
+            )
+
     def _append_session_fact(
         self,
         *,
@@ -450,7 +536,9 @@ class TranscriptStore:
         only_if_missing: bool = False,
         turn_id: str | None = None,
         migration_anchor: bool = False,
+        migration_approximate: bool = False,
         context_generation: int | None = None,
+        exact_current_usage: bool = False,
     ) -> tuple[int, bool]:
         """Persist one runtime snapshot and optionally start a new context."""
         state_json = _canonical_json(state)
@@ -503,8 +591,12 @@ class TranscriptStore:
             if context_generation is not None:
                 generation = context_generation
             usage_json = existing["current_usage_json"] if existing else None
-            if current_usage is not None:
-                usage_json = _canonical_json(current_usage)
+            if current_usage is not None or exact_current_usage:
+                usage_json = (
+                    _canonical_json(current_usage)
+                    if current_usage is not None
+                    else None
+                )
             if reset_context:
                 generation += 1
                 previous = json.loads(usage_json) if usage_json else {}
@@ -556,18 +648,28 @@ class TranscriptStore:
                 usage_json=usage_json,
                 created_at=timestamp,
                 kind=(
-                    "migration_anchor"
-                    if migration_anchor
-                    else "clear"
-                    if reset_context
-                    else "turn_commit"
-                    if turn_id is not None
-                    else "snapshot"
+                    "migration_approximate"
+                    if migration_approximate
+                    else (
+                        "migration_anchor"
+                        if migration_anchor
+                        else (
+                            "clear"
+                            if reset_context
+                            else (
+                                "turn_commit"
+                                if turn_id is not None
+                                else "snapshot"
+                            )
+                        )
+                    )
                 ),
             )
             reason = "turn_commit" if turn_id is not None else "snapshot"
             if reset_context:
                 reason = "clear"
+            elif migration_approximate:
+                reason = "migration_approximate"
             elif migration_anchor:
                 reason = "migration"
             self._append_fact(
@@ -1075,6 +1177,7 @@ class TranscriptStore:
         target_session_id: str,
         target_user_id: str,
         target_channel: str,
+        native_context: bool = False,
     ) -> None:
         """Copy one materialized turn as new append-only target facts."""
         source_turn_id = str(turn["turn_id"])
@@ -1087,19 +1190,35 @@ class TranscriptStore:
             created_at=str(turn["created_at"]),
         )
         messages = source.execute(
-            "SELECT p.payload_json, m.ordinal, m.created_at, "
-            "m.finished_at FROM transcript_message_payloads p "
-            "JOIN transcript_messages m "
-            "ON m.session_id = p.session_id "
-            "AND m.message_id = p.message_id "
-            "WHERE m.session_id = ? AND m.turn_id = ? "
-            "ORDER BY m.ordinal",
-            (source_session_id, source_turn_id),
+            "SELECT payload_json FROM event_log "
+            "WHERE event_type = 'message.committed' AND turn_id = ? "
+            "ORDER BY seq",
+            (source_turn_id,),
         ).fetchall()
-        for row in messages:
-            message = Message.model_validate_json(row["payload_json"])
-            metadata = dict(message.metadata or {})
-            metadata.pop(TURN_USAGE_META_KEY, None)
+        for event in messages:
+            row = json.loads(event["payload_json"])
+            envelope = json.loads(
+                source.execute(
+                    "SELECT payload FROM content_objects "
+                    "WHERE content_hash = ?",
+                    (row["envelope_ref"],),
+                ).fetchone()[0]
+            )
+            envelope["content"] = [
+                json.loads(
+                    source.execute(
+                        "SELECT payload FROM content_objects "
+                        "WHERE content_hash = ?",
+                        (ref,),
+                    ).fetchone()[0]
+                )
+                for ref in row["block_refs"]
+            ]
+            message = Message.model_validate(envelope)
+            metadata = message.metadata
+            if metadata is not None and TURN_USAGE_META_KEY in metadata:
+                metadata = dict(metadata)
+                metadata.pop(TURN_USAGE_META_KEY)
             self.upsert_message(
                 session_id=target_session_id,
                 turn_id=source_turn_id,
@@ -1120,15 +1239,13 @@ class TranscriptStore:
             "WHERE t.session_id = ? AND t.turn_id = ?",
             (source_session_id, source_turn_id),
         ).fetchone()
-        if revision is not None:
+        if revision is not None and not native_context:
             state = read_revision_state(
                 source,
                 session_id=source_session_id,
                 revision_id=str(revision["revision_id"]),
             )
-            usage_json = (
-                revision["usage_json"] or revision["current_usage_json"]
-            )
+            usage_json = revision["current_usage_json"]
             self.write_runtime_state(
                 session_id=target_session_id,
                 user_id=target_user_id,
@@ -1141,6 +1258,7 @@ class TranscriptStore:
                 current_usage=(json.loads(usage_json) if usage_json else None),
                 turn_id=source_turn_id,
                 context_generation=int(revision["context_generation"]),
+                exact_current_usage=True,
             )
 
         error = json.loads(turn["error_json"]) if turn["error_json"] else None
@@ -1172,6 +1290,7 @@ class TranscriptStore:
         source_session_id: str,
         target_session_id: str,
         through_event_seq: int,
+        next_legacy_source_seq: int | None = None,
     ) -> None:
         """Copy Recall facts visible at the selected runtime boundary."""
         recall_events = source.execute(
@@ -1184,6 +1303,13 @@ class TranscriptStore:
         with self._transaction():
             for event in recall_events:
                 payload = json.loads(event["payload_json"])
+                if (
+                    next_legacy_source_seq is not None
+                    and event["event_type"] == "recall.entry_committed"
+                    and int(payload.get("source_seq") or 0)
+                    >= next_legacy_source_seq
+                ):
+                    continue
                 ref_key = (
                     "entry_ref"
                     if event["event_type"] == "recall.entry_committed"
@@ -1233,6 +1359,7 @@ class TranscriptStore:
         target_session_id: str,
         target_user_id: str,
         target_channel: str,
+        native_context: bool = False,
     ) -> int:
         """Rebuild an independent conversation through one completed turn."""
         if (
@@ -1266,25 +1393,46 @@ class TranscriptStore:
             if boundary["status"] != "completed":
                 raise ValueError("fork turn must be completed")
             turn_seq = int(boundary["turn_seq"])
-            boundary_revision = source.execute(
-                "SELECT r.revision_id FROM turn_context_revision t "
-                "JOIN context_revisions r "
-                "ON r.session_id = t.session_id "
-                "AND r.revision_id = t.revision_id "
-                "WHERE t.session_id = ? AND t.turn_id = ?",
-                (source_session_id, turn_id),
-            ).fetchone()
-            if boundary_revision is None:
-                raise ValueError("fork turn has no committed runtime")
-            boundary_event = source.execute(
-                "SELECT seq FROM event_log "
-                "WHERE event_type = 'runtime.committed' "
-                "AND json_extract(payload_json, '$.revision_id') = ? "
-                "ORDER BY seq DESC LIMIT 1",
-                (boundary_revision["revision_id"],),
-            ).fetchone()
-            if boundary_event is None:
-                raise ValueError("fork runtime event is missing")
+            boundary_event = None
+            if not native_context:
+                boundary_revision = source.execute(
+                    "SELECT r.revision_id FROM turn_context_revision t "
+                    "JOIN context_revisions r "
+                    "ON r.session_id = t.session_id "
+                    "AND r.revision_id = t.revision_id "
+                    "WHERE t.session_id = ? AND t.turn_id = ?",
+                    (source_session_id, turn_id),
+                ).fetchone()
+                if boundary_revision is None:
+                    raise ValueError("fork turn has no committed runtime")
+                boundary_event = source.execute(
+                    "SELECT seq FROM event_log "
+                    "WHERE event_type = 'runtime.committed' "
+                    "AND json_extract(payload_json, '$.revision_id') = ? "
+                    "ORDER BY seq DESC LIMIT 1",
+                    (boundary_revision["revision_id"],),
+                ).fetchone()
+                if boundary_event is None:
+                    raise ValueError("fork runtime event is missing")
+            next_legacy_source_seq = None
+            if turn_id.startswith("legacy:"):
+                next_legacy = source.execute(
+                    "SELECT turn_id FROM transcript_turns "
+                    "WHERE session_id = ? AND turn_seq > ? "
+                    "AND turn_id LIKE 'legacy:%' "
+                    "ORDER BY turn_seq LIMIT 1",
+                    (source_session_id, turn_seq),
+                ).fetchone()
+                if next_legacy is not None:
+                    next_row = source.execute(
+                        "SELECT MIN(json_extract(payload_json, "
+                        "'$.source_seq')) FROM event_log "
+                        "WHERE event_type = 'recall.entry_committed' "
+                        "AND turn_id = ?",
+                        (next_legacy["turn_id"],),
+                    ).fetchone()
+                    if next_row[0] is not None:
+                        next_legacy_source_seq = int(next_row[0])
 
             with self._transaction():
                 timestamp = _utc_now()
@@ -1340,14 +1488,32 @@ class TranscriptStore:
                     target_session_id=target_session_id,
                     target_user_id=target_user_id,
                     target_channel=target_channel,
+                    native_context=native_context,
                 )
 
-            self._fork_copy_recall_events(
-                source,
-                source_session_id=source_session_id,
-                target_session_id=target_session_id,
-                through_event_seq=int(boundary_event["seq"]),
-            )
+            for turn in turns:
+                anchor = source.execute(
+                    "SELECT payload_json FROM event_log WHERE "
+                    "event_type = 'provider.turn_boundary' AND turn_id = ? "
+                    "ORDER BY seq DESC LIMIT 1",
+                    (turn["turn_id"],),
+                ).fetchone()
+                if anchor is not None:
+                    self.record_provider_fact(
+                        session_id=target_session_id,
+                        kind="turn_boundary",
+                        turn_id=str(turn["turn_id"]),
+                        data=json.loads(anchor["payload_json"]),
+                    )
+
+            if boundary_event is not None:
+                self._fork_copy_recall_events(
+                    source,
+                    source_session_id=source_session_id,
+                    target_session_id=target_session_id,
+                    through_event_seq=int(boundary_event["seq"]),
+                    next_legacy_source_seq=next_legacy_source_seq,
+                )
 
             self.rebuild_projections()
             return turn_seq
@@ -1537,24 +1703,19 @@ class TranscriptStore:
                             metadata.get("finished_at"),
                         ),
                     )
+                    blocks = message.model_dump(mode="json")["content"]
                     write_message_blocks(
                         self._conn,
                         session_id=session_id,
                         message_id=message.id,
-                        content=[
-                            block.model_dump(mode="json")
-                            for block in message.content
-                        ],
+                        content=blocks,
                     )
                     envelope_ref = self._write_fact_object(
                         codec="message-envelope-v1",
                         value=json.loads(message_envelope(message)),
                     )
                     block_refs = []
-                    for block_ordinal, block_model in enumerate(
-                        message.content,
-                    ):
-                        block = block_model.model_dump(mode="json")
+                    for block_ordinal, block in enumerate(blocks):
                         block_id = block_identity(
                             session_id,
                             message.id,
@@ -1757,7 +1918,7 @@ class TranscriptStore:
         role = _enum_value(message.role)
         client_message_id = self._client_message_id(message)
         timestamp = created_at or _utc_now()
-        blocks = [block.model_dump(mode="json") for block in message.content]
+        blocks = message.model_dump(mode="json")["content"]
         with self._transaction():
             turn = self._conn.execute(
                 "SELECT 1 FROM transcript_turns "
