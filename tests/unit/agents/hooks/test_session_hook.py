@@ -12,7 +12,7 @@ import pytest
 from qwenpaw.agents.acp.meta import ACP_EPHEMERAL_META_KEY
 from qwenpaw.exceptions import LegacyMigrationError
 from qwenpaw.hooks.session.session_hook import SessionLoadHook, SessionSaveHook
-from qwenpaw.hooks.session.signals import SESSION_SAVE_SUCCEEDED_KEY
+from qwenpaw._session_signals import SESSION_SAVE_SUCCEEDED_KEY
 
 pytestmark = [pytest.mark.unit, pytest.mark.p1]
 

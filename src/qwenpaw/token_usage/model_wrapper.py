@@ -12,6 +12,7 @@ from agentscope.model._model_usage import ChatUsage
 
 from ..utils.model_response import safe_attr
 from .buffer import _UsageEvent
+from .counter import record_session_tokens
 from .manager import _usage_agent_id, get_token_usage_manager
 
 _auxiliary_usage = ContextVar(f"auxiliary_token_usage", default=False)
@@ -123,6 +124,11 @@ class TokenRecordingModelWrapper(ChatModelBase):
         self._compact_threshold = compact_threshold
 
     @property
+    def model_key(self) -> str:
+        """Expose routing identity even without an outer retry wrapper."""
+        return f"{self._provider_id}:{self.model}"
+
+    @property
     def formatter(self) -> Any:
         """Expose the wrapped model's formatter to AgentScope."""
         return self._model.formatter
@@ -227,6 +233,7 @@ class TokenRecordingModelWrapper(ChatModelBase):
 
         session_id = get_current_session_id()
         if session_id and usage:
+            record_session_tokens(session_id, int(usage[f"total_tokens"]))
             previous = TokenRecordingModelWrapper._usage_by_session.get(
                 session_id,
             )

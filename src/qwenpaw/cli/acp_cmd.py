@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sys
 
 import click
@@ -45,15 +46,39 @@ import click
         "OPENAI_API_KEY, and OPENAI_MODEL."
     ),
 )
+@click.option(
+    f"--agent-mode",
+    type=str,
+    metavar=f"MODE_ID",
+    default=None,
+    help=(
+        f"Select a QwenPaw agent mode (e.g. code, goal, "
+        f"mission, custom:<id>, plugin:<name>). The first message of "
+        f"each new session uses its registered slash command. "
+        f"Code enables Python tool orchestration for every request. "
+        f"This does not change ACP permission settings."
+    ),
+)
+@click.option(
+    f"--goal-token-budget",
+    type=click.IntRange(min=-1),
+    default=0,
+    show_default=True,
+    help=f"Token budget per goal. -1 or 0 means unlimited.",
+)
 def acp_cmd(
     agent: str | None,
     workspace: str | None,
     debug: bool,
     local_diagnostics: bool,
     runtime_provider: str | None,
+    agent_mode: str | None,
+    goal_token_budget: int,
 ) -> None:
     """Start QwenPaw as an ACP agent (stdio)."""
     from pathlib import Path
+
+    os.environ["QWENPAW_RUNTIME_MODE"] = "stdio"
 
     level = logging.DEBUG if debug else logging.WARNING
     logging.basicConfig(
@@ -96,6 +121,8 @@ def acp_cmd(
                 workspace_dir=workspace_dir,
                 local_diagnostics=local_diagnostics,
                 runtime_provider=provider_config,
+                agent_mode=agent_mode,
+                goal_token_budget=goal_token_budget,
             ),
         )
     finally:

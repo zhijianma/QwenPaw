@@ -21,7 +21,11 @@ it("keeps the SDK surface inert and suppresses welcome until ready", async () =>
     createSession: async () => ({ session, sessions: [session] }),
   });
   render(
-    <ChatSessionTransition adapter={adapter} sessionId="target">
+    <ChatSessionTransition
+      adapter={adapter}
+      sessionId="target"
+      onRetry={vi.fn()}
+    >
       <div>Previous conversation</div>
       <ReadyChatWelcome adapter={adapter} sessionId="target">
         <div>Welcome</div>
@@ -114,4 +118,43 @@ it("offers retry when the SDK history load rejects", async () => {
   expect(screen.getByRole("alert")).toHaveTextContent("chat.historyLoadFailed");
   fireEvent.click(screen.getByRole("button", { name: "common.retry" }));
   expect(retry).toHaveBeenCalledOnce();
+});
+
+it("delegates failed hydration retry without bypassing the SDK loader", async () => {
+  const session = { id: "target", name: "target", messages: [] };
+  const getSession = vi.fn().mockRejectedValueOnce(new Error("offline"));
+  const onRetry = vi.fn();
+  const adapter = createSdkSessionAdapter({
+    getSession,
+    getSessionList: async () => [],
+    updateSession: async () => [],
+    removeSession: async () => [],
+    createSession: async () => ({ session, sessions: [session] }),
+  });
+  render(
+    <ChatSessionTransition
+      adapter={adapter}
+      sessionId="target"
+      onRetry={onRetry}
+    >
+      <div>Recovered conversation</div>
+    </ChatSessionTransition>,
+  );
+
+  await act(async () => {
+    await expect(adapter.api.getSession("target")).rejects.toThrow("offline");
+  });
+
+  const surface = screen.getByText("Recovered conversation").parentElement!;
+  expect(surface.inert).toBe(true);
+  expect(surface).toBeVisible();
+  expect(screen.getByRole("alert")).toHaveTextContent("chat.historyLoadFailed");
+
+  fireEvent.click(screen.getByRole("button", { name: "common.retry" }));
+
+  expect(onRetry).toHaveBeenCalledOnce();
+  expect(getSession).toHaveBeenCalledOnce();
+  expect(surface.inert).toBe(true);
+  expect(surface).toBeVisible();
+  expect(screen.getByRole("alert")).toHaveTextContent("chat.historyLoadFailed");
 });

@@ -9,7 +9,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from ...constant import QWENPAW_CLIENT_MESSAGE_ID_KEY
-from ...hooks.session.signals import (
+from ..._session_signals import (
     TRANSCRIPT_RECORDING_READY_KEY,
     TRANSCRIPT_TURN_ID_CONTEXT_KEY,
 )

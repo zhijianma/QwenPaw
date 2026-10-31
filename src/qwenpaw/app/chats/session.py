@@ -664,7 +664,10 @@ class DatabaseSession:
             messages=messages,
         )
         if imported:
-            for turn_seq, state in enumerate(approximate, start=1):
+            states = iter(approximate)
+            turn_seq = 0
+            while (state := await run_sync_io(next, states, None)) is not None:
+                turn_seq += 1
                 await run_sync_io(
                     self._catalog.write_runtime_state,
                     session_id=session_id,
@@ -862,8 +865,9 @@ class DatabaseSession:
         user_id: str,
         channel: str,
         snapshot: LegacyConversationSnapshot | None = None,
+        wait_for_projection: bool = False,
     ) -> bool:
-        """Start one shared migration and return without waiting for it."""
+        """Start shared migration, optionally waiting for display projection."""
         legacy = snapshot or await self.get_legacy_snapshot(
             session_id=session_id,
             user_id=user_id,
@@ -871,12 +875,26 @@ class DatabaseSession:
         )
         if legacy is None:
             return False
-        await self._get_migration_task(
+        task = await self._get_migration_task(
             session_id=session_id,
             user_id=user_id,
             channel=channel,
             snapshot=legacy,
         )
+        if wait_for_projection:
+            while not task.done():
+                page = await run_sync_io(
+                    self._catalog.get_page,
+                    session_id=session_id,
+                    user_id=user_id,
+                    channel=channel,
+                    limit=1,
+                    max_content_blocks=1,
+                )
+                if page is not None:
+                    return True
+                await asyncio.wait({task}, timeout=0.1)
+            task.result()
         return True
 
     async def ensure_legacy_migrated(

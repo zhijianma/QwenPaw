@@ -12,7 +12,7 @@ from agentscope.message import Msg
 from agentscope.state import AgentState
 
 from ..runtime._state_utils import StateProxy
-from ..hooks.session.signals import (
+from .._session_signals import (
     TRANSCRIPT_RECORDING_READY_KEY,
     TRANSCRIPT_TURN_ID_CONTEXT_KEY,
 )

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -178,12 +179,12 @@ def read_legacy_timeline(
     session_id: str,
     state: dict[str, Any],
     fallback: list[Message],
-) -> tuple[list[Message], list[dict[str, Any]]]:
+) -> tuple[list[Message], Iterator[dict[str, Any]]]:
     """Return complete display history and earlier approximate states."""
     rows = _rows(path, session_id)
     messages = _message_rows(rows, state)
     if not messages:
-        return fallback, []
+        return fallback, iter(())
     turns = _turns(messages)
     converted = agentscope_msg_to_message([
         Msg.model_validate(raw) for raw, _row in messages
@@ -208,6 +209,11 @@ def read_legacy_timeline(
     for original_id, group in exact_groups.items():
         if original_id not in handled:
             display.extend(group)
+    return display, _approximate_states(state, turns, rows)
+
+
+def _approximate_states(state, turns, rows):
+    """Build one boundary at a time without retaining every context prefix."""
     agent = state.get("agent") or {}
     final_context = (agent.get("state") or {}).get("context") or []
     synthetic = set((agent.get("scroll") or {}).get("synthetic_ids") or [])
@@ -218,13 +224,19 @@ def read_legacy_timeline(
         for block in tier:
             covered = max(covered, int(block.get("seq_hi") or 0))
 
-    approximate: list[dict[str, Any]] = []
     prefix: list[tuple[dict[str, Any], dict[str, Any]]] = []
     for turn in turns[:-1]:
         prefix.extend(turn)
         boundary = max(int(row["seq"]) for _raw, row in prefix)
         compressed = covered > 0 and boundary > covered
-        current = deepcopy(state)
+        current = deepcopy({
+            **state,
+            "agent": {
+                **agent,
+                "state": {**agent["state"], "context": []},
+                "scroll": {},
+            },
+        })
         selected = [item for item in prefix if item[0]["id"]]
         if compressed:
             selected_ids = {raw["id"] for raw, _row in selected}
@@ -254,5 +266,4 @@ def read_legacy_timeline(
             current["agent"]["state"]["reply_context"]["reply_id"] = (
                 last_assistant
             )
-        approximate.append(current)
-    return display, approximate
+        yield current

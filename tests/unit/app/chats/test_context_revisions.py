@@ -14,7 +14,7 @@ from qwenpaw.app.chats.transcript_catalog import TranscriptCatalog
 from qwenpaw.app.chats.transcript_recorder import TranscriptRecorder
 from qwenpaw.app.chats.session import DatabaseSession
 from qwenpaw.hooks.session.session_hook import SessionSaveHook
-from qwenpaw.hooks.session.signals import SESSION_SAVE_SUCCEEDED_KEY
+from qwenpaw._session_signals import SESSION_SAVE_SUCCEEDED_KEY
 from qwenpaw.runtime.runtime import Runtime
 from qwenpaw.runtime.builtin_commands import _save_agent_state
 from qwenpaw.schemas import AgentRequest, AgentResponse

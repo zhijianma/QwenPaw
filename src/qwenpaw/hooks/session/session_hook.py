@@ -24,7 +24,7 @@ from ...runtime.console_turn_state import (
 )
 from ...runtime.hooks import HookContext, HookResult
 from ...runtime.phases import Phase
-from .signals import (
+from ..._session_signals import (
     SESSION_SAVE_SUCCEEDED_KEY,
     TRANSCRIPT_RECORDING_READY_KEY,
     TRANSCRIPT_TURN_ID_CONTEXT_KEY,

@@ -56,6 +56,7 @@ from ..crons.manager import CronManager
 from ..crons.repo.json_repo import JsonJobRepository
 from ...config.config import load_agent_config
 from ...utils.logging import sanitize_log_value
+from ...plugins._events import observe_stream as _sdk_observe_stream
 
 if TYPE_CHECKING:
     from ...memory import MemoryBackendContext
@@ -160,13 +161,24 @@ class Workspace:  # pylint: disable=too-many-public-methods
     to ``Runtime.run()``.
     """
 
-    def __init__(self, agent_id: str, workspace_dir: str):
+    def __init__(
+        self,
+        agent_id: str,
+        workspace_dir: str,
+        *,
+        mode_config_overrides: dict[str, dict[str, Any]] | None = None,
+    ):
         """Initialize agent instance.
 
         Args:
             agent_id: Unique agent identifier
             workspace_dir: Path to agent's workspace directory
+            mode_config_overrides: Process-local mode settings, never saved.
         """
+        self.mode_config_overrides = {
+            name: dict(values)
+            for name, values in (mode_config_overrides or {}).items()
+        }
         self.agent_id = agent_id
         self.workspace_dir = Path(workspace_dir).expanduser()
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
@@ -437,6 +449,7 @@ class Workspace:  # pylint: disable=too-many-public-methods
         """Inject the cross-workspace AppServiceManager reference."""
         self._app_services = app_services
 
+    @_sdk_observe_stream
     async def stream_query(
         self,
         request: Any,
@@ -445,6 +458,9 @@ class Workspace:  # pylint: disable=too-many-public-methods
 
         Drop-in replacement for the old ``Runner.stream_query()``.
         """
+        available = getattr(self._manager, "assert_agent_available", None)
+        if available is not None:
+            available(self.agent_id)
         config = load_agent_config(self.agent_id)
         backend = config.backend
         if backend != "qwenpaw":
@@ -538,6 +554,11 @@ class Workspace:  # pylint: disable=too-many-public-methods
             }
             await recorder.finish("failed", error=error)
             raise
+        finally:
+            from ...plugins._events import observing
+
+            if observing():
+                await stream.aclose()
         await recorder.finish("completed")
 
     async def finalize_turn_usage(
@@ -778,6 +799,7 @@ class Workspace:  # pylint: disable=too-many-public-methods
                 post_init=create_channel_service,
                 start_method="start_all",
                 stop_method="stop_all",
+                require_clean_stop=True,
                 priority=30,
                 concurrent_init=False,
             ),
@@ -874,7 +896,7 @@ class Workspace:  # pylint: disable=too-many-public-methods
         if self._started:
             logger.warning(
                 f"Cannot set reusable components for already started "
-                f"workspace: {self.agent_id}",
+                f"workspace: {sanitize_log_value(self.agent_id)}",
             )
             return
 
@@ -892,6 +914,9 @@ class Workspace:  # pylint: disable=too-many-public-methods
             return
 
         self._start_attempted = True
+        from ...plugins.registry import PluginRegistry
+
+        PluginRegistry().projector.track_workspace(self)
 
         logger.info(
             f"Starting workspace: {sanitize_log_value(self.agent_id)}",
@@ -905,7 +930,8 @@ class Workspace:  # pylint: disable=too-many-public-methods
             ensure_skill_pool_initialized()
         except Exception as e:
             logger.warning(
-                f"Skill pool initialization failed (non-fatal): {e}",
+                "Skill pool initialization failed (non-fatal): "
+                f"{sanitize_log_value(e)}",
             )
 
         try:
@@ -1020,6 +1046,9 @@ class Workspace:  # pylint: disable=too-many-public-methods
     ):
         """Stop agent instance and clean up all resources.
 
+        Attempt every independent cleanup stage before reporting errors.
+        Failed cleanup retains running flags and unfinished handles for retry.
+
         Args:
             final: If True (default), stop ALL services including reusable.
                    If False, skip reusable services (for reload scenario).
@@ -1037,18 +1066,54 @@ class Workspace:  # pylint: disable=too-many-public-methods
             f"{sanitize_log_value(self.agent_id)} (final={final})",
         )
 
+        # Revoke this instance's plugin bindings while its managers are alive.
+        # Reload candidates and draining old instances may share an agent id.
+        from ...plugins.registry import PluginRegistry
+
+        if self.channel_manager is not None:
+            from ...plugins.lifecycle import QuiescenceError
+
+            if not await self.channel_manager.quiesce(for_stop=True):
+                raise QuiescenceError("CHANNEL_DRAIN_TIMEOUT")
+        errors: list[tuple[str, Exception]] = []
+        try:
+            await PluginRegistry().projector.revoke_workspace(self)
+        except Exception as exc:
+            errors.append(("plugin bindings", exc))
+        if self.channel_manager is not None:
+            try:
+                await self.channel_manager.stop_all()
+            except Exception as exc:
+                errors.append(("channels", exc))
+
         # Stop all services via ServiceManager (handles reuse automatically)
-        await self._service_manager.stop_all(
-            final=final,
-            preserve_reused=preserve_reused,
-        )
+        try:
+            await self._service_manager.stop_all(
+                final=final,
+                preserve_reused=preserve_reused,
+            )
+        except Exception as exc:
+            errors.append(("services", exc))
 
         if self._harness_runtime is not None:
-            await self._harness_runtime.stop()
-            self._harness_runtime = None
+            try:
+                await self._harness_runtime.stop()
+            except Exception as exc:
+                errors.append(("harness", exc))
+            else:
+                self._harness_runtime = None
+
+        if len(errors) == 1:
+            raise errors[0][1]
+        if errors:
+            details = "; ".join(f"{stage}: {exc}" for stage, exc in errors)
+            raise RuntimeError(f"Workspace cleanup failed: {details}") from (
+                errors[0][1]
+            )
 
         self._started = False
         self._start_attempted = False
+        PluginRegistry().projector.forget_workspace(self)
         logger.info(
             f"Workspace stopped: {sanitize_log_value(self.agent_id)}",
         )

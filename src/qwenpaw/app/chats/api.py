@@ -93,6 +93,22 @@ def _history_store(workspace):
     return TranscriptHistoryStore(transcript)
 
 
+def _legacy_needs_page(messages, limit, max_bytes, max_content_blocks):
+    """Keep an unprojected legacy snapshot within the same page budgets."""
+    turns = blocks = size = 0
+    for message in messages:
+        turns += message.role == "user"
+        blocks += max(1, len(message.content))
+        size += len(message.model_dump_json().encode("utf-8"))
+        if (
+            turns > limit
+            or blocks > max_content_blocks
+            or size > max_bytes - 1024
+        ):
+            return True
+    return False
+
+
 async def _read_history_page(
     workspace,
     chat: ChatSpec,
@@ -107,22 +123,32 @@ async def _read_history_page(
     store = _history_store(workspace)
     if store is None:
         return None
+    options = dict(
+        session_id=chat.session_id,
+        user_id=chat.user_id,
+        channel=chat.channel,
+        before=before,
+        **({"after_message_id": after_message_id} if after_message_id else {}),
+        limit=limit,
+        max_bytes=max_bytes,
+        max_content_blocks=max_content_blocks,
+    )
     try:
-        return await asyncio.to_thread(
-            store.get_page,
-            session_id=chat.session_id,
-            user_id=chat.user_id,
-            channel=chat.channel,
-            before=before,
-            **(
-                {"after_message_id": after_message_id}
-                if after_message_id
-                else {}
-            ),
-            limit=limit,
-            max_bytes=max_bytes,
-            max_content_blocks=max_content_blocks,
-        )
+        page = await asyncio.to_thread(store.get_page, **options)
+        if page is None:
+            snapshot = await _read_workspace_legacy_snapshot(workspace, chat)
+            if snapshot is not None and _legacy_needs_page(
+                snapshot.messages, limit, max_bytes, max_content_blocks,
+            ):
+                await workspace.session.start_legacy_migration(
+                    session_id=chat.session_id,
+                    user_id=chat.user_id,
+                    channel=chat.channel,
+                    snapshot=snapshot,
+                    wait_for_projection=True,
+                )
+                return await asyncio.to_thread(store.get_page, **options)
+        return page
     except ConversationHistoryError:
         logger.warning(
             "Failed to read conversation history for session %s",

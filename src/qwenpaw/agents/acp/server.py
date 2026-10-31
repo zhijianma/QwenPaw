@@ -89,6 +89,8 @@ from ...config.config import (
 from ...drivers.constants import DRIVER_SCOPE_CONTEXT_KEY
 from ...exceptions import AppBaseException
 from ...providers.provider_manager import ProviderManager
+from ...plugins.registry import PluginRegistry
+from ...modes.catalog import resolve_loop_mode
 from ...utils.io_utils import run_sync_io
 from .meta import (
     ACP_APPROVAL_EXPIRES_AT_META_KEY,
@@ -371,11 +373,19 @@ class QwenPawACPAgent(Agent):
         workspace_dir: Path | None = None,
         local_diagnostics: bool = False,
         runtime_provider: OpenAIRuntimeProviderConfig | None = None,
+        agent_mode: str | None = None,
+        goal_token_budget: int = 0,
     ):
         self._agent_id = agent_id
         self._workspace_dir = workspace_dir
         self._local_diagnostics = local_diagnostics
         self._runtime_provider = runtime_provider
+        # Runtime loop mode (e.g. "goal"); distinct from the ACP session
+        # config option "mode" (MODE_CONFIG_ID), which is a permission mode.
+        self._agent_mode = agent_mode
+        self._goal_token_budget = goal_token_budget
+        self._agent_mode_started: set[str] = set()
+        self._stop_gate_workspace: tuple[str, Any] | None = None
         self._runtime_provider_manager: ProviderManager | None = None
         self._runtime_provider_instance: Any | None = None
         self._previous_active_model: ModelSlotConfig | None = None
@@ -553,6 +563,9 @@ class QwenPawACPAgent(Agent):
             workspace = Workspace(
                 agent_id=agent_id,
                 workspace_dir=str(workspace_dir),
+                mode_config_overrides={
+                    f"goal": {f"max_tokens": self._goal_token_budget},
+                },
             )
             app_services = await self._ensure_app_services()
             workspace.bootstrap_plugins(
@@ -561,6 +574,7 @@ class QwenPawACPAgent(Agent):
             workspace.set_app_services(app_services)
             try:
                 await workspace.start()
+                self._install_stop_gate_bridge(agent_id, workspace)
             except BaseException:
                 try:
                     await workspace.stop(final=True)
@@ -578,8 +592,22 @@ class QwenPawACPAgent(Agent):
             )
             return workspace
 
+    def _install_stop_gate_bridge(self, agent_id: str, workspace: Any) -> None:
+        """Register ACP stop gates without replacing the app's manager.
+
+        ReAct resolves handlers by agent ID through PluginRegistry. ACP
+        owns this standalone workspace registration until shutdown.
+        """
+        PluginRegistry().register_stop_workspace(agent_id, workspace)
+        self._stop_gate_workspace = (agent_id, workspace)
+
     async def _shutdown_workspace(self) -> None:
         """Gracefully stop the workspace."""
+        if self._stop_gate_workspace is not None:
+            PluginRegistry().unregister_stop_workspace(
+                *self._stop_gate_workspace,
+            )
+            self._stop_gate_workspace = None
         if self._workspace is not None:
             try:
                 await self._workspace.stop(final=True)
@@ -687,6 +715,9 @@ class QwenPawACPAgent(Agent):
             else:
                 self._sessions[session_id] = previous_session
             raise
+        # A loaded session already had its first message, so the mode
+        # prefix must not apply to any subsequent prompt.
+        self._agent_mode_started.add(session_id)
         logger.info(
             "ACP load_session: id=%s cwd=%s",
             session_id,
@@ -755,6 +786,13 @@ class QwenPawACPAgent(Agent):
             tracker = _EnvelopeTracker()
             outcome: tuple[str, Any] = (f"end", None)
             try:
+                workspace = await self._ensure_workspace()
+                agent_id = await run_sync_io(self._resolve_agent_id)
+                prompt_text = self._apply_agent_mode(
+                    text,
+                    session_id,
+                    workspace,
+                )
                 request_context = self._build_request_context(session_info)
 
                 request = AgentRequest(
@@ -762,20 +800,19 @@ class QwenPawACPAgent(Agent):
                         Message(
                             role="user",
                             content=[
-                                {"type": "text", "text": text},
+                                {"type": "text", "text": prompt_text},
                             ],
                         ),
                     ],
                     session_id=session_id,
                     user_id=user_id,
-                    agent_id=await run_sync_io(self._resolve_agent_id),
+                    agent_id=agent_id,
                     request_context=request_context or None,
                     model_slot_override=session_info.get(
                         _ACP_RUNTIME_MODEL_SLOT_KEY,
                     ),
                 )
 
-                workspace = await self._ensure_workspace()
                 events_since_yield = 0
                 async for event in workspace.stream_query(request):
                     if getattr(event, f"object", None) == f"response":
@@ -896,6 +933,37 @@ class QwenPawACPAgent(Agent):
         stop_reason = "cancelled" if was_cancelled else "end_turn"
         return PromptResponse(stop_reason=stop_reason)
 
+    def _apply_agent_mode(
+        self,
+        text: str,
+        session_id: str,
+        workspace: Any,
+    ) -> str:
+        """Prefix the session's first message with the mode command.
+
+        Only the first user message of a session gets the prefix (for
+        example ``/goal``); messages that already start with a slash
+        command are left untouched so explicit commands always win.
+        Later messages and resumed sessions are never prefixed.
+        """
+        if self._agent_mode is None or self._agent_mode == f"code":
+            return text
+        if session_id in self._agent_mode_started:
+            return text
+        if text.lstrip().startswith(f"/"):
+            self._agent_mode_started.add(session_id)
+            return text
+        try:
+            mode = resolve_loop_mode(workspace, self._agent_mode)
+        except ValueError as exc:
+            raise RequestError.invalid_params(
+                {f"agent_mode": self._agent_mode, f"details": str(exc)},
+            ) from exc
+        self._agent_mode_started.add(session_id)
+        if not mode.slash_command:
+            return text
+        return f"/{mode.slash_command} {text}"
+
     async def close_session(  # pylint: disable=unused-argument
         self,
         session_id: str,
@@ -906,6 +974,7 @@ class QwenPawACPAgent(Agent):
         await self._cancel_pending_approvals(session_id)
         await self._remove_session_mcp(session_id)
         self._sessions.pop(session_id, None)
+        self._agent_mode_started.discard(session_id)
         self._cancel_events.pop(session_id, None)
         self._prompt_tasks.pop(session_id, None)
         return CloseSessionResponse()
@@ -965,6 +1034,9 @@ class QwenPawACPAgent(Agent):
             else:
                 self._sessions[session_id] = previous_session
             raise
+        # A resumed session already had its first message, so the mode
+        # prefix must not apply to any subsequent prompt.
+        self._agent_mode_started.add(session_id)
         return ResumeSessionResponse()
 
     async def set_session_model(  # pylint: disable=unused-argument
@@ -1088,6 +1160,8 @@ class QwenPawACPAgent(Agent):
     ) -> dict[str, Any]:
         """Build the runtime request context for one ACP session."""
         request_context: dict[str, Any] = {}
+        if self._agent_mode == f"code":
+            request_context[f"coding_mode"] = True
         if session_info.get("mode", self.MODE_DEFAULT) == self.MODE_BYPASS:
             request_context["_headless_tool_guard"] = "false"
 
@@ -1815,6 +1889,8 @@ async def run_qwenpaw_agent(
     workspace_dir: Path | None = None,
     local_diagnostics: bool = False,
     runtime_provider: OpenAIRuntimeProviderConfig | None = None,
+    agent_mode: str | None = None,
+    goal_token_budget: int = 0,
 ) -> None:
     """Entry point: run QwenPaw as an ACP agent over stdio."""
     agent = QwenPawACPAgent(
@@ -1822,6 +1898,8 @@ async def run_qwenpaw_agent(
         workspace_dir=workspace_dir,
         local_diagnostics=local_diagnostics,
         runtime_provider=runtime_provider,
+        agent_mode=agent_mode,
+        goal_token_budget=goal_token_budget,
     )
     try:
         # pylint: disable=protected-access
