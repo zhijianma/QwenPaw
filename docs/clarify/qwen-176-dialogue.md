@@ -60,6 +60,35 @@ nl -ba design.md | sed -n '1,210p'
 呈现方式。应复用并补齐，而非另建视觉体系。未验证：实际渲染、焦点、
 对比度和保存时序，不能据源码声称这些行为已通过或存在运行时故障。
 
+### 第 2 轮：2026-11-25，确认样板并澄清消费边界
+
+- 人类已选择 A：语音转录页，为首批唯一真实配置页。
+- 已实测：`git rev-parse --abbrev-ref HEAD` 为 `agent/codex/qwen-176`；
+  `git rev-parse HEAD` 为 `1303fc168b35660cdf61cc3edb50023eeaa92bf2`。
+- 已实测：`git diff 13c976b2d2c7265cb1df9443f1bc3f496b9cee7e HEAD --stat`
+  仅列出台账 95 行新增。按本轮起点复核了代码差异范围，未直接沿用上轮
+  勘察结论；产品文件无变化，既有证据引用第 1 轮台账，不重复读取。
+- 新增静态事实（未在本地执行验证运行时行为）：
+  - `console/src/plugins/hostExternals.ts:57` 的 HostExternals 提供 React、
+    ReactDOM、antd 等依赖；:258 的安装逻辑未暴露 PageHeader/SettingsField。
+  - `console/src/plugins/pawapp-sdk/ui.tsx:115` 的 UI namespace 提供
+    registerPage 和 chat；页面接收 component 或 mount，两者必须恰有一个。
+  - `console/src/plugins/dynamicModuleRegistry.ts:24` 与 :84 的自动发现
+    范围是 pages，不包含 components，不能视作公共组件正式导出机制。
+  - `src/qwenpaw/plugins/frontend/package.json` 已有 @qwenpaw/plugin-sdk，
+    exports 为根入口及 globals；不据此断言插件无法复用任何宿主代码。
+- 证据读取命令：`nl -ba console/src/plugins/hostExternals.ts`（分两段
+  1–220、221–368 行读取）、`nl -ba console/src/plugins/pawapp-sdk/ui.tsx`、
+  `nl -ba console/src/plugins/dynamicModuleRegistry.ts`、
+  `cat src/qwenpaw/plugins/frontend/package.json`，退出码均为 0。
+- 推导：库内复用和独立插件复用是不同契约。首批若包含后者，需要显式的
+  组件导出、类型、样式与宿主依赖约定；不能把库内路径当成稳定公开 API。
+- 提案 A（推荐）：首批服务修改仓库的外部贡献者及 AI Agent，提供可导入
+  组件、使用表、示例和 checklist；独立插件沿用现有能力，不新增组件 SDK。
+- 提案 B：独立插件/PawApp 也须在首批直接复用同一套组件，则首批设计增加
+  公开组件契约与插件消费验证。该选择尚待人类确认。
+- 未验证：插件实际挂载与主题联动；本轮没有据此声称其通过或失败。
+
 ## 人类编号约束台账
 
 - 本轮没有新增编号约束；人类已完成项目关联。
@@ -71,12 +100,13 @@ nl -ba design.md | sed -n '1,210p'
   本轮为静态澄清，尚未采集页面截图；实施计划必须包含改动前采集步骤。
 - 历史边界保持：业务功能、字段、权限和保存语义不变；不新增产品能力。
 - 保留品牌与既有主题能力；首批只改一个真实配置页；不提前推广。
-- 推荐语音转录页只是架构师提案，尚非人类选择。
+- 第 2 轮已确认：首批样板为语音转录页（A）。
 
 ## 已确认节清单
 
 - [x] 启动视觉方向与首批交付边界（历史已同意）
-- [ ] 首个真实配置页
+- [x] 首个真实配置页：语音转录页
+- [ ] 首批公共组件消费边界
 - [ ] 总体方案选择
 - [ ] I 架构边界、组件职责与不变量
 - [ ] II 状态与保存契约
@@ -86,10 +116,7 @@ nl -ba design.md | sed -n '1,210p'
 
 ## 待确认问题队列
 
-1. 本轮：A 语音转录页（推荐）或 B 环境变量页，作为唯一首批样板。
-   A 可检验字段组合、条件显隐、帮助及真实异步状态；B 可检验列表、只读
-   和抽屉，但会使首批重心偏向列表编辑，增加保存路径与破坏性操作的验证。
-2. 样板选定后核对公共组件适用边界：仅仓库内开发者/Agent 复用，还是
-   已有插件入口也在首批消费范围。先检查公开导出契约，再据证据提问。
-3. 两项语义收敛后，独立给出 2–3 个总体方案；人类选择后逐节确认。
+1. 本轮仅剩消费边界：A 仓库贡献者/Agent 复用（推荐），或 B 首批包含
+   独立插件/PawApp 直接复用。样板页与前后截图要求均已确认，不再询问。
+2. 此项语义收敛后，下一轮独立给出 2–3 个总体方案；人类选择后逐节确认。
    不重复询问既定视觉方向、不把等待选择标为 blocked。
