@@ -12,7 +12,7 @@ import { useAgentStore } from "../../../stores/agentStore";
 import type { HeartbeatConfig } from "../../../api/types/heartbeat";
 import { parseEvery, serializeEvery } from "./parseEvery";
 import { DurationWheel } from "@/components/interaction/DurationWheel";
-import { PageHeader } from "@/components/PageHeader";
+import { SettingsPage } from "@/components/settings";
 import { HeartbeatInstructions } from "./HeartbeatInstructions";
 import styles from "./index.module.less";
 
@@ -193,166 +193,171 @@ function HeartbeatPage() {
     !scheduleLoading && !loadFailed && loadedAgentRef.current === agentId;
 
   return (
-    <div className={styles.heartbeatPage}>
-      <PageHeader items={[{ title: t("heartbeat.title") }]} />
-      <Form
-        form={form}
-        layout="vertical"
-        requiredMark={false}
-        onValuesChange={scheduleCurrentAgent}
-        onFinish={() => {
-          if (scheduleReady) void flush();
-        }}
-        className={styles.schedule}
-      >
-        {scheduleLoading ? (
-          <div className={styles.loading}>
-            <Spin aria-label={t("common.loading")} />
-          </div>
-        ) : loadFailed ? (
-          <div className={styles.loadError}>
-            <Alert
-              type="error"
-              showIcon
-              message={t("heartbeat.loadFailed")}
-              action={
-                <Button type="primary" onClick={() => void fetchConfig()}>
-                  {t("common.retry")}
-                </Button>
-              }
-            />
-          </div>
-        ) : (
-          <InteractiveCard
-            tilt={enabled ? 2 : 0}
-            className={styles.pulseCard}
-            data-disabled={!enabled}
-          >
-            <div className={styles.pulseHeader}>
-              <h2 id="heartbeat-interval-label">{t("heartbeat.every")}</h2>
-              <Form.Item name="enabled" valuePropName="checked" noStyle>
-                <Switch aria-label={t("heartbeat.enabled")} />
-              </Form.Item>
+    <SettingsPage header={{ items: [{ title: t("heartbeat.title") }] }}>
+      <div className={styles.heartbeatPage}>
+        <Form
+          form={form}
+          layout="vertical"
+          requiredMark={false}
+          onValuesChange={scheduleCurrentAgent}
+          onFinish={() => {
+            if (scheduleReady) void flush();
+          }}
+          className={styles.schedule}
+        >
+          {scheduleLoading ? (
+            <div className={styles.loading}>
+              <Spin aria-label={t("common.loading")} />
             </div>
-            <Form.Item
-              aria-labelledby="heartbeat-interval-label"
-              name="intervalMinutes"
-              rules={[
-                {
-                  required: true,
-                  type: "number",
-                  min: 1,
-                  message: t("heartbeat.intervalRange"),
-                },
-              ]}
-            >
-              <DurationWheel
-                disabled={!enabled}
-                maxHours={Math.max(23, Math.floor(intervalMinutes / 60))}
-              />
-            </Form.Item>
-            <div className={styles.presets}>
-              {[1, 3, 6, 12].map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  data-press
-                  disabled={!enabled}
-                  aria-pressed={intervalMinutes === value * 60}
-                  onClick={() => {
-                    form.setFieldsValue({ intervalMinutes: value * 60 });
-                    scheduleCurrentAgent();
-                  }}
-                >
-                  {value} {t("heartbeat.unitHours")}
-                </button>
-              ))}
-            </div>
-          </InteractiveCard>
-        )}
-        <HeartbeatInstructions key={agentId} agentId={agentId} />
-        {scheduleReady ? (
-          <section className={styles.delivery}>
-            <Form.Item name="target" hidden>
-              <input />
-            </Form.Item>
-            <div className={styles.settingRow}>
-              <h2>{t("heartbeat.target")}</h2>
-              <Segmented
-                aria-label={t("heartbeat.target")}
-                value={target}
-                options={TARGET_OPTIONS.map((option) => ({
-                  value: option.value,
-                  label: t(option.labelKey),
-                }))}
-                onChange={(value) => {
-                  form.setFieldValue("target", value);
-                  scheduleCurrentAgent();
-                }}
+          ) : loadFailed ? (
+            <div className={styles.loadError}>
+              <Alert
+                type="error"
+                showIcon
+                message={t("heartbeat.loadFailed")}
+                action={
+                  <Button type="primary" onClick={() => void fetchConfig()}>
+                    {t("common.retry")}
+                  </Button>
+                }
               />
             </div>
-            <div className={styles.divider} />
-            <div className={styles.hoursHeader}>
-              <h2>{t("heartbeat.activeHours")}</h2>
-              <Form.Item name="useActiveHours" valuePropName="checked" noStyle>
-                <Switch aria-label={t("heartbeat.activeHours")} />
-              </Form.Item>
-            </div>
-            <Form.Item
-              noStyle
-              shouldUpdate={(prev, cur) =>
-                prev.useActiveHours !== cur.useActiveHours
-              }
+          ) : (
+            <InteractiveCard
+              tilt={enabled ? 2 : 0}
+              className={styles.pulseCard}
+              data-disabled={!enabled}
             >
-              {({ getFieldValue }) =>
-                getFieldValue("useActiveHours") ? (
-                  <div className={styles.activeHoursRow}>
-                    <Form.Item
-                      name="activeHoursStart"
-                      label={t("heartbeat.activeStart")}
-                    >
-                      <TimePickerHHmm />
-                    </Form.Item>
-                    <Form.Item
-                      name="activeHoursEnd"
-                      label={t("heartbeat.activeEnd")}
-                    >
-                      <TimePickerHHmm />
-                    </Form.Item>
-                  </div>
-                ) : null
-              }
-            </Form.Item>
-            <div className={styles.divider} />
-            <div className={styles.timeoutRow}>
-              <h2>{t("heartbeat.timeoutSeconds")}</h2>
+              <div className={styles.pulseHeader}>
+                <h2 id="heartbeat-interval-label">{t("heartbeat.every")}</h2>
+                <Form.Item name="enabled" valuePropName="checked" noStyle>
+                  <Switch aria-label={t("heartbeat.enabled")} />
+                </Form.Item>
+              </div>
               <Form.Item
-                name="timeoutSeconds"
+                aria-labelledby="heartbeat-interval-label"
+                name="intervalMinutes"
                 rules={[
-                  { required: true, message: t("heartbeat.timeoutRequired") },
                   {
+                    required: true,
                     type: "number",
                     min: 1,
-                    message: t("heartbeat.timeoutMin"),
-                  },
-                  {
-                    type: "number",
-                    max: HEARTBEAT_MAX_TIMEOUT_SECONDS,
-                    message: t("heartbeat.timeoutMax"),
+                    message: t("heartbeat.intervalRange"),
                   },
                 ]}
               >
-                <NumberSlider
-                  min={1}
-                  max={HEARTBEAT_MAX_TIMEOUT_SECONDS}
-                  label={t("heartbeat.timeoutSeconds")}
+                <DurationWheel
+                  disabled={!enabled}
+                  maxHours={Math.max(23, Math.floor(intervalMinutes / 60))}
                 />
               </Form.Item>
-            </div>
-          </section>
-        ) : null}
-      </Form>
-    </div>
+              <div className={styles.presets}>
+                {[1, 3, 6, 12].map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    data-press
+                    disabled={!enabled}
+                    aria-pressed={intervalMinutes === value * 60}
+                    onClick={() => {
+                      form.setFieldsValue({ intervalMinutes: value * 60 });
+                      scheduleCurrentAgent();
+                    }}
+                  >
+                    {value} {t("heartbeat.unitHours")}
+                  </button>
+                ))}
+              </div>
+            </InteractiveCard>
+          )}
+          <HeartbeatInstructions key={agentId} agentId={agentId} />
+          {scheduleReady ? (
+            <section className={styles.delivery}>
+              <Form.Item name="target" hidden>
+                <input />
+              </Form.Item>
+              <div className={styles.settingRow}>
+                <h2>{t("heartbeat.target")}</h2>
+                <Segmented
+                  aria-label={t("heartbeat.target")}
+                  value={target}
+                  options={TARGET_OPTIONS.map((option) => ({
+                    value: option.value,
+                    label: t(option.labelKey),
+                  }))}
+                  onChange={(value) => {
+                    form.setFieldValue("target", value);
+                    scheduleCurrentAgent();
+                  }}
+                />
+              </div>
+              <div className={styles.divider} />
+              <div className={styles.hoursHeader}>
+                <h2>{t("heartbeat.activeHours")}</h2>
+                <Form.Item
+                  name="useActiveHours"
+                  valuePropName="checked"
+                  noStyle
+                >
+                  <Switch aria-label={t("heartbeat.activeHours")} />
+                </Form.Item>
+              </div>
+              <Form.Item
+                noStyle
+                shouldUpdate={(prev, cur) =>
+                  prev.useActiveHours !== cur.useActiveHours
+                }
+              >
+                {({ getFieldValue }) =>
+                  getFieldValue("useActiveHours") ? (
+                    <div className={styles.activeHoursRow}>
+                      <Form.Item
+                        name="activeHoursStart"
+                        label={t("heartbeat.activeStart")}
+                      >
+                        <TimePickerHHmm />
+                      </Form.Item>
+                      <Form.Item
+                        name="activeHoursEnd"
+                        label={t("heartbeat.activeEnd")}
+                      >
+                        <TimePickerHHmm />
+                      </Form.Item>
+                    </div>
+                  ) : null
+                }
+              </Form.Item>
+              <div className={styles.divider} />
+              <div className={styles.timeoutRow}>
+                <h2>{t("heartbeat.timeoutSeconds")}</h2>
+                <Form.Item
+                  name="timeoutSeconds"
+                  rules={[
+                    { required: true, message: t("heartbeat.timeoutRequired") },
+                    {
+                      type: "number",
+                      min: 1,
+                      message: t("heartbeat.timeoutMin"),
+                    },
+                    {
+                      type: "number",
+                      max: HEARTBEAT_MAX_TIMEOUT_SECONDS,
+                      message: t("heartbeat.timeoutMax"),
+                    },
+                  ]}
+                >
+                  <NumberSlider
+                    min={1}
+                    max={HEARTBEAT_MAX_TIMEOUT_SECONDS}
+                    label={t("heartbeat.timeoutSeconds")}
+                  />
+                </Form.Item>
+              </div>
+            </section>
+          ) : null}
+        </Form>
+      </div>
+    </SettingsPage>
   );
 }
 

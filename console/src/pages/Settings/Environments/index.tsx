@@ -16,7 +16,7 @@ import { useTranslation } from "react-i18next";
 
 import type { EnvSpec, EnvVar } from "../../../api/types";
 import api from "../../../api";
-import { PageHeader } from "@/components/PageHeader";
+import { SettingsPage } from "@/components/settings";
 import { useAppMessage } from "../../../hooks/useAppMessage";
 import { useEnvVars } from "./useEnvVars";
 import styles from "./index.module.less";
@@ -241,11 +241,11 @@ function EnvironmentsPage() {
     });
 
   return (
-    <div className={styles.page}>
-      <PageHeader
-        current={t("environments.environments")}
-        className={styles.pageHeader}
-        extra={
+    <SettingsPage
+      header={{
+        current: t("environments.environments"),
+        className: styles.pageHeader,
+        extra: (
           <Button
             type="primary"
             icon={<Plus size={16} />}
@@ -253,199 +253,202 @@ function EnvironmentsPage() {
           >
             {t("environments.addVariable")}
           </Button>
-        }
-      />
-      <main className={styles.content}>
-        <section className={styles.panel}>
-          <div className={styles.filters}>
-            <div className={styles.searchBox}>
-              <Search size={17} />
-              <Input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder={t("environments.searchPlaceholder")}
-                aria-label={t("environments.searchPlaceholder")}
-                variant="borderless"
-              />
-            </div>
-          </div>
-
-          {loading ? (
-            <div className={styles.state}>{t("environments.loading")}</div>
-          ) : error ? (
-            <div className={styles.state}>
-              <span>{error}</span>
-              <Button size="small" onClick={fetchAll}>
-                {t("environments.retry")}
-              </Button>
-            </div>
-          ) : (
-            <>
-              <div className={styles.sectionHeading}>
-                <h2>{t("environments.customSettings")}</h2>
-                <span>{customVariables.length}</span>
+        ),
+      }}
+    >
+      <div className={styles.page}>
+        <main className={styles.content}>
+          <section className={styles.panel}>
+            <div className={styles.filters}>
+              <div className={styles.searchBox}>
+                <Search size={17} />
+                <Input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder={t("environments.searchPlaceholder")}
+                  aria-label={t("environments.searchPlaceholder")}
+                  variant="borderless"
+                />
               </div>
-              <div className={styles.table}>
-                {customVariables.length === 0 ? (
-                  <div className={styles.empty}>
-                    {t("environments.noCustomVariables")}
-                  </div>
-                ) : (
-                  customVariables.map((item: EnvVar) => (
-                    <div className={styles.row} key={item.key}>
-                      <div className={styles.identity}>
-                        <code>{item.key}</code>
-                      </div>
-                      <ValueText value={item.value} secret />
-                      <span className={`${styles.badge} ${styles.user}`}>
-                        {t("environments.source.user")}
-                      </span>
-                      <div className={styles.actions}>
-                        <button
-                          type="button"
-                          className={styles.iconButton}
-                          onClick={() =>
-                            openEditor({
-                              key: item.key,
-                              value: item.value,
-                              isNew: false,
-                            })
-                          }
-                          aria-label={t("common.edit")}
-                        >
-                          <Pencil size={16} />
-                        </button>
-                        <DeleteAction
-                          label={t("environments.deleteConfirm", {
-                            name: item.key,
-                          })}
-                          onConfirm={() => executeRemove(item.key)}
-                        />
-                      </div>
+            </div>
+
+            {loading ? (
+              <div className={styles.state}>{t("environments.loading")}</div>
+            ) : error ? (
+              <div className={styles.state}>
+                <span>{error}</span>
+                <Button size="small" onClick={fetchAll}>
+                  {t("environments.retry")}
+                </Button>
+              </div>
+            ) : (
+              <>
+                <div className={styles.sectionHeading}>
+                  <h2>{t("environments.customSettings")}</h2>
+                  <span>{customVariables.length}</span>
+                </div>
+                <div className={styles.table}>
+                  {customVariables.length === 0 ? (
+                    <div className={styles.empty}>
+                      {t("environments.noCustomVariables")}
                     </div>
-                  ))
-                )}
-              </div>
+                  ) : (
+                    customVariables.map((item: EnvVar) => (
+                      <div className={styles.row} key={item.key}>
+                        <div className={styles.identity}>
+                          <code>{item.key}</code>
+                        </div>
+                        <ValueText value={item.value} secret />
+                        <span className={`${styles.badge} ${styles.user}`}>
+                          {t("environments.source.user")}
+                        </span>
+                        <div className={styles.actions}>
+                          <button
+                            type="button"
+                            className={styles.iconButton}
+                            onClick={() =>
+                              openEditor({
+                                key: item.key,
+                                value: item.value,
+                                isNew: false,
+                              })
+                            }
+                            aria-label={t("common.edit")}
+                          >
+                            <Pencil size={16} />
+                          </button>
+                          <DeleteAction
+                            label={t("environments.deleteConfirm", {
+                              name: item.key,
+                            })}
+                            onConfirm={() => executeRemove(item.key)}
+                          />
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
 
-              <div className={styles.sectionHeading}>
-                <h2>{t("environments.liveSettings")}</h2>
-                <span>{editableCatalog.length}</span>
-              </div>
-              <div className={`${styles.table} ${styles.editableTable}`}>
-                {editableCatalog.length === 0 ? (
-                  <div className={styles.empty}>
-                    {t("environments.noLiveVariables")}
-                  </div>
-                ) : (
-                  renderKnownRows(editableCatalog)
-                )}
-              </div>
+                <div className={styles.sectionHeading}>
+                  <h2>{t("environments.liveSettings")}</h2>
+                  <span>{editableCatalog.length}</span>
+                </div>
+                <div className={`${styles.table} ${styles.editableTable}`}>
+                  {editableCatalog.length === 0 ? (
+                    <div className={styles.empty}>
+                      {t("environments.noLiveVariables")}
+                    </div>
+                  ) : (
+                    renderKnownRows(editableCatalog)
+                  )}
+                </div>
 
-              <div className={styles.sectionHeading}>
-                <h2>{t("environments.readonlySettings")}</h2>
-                <span>{readonlyCatalog.length}</span>
-              </div>
-              <div className={`${styles.table} ${styles.readonlyTable}`}>
-                {readonlyCatalog.length === 0 ? (
-                  <div className={styles.empty}>
-                    {t("environments.noReadonlyVariables")}
-                  </div>
-                ) : (
-                  renderKnownRows(readonlyCatalog)
-                )}
-              </div>
-            </>
-          )}
-        </section>
-      </main>
+                <div className={styles.sectionHeading}>
+                  <h2>{t("environments.readonlySettings")}</h2>
+                  <span>{readonlyCatalog.length}</span>
+                </div>
+                <div className={`${styles.table} ${styles.readonlyTable}`}>
+                  {readonlyCatalog.length === 0 ? (
+                    <div className={styles.empty}>
+                      {t("environments.noReadonlyVariables")}
+                    </div>
+                  ) : (
+                    renderKnownRows(readonlyCatalog)
+                  )}
+                </div>
+              </>
+            )}
+          </section>
+        </main>
 
-      <SettingsDrawer
-        tall={false}
-        width={560}
-        open={editorOpen}
-        title={
-          editor?.isNew
-            ? t("environments.addVariable")
-            : t("environments.editVariable")
-        }
-        onClose={() => void closeEditor()}
-        footer={
-          editor?.isNew ? (
-            <div className={styles.editorActions}>
-              <Button onClick={() => void closeEditor()}>
-                {t("common.cancel")}
-              </Button>
-              <Button
-                type="primary"
-                loading={saving}
-                onClick={() => void saveEditor()}
-              >
-                {t("common.create")}
-              </Button>
-            </div>
-          ) : undefined
-        }
-      >
-        <div className={styles.editor}>
-          <label>
-            <span>{t("environments.key")}</span>
-            <Input
-              autoComplete="off"
-              name="environment-variable-name"
-              value={editor?.key ?? ""}
-              disabled={!editor?.isNew}
-              onChange={(event) =>
-                setEditor(
-                  (current) =>
-                    current && { ...current, key: event.target.value },
-                )
-              }
-              placeholder="VARIABLE_NAME"
-            />
-          </label>
-          <label>
-            <span>{t("environments.value")}</span>
-            <Input
-              value={editor?.value ?? ""}
-              type={
-                !revealed && (!editor || !catalogKeys.has(editor.key))
-                  ? "password"
-                  : "text"
-              }
-              autoComplete="new-password"
-              name="environment-variable-value"
-              suffix={
-                editor && !catalogKeys.has(editor.key) ? (
-                  <button
-                    type="button"
-                    className={styles.revealButton}
-                    aria-label={t(
-                      revealed
-                        ? "environments.hideValue"
-                        : "environments.showValue",
-                    )}
-                    onClick={() => setRevealed((value) => !value)}
-                  >
-                    {revealed ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                ) : undefined
-              }
-              onChange={(event) => {
-                setEditor(
-                  (current) =>
-                    current && { ...current, value: event.target.value },
-                );
-                if (editor && !editor.isNew) schedule();
-              }}
-              placeholder={t("environments.valuePlaceholder")}
-            />
-          </label>
-          <p>
-            <Zap size={14} /> {t("environments.applyHint")}
-          </p>
-        </div>
-      </SettingsDrawer>
-    </div>
+        <SettingsDrawer
+          tall={false}
+          width={560}
+          open={editorOpen}
+          title={
+            editor?.isNew
+              ? t("environments.addVariable")
+              : t("environments.editVariable")
+          }
+          onClose={() => void closeEditor()}
+          footer={
+            editor?.isNew ? (
+              <div className={styles.editorActions}>
+                <Button onClick={() => void closeEditor()}>
+                  {t("common.cancel")}
+                </Button>
+                <Button
+                  type="primary"
+                  loading={saving}
+                  onClick={() => void saveEditor()}
+                >
+                  {t("common.create")}
+                </Button>
+              </div>
+            ) : undefined
+          }
+        >
+          <div className={styles.editor}>
+            <label>
+              <span>{t("environments.key")}</span>
+              <Input
+                autoComplete="off"
+                name="environment-variable-name"
+                value={editor?.key ?? ""}
+                disabled={!editor?.isNew}
+                onChange={(event) =>
+                  setEditor(
+                    (current) =>
+                      current && { ...current, key: event.target.value },
+                  )
+                }
+                placeholder="VARIABLE_NAME"
+              />
+            </label>
+            <label>
+              <span>{t("environments.value")}</span>
+              <Input
+                value={editor?.value ?? ""}
+                type={
+                  !revealed && (!editor || !catalogKeys.has(editor.key))
+                    ? "password"
+                    : "text"
+                }
+                autoComplete="new-password"
+                name="environment-variable-value"
+                suffix={
+                  editor && !catalogKeys.has(editor.key) ? (
+                    <button
+                      type="button"
+                      className={styles.revealButton}
+                      aria-label={t(
+                        revealed
+                          ? "environments.hideValue"
+                          : "environments.showValue",
+                      )}
+                      onClick={() => setRevealed((value) => !value)}
+                    >
+                      {revealed ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  ) : undefined
+                }
+                onChange={(event) => {
+                  setEditor(
+                    (current) =>
+                      current && { ...current, value: event.target.value },
+                  );
+                  if (editor && !editor.isNew) schedule();
+                }}
+                placeholder={t("environments.valuePlaceholder")}
+              />
+            </label>
+            <p>
+              <Zap size={14} /> {t("environments.applyHint")}
+            </p>
+          </div>
+        </SettingsDrawer>
+      </div>
+    </SettingsPage>
   );
 }
 

@@ -14,7 +14,7 @@ import {
   AgentLoopCard,
   EmbeddingModelCard,
 } from "./components";
-import { PageHeader } from "@/components/PageHeader";
+import { SettingsPage } from "@/components/settings";
 import {
   CONTEXT_MANAGER_BACKEND_MAPPINGS,
   MEMORY_MANAGER_BACKEND_MAPPINGS,
@@ -315,74 +315,82 @@ function AgentConfigPage() {
 
   if (loading) {
     return (
-      <div className={styles.configPage}>
-        <div className={styles.centerState}>
-          <span className={styles.stateText}>{t("common.loading")}</span>
+      <SettingsPage header={{ current: t("agentConfig.title") }}>
+        <div className={styles.configPage}>
+          <div className={styles.centerState}>
+            <span className={styles.stateText}>{t("common.loading")}</span>
+          </div>
         </div>
-      </div>
+      </SettingsPage>
     );
   }
 
   if (error) {
     return (
-      <div className={styles.configPage}>
-        <div className={styles.centerState}>
-          <span className={styles.stateTextError}>{error}</span>
-          <Button size="small" onClick={fetchConfig} style={{ marginTop: 12 }}>
-            {t("environments.retry")}
-          </Button>
+      <SettingsPage header={{ current: t("agentConfig.title") }}>
+        <div className={styles.configPage}>
+          <div className={styles.centerState}>
+            <span className={styles.stateTextError}>{error}</span>
+            <Button
+              size="small"
+              onClick={fetchConfig}
+              style={{ marginTop: 12 }}
+            >
+              {t("environments.retry")}
+            </Button>
+          </div>
         </div>
-      </div>
+      </SettingsPage>
     );
   }
 
   return (
-    <div className={styles.configPage}>
-      <PageHeader current={t("agentConfig.title")} />
-
-      <div className={styles.content}>
-        <MemoryMaintenanceContext.Provider
-          value={{
-            needsReindex,
-            setNeedsReindex,
-            reindexing,
-            setReindexing: setLocalReindexing,
-            persistedEmbeddingFingerprint,
-            setPersistedEmbeddingFingerprint,
-            openMemorySettings: () =>
-              document
-                .querySelector('[data-runtime-key="remeLightMemory"]')
-                ?.scrollIntoView({ block: "start", behavior: "smooth" }),
-            runtimeStatus,
-            diagnosticsStatus,
-            checkMemoryStatus,
-            rerankerExpanded,
-            setRerankerExpanded,
-            configLoadRevision,
-          }}
-        >
-          <ConfigAutoSaveContext.Provider value={scheduleSave}>
-            <Form
-              form={form}
-              layout="vertical"
-              className={styles.form}
-              onValuesChange={scheduleSave}
-              onFieldsChange={handleRerankerFieldsChange(
-                form,
-                setRerankerExpanded,
-              )}
-            >
-              <RuntimeWorkbench
-                items={dynamicTabs}
-                initialKey={searchParams.get("tab")}
-                onSectionChange={setSection}
-                onNavigate={flushSave}
-              />
-            </Form>
-          </ConfigAutoSaveContext.Provider>
-        </MemoryMaintenanceContext.Provider>
+    <SettingsPage header={{ current: t("agentConfig.title") }}>
+      <div className={styles.configPage}>
+        <div className={styles.content}>
+          <MemoryMaintenanceContext.Provider
+            value={{
+              needsReindex,
+              setNeedsReindex,
+              reindexing,
+              setReindexing: setLocalReindexing,
+              persistedEmbeddingFingerprint,
+              setPersistedEmbeddingFingerprint,
+              openMemorySettings: () =>
+                document
+                  .querySelector('[data-runtime-key="remeLightMemory"]')
+                  ?.scrollIntoView({ block: "start", behavior: "smooth" }),
+              runtimeStatus,
+              diagnosticsStatus,
+              checkMemoryStatus,
+              rerankerExpanded,
+              setRerankerExpanded,
+              configLoadRevision,
+            }}
+          >
+            <ConfigAutoSaveContext.Provider value={scheduleSave}>
+              <Form
+                form={form}
+                layout="vertical"
+                className={styles.form}
+                onValuesChange={scheduleSave}
+                onFieldsChange={handleRerankerFieldsChange(
+                  form,
+                  setRerankerExpanded,
+                )}
+              >
+                <RuntimeWorkbench
+                  items={dynamicTabs}
+                  initialKey={searchParams.get("tab")}
+                  onSectionChange={setSection}
+                  onNavigate={flushSave}
+                />
+              </Form>
+            </ConfigAutoSaveContext.Provider>
+          </MemoryMaintenanceContext.Provider>
+        </div>
       </div>
-    </div>
+    </SettingsPage>
   );
 }
 

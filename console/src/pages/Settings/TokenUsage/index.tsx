@@ -9,7 +9,7 @@ import api from "../../../api";
 import type { TokenUsageRecord } from "../../../api/types/tokenUsage";
 import type { LlmToolDaily } from "../../../api/modules/agentStats";
 import { useAppMessage } from "../../../hooks/useAppMessage";
-import { PageHeader } from "@/components/PageHeader";
+import { SettingsPage } from "@/components/settings";
 import {
   LoadingState,
   SummaryCards,
@@ -223,154 +223,152 @@ function TokenUsagePage() {
 
   const tablesEmpty = byModelData.length === 0 && byDateData.length === 0;
 
-  const pageHeader = <PageHeader current={t("tokenUsage.title")} />;
-
   return (
-    <div className={styles.container}>
-      {pageHeader}
-
-      <div className={styles.content}>
-        <div className={styles.toolbar}>
-          <Segmented
-            value={chartView}
-            onChange={setChartView}
-            options={[
-              {
-                value: "trends",
-                label: t("tokenUsage.trends", "Trends"),
-                icon: <ChartNoAxesCombined size={15} />,
-              },
-              {
-                value: "activity",
-                label: t("tokenUsage.activity", "Activity"),
-                icon: <CalendarDays size={15} />,
-              },
-            ]}
-          />
-          {chartView === "activity" ? (
-            <DatePicker
-              picker="year"
-              allowClear={false}
-              value={dayjs().year(activityYear)}
-              onChange={(value) => {
-                if (value) setActivityYear(value.year());
-              }}
-              disabledDate={(current) => current.year() > dayjs().year()}
-              aria-label={t("tokenUsage.year", "Year")}
+    <SettingsPage header={{ current: t("tokenUsage.title") }}>
+      <div className={styles.container}>
+        <div className={styles.content}>
+          <div className={styles.toolbar}>
+            <Segmented
+              value={chartView}
+              onChange={setChartView}
+              options={[
+                {
+                  value: "trends",
+                  label: t("tokenUsage.trends", "Trends"),
+                  icon: <ChartNoAxesCombined size={15} />,
+                },
+                {
+                  value: "activity",
+                  label: t("tokenUsage.activity", "Activity"),
+                  icon: <CalendarDays size={15} />,
+                },
+              ]}
             />
-          ) : (
-            <DatePicker.RangePicker
-              classNames={{
-                popup: { root: styles.mobileRangePopup },
-              }}
-              presets={[30, 90, 365].map((days) => ({
-                label: t("tokenUsage.lastDays", {
-                  count: days,
-                  defaultValue: "Last {{count}} days",
-                }),
-                value: [dayjs().subtract(days - 1, "day"), dayjs()],
-              }))}
-              value={[startDate, endDate]}
-              onChange={handleDateChange}
-              disabledDate={(current: Dayjs, info?: { from?: Dayjs }) => {
-                if (!current || current.isAfter(dayjs(), "day")) return true;
-                if (info?.from) {
-                  return Math.abs(current.diff(info.from, "day")) >= 365;
-                }
-                return false;
-              }}
-            />
-          )}
-        </div>
-
-        {loading ? (
-          <LoadingState message={t("common.loading", "Loading...")} />
-        ) : error ? (
-          <LoadingState
-            message={t("tokenUsage.loadFailed")}
-            error
-            onRetry={fetchData}
-          />
-        ) : (
-          <>
-            {aggregatedData && (
-              <SummaryCards
-                totalCalls={aggregatedData.total_calls}
-                totalPromptTokens={aggregatedData.total_prompt_tokens}
-                totalCompletionTokens={aggregatedData.total_completion_tokens}
-                totalCacheReadTokens={aggregatedData.total_cache_read_tokens}
-                totalCacheEligibleInputTokens={
-                  aggregatedData.total_cache_eligible_input_tokens
-                }
+            {chartView === "activity" ? (
+              <DatePicker
+                picker="year"
+                allowClear={false}
+                value={dayjs().year(activityYear)}
+                onChange={(value) => {
+                  if (value) setActivityYear(value.year());
+                }}
+                disabledDate={(current) => current.year() > dayjs().year()}
+                aria-label={t("tokenUsage.year", "Year")}
               />
-            )}
-
-            <motion.div
-              key={chartView}
-              initial={reduced ? false : { opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.2 }}
-            >
-              {chartView === "activity" ? (
-                <UsageActivity
-                  records={records}
-                  startDate={dayjs().year(activityYear).startOf("year")}
-                  endDate={dayjs().year(activityYear).endOf("year")}
-                />
-              ) : (
-                <div className={styles.trendRow}>
-                  <ModelTrendChart chartConfig={modelTrendConfig} />
-                  <TokenTypeChart chartConfig={tokenTypeConfig} />
-                </div>
-              )}
-            </motion.div>
-          </>
-        )}
-
-        {!loading && chartView === "trends" && (
-          <Card
-            className={styles.chartCard}
-            title={
-              <Tooltip title={t("tokenUsage.llmAndToolTrendTooltip")}>
-                <span className={styles.chartTitle}>
-                  {t("tokenUsage.llmAndToolTrend")}
-                </span>
-              </Tooltip>
-            }
-          >
-            {trendLoading ? (
-              <LoadingState message={t("common.loading", "Loading...")} />
-            ) : trendError ? (
-              <LoadingState
-                message={t("tokenUsage.llmAndToolTrendLoadFailed")}
-                error
-                onRetry={() => {
-                  void fetchTrend(++trendFetchIdRef.current);
+            ) : (
+              <DatePicker.RangePicker
+                classNames={{
+                  popup: { root: styles.mobileRangePopup },
+                }}
+                presets={[30, 90, 365].map((days) => ({
+                  label: t("tokenUsage.lastDays", {
+                    count: days,
+                    defaultValue: "Last {{count}} days",
+                  }),
+                  value: [dayjs().subtract(days - 1, "day"), dayjs()],
+                }))}
+                value={[startDate, endDate]}
+                onChange={handleDateChange}
+                disabledDate={(current: Dayjs, info?: { from?: Dayjs }) => {
+                  if (!current || current.isAfter(dayjs(), "day")) return true;
+                  if (info?.from) {
+                    return Math.abs(current.diff(info.from, "day")) >= 365;
+                  }
+                  return false;
                 }}
               />
-            ) : (llmToolDays ?? []).every(
-                (d) => d.agent_llm_calls === 0 && d.tool_calls === 0,
-              ) ? (
+            )}
+          </div>
+
+          {loading ? (
+            <LoadingState message={t("common.loading", "Loading...")} />
+          ) : error ? (
+            <LoadingState
+              message={t("tokenUsage.loadFailed")}
+              error
+              onRetry={fetchData}
+            />
+          ) : (
+            <>
+              {aggregatedData && (
+                <SummaryCards
+                  totalCalls={aggregatedData.total_calls}
+                  totalPromptTokens={aggregatedData.total_prompt_tokens}
+                  totalCompletionTokens={aggregatedData.total_completion_tokens}
+                  totalCacheReadTokens={aggregatedData.total_cache_read_tokens}
+                  totalCacheEligibleInputTokens={
+                    aggregatedData.total_cache_eligible_input_tokens
+                  }
+                />
+              )}
+
+              <motion.div
+                key={chartView}
+                initial={reduced ? false : { opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.2 }}
+              >
+                {chartView === "activity" ? (
+                  <UsageActivity
+                    records={records}
+                    startDate={dayjs().year(activityYear).startOf("year")}
+                    endDate={dayjs().year(activityYear).endOf("year")}
+                  />
+                ) : (
+                  <div className={styles.trendRow}>
+                    <ModelTrendChart chartConfig={modelTrendConfig} />
+                    <TokenTypeChart chartConfig={tokenTypeConfig} />
+                  </div>
+                )}
+              </motion.div>
+            </>
+          )}
+
+          {!loading && chartView === "trends" && (
+            <Card
+              className={styles.chartCard}
+              title={
+                <Tooltip title={t("tokenUsage.llmAndToolTrendTooltip")}>
+                  <span className={styles.chartTitle}>
+                    {t("tokenUsage.llmAndToolTrend")}
+                  </span>
+                </Tooltip>
+              }
+            >
+              {trendLoading ? (
+                <LoadingState message={t("common.loading", "Loading...")} />
+              ) : trendError ? (
+                <LoadingState
+                  message={t("tokenUsage.llmAndToolTrendLoadFailed")}
+                  error
+                  onRetry={() => {
+                    void fetchTrend(++trendFetchIdRef.current);
+                  }}
+                />
+              ) : (llmToolDays ?? []).every(
+                  (d) => d.agent_llm_calls === 0 && d.tool_calls === 0,
+                ) ? (
+                <EmptyState message={t("tokenUsage.noData")} />
+              ) : (
+                <Line {...llmToolConfig} />
+              )}
+            </Card>
+          )}
+
+          {!loading &&
+            !error &&
+            (tablesEmpty ? (
               <EmptyState message={t("tokenUsage.noData")} />
             ) : (
-              <Line {...llmToolConfig} />
-            )}
-          </Card>
-        )}
-
-        {!loading &&
-          !error &&
-          (tablesEmpty ? (
-            <EmptyState message={t("tokenUsage.noData")} />
-          ) : (
-            <DataTables
-              byModelData={byModelData}
-              byDateData={byDateData}
-              byAgentData={byAgentData}
-            />
-          ))}
+              <DataTables
+                byModelData={byModelData}
+                byDateData={byDateData}
+                byAgentData={byAgentData}
+              />
+            ))}
+        </div>
       </div>
-    </div>
+    </SettingsPage>
   );
 }
 
