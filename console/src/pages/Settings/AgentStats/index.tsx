@@ -8,7 +8,7 @@ import { useTranslation } from "react-i18next";
 import { Column, Pie } from "@ant-design/plots";
 import api from "../../../api";
 import type { AgentStatsSummary } from "../../../api/types/agentStats";
-import { PageHeader } from "@/components/PageHeader";
+import { SettingsPage } from "@/components/settings";
 import { useAppMessage } from "../../../hooks/useAppMessage";
 import { formatCompact } from "../../../utils/formatNumber";
 import { formatPercent } from "../../../utils/cacheUsage";
@@ -349,213 +349,214 @@ function AgentStatsPage() {
   }, [data?.channel_stats, pieCommon]);
 
   return (
-    <div className={styles.page}>
-      <PageHeader current={t("agentStats.title")} />
-      <div className={styles.content}>
-        {error && !data ? (
-          <div className={styles.error}>
-            <p>{error}</p>
-            <Button
-              type="primary"
-              onClick={() => fetchData(startDate, endDate)}
-            >
-              {t("agentStats.retry")}
-            </Button>
-          </div>
-        ) : loading && !data ? (
-          <div className={styles.loading}>
-            <Spin size="large" />
-            <p>{t("common.loading")}</p>
-          </div>
-        ) : (
-          <>
-            <div className={styles.filters}>
-              <DatePicker.RangePicker
-                value={[startDate, endDate]}
-                onChange={handleDateChange}
-                className={styles.datePicker}
-                disabled={loading}
-                disabledDate={(current) =>
-                  current && current.isAfter(dayjs(), "day")
-                }
-              />
-              {loading && <Spin size="small" />}
+    <SettingsPage header={{ current: t("agentStats.title") }}>
+      <div className={styles.page}>
+        <div className={styles.content}>
+          {error && !data ? (
+            <div className={styles.error}>
+              <p>{error}</p>
+              <Button
+                type="primary"
+                onClick={() => fetchData(startDate, endDate)}
+              >
+                {t("agentStats.retry")}
+              </Button>
             </div>
+          ) : loading && !data ? (
+            <div className={styles.loading}>
+              <Spin size="large" />
+              <p>{t("common.loading")}</p>
+            </div>
+          ) : (
+            <>
+              <div className={styles.filters}>
+                <DatePicker.RangePicker
+                  value={[startDate, endDate]}
+                  onChange={handleDateChange}
+                  className={styles.datePicker}
+                  disabled={loading}
+                  disabledDate={(current) =>
+                    current && current.isAfter(dayjs(), "day")
+                  }
+                />
+                {loading && <Spin size="small" />}
+              </div>
 
-            {hasData ? (
-              <>
-                <div className={styles.currentAgentSectionTitle}>
-                  {agentName}
-                </div>
-                <div className={styles.summaryCards}>
-                  <SummaryCard
-                    value={data.total_active_sessions}
-                    label={t("agentStats.totalSessions")}
-                    tooltip={t("agentStats.totalSessionsTooltip")}
-                  />
-                  <SummaryCard
-                    value={data.total_messages}
-                    label={t("agentStats.totalMessages")}
-                    tooltip={t("agentStats.totalMessagesTooltip")}
-                  />
-                  <SummaryCard
-                    value={data.agent_prompt_tokens ?? 0}
-                    label={t("agentStats.promptTokens")}
-                    tooltip={t("agentStats.currentAgentPromptTokensTooltip")}
-                  />
-                  <SummaryCard
-                    value={data.agent_cache_hit_rate}
-                    label={t("tokenUsage.cacheHitRate")}
-                    tooltip={t("agentStats.currentAgentCacheHitRateTooltip")}
-                    formatValue={(value) => formatPercent(value ?? null)}
-                  />
-                  <SummaryCard
-                    value={data.agent_completion_tokens ?? 0}
-                    label={t("agentStats.completionTokens")}
-                    tooltip={t(
-                      "agentStats.currentAgentCompletionTokensTooltip",
-                    )}
-                  />
-                  <SummaryCard
-                    value={data.agent_llm_calls ?? 0}
-                    label={t("agentStats.currentAgentLlmCalls")}
-                    tooltip={t("agentStats.currentAgentLlmCallsTooltip")}
-                  />
-                  <SummaryCard
-                    value={data.total_tool_calls}
-                    label={t("agentStats.toolCalls")}
-                    tooltip={t("agentStats.toolCallsTooltip")}
-                  />
-                </div>
-
-                <div className={styles.trendRow}>
-                  <Card
-                    className={styles.chartCard}
-                    title={
-                      <Tooltip
-                        title={t("agentStats.messageTrendTooltip")}
-                        placement="bottom"
-                      >
-                        <span className={styles.chartTitle}>
-                          {t("agentStats.messageTrend")}
-                        </span>
-                      </Tooltip>
-                    }
-                  >
-                    <div className={styles.chartContainerShort}>
-                      <Column {...messageColumnConfig} />
-                    </div>
-                  </Card>
-
-                  <Card
-                    className={styles.chartCard}
-                    title={
-                      <Tooltip
-                        title={t("agentStats.sessionTrendTooltip")}
-                        placement="bottom"
-                      >
-                        <span className={styles.chartTitle}>
-                          {t("agentStats.sessionTrend")}
-                        </span>
-                      </Tooltip>
-                    }
-                  >
-                    <div className={styles.chartContainerShort}>
-                      <Column {...chatColumnConfig} />
-                    </div>
-                  </Card>
-
-                  <Card
-                    className={styles.chartCard}
-                    title={
-                      <Tooltip
-                        title={t("agentStats.currentAgentTokenTrendTooltip")}
-                        placement="bottom"
-                      >
-                        <span className={styles.chartTitle}>
-                          {t("agentStats.tokenTrend")}
-                        </span>
-                      </Tooltip>
-                    }
-                  >
-                    <div className={styles.chartContainerShort}>
-                      <Column {...agentTokenColumnConfig} />
-                    </div>
-                  </Card>
-
-                  <Card
-                    className={styles.chartCard}
-                    title={
-                      <Tooltip
-                        title={t("agentStats.llmAndToolTrendTooltip")}
-                        placement="bottom"
-                      >
-                        <span className={styles.chartTitle}>
-                          {t("agentStats.llmAndToolTrend")}
-                        </span>
-                      </Tooltip>
-                    }
-                  >
-                    <div className={styles.chartContainerShort}>
-                      <Column {...llmToolColumnConfig} />
-                    </div>
-                  </Card>
-                </div>
-
-                {(chatPieConfig || messagePieConfig) && (
-                  <div className={styles.pieChartsRow}>
-                    {chatPieConfig && (
-                      <Card
-                        className={styles.chartCard}
-                        title={
-                          <Tooltip
-                            title={t("agentStats.sessionsByChannelTooltip")}
-                            placement="bottom"
-                          >
-                            <span className={styles.chartTitle}>
-                              {t("agentStats.sessionsByChannel")}
-                            </span>
-                          </Tooltip>
-                        }
-                      >
-                        <div className={styles.pieChartContainer}>
-                          <Pie {...chatPieConfig} />
-                        </div>
-                      </Card>
-                    )}
-
-                    {messagePieConfig && (
-                      <Card
-                        className={styles.chartCard}
-                        title={
-                          <Tooltip
-                            title={t("agentStats.messagesByChannelTooltip")}
-                            placement="bottom"
-                          >
-                            <span className={styles.chartTitle}>
-                              {t("agentStats.messagesByChannel")}
-                            </span>
-                          </Tooltip>
-                        }
-                      >
-                        <div className={styles.pieChartContainer}>
-                          <Pie {...messagePieConfig} />
-                        </div>
-                      </Card>
-                    )}
+              {hasData ? (
+                <>
+                  <div className={styles.currentAgentSectionTitle}>
+                    {agentName}
                   </div>
-                )}
-              </>
-            ) : (
-              <Empty
-                description={t("agentStats.noData")}
-                style={{ marginTop: 48 }}
-              />
-            )}
-          </>
-        )}
+                  <div className={styles.summaryCards}>
+                    <SummaryCard
+                      value={data.total_active_sessions}
+                      label={t("agentStats.totalSessions")}
+                      tooltip={t("agentStats.totalSessionsTooltip")}
+                    />
+                    <SummaryCard
+                      value={data.total_messages}
+                      label={t("agentStats.totalMessages")}
+                      tooltip={t("agentStats.totalMessagesTooltip")}
+                    />
+                    <SummaryCard
+                      value={data.agent_prompt_tokens ?? 0}
+                      label={t("agentStats.promptTokens")}
+                      tooltip={t("agentStats.currentAgentPromptTokensTooltip")}
+                    />
+                    <SummaryCard
+                      value={data.agent_cache_hit_rate}
+                      label={t("tokenUsage.cacheHitRate")}
+                      tooltip={t("agentStats.currentAgentCacheHitRateTooltip")}
+                      formatValue={(value) => formatPercent(value ?? null)}
+                    />
+                    <SummaryCard
+                      value={data.agent_completion_tokens ?? 0}
+                      label={t("agentStats.completionTokens")}
+                      tooltip={t(
+                        "agentStats.currentAgentCompletionTokensTooltip",
+                      )}
+                    />
+                    <SummaryCard
+                      value={data.agent_llm_calls ?? 0}
+                      label={t("agentStats.currentAgentLlmCalls")}
+                      tooltip={t("agentStats.currentAgentLlmCallsTooltip")}
+                    />
+                    <SummaryCard
+                      value={data.total_tool_calls}
+                      label={t("agentStats.toolCalls")}
+                      tooltip={t("agentStats.toolCallsTooltip")}
+                    />
+                  </div>
+
+                  <div className={styles.trendRow}>
+                    <Card
+                      className={styles.chartCard}
+                      title={
+                        <Tooltip
+                          title={t("agentStats.messageTrendTooltip")}
+                          placement="bottom"
+                        >
+                          <span className={styles.chartTitle}>
+                            {t("agentStats.messageTrend")}
+                          </span>
+                        </Tooltip>
+                      }
+                    >
+                      <div className={styles.chartContainerShort}>
+                        <Column {...messageColumnConfig} />
+                      </div>
+                    </Card>
+
+                    <Card
+                      className={styles.chartCard}
+                      title={
+                        <Tooltip
+                          title={t("agentStats.sessionTrendTooltip")}
+                          placement="bottom"
+                        >
+                          <span className={styles.chartTitle}>
+                            {t("agentStats.sessionTrend")}
+                          </span>
+                        </Tooltip>
+                      }
+                    >
+                      <div className={styles.chartContainerShort}>
+                        <Column {...chatColumnConfig} />
+                      </div>
+                    </Card>
+
+                    <Card
+                      className={styles.chartCard}
+                      title={
+                        <Tooltip
+                          title={t("agentStats.currentAgentTokenTrendTooltip")}
+                          placement="bottom"
+                        >
+                          <span className={styles.chartTitle}>
+                            {t("agentStats.tokenTrend")}
+                          </span>
+                        </Tooltip>
+                      }
+                    >
+                      <div className={styles.chartContainerShort}>
+                        <Column {...agentTokenColumnConfig} />
+                      </div>
+                    </Card>
+
+                    <Card
+                      className={styles.chartCard}
+                      title={
+                        <Tooltip
+                          title={t("agentStats.llmAndToolTrendTooltip")}
+                          placement="bottom"
+                        >
+                          <span className={styles.chartTitle}>
+                            {t("agentStats.llmAndToolTrend")}
+                          </span>
+                        </Tooltip>
+                      }
+                    >
+                      <div className={styles.chartContainerShort}>
+                        <Column {...llmToolColumnConfig} />
+                      </div>
+                    </Card>
+                  </div>
+
+                  {(chatPieConfig || messagePieConfig) && (
+                    <div className={styles.pieChartsRow}>
+                      {chatPieConfig && (
+                        <Card
+                          className={styles.chartCard}
+                          title={
+                            <Tooltip
+                              title={t("agentStats.sessionsByChannelTooltip")}
+                              placement="bottom"
+                            >
+                              <span className={styles.chartTitle}>
+                                {t("agentStats.sessionsByChannel")}
+                              </span>
+                            </Tooltip>
+                          }
+                        >
+                          <div className={styles.pieChartContainer}>
+                            <Pie {...chatPieConfig} />
+                          </div>
+                        </Card>
+                      )}
+
+                      {messagePieConfig && (
+                        <Card
+                          className={styles.chartCard}
+                          title={
+                            <Tooltip
+                              title={t("agentStats.messagesByChannelTooltip")}
+                              placement="bottom"
+                            >
+                              <span className={styles.chartTitle}>
+                                {t("agentStats.messagesByChannel")}
+                              </span>
+                            </Tooltip>
+                          }
+                        >
+                          <div className={styles.pieChartContainer}>
+                            <Pie {...messagePieConfig} />
+                          </div>
+                        </Card>
+                      )}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <Empty
+                  description={t("agentStats.noData")}
+                  style={{ marginTop: 48 }}
+                />
+              )}
+            </>
+          )}
+        </div>
       </div>
-    </div>
+    </SettingsPage>
   );
 }
 

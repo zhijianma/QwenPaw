@@ -9,7 +9,8 @@
  *    even if the reload throws). Everything else lives in children that have
  *    suites next door (`InstalledPluginList`, `OfficialPluginList`,
  *    `MarketPluginList`, `InstallPluginModal`, `usePluginManager`,
- *    `useInstallModal`, `MarketplaceHeader`), so those are stubbed on purpose
+ *    `useInstallModal`, `useMarketplaceHeaderProps`), so those are stubbed on
+ *    purpose
  *    and every assertion is about this file's wiring.
  * 2. `useSearchParams` runs for real under a `MemoryRouter` (via
  *    `renderWithProviders`), and a location probe renders the live search
@@ -124,16 +125,21 @@ vi.mock("./hooks/useInstallModal", () => ({
   },
 }));
 
-vi.mock("@/pages/Market/components/MarketplaceHeader", () => ({
-  MarketplaceHeader: (props: {
-    activeSection: string;
-    extra?: React.ReactNode;
-  }) => (
-    <div data-testid="market-header" data-section={props.activeSection}>
-      {props.extra}
-    </div>
-  ),
-}));
+vi.mock(
+  "@/pages/Market/components/MarketplaceHeader/useMarketplaceHeaderProps",
+  () => ({
+    useMarketplaceHeaderProps: (props: {
+      activeSection: string;
+      extra?: React.ReactNode;
+    }) => ({
+      current: "nav.marketplace",
+      center: (
+        <div data-testid="market-header" data-section={props.activeSection} />
+      ),
+      extra: props.extra,
+    }),
+  }),
+);
 
 vi.mock("@/plugins/usePluginLoader", () => ({
   reloadFrontendPlugin: env.reloadFrontendPlugin,

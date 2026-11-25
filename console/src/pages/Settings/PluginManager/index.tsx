@@ -4,7 +4,8 @@ import type { InstallPluginResult } from "@/api/modules/plugin";
 import { Badge, Button, Tabs } from "antd";
 import { useSearchParams } from "react-router-dom";
 import { ExternalLink, Plus } from "lucide-react";
-import { MarketplaceHeader } from "@/pages/Market/components/MarketplaceHeader";
+import { SettingsPage } from "@/components/settings";
+import { useMarketplaceHeaderProps } from "@/pages/Market/components/MarketplaceHeader/useMarketplaceHeaderProps";
 import { usePluginManager } from "./hooks/usePluginManager";
 import { useInstallModal } from "./hooks/useInstallModal";
 import { InstallPluginModal } from "./components/InstallPluginModal";
@@ -137,46 +138,48 @@ export default function PluginManagerPage() {
     },
   ];
 
-  return (
-    <div className={styles.page}>
-      <MarketplaceHeader
-        activeSection="plugins"
-        extra={
-          <div className={styles.headerActions}>
-            <Button
-              icon={<ExternalLink size={16} />}
-              onClick={() =>
-                window.open("https://platform.agentscope.io/plugins", "_blank")
-              }
-            >
-              {t("pluginManager.publishBtn")}
-            </Button>
-            <Button
-              type="primary"
-              icon={<Plus size={16} />}
-              onClick={installModal.openModal}
-            >
-              {t("pluginManager.installBtn")}
-            </Button>
-          </div>
-        }
-      />
-
-      <div className={styles.content}>
-        <Tabs
-          activeKey={activeTab}
-          onChange={(key) => {
-            const next = new URLSearchParams(searchParams);
-            if (key === "installed") next.delete("view");
-            else next.set("view", key);
-            setSearchParams(next, { replace: true });
-          }}
-          items={tabItems}
-          className={styles.tabs}
-        />
+  const header = useMarketplaceHeaderProps({
+    activeSection: "plugins",
+    extra: (
+      <div className={styles.headerActions}>
+        <Button
+          icon={<ExternalLink size={16} />}
+          onClick={() =>
+            window.open("https://platform.agentscope.io/plugins", "_blank")
+          }
+        >
+          {t("pluginManager.publishBtn")}
+        </Button>
+        <Button
+          type="primary"
+          icon={<Plus size={16} />}
+          onClick={installModal.openModal}
+        >
+          {t("pluginManager.installBtn")}
+        </Button>
       </div>
+    ),
+  });
 
-      <InstallPluginModal {...installModal} />
-    </div>
+  return (
+    <SettingsPage header={header}>
+      <div className={styles.page}>
+        <div className={styles.content}>
+          <Tabs
+            activeKey={activeTab}
+            onChange={(key) => {
+              const next = new URLSearchParams(searchParams);
+              if (key === "installed") next.delete("view");
+              else next.set("view", key);
+              setSearchParams(next, { replace: true });
+            }}
+            items={tabItems}
+            className={styles.tabs}
+          />
+        </div>
+
+        <InstallPluginModal {...installModal} />
+      </div>
+    </SettingsPage>
   );
 }

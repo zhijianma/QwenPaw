@@ -17,7 +17,7 @@ import {
 } from "./components";
 import type { SkillSpec } from "../../../api/types";
 import type { HarnessDiscoveredSkill } from "../../../api/modules/harness";
-import { PageHeader } from "@/components/PageHeader";
+import { SettingsPage } from "@/components/settings";
 import { useSkillsPage } from "./useSkillsPage";
 import styles from "./index.module.less";
 import { useMemo, useCallback, useState } from "react";
@@ -140,40 +140,42 @@ function SkillsPage() {
 
   if (error) {
     return (
-      <div className={styles.skillsPage}>
-        <PageHeader items={[{ title: t("skills.title") }]} />
-        <div className={styles.loadError}>
-          <Alert
-            type="error"
-            showIcon
-            message={t("skills.loadFailed")}
-            action={
-              <Button type="primary" onClick={() => void refreshSkills()}>
-                {t("common.retry")}
-              </Button>
-            }
-          />
+      <SettingsPage header={{ items: [{ title: t("skills.title") }] }}>
+        <div className={styles.skillsPage}>
+          <div className={styles.loadError}>
+            <Alert
+              type="error"
+              showIcon
+              message={t("skills.loadFailed")}
+              action={
+                <Button type="primary" onClick={() => void refreshSkills()}>
+                  {t("common.retry")}
+                </Button>
+              }
+            />
+          </div>
         </div>
-      </div>
+      </SettingsPage>
     );
   }
 
   if (loading || !ready) {
     return (
-      <div className={styles.skillsPage}>
-        <PageHeader items={[{ title: t("skills.title") }]} />
-        <div className={styles.loading} role="status">
-          <span className={styles.loadingText}>{t("common.loading")}</span>
+      <SettingsPage header={{ items: [{ title: t("skills.title") }] }}>
+        <div className={styles.skillsPage}>
+          <div className={styles.loading} role="status">
+            <span className={styles.loadingText}>{t("common.loading")}</span>
+          </div>
         </div>
-      </div>
+      </SettingsPage>
     );
   }
 
   return (
-    <div className={styles.skillsPage}>
-      <PageHeader
-        items={[{ title: t("skills.title") }]}
-        extra={
+    <SettingsPage
+      header={{
+        items: [{ title: t("skills.title") }],
+        extra: (
           <HeaderActions
             batchModeEnabled={batchModeEnabled}
             selectedSkills={selectedSkills}
@@ -196,243 +198,249 @@ function SkillsPage() {
             onBrowseMarket={openMarket}
             onFileChange={handleFileChange}
           />
-        }
-      />
-
-      <ImportHubModal
-        open={importModalOpen}
-        importing={importing}
-        onCancel={closeImportModal}
-        onConfirm={handleConfirmImport}
-        cancelImport={cancelImport}
-        hint={t("skillPool.externalHubHint")}
-      />
-
-      {providerSkills.length > 0 && (
-        <div className={styles.managementBanner}>
-          <Sparkles size={16} />
-          <div>
-            <strong>{t("skills.qwenpawManaged")}</strong>
-            <span>{t("skills.qwenpawManagedHint")}</span>
-          </div>
-        </div>
-      )}
-
-      {!loading && skills.length > 0 && (
-        <SkillsToolbar
-          searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
-          searchTags={searchTags}
-          onTagsChange={setSearchTags}
-          allTags={allTags}
-          filterOpen={filterOpen}
-          onFilterOpenChange={setFilterOpen}
-          viewMode={viewMode}
-          onViewModeChange={setViewMode}
+        ),
+      }}
+    >
+      <div className={styles.skillsPage}>
+        <ImportHubModal
+          open={importModalOpen}
+          importing={importing}
+          onCancel={closeImportModal}
+          onConfirm={handleConfirmImport}
+          cancelImport={cancelImport}
+          hint={t("skillPool.externalHubHint")}
         />
-      )}
 
-      {skills.length === 0 ? (
-        <div
-          className={`${styles.emptyState} ${
-            providerSkills.length > 0 ? styles.emptyStateCompact : ""
-          }`}
-        >
-          <div className={styles.emptyStateBadge}>
-            {t("skills.emptyStateBadge")}
-          </div>
-          <h2 className={styles.emptyStateTitle}>
-            {t("skills.emptyStateTitle")}
-          </h2>
-          <p className={styles.emptyStateText}>{t("skills.emptyStateText")}</p>
-          <div className={styles.emptyStateActions}>
-            <Button
-              type="primary"
-              className={styles.primaryActionButton}
-              onClick={handleCreate}
-              icon={<PlusOutlined size="1em" />}
-            >
-              {t("skills.emptyStateCreate")}
-            </Button>
-          </div>
-        </div>
-      ) : sortedSkills.length === 0 ? (
-        <div className={styles.noSearchResults}>
-          <span className={styles.noSearchResultsIcon}>
-            <Search size={28} aria-hidden="true" />
-          </span>
-          <span className={styles.noSearchResultsText}>
-            {t("skills.noSearchResults")}
-          </span>
-        </div>
-      ) : (
-        <LayoutGroup>
-          {/* Enabled Skills Section */}
-          {enabledSkills.length > 0 && (
-            <div className={styles.panelSection}>
-              <div className={styles.panelTitle}>
-                <span className={styles.panelDotGreen} />
-                {t("skills.enabledSkills")}
-                <span className={styles.panelCount}>
-                  {enabledSkillCount} {t("skills.active")}
-                </span>
-              </div>
-
-              {viewMode === "card" ? (
-                <div className={styles.skillsGrid}>
-                  {enabledSkills.map((skill) => (
-                    <SkillCard
-                      key={skill.name}
-                      skill={skill}
-                      getChannelName={getChannelName}
-                      selected={
-                        batchModeEnabled
-                          ? selectedSkills.has(skill.name)
-                          : undefined
-                      }
-                      onSelect={() => toggleSelect(skill.name)}
-                      onClick={() => handleEdit(skill)}
-                      onMouseEnter={() => {}}
-                      onMouseLeave={() => {}}
-                      onToggleEnabled={(e) => handleToggleEnabled(skill, e)}
-                      onDelete={(e) => handleDelete(skill, e)}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <div className={styles.skillsList}>
-                  {enabledSkills.map(renderSkillListItem)}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Disabled Skills Section */}
-          {disabledSkills.length > 0 && (
-            <div className={styles.panelSectionDashed}>
-              <div className={styles.panelTitle}>
-                <span className={styles.panelDotGray} />
-                {t("skills.disabledSkills")}
-              </div>
-              {viewMode === "card" ? (
-                <div className={styles.skillsGrid}>
-                  {disabledSkills.map((skill) => (
-                    <SkillCard
-                      key={skill.name}
-                      skill={skill}
-                      getChannelName={getChannelName}
-                      selected={
-                        batchModeEnabled
-                          ? selectedSkills.has(skill.name)
-                          : undefined
-                      }
-                      onSelect={() => toggleSelect(skill.name)}
-                      onClick={() => handleEdit(skill)}
-                      onToggleEnabled={(event) =>
-                        handleToggleEnabled(skill, event)
-                      }
-                      onDelete={(event) => handleDelete(skill, event)}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <div className={styles.skillsList}>
-                  {disabledSkills.map(renderSkillListItem)}
-                </div>
-              )}
-            </div>
-          )}
-
-          {hasMore && (
-            <div
-              ref={sentinelRef}
-              style={{ height: 1, minHeight: 1, flexShrink: 0 }}
-            />
-          )}
-        </LayoutGroup>
-      )}
-
-      {providerSkills.length > 0 && (
-        <section className={styles.providerSkillsSection}>
-          <div className={styles.providerSkillsHeading}>
+        {providerSkills.length > 0 && (
+          <div className={styles.managementBanner}>
+            <Sparkles size={16} />
             <div>
-              <span className={styles.providerSkillsTitle}>
-                <LockKeyhole size={16} />
-                {t("skills.providerManaged")}
-              </span>
-              <p>{t("skills.providerManagedHint")}</p>
+              <strong>{t("skills.qwenpawManaged")}</strong>
+              <span>{t("skills.qwenpawManagedHint")}</span>
             </div>
-            <span className={styles.providerSkillsCount}>
-              {providerSkills.length}
+          </div>
+        )}
+
+        {!loading && skills.length > 0 && (
+          <SkillsToolbar
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            searchTags={searchTags}
+            onTagsChange={setSearchTags}
+            allTags={allTags}
+            filterOpen={filterOpen}
+            onFilterOpenChange={setFilterOpen}
+            viewMode={viewMode}
+            onViewModeChange={setViewMode}
+          />
+        )}
+
+        {skills.length === 0 ? (
+          <div
+            className={`${styles.emptyState} ${
+              providerSkills.length > 0 ? styles.emptyStateCompact : ""
+            }`}
+          >
+            <div className={styles.emptyStateBadge}>
+              {t("skills.emptyStateBadge")}
+            </div>
+            <h2 className={styles.emptyStateTitle}>
+              {t("skills.emptyStateTitle")}
+            </h2>
+            <p className={styles.emptyStateText}>
+              {t("skills.emptyStateText")}
+            </p>
+            <div className={styles.emptyStateActions}>
+              <Button
+                type="primary"
+                className={styles.primaryActionButton}
+                onClick={handleCreate}
+                icon={<PlusOutlined size="1em" />}
+              >
+                {t("skills.emptyStateCreate")}
+              </Button>
+            </div>
+          </div>
+        ) : sortedSkills.length === 0 ? (
+          <div className={styles.noSearchResults}>
+            <span className={styles.noSearchResultsIcon}>
+              <Search size={28} aria-hidden="true" />
+            </span>
+            <span className={styles.noSearchResultsText}>
+              {t("skills.noSearchResults")}
             </span>
           </div>
-          <div className={styles.providerSkillsGrid}>
-            {providerSkills.map((skill) => (
-              <button
-                type="button"
-                key={`${skill.provider_id}:${skill.source}:${skill.name}`}
-                className={styles.providerSkillCard}
-                onClick={() => setSelectedProviderSkill(skill)}
-                aria-label={`${t("common.view")}: ${skill.name}`}
-              >
-                <div className={styles.providerSkillTop}>
-                  <span className={styles.providerSkillIcon}>
-                    <LockKeyhole size={15} />
-                  </span>
-                  <span
-                    className={
-                      skill.enabled
-                        ? styles.providerSkillEnabled
-                        : styles.providerSkillDisabled
-                    }
-                  >
-                    {skill.enabled ? t("common.enabled") : t("common.disabled")}
+        ) : (
+          <LayoutGroup>
+            {/* Enabled Skills Section */}
+            {enabledSkills.length > 0 && (
+              <div className={styles.panelSection}>
+                <div className={styles.panelTitle}>
+                  <span className={styles.panelDotGreen} />
+                  {t("skills.enabledSkills")}
+                  <span className={styles.panelCount}>
+                    {enabledSkillCount} {t("skills.active")}
                   </span>
                 </div>
-                <strong title={skill.name}>{skill.name}</strong>
-                <p>{skill.description || t("skills.noDescription")}</p>
-                <div className={styles.providerSkillMeta}>
-                  <span>{skill.provider_id}</span>
-                  {skill.source && <span>{skill.source}</span>}
-                  <span>{t("skills.providerOnly")}</span>
-                  <span>{t("skills.readOnly")}</span>
+
+                {viewMode === "card" ? (
+                  <div className={styles.skillsGrid}>
+                    {enabledSkills.map((skill) => (
+                      <SkillCard
+                        key={skill.name}
+                        skill={skill}
+                        getChannelName={getChannelName}
+                        selected={
+                          batchModeEnabled
+                            ? selectedSkills.has(skill.name)
+                            : undefined
+                        }
+                        onSelect={() => toggleSelect(skill.name)}
+                        onClick={() => handleEdit(skill)}
+                        onMouseEnter={() => {}}
+                        onMouseLeave={() => {}}
+                        onToggleEnabled={(e) => handleToggleEnabled(skill, e)}
+                        onDelete={(e) => handleDelete(skill, e)}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className={styles.skillsList}>
+                    {enabledSkills.map(renderSkillListItem)}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Disabled Skills Section */}
+            {disabledSkills.length > 0 && (
+              <div className={styles.panelSectionDashed}>
+                <div className={styles.panelTitle}>
+                  <span className={styles.panelDotGray} />
+                  {t("skills.disabledSkills")}
                 </div>
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
+                {viewMode === "card" ? (
+                  <div className={styles.skillsGrid}>
+                    {disabledSkills.map((skill) => (
+                      <SkillCard
+                        key={skill.name}
+                        skill={skill}
+                        getChannelName={getChannelName}
+                        selected={
+                          batchModeEnabled
+                            ? selectedSkills.has(skill.name)
+                            : undefined
+                        }
+                        onSelect={() => toggleSelect(skill.name)}
+                        onClick={() => handleEdit(skill)}
+                        onToggleEnabled={(event) =>
+                          handleToggleEnabled(skill, event)
+                        }
+                        onDelete={(event) => handleDelete(skill, event)}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className={styles.skillsList}>
+                    {disabledSkills.map(renderSkillListItem)}
+                  </div>
+                )}
+              </div>
+            )}
 
-      <ProviderSkillDrawer
-        open={selectedProviderSkill !== null}
-        skill={selectedProviderSkill}
-        onClose={() => setSelectedProviderSkill(null)}
-      />
+            {hasMore && (
+              <div
+                ref={sentinelRef}
+                style={{ height: 1, minHeight: 1, flexShrink: 0 }}
+              />
+            )}
+          </LayoutGroup>
+        )}
 
-      <PoolTransferModal
-        mode={poolModal}
-        skills={skills}
-        poolSkills={poolSkills}
-        onCancel={closePoolModal}
-        onUpload={handleUploadToPool}
-        onDownload={handleDownloadFromPool}
-      />
+        {providerSkills.length > 0 && (
+          <section className={styles.providerSkillsSection}>
+            <div className={styles.providerSkillsHeading}>
+              <div>
+                <span className={styles.providerSkillsTitle}>
+                  <LockKeyhole size={16} />
+                  {t("skills.providerManaged")}
+                </span>
+                <p>{t("skills.providerManagedHint")}</p>
+              </div>
+              <span className={styles.providerSkillsCount}>
+                {providerSkills.length}
+              </span>
+            </div>
+            <div className={styles.providerSkillsGrid}>
+              {providerSkills.map((skill) => (
+                <button
+                  type="button"
+                  key={`${skill.provider_id}:${skill.source}:${skill.name}`}
+                  className={styles.providerSkillCard}
+                  onClick={() => setSelectedProviderSkill(skill)}
+                  aria-label={`${t("common.view")}: ${skill.name}`}
+                >
+                  <div className={styles.providerSkillTop}>
+                    <span className={styles.providerSkillIcon}>
+                      <LockKeyhole size={15} />
+                    </span>
+                    <span
+                      className={
+                        skill.enabled
+                          ? styles.providerSkillEnabled
+                          : styles.providerSkillDisabled
+                      }
+                    >
+                      {skill.enabled
+                        ? t("common.enabled")
+                        : t("common.disabled")}
+                    </span>
+                  </div>
+                  <strong title={skill.name}>{skill.name}</strong>
+                  <p>{skill.description || t("skills.noDescription")}</p>
+                  <div className={styles.providerSkillMeta}>
+                    <span>{skill.provider_id}</span>
+                    {skill.source && <span>{skill.source}</span>}
+                    <span>{t("skills.providerOnly")}</span>
+                    <span>{t("skills.readOnly")}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
 
-      {conflictRenameModal}
+        <ProviderSkillDrawer
+          open={selectedProviderSkill !== null}
+          skill={selectedProviderSkill}
+          onClose={() => setSelectedProviderSkill(null)}
+        />
 
-      <SkillDrawer
-        channelOptions={channelOptions}
-        open={drawerOpen}
-        editing={drawerLoading || editingSkill !== null}
-        editingName={editingSkillName}
-        loading={drawerLoading}
-        editingSkill={editingSkill}
-        form={form}
-        availableTags={allTags}
-        onClose={handleDrawerClose}
-        onSubmit={handleSubmit}
-      />
-    </div>
+        <PoolTransferModal
+          mode={poolModal}
+          skills={skills}
+          poolSkills={poolSkills}
+          onCancel={closePoolModal}
+          onUpload={handleUploadToPool}
+          onDownload={handleDownloadFromPool}
+        />
+
+        {conflictRenameModal}
+
+        <SkillDrawer
+          channelOptions={channelOptions}
+          open={drawerOpen}
+          editing={drawerLoading || editingSkill !== null}
+          editingName={editingSkillName}
+          loading={drawerLoading}
+          editingSkill={editingSkill}
+          form={form}
+          availableTags={allTags}
+          onClose={handleDrawerClose}
+          onSubmit={handleSubmit}
+        />
+      </div>
+    </SettingsPage>
   );
 }
 

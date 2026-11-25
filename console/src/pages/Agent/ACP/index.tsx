@@ -23,7 +23,8 @@ import {
 import { Button, Form, Modal, Select } from "@agentscope-ai/design";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { PageHeader } from "@/components/PageHeader";
+import { SettingsPage } from "@/components/settings";
+import type { PageHeaderProps } from "@/components/PageHeader";
 import { MCPFeatureStatus } from "@/components/MCPFeatureStatus";
 import api from "../../../api";
 import { useAppMessage } from "../../../hooks/useAppMessage";
@@ -600,34 +601,30 @@ function ACPPage() {
     { key: "custom", label: t("acp.custom") },
   ];
 
-  const renderPageHeader = (showActions: boolean) => (
-    <PageHeader
-      className={stylesACP.pageHeader}
-      current={t("acp.title")}
-      afterBreadcrumb={
-        <InlineHelp>{`${t("acp.intro")} ${t("acp.protocolHelp")}`}</InlineHelp>
-      }
-      extra={
-        showActions ? (
-          <div className={stylesACP.headerActions}>
-            <Button
-              icon={<SlidersHorizontal size={16} />}
-              onClick={handleNodeSettingsClick}
-            >
-              {t("acp.nodeSettings")}
-            </Button>
-            <Button
-              type="primary"
-              icon={<Plus size={16} />}
-              onClick={handleCreateClick}
-            >
-              {t("acp.create")}
-            </Button>
-          </div>
-        ) : undefined
-      }
-    />
-  );
+  const getPageHeader = (showActions: boolean): PageHeaderProps => ({
+    className: stylesACP.pageHeader,
+    current: t("acp.title"),
+    afterBreadcrumb: (
+      <InlineHelp>{`${t("acp.intro")} ${t("acp.protocolHelp")}`}</InlineHelp>
+    ),
+    extra: showActions ? (
+      <div className={stylesACP.headerActions}>
+        <Button
+          icon={<SlidersHorizontal size={16} />}
+          onClick={handleNodeSettingsClick}
+        >
+          {t("acp.nodeSettings")}
+        </Button>
+        <Button
+          type="primary"
+          icon={<Plus size={16} />}
+          onClick={handleCreateClick}
+        >
+          {t("acp.create")}
+        </Button>
+      </div>
+    ) : undefined,
+  });
 
   const waitingForCurrentAgent =
     pageAgent !== selectedAgent ||
@@ -636,159 +633,164 @@ function ACPPage() {
 
   if (waitingForCurrentAgent) {
     return (
-      <div className={styles.channelsPage}>
-        {renderPageHeader(false)}
-        <div className={styles.loading} role="status">
-          <span className={styles.loadingText}>{t("acp.loading")}</span>
+      <SettingsPage header={getPageHeader(false)}>
+        <div className={styles.channelsPage}>
+          <div className={styles.loading} role="status">
+            <span className={styles.loadingText}>{t("acp.loading")}</span>
+          </div>
         </div>
-      </div>
+      </SettingsPage>
     );
   }
 
   if (loadError) {
     return (
-      <div className={styles.channelsPage}>
-        {renderPageHeader(false)}
-        <div className={stylesACP.loadError} role="alert">
-          <span>{t("acp.loadError")}</span>
-          <Button type="primary" onClick={() => void fetchACP(selectedAgent)}>
-            {t("common.retry")}
-          </Button>
+      <SettingsPage header={getPageHeader(false)}>
+        <div className={styles.channelsPage}>
+          <div className={stylesACP.loadError} role="alert">
+            <span>{t("acp.loadError")}</span>
+            <Button type="primary" onClick={() => void fetchACP(selectedAgent)}>
+              {t("common.retry")}
+            </Button>
+          </div>
         </div>
-      </div>
+      </SettingsPage>
     );
   }
 
   return (
-    <div className={styles.channelsPage}>
-      {renderPageHeader(true)}
-      <MCPFeatureStatus agentId={selectedAgent} refreshKey={loadedConfig} />
-      <section className={stylesACP.intro}>
-        <div className={stylesACP.connection} aria-label={t("acp.intro")}>
-          <span>
-            <Bot size={18} />
-            {t("acp.currentAgent")}
-          </span>
-          <ArrowRight size={16} aria-hidden />
-          <span className={stylesACP.protocol}>
-            <Cable size={20} />
-            ACP
-          </span>
-          <ArrowRight size={16} aria-hidden />
-          <span>
-            <Wrench size={18} />
-            {t("acp.callableTools")}
-          </span>
-        </div>
-        <div className={stylesACP.metric}>
-          <NumberFlow
-            value={Object.values(agents).filter((item) => item.enabled).length}
-            respectMotionPreference
+    <SettingsPage header={getPageHeader(true)}>
+      <div className={styles.channelsPage}>
+        <MCPFeatureStatus agentId={selectedAgent} refreshKey={loadedConfig} />
+        <section className={stylesACP.intro}>
+          <div className={stylesACP.connection} aria-label={t("acp.intro")}>
+            <span>
+              <Bot size={18} />
+              {t("acp.currentAgent")}
+            </span>
+            <ArrowRight size={16} aria-hidden />
+            <span className={stylesACP.protocol}>
+              <Cable size={20} />
+              ACP
+            </span>
+            <ArrowRight size={16} aria-hidden />
+            <span>
+              <Wrench size={18} />
+              {t("acp.callableTools")}
+            </span>
+          </div>
+          <div className={stylesACP.metric}>
+            <NumberFlow
+              value={
+                Object.values(agents).filter((item) => item.enabled).length
+              }
+              respectMotionPreference
+            />
+            <span>{t("acp.enabledIntegrations")}</span>
+          </div>
+        </section>
+        <div className={stylesACP.collectionControls}>
+          <Segmented
+            value={filter}
+            onChange={(value) => setFilter(value as FilterType)}
+            options={FILTER_TABS.map((item) => ({
+              value: item.key,
+              label: item.label,
+            }))}
           />
-          <span>{t("acp.enabledIntegrations")}</span>
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            allowClear
+            prefix={<Search size={16} />}
+            placeholder={t("acp.search")}
+            aria-label={t("acp.search")}
+          />
         </div>
-      </section>
-      <div className={stylesACP.collectionControls}>
-        <Segmented
-          value={filter}
-          onChange={(value) => setFilter(value as FilterType)}
-          options={FILTER_TABS.map((item) => ({
-            value: item.key,
-            label: item.label,
-          }))}
+        <div className={styles.channelsContainer}>
+          {loading ? (
+            <div className={styles.loading}>
+              <span className={styles.loadingText}>{t("acp.loading")}</span>
+            </div>
+          ) : (
+            <div
+              className={`${styles.channelsGrid} ${stylesACP.channelsGridMobile}`}
+            >
+              {!cards.length && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />}
+              {cards.map(({ key, config }, index) => (
+                <Cascade key={key} index={index}>
+                  <ACPCard
+                    surfaceId={`${surfacePrefix}:${key}`}
+                    agentKey={key}
+                    config={config}
+                    isBuiltin={isBuiltinACPAgent(key)}
+                    onClick={() => handleCardClick(key)}
+                    onToggle={async () => {
+                      const ownerAgent = getWritableOwner();
+                      if (!ownerAgent) return;
+                      try {
+                        await api.updateACPAgentConfig(
+                          key,
+                          {
+                            ...config,
+                            enabled: !config.enabled,
+                          },
+                          ownerAgent.agentId,
+                        );
+                        if (!ownerIsCurrent(ownerAgent)) return;
+                        setAgents((current) => ({
+                          ...current,
+                          [key]: { ...current[key], enabled: !config.enabled },
+                        }));
+                      } catch {
+                        if (!ownerIsCurrent(ownerAgent)) return;
+                        message.error(t("acp.configFailed"));
+                      }
+                    }}
+                  />
+                </Cascade>
+              ))}
+            </div>
+          )}
+        </div>
+        <ACPDrawer
+          surfaceId={drawerSurface}
+          open={drawerOpen}
+          activeKey={activeKey}
+          isCreateMode={isCreateMode}
+          form={form}
+          saving={saving}
+          initialValues={activeKey ? agents[activeKey] : undefined}
+          canEditKey={isCreateMode || !isBuiltinACPAgent(activeKey || "")}
+          canDelete={!isCreateMode && !isBuiltinACPAgent(activeKey || "")}
+          onClose={handleClose}
+          onSubmit={handleSubmit}
+          onDelete={handleDelete}
         />
-        <Input
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          allowClear
-          prefix={<Search size={16} />}
-          placeholder={t("acp.search")}
-          aria-label={t("acp.search")}
-        />
-      </div>
-      <div className={styles.channelsContainer}>
-        {loading ? (
-          <div className={styles.loading}>
-            <span className={styles.loadingText}>{t("acp.loading")}</span>
-          </div>
-        ) : (
-          <div
-            className={`${styles.channelsGrid} ${stylesACP.channelsGridMobile}`}
-          >
-            {!cards.length && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />}
-            {cards.map(({ key, config }, index) => (
-              <Cascade key={key} index={index}>
-                <ACPCard
-                  surfaceId={`${surfacePrefix}:${key}`}
-                  agentKey={key}
-                  config={config}
-                  isBuiltin={isBuiltinACPAgent(key)}
-                  onClick={() => handleCardClick(key)}
-                  onToggle={async () => {
-                    const ownerAgent = getWritableOwner();
-                    if (!ownerAgent) return;
-                    try {
-                      await api.updateACPAgentConfig(
-                        key,
-                        {
-                          ...config,
-                          enabled: !config.enabled,
-                        },
-                        ownerAgent.agentId,
-                      );
-                      if (!ownerIsCurrent(ownerAgent)) return;
-                      setAgents((current) => ({
-                        ...current,
-                        [key]: { ...current[key], enabled: !config.enabled },
-                      }));
-                    } catch {
-                      if (!ownerIsCurrent(ownerAgent)) return;
-                      message.error(t("acp.configFailed"));
-                    }
-                  }}
-                />
-              </Cascade>
-            ))}
-          </div>
-        )}
-      </div>
-      <ACPDrawer
-        surfaceId={drawerSurface}
-        open={drawerOpen}
-        activeKey={activeKey}
-        isCreateMode={isCreateMode}
-        form={form}
-        saving={saving}
-        initialValues={activeKey ? agents[activeKey] : undefined}
-        canEditKey={isCreateMode || !isBuiltinACPAgent(activeKey || "")}
-        canDelete={!isCreateMode && !isBuiltinACPAgent(activeKey || "")}
-        onClose={handleClose}
-        onSubmit={handleSubmit}
-        onDelete={handleDelete}
-      />
-      <SharedModal
-        title={t("acp.nodeSettings")}
-        open={nodeModalOpen}
-        onCancel={() => setNodeModalOpen(false)}
-        footer={null}
-        destroyOnHidden
-      >
-        <div
-          className={stylesACP.nodeSettings}
-          data-settings-target="acp.nodePath"
+        <SharedModal
+          title={t("acp.nodeSettings")}
+          open={nodeModalOpen}
+          onCancel={() => setNodeModalOpen(false)}
+          footer={null}
+          destroyOnHidden
         >
-          <label className={stylesACP.nodeLabel}>{t("acp.nodePath")}</label>
-          <Select
-            value={selectedNodeValue}
-            options={nodeOptions}
-            loading={nodeRuntimeLoading || nodeRuntimeSaving}
-            onChange={(value) => saveNodePath(String(value))}
-            placeholder={t("acp.nodePath")}
-            style={{ width: "100%" }}
-          />
-        </div>
-      </SharedModal>
-    </div>
+          <div
+            className={stylesACP.nodeSettings}
+            data-settings-target="acp.nodePath"
+          >
+            <label className={stylesACP.nodeLabel}>{t("acp.nodePath")}</label>
+            <Select
+              value={selectedNodeValue}
+              options={nodeOptions}
+              loading={nodeRuntimeLoading || nodeRuntimeSaving}
+              onChange={(value) => saveNodePath(String(value))}
+              placeholder={t("acp.nodePath")}
+              style={{ width: "100%" }}
+            />
+          </div>
+        </SharedModal>
+      </div>
+    </SettingsPage>
   );
 }
 

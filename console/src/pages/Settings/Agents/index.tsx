@@ -10,7 +10,7 @@ import { useAgentStore } from "../../../stores/agentStore";
 import { useAgents } from "./useAgents";
 import { AgentModal, CopyAgentModal } from "./components";
 import { MAIL_DOMAIN_WHITELIST } from "./components/mailDomains";
-import { PageHeader } from "@/components/PageHeader";
+import { SettingsPage } from "@/components/settings";
 import { MCPFeatureStatus } from "@/components/MCPFeatureStatus";
 import { reorderAgents } from "./reorder";
 import styles from "./index.module.less";
@@ -328,16 +328,10 @@ export default function AgentsPage() {
   };
 
   return (
-    <div className={styles.agentsPage}>
-      {mcpCheck && (
-        <MCPFeatureStatus
-          key={`${mcpCheck.id}:${mcpCheck.revision}`}
-          agentId={mcpCheck.id}
-        />
-      )}
-      <PageHeader
-        current={t("agent.agents")}
-        extra={
+    <SettingsPage
+      header={{
+        current: t("agent.agents"),
+        extra: (
           <div className={styles.headerRight}>
             <Button
               type="primary"
@@ -347,43 +341,51 @@ export default function AgentsPage() {
               {t("agent.create")}
             </Button>
           </div>
-        }
-      />
+        ),
+      }}
+    >
+      <div className={styles.agentsPage}>
+        {mcpCheck && (
+          <MCPFeatureStatus
+            key={`${mcpCheck.id}:${mcpCheck.revision}`}
+            agentId={mcpCheck.id}
+          />
+        )}
+        <div className={styles.galleryContainer}>
+          <AgentGallery
+            agents={agents}
+            loading={loading}
+            reordering={false}
+            onEdit={handleEdit}
+            onCopy={handleOpenCopy}
+            onDelete={handleDelete}
+            onToggle={handleToggle}
+            onPin={handlePin}
+            onReorder={handleReorder}
+          />
+        </div>
 
-      <div className={styles.galleryContainer}>
-        <AgentGallery
-          agents={agents}
-          loading={loading}
-          reordering={false}
-          onEdit={handleEdit}
-          onCopy={handleOpenCopy}
-          onDelete={handleDelete}
-          onToggle={handleToggle}
-          onPin={handlePin}
-          onReorder={handleReorder}
+        <AgentModal
+          open={modalVisible}
+          editingAgent={editingAgent}
+          form={form}
+          selectedSkills={selectedSkills}
+          onSelectedSkillsChange={setSelectedSkills}
+          onSave={handleSubmit}
+          onCancel={() => setModalVisible(false)}
+        />
+
+        <CopyAgentModal
+          open={copyModalVisible}
+          sourceAgent={copyingAgent}
+          confirmLoading={copying}
+          onOk={handleCopy}
+          onCancel={() => {
+            setCopyModalVisible(false);
+            setCopyingAgent(null);
+          }}
         />
       </div>
-
-      <AgentModal
-        open={modalVisible}
-        editingAgent={editingAgent}
-        form={form}
-        selectedSkills={selectedSkills}
-        onSelectedSkillsChange={setSelectedSkills}
-        onSave={handleSubmit}
-        onCancel={() => setModalVisible(false)}
-      />
-
-      <CopyAgentModal
-        open={copyModalVisible}
-        sourceAgent={copyingAgent}
-        confirmLoading={copying}
-        onOk={handleCopy}
-        onCancel={() => {
-          setCopyModalVisible(false);
-          setCopyingAgent(null);
-        }}
-      />
-    </div>
+    </SettingsPage>
   );
 }

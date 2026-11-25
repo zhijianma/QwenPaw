@@ -25,7 +25,7 @@ import {
 import { getBuiltinNoticeLines } from "./builtinNotice";
 import { useSkillPool } from "./useSkillPool";
 import { useProgressiveRender } from "../../../hooks/useProgressiveRender";
-import { PageHeader } from "@/components/PageHeader";
+import { SettingsPage } from "@/components/settings";
 import type { PoolSkillSpec } from "../../../api/types";
 import styles from "./index.module.less";
 
@@ -49,10 +49,10 @@ function SkillPoolPage() {
 
   return (
     <LayoutGroup id={transferId}>
-      <div className={styles.skillsPage}>
-        <PageHeader
-          current={t("nav.skillPool")}
-          extra={
+      <SettingsPage
+        header={{
+          current: t("nav.skillPool"),
+          extra: (
             <div className={styles.headerRight}>
               <input
                 type="file"
@@ -173,138 +173,142 @@ function SkillPoolPage() {
                 </>
               )}
             </div>
-          }
-        />
+          ),
+        }}
+      >
+        <div className={styles.skillsPage}>
+          {/* ---- Scrollable Content ---- */}
+          <div className={styles.content}>
+            {/* Toolbar */}
+            {!pool.loading && pool.skills.length > 0 && (
+              <SkillsToolbar
+                searchQuery={pool.searchQuery}
+                onSearchChange={pool.setSearchQuery}
+                searchTags={pool.searchTags}
+                onTagsChange={pool.setSearchTags}
+                allTags={pool.allTags}
+                filterOpen={pool.filterOpen}
+                onFilterOpenChange={pool.setFilterOpen}
+                viewMode={pool.viewMode}
+                onViewModeChange={pool.setViewMode}
+              />
+            )}
 
-        {/* ---- Scrollable Content ---- */}
-        <div className={styles.content}>
-          {/* Toolbar */}
-          {!pool.loading && pool.skills.length > 0 && (
-            <SkillsToolbar
-              searchQuery={pool.searchQuery}
-              onSearchChange={pool.setSearchQuery}
-              searchTags={pool.searchTags}
-              onTagsChange={pool.setSearchTags}
-              allTags={pool.allTags}
-              filterOpen={pool.filterOpen}
-              onFilterOpenChange={pool.setFilterOpen}
-              viewMode={pool.viewMode}
-              onViewModeChange={pool.setViewMode}
-            />
-          )}
+            {pool.loading ? (
+              <div className={styles.loading}>
+                <span className={styles.loadingText}>
+                  {t("common.loading")}
+                </span>
+              </div>
+            ) : pool.sortedSkills.length === 0 && pool.skills.length > 0 ? (
+              <div className={styles.noSearchResults}>
+                <span className={styles.noSearchResultsIcon}>
+                  <Search size={28} aria-hidden="true" />
+                </span>
+                <span className={styles.noSearchResultsText}>
+                  {t("skills.noSearchResults")}
+                </span>
+              </div>
+            ) : pool.viewMode === "card" ? (
+              <div className={`${styles.skillsGrid} responsive-grid`}>
+                {visibleSkills.map((skill: PoolSkillSpec) => (
+                  <PoolSkillCard
+                    key={skill.name}
+                    skill={skill}
+                    isSelected={pool.selectedPoolSkills.has(skill.name)}
+                    batchModeEnabled={pool.batchModeEnabled}
+                    automationPending={pool.automationPendingSkills.has(
+                      skill.name,
+                    )}
+                    onToggleSelect={pool.togglePoolSelect}
+                    onEdit={pool.openEdit}
+                    onBroadcast={pool.openBroadcast}
+                    onDelete={pool.handleDelete}
+                    onAutomationQuickAction={pool.handleAutomationQuickAction}
+                  />
+                ))}
+                {hasMore && <div ref={sentinelRef} style={{ height: 1 }} />}
+              </div>
+            ) : (
+              <div className={styles.skillsList}>
+                {visibleSkills.map((skill: PoolSkillSpec) => (
+                  <PoolSkillListItem
+                    key={skill.name}
+                    skill={skill}
+                    isSelected={pool.selectedPoolSkills.has(skill.name)}
+                    batchModeEnabled={pool.batchModeEnabled}
+                    onToggleSelect={pool.togglePoolSelect}
+                    onEdit={pool.openEdit}
+                    onBroadcast={pool.openBroadcast}
+                    onDelete={pool.handleDelete}
+                  />
+                ))}
+                {hasMore && <div ref={sentinelRef} style={{ height: 1 }} />}
+              </div>
+            )}
+          </div>
 
-          {pool.loading ? (
-            <div className={styles.loading}>
-              <span className={styles.loadingText}>{t("common.loading")}</span>
-            </div>
-          ) : pool.sortedSkills.length === 0 && pool.skills.length > 0 ? (
-            <div className={styles.noSearchResults}>
-              <span className={styles.noSearchResultsIcon}>
-                <Search size={28} aria-hidden="true" />
-              </span>
-              <span className={styles.noSearchResultsText}>
-                {t("skills.noSearchResults")}
-              </span>
-            </div>
-          ) : pool.viewMode === "card" ? (
-            <div className={`${styles.skillsGrid} responsive-grid`}>
-              {visibleSkills.map((skill: PoolSkillSpec) => (
-                <PoolSkillCard
-                  key={skill.name}
-                  skill={skill}
-                  isSelected={pool.selectedPoolSkills.has(skill.name)}
-                  batchModeEnabled={pool.batchModeEnabled}
-                  automationPending={pool.automationPendingSkills.has(
-                    skill.name,
-                  )}
-                  onToggleSelect={pool.togglePoolSelect}
-                  onEdit={pool.openEdit}
-                  onBroadcast={pool.openBroadcast}
-                  onDelete={pool.handleDelete}
-                  onAutomationQuickAction={pool.handleAutomationQuickAction}
-                />
-              ))}
-              {hasMore && <div ref={sentinelRef} style={{ height: 1 }} />}
-            </div>
-          ) : (
-            <div className={styles.skillsList}>
-              {visibleSkills.map((skill: PoolSkillSpec) => (
-                <PoolSkillListItem
-                  key={skill.name}
-                  skill={skill}
-                  isSelected={pool.selectedPoolSkills.has(skill.name)}
-                  batchModeEnabled={pool.batchModeEnabled}
-                  onToggleSelect={pool.togglePoolSelect}
-                  onEdit={pool.openEdit}
-                  onBroadcast={pool.openBroadcast}
-                  onDelete={pool.handleDelete}
-                />
-              ))}
-              {hasMore && <div ref={sentinelRef} style={{ height: 1 }} />}
-            </div>
-          )}
+          <ImportHubModal
+            open={pool.importModalOpen}
+            importing={pool.importing}
+            onCancel={pool.closeImportModal}
+            onConfirm={pool.handleConfirmImport}
+            hint={t("skillPool.externalHubHint")}
+          />
+
+          <BroadcastModal
+            surfaceId={transferId}
+            open={pool.mode === "broadcast"}
+            skills={pool.skills}
+            workspaces={pool.workspaces}
+            initialSkillNames={pool.broadcastInitialNames}
+            downloadState={pool.downloadState}
+            onCancel={pool.closeModal}
+            onCancelDownload={pool.cancelDownload}
+            onConfirm={pool.handleBroadcast}
+          />
+
+          <ImportBuiltinModal
+            open={pool.importBuiltinModalOpen}
+            loading={pool.importBuiltinLoading}
+            sources={pool.builtinSources}
+            notice={pool.builtinNotice}
+            defaultLanguage={pool.builtinLanguage}
+            defaultSelectedNames={pool.builtinNotice?.actionable_skill_names}
+            onCancel={pool.closeImportBuiltin}
+            onConfirm={pool.handleImportBuiltins}
+          />
+
+          <PoolSkillDrawer
+            mode={pool.mode}
+            activeSkill={pool.activeSkill}
+            loading={pool.detailLoading}
+            saving={pool.saving}
+            skillName={pool.detailSkillName}
+            form={pool.form}
+            drawerContent={pool.drawerContent}
+            showMarkdown={pool.showMarkdown}
+            configText={pool.configText}
+            availableTags={pool.allTags}
+            workspaces={pool.workspaces}
+            builtinAutoUpdateEnabled={pool.builtinAutoUpdateEnabled}
+            autoSyncEnabled={pool.autoSyncEnabled}
+            autoSyncTargets={pool.autoSyncTargets}
+            onClose={pool.closeDrawer}
+            onSave={pool.handleSavePoolSkill}
+            onContentChange={pool.handleDrawerContentChange}
+            onShowMarkdownChange={pool.setShowMarkdown}
+            onConfigTextChange={pool.setConfigText}
+            onChangeBuiltinLanguage={pool.handleBuiltinLanguageSwitch}
+            onBuiltinAutoUpdateEnabledChange={pool.setBuiltinAutoUpdateEnabled}
+            onAutoSyncEnabledChange={pool.setAutoSyncEnabled}
+            onAutoSyncTargetsChange={pool.setAutoSyncTargets}
+            validateFrontmatter={pool.validateFrontmatter}
+          />
+
+          {pool.conflictRenameModal}
         </div>
-
-        <ImportHubModal
-          open={pool.importModalOpen}
-          importing={pool.importing}
-          onCancel={pool.closeImportModal}
-          onConfirm={pool.handleConfirmImport}
-          hint={t("skillPool.externalHubHint")}
-        />
-
-        <BroadcastModal
-          surfaceId={transferId}
-          open={pool.mode === "broadcast"}
-          skills={pool.skills}
-          workspaces={pool.workspaces}
-          initialSkillNames={pool.broadcastInitialNames}
-          downloadState={pool.downloadState}
-          onCancel={pool.closeModal}
-          onCancelDownload={pool.cancelDownload}
-          onConfirm={pool.handleBroadcast}
-        />
-
-        <ImportBuiltinModal
-          open={pool.importBuiltinModalOpen}
-          loading={pool.importBuiltinLoading}
-          sources={pool.builtinSources}
-          notice={pool.builtinNotice}
-          defaultLanguage={pool.builtinLanguage}
-          defaultSelectedNames={pool.builtinNotice?.actionable_skill_names}
-          onCancel={pool.closeImportBuiltin}
-          onConfirm={pool.handleImportBuiltins}
-        />
-
-        <PoolSkillDrawer
-          mode={pool.mode}
-          activeSkill={pool.activeSkill}
-          loading={pool.detailLoading}
-          saving={pool.saving}
-          skillName={pool.detailSkillName}
-          form={pool.form}
-          drawerContent={pool.drawerContent}
-          showMarkdown={pool.showMarkdown}
-          configText={pool.configText}
-          availableTags={pool.allTags}
-          workspaces={pool.workspaces}
-          builtinAutoUpdateEnabled={pool.builtinAutoUpdateEnabled}
-          autoSyncEnabled={pool.autoSyncEnabled}
-          autoSyncTargets={pool.autoSyncTargets}
-          onClose={pool.closeDrawer}
-          onSave={pool.handleSavePoolSkill}
-          onContentChange={pool.handleDrawerContentChange}
-          onShowMarkdownChange={pool.setShowMarkdown}
-          onConfigTextChange={pool.setConfigText}
-          onChangeBuiltinLanguage={pool.handleBuiltinLanguageSwitch}
-          onBuiltinAutoUpdateEnabledChange={pool.setBuiltinAutoUpdateEnabled}
-          onAutoSyncEnabledChange={pool.setAutoSyncEnabled}
-          onAutoSyncTargetsChange={pool.setAutoSyncTargets}
-          validateFrontmatter={pool.validateFrontmatter}
-        />
-
-        {pool.conflictRenameModal}
-      </div>
+      </SettingsPage>
     </LayoutGroup>
   );
 }
