@@ -1,0 +1,92 @@
+.page {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.page > :global([data-page-header]) {
+  padding: 0 0 8px;
+  border-bottom: 0;
+  background: transparent;
+  backdrop-filter: none;
+}
+
+.navigation,
+.toolbar,
+.feedback,
+.content {
+  min-width: 0;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.section {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.readable {
+  width: min(100%, 48rem);
+}
+
+.full {
+  width: 100%;
+}
+
+.sectionHeader {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.sectionTitleGroup {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+
+  h2 {
+    margin: 0;
+    color: var(--app-text);
+    font-size: 1rem;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.sectionContent {
+  min-width: 0;
+}
+
+@media (max-width: 768px) {
+  .page {
+    gap: 20px;
+  }
+
+  .content {
+    gap: 24px;
+  }
+
+  .sectionHeader {
+    flex-wrap: wrap;
+  }
+}

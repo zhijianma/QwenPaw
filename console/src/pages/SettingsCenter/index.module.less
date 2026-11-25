@@ -755,7 +755,8 @@
   }
 }
 
-.content[data-core-settings="true"] :global([data-page-header]) {
+.content[data-core-settings="true"]:not([data-settings-template="true"])
+  :global([data-page-header]) {
   background: transparent;
   backdrop-filter: none;
   border-bottom: 0;
@@ -816,7 +817,7 @@
   }
 }
 
-.content[data-core-settings="true"] > * {
+.content[data-core-settings="true"]:not([data-settings-template="true"]) > * {
   margin-inline: 0;
   max-width: none;
   width: 100%;

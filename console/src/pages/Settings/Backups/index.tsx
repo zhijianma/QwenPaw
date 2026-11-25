@@ -10,7 +10,7 @@ import { Button, Spin } from "antd";
 import { Plus as PlusOutlined, RefreshCw, TriangleAlert } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import api, { agentsApi } from "@/api";
-import { PageHeader } from "@/components/PageHeader";
+import { SettingsPage } from "@/components/settings";
 import type { BackupJobSnapshot, BackupMeta } from "@/api/types/backup";
 import type { AgentSummary } from "@/api/types/agents";
 
@@ -81,37 +81,41 @@ export default function BackupsPage() {
 
   if (loading) {
     return (
-      <div className={styles.page}>
-        <div className={styles.centerState}>
-          <Spin />
+      <SettingsPage header={{ current: t("backup.title") }}>
+        <div className={styles.page}>
+          <div className={styles.centerState}>
+            <Spin />
+          </div>
         </div>
-      </div>
+      </SettingsPage>
     );
   }
 
   if (error) {
     return (
-      <div className={styles.page}>
-        <div className={styles.centerState} role="alert">
-          <TriangleAlert size={28} aria-hidden="true" />
-          <span>{t("backup.loadFailed")}</span>
-          <Button
-            icon={<RefreshCw size="1em" />}
-            onClick={() => void fetchData()}
-          >
-            {t("common.retry")}
-          </Button>
+      <SettingsPage header={{ current: t("backup.title") }}>
+        <div className={styles.page}>
+          <div className={styles.centerState} role="alert">
+            <TriangleAlert size={28} aria-hidden="true" />
+            <span>{t("backup.loadFailed")}</span>
+            <Button
+              icon={<RefreshCw size="1em" />}
+              onClick={() => void fetchData()}
+            >
+              {t("common.retry")}
+            </Button>
+          </div>
         </div>
-      </div>
+      </SettingsPage>
     );
   }
 
   return (
-    <div className={styles.page}>
-      <PageHeader
-        className={styles.pageHeader}
-        current={t("backup.title")}
-        extra={
+    <SettingsPage
+      header={{
+        className: styles.pageHeader,
+        current: t("backup.title"),
+        extra: (
           <div className={styles.headerRight}>
             <ImportButton onPick={importFlow.handleImport} />
             <Button
@@ -125,73 +129,75 @@ export default function BackupsPage() {
               {t("backup.create")}
             </Button>
           </div>
-        }
-      />
+        ),
+      }}
+    >
+      <div className={styles.page}>
+        <div className={styles.content}>
+          <BackupToolbar
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+          />
+          <BackupTable
+            backups={backups}
+            searchQuery={searchQuery}
+            onRestore={restoreFlow.handleRestore}
+            onRefresh={fetchData}
+          />
+        </div>
 
-      <div className={styles.content}>
-        <BackupToolbar
-          searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
+        {/* Import flow */}
+        <ImportConflictModal
+          conflictMeta={importFlow.conflictMeta}
+          onChoice={importFlow.handleConflictChoice}
+          onCancel={importFlow.clearConflict}
         />
-        <BackupTable
-          backups={backups}
-          searchQuery={searchQuery}
-          onRestore={restoreFlow.handleRestore}
-          onRefresh={fetchData}
+        <BackupTrustDialog
+          open={!!importFlow.trustFileName}
+          mode={importFlow.trustMode ?? "foreign"}
+          backupName={importFlow.trustFileName ?? undefined}
+          confirmLoading={importFlow.trustLoading}
+          onConfirm={importFlow.handleTrustConfirm}
+          onCancel={importFlow.clearTrust}
         />
-      </div>
 
-      {/* Import flow */}
-      <ImportConflictModal
-        conflictMeta={importFlow.conflictMeta}
-        onChoice={importFlow.handleConflictChoice}
-        onCancel={importFlow.clearConflict}
-      />
-      <BackupTrustDialog
-        open={!!importFlow.trustFileName}
-        mode={importFlow.trustMode ?? "foreign"}
-        backupName={importFlow.trustFileName ?? undefined}
-        confirmLoading={importFlow.trustLoading}
-        onConfirm={importFlow.handleTrustConfirm}
-        onCancel={importFlow.clearTrust}
-      />
-
-      {/* Create flow */}
-      <CreateBackupModal
-        open={createOpen}
-        agents={agents}
-        resumeJob={resumeJob}
-        onClose={() => {
-          setCreateOpen(false);
-          setResumeJob(null);
-        }}
-        onSuccess={fetchData}
-      />
-
-      {/* Restore flow */}
-      <PreRestoreConfirmModal
-        target={restoreFlow.preRestoreConfirmTarget}
-        onCancel={restoreFlow.cancelPreRestore}
-        onNoBackup={restoreFlow.confirmRestoreWithoutBackup}
-        onYesBackup={restoreFlow.confirmRestoreWithBackup}
-      />
-
-      <SilentBackupModal
-        target={restoreFlow.preRestoreBackupTarget}
-        agentIds={agents.map((a) => a.id)}
-        onClose={restoreFlow.onPreRestoreBackupClose}
-        onSuccess={restoreFlow.onPreRestoreBackupSuccess}
-      />
-
-      {restoreFlow.restoreTarget && (
-        <RestoreBackupModal
-          backup={restoreFlow.restoreTarget}
+        {/* Create flow */}
+        <CreateBackupModal
+          open={createOpen}
           agents={agents}
-          open={!!restoreFlow.restoreTarget}
-          onClose={() => restoreFlow.setRestoreTarget(null)}
+          resumeJob={resumeJob}
+          onClose={() => {
+            setCreateOpen(false);
+            setResumeJob(null);
+          }}
           onSuccess={fetchData}
         />
-      )}
-    </div>
+
+        {/* Restore flow */}
+        <PreRestoreConfirmModal
+          target={restoreFlow.preRestoreConfirmTarget}
+          onCancel={restoreFlow.cancelPreRestore}
+          onNoBackup={restoreFlow.confirmRestoreWithoutBackup}
+          onYesBackup={restoreFlow.confirmRestoreWithBackup}
+        />
+
+        <SilentBackupModal
+          target={restoreFlow.preRestoreBackupTarget}
+          agentIds={agents.map((a) => a.id)}
+          onClose={restoreFlow.onPreRestoreBackupClose}
+          onSuccess={restoreFlow.onPreRestoreBackupSuccess}
+        />
+
+        {restoreFlow.restoreTarget && (
+          <RestoreBackupModal
+            backup={restoreFlow.restoreTarget}
+            agents={agents}
+            open={!!restoreFlow.restoreTarget}
+            onClose={() => restoreFlow.setRestoreTarget(null)}
+            onSuccess={fetchData}
+          />
+        )}
+      </div>
+    </SettingsPage>
   );
 }

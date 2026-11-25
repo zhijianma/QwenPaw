@@ -29,7 +29,7 @@ import {
   ProviderConfigModal,
   ModelManageModal,
 } from "./components";
-import { PageHeader } from "@/components/PageHeader";
+import { SettingsPage, SettingsSection } from "@/components/settings";
 import { useTranslation } from "react-i18next";
 import type { ProviderInfo } from "../../../api/types/provider";
 import {
@@ -318,28 +318,27 @@ function ModelsPage() {
     ));
 
   return (
-    <motion.div
-      className={[
-        styles.settingsPage,
-        isSettingsEntry ? styles.settingsEntry : "",
-      ].join(" ")}
-      animate={{
-        scale: !reducedMotion && (configOpen || modelsOpen) ? 0.995 : 1,
+    <SettingsPage
+      header={{
+        className: isSettingsEntry ? styles.pageHeader : undefined,
+        current: t("models.llmTitle"),
       }}
-      transition={{ type: "spring", stiffness: 360, damping: 38 }}
     >
-      {loading ? (
-        <LoadingState message={t("models.loading")} />
-      ) : error ? (
-        <LoadingState message={error} error onRetry={fetchAll} />
-      ) : (
-        <>
-          {/* ---- LLM Section (top) ---- */}
-          <PageHeader
-            className={isSettingsEntry ? styles.pageHeader : undefined}
-            current={t("models.llmTitle")}
-          />
-          {/* ---- Scrollable Content ---- */}
+      <motion.div
+        className={[
+          styles.settingsPage,
+          isSettingsEntry ? styles.settingsEntry : "",
+        ].join(" ")}
+        animate={{
+          scale: !reducedMotion && (configOpen || modelsOpen) ? 0.995 : 1,
+        }}
+        transition={{ type: "spring", stiffness: 360, damping: 38 }}
+      >
+        {loading ? (
+          <LoadingState message={t("models.loading")} />
+        ) : error ? (
+          <LoadingState message={error} error onRetry={fetchAll} />
+        ) : (
           <div className={styles.content}>
             {warning && (
               <Alert
@@ -359,12 +358,11 @@ function ModelsPage() {
               onSaved={refreshProvidersSilently}
             />
             {/* ---- Providers Section ---- */}
-            <div className={styles.providersBlock}>
-              <div className={styles.sectionHeaderRow}>
-                <PageHeader
-                  current={t("models.providersTitle")}
-                  className={styles.providersPageHeader}
-                />
+            <SettingsSection
+              id="models-providers"
+              title={t("models.providersTitle")}
+              width="full"
+              actions={
                 <div className={styles.headerRight}>
                   {/* ---- Search ---- */}
                   <div className={styles.searchRow}>
@@ -397,224 +395,226 @@ function ModelsPage() {
                     {t("models.addProvider")}
                   </Button>
                 </div>
-              </div>
-
-              {/* ---- Tab Navigation ---- */}
-              <div className={styles.tabsNav} role="tablist">
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab === "cloud"}
-                  data-settings-tab="cloud"
-                  className={[
-                    styles.tabItem,
-                    activeTab === "cloud" ? styles.tabItemActive : "",
-                  ].join(" ")}
-                  onClick={() => handleTabChange("cloud")}
-                >
-                  {t("models.cloudGroup")} (
-                  {cloudConfiguredGrouped.reduce(
-                    (n, g) => n + g.providers.length,
-                    0,
-                  ) +
-                    cloudConfiguredUngrouped.length +
-                    cloudAvailableGroups.reduce(
+              }
+            >
+              <div className={styles.providersBlock}>
+                {/* ---- Tab Navigation ---- */}
+                <div className={styles.tabsNav} role="tablist">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === "cloud"}
+                    data-settings-tab="cloud"
+                    className={[
+                      styles.tabItem,
+                      activeTab === "cloud" ? styles.tabItemActive : "",
+                    ].join(" ")}
+                    onClick={() => handleTabChange("cloud")}
+                  >
+                    {t("models.cloudGroup")} (
+                    {cloudConfiguredGrouped.reduce(
                       (n, g) => n + g.providers.length,
                       0,
-                    )}
-                  )
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab === "local"}
-                  data-settings-tab="local"
-                  data-settings-target="models.localCustomGroup"
-                  className={[
-                    styles.tabItem,
-                    activeTab === "local" ? styles.tabItemActive : "",
-                  ].join(" ")}
-                  onClick={() => handleTabChange("local")}
-                >
-                  {t("models.localCustomGroup")} (
-                  {localConfigured.length + localAvailable.length})
-                </button>
-              </div>
-
-              {/* ---- Tab Content ---- */}
-              {hasSearchQuery && !activeTabHasSearchResults ? (
-                <div className={styles.searchEmpty} role="status">
-                  <SearchX size={18} strokeWidth={1.6} aria-hidden="true" />
-                  <span>
-                    {t("models.noSearchResults", {
-                      query: deferredSearchQuery.trim(),
-                    })}
-                  </span>
+                    ) +
+                      cloudConfiguredUngrouped.length +
+                      cloudAvailableGroups.reduce(
+                        (n, g) => n + g.providers.length,
+                        0,
+                      )}
+                    )
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === "local"}
+                    data-settings-tab="local"
+                    data-settings-target="models.localCustomGroup"
+                    className={[
+                      styles.tabItem,
+                      activeTab === "local" ? styles.tabItemActive : "",
+                    ].join(" ")}
+                    onClick={() => handleTabChange("local")}
+                  >
+                    {t("models.localCustomGroup")} (
+                    {localConfigured.length + localAvailable.length})
+                  </button>
                 </div>
-              ) : activeTab === "cloud" ? (
-                <>
-                  {/* Cloud Configured */}
-                  <div className={styles.panelSection}>
-                    <div className={styles.panelTitle}>
-                      <span className={styles.panelDotGreen} />
-                      {t("models.configuredGroup")}
-                      <span className={styles.panelCount}>
-                        {configuredCloudProviderCount}{" "}
-                        {t("models.configuredOnline")}
-                      </span>
-                    </div>
 
-                    {cloudConfiguredGrouped.length > 0 ||
-                    cloudConfiguredUngrouped.length > 0 ? (
-                      <div className={styles.providerCards}>
-                        {cloudConfiguredGrouped.map((group) => (
-                          <ProviderGroupCard
-                            key={group.groupKey}
-                            group={group}
-                            onSaved={refreshProvidersSilently}
-                            onOpenConfig={handleOpenConfig}
-                            onOpenModels={handleOpenModels}
-                          />
-                        ))}
-                        {renderProviderCards(cloudConfiguredUngrouped)}
-                      </div>
-                    ) : (
-                      <div className={styles.emptyConfigured}>
-                        <span
-                          className={styles.emptyConfiguredIcon}
-                          aria-hidden="true"
-                        >
-                          <Plug size={22} strokeWidth={1.6} />
-                        </span>
-                        <div>
-                          <h3>{t("models.connectProviderTitle")}</h3>
-                          <p>{t("models.noConfigured")}</p>
-                        </div>
-                      </div>
-                    )}
+                {/* ---- Tab Content ---- */}
+                {hasSearchQuery && !activeTabHasSearchResults ? (
+                  <div className={styles.searchEmpty} role="status">
+                    <SearchX size={18} strokeWidth={1.6} aria-hidden="true" />
+                    <span>
+                      {t("models.noSearchResults", {
+                        query: deferredSearchQuery.trim(),
+                      })}
+                    </span>
                   </div>
-
-                  {/* Cloud Available */}
-                  {cloudAvailableGroups.length > 0 && (
-                    <div
-                      id="available-providers"
-                      className={styles.panelSectionDashed}
-                    >
-                      <div className={styles.panelTitle}>
-                        <span className={styles.panelDotGray} />
-                        {t("models.availableGroup")}
-                      </div>
-                      <div className={styles.availableGrid}>
-                        {cloudAvailableGroups.map((g) => (
-                          <motion.button
-                            type="button"
-                            whileTap={
-                              reducedMotion ? undefined : { scale: 0.98 }
-                            }
-                            transition={{
-                              type: "spring",
-                              stiffness: 400,
-                              damping: 30,
-                            }}
-                            key={g.key}
-                            className={styles.availableItem}
-                            onClick={() => {
-                              if (g.providers.length > 1) {
-                                setVariantSelectGroup(g);
-                              } else {
-                                handleOpenConfig(g.firstProvider);
-                              }
-                            }}
-                          >
-                            <ProviderIcon
-                              providerId={g.firstProvider.id}
-                              size={24}
-                              decorative
-                              loading="lazy"
-                            />
-                            <span className={styles.availableItemName}>
-                              {g.name}
-                            </span>
-                            {g.hasFree && (
-                              <span className={styles.freeTag}>FREE</span>
-                            )}
-                            <span className={styles.availableItemAction}>
-                              {t("models.configureAction")}
-                              <ChevronRight
-                                size={14}
-                                strokeWidth={1.7}
-                                aria-hidden="true"
-                              />
-                            </span>
-                          </motion.button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <>
-                  {/* Local Configured */}
-                  {localConfigured.length > 0 && (
+                ) : activeTab === "cloud" ? (
+                  <>
+                    {/* Cloud Configured */}
                     <div className={styles.panelSection}>
                       <div className={styles.panelTitle}>
                         <span className={styles.panelDotGreen} />
                         {t("models.configuredGroup")}
+                        <span className={styles.panelCount}>
+                          {configuredCloudProviderCount}{" "}
+                          {t("models.configuredOnline")}
+                        </span>
                       </div>
-                      <div className={styles.providerCards}>
-                        {renderProviderCards(localConfigured)}
-                      </div>
-                    </div>
-                  )}
 
-                  {/* Local Available */}
-                  {localAvailable.length > 0 && (
-                    <div className={styles.panelSectionDashed}>
-                      <div className={styles.panelTitle}>
-                        <span className={styles.panelDotGray} />
-                        {t("models.availableGroup")}
-                      </div>
-                      <div className={styles.availableGrid}>
-                        {localAvailable.map((provider) => (
-                          <motion.button
-                            type="button"
-                            whileTap={
-                              reducedMotion ? undefined : { scale: 0.98 }
-                            }
-                            transition={{
-                              type: "spring",
-                              stiffness: 400,
-                              damping: 30,
-                            }}
-                            key={provider.id}
-                            className={styles.availableItem}
-                            onClick={() => handleOpenConfig(provider)}
-                          >
-                            <ProviderIcon
-                              providerId={provider.id}
-                              size={24}
-                              decorative
-                              loading="lazy"
+                      {cloudConfiguredGrouped.length > 0 ||
+                      cloudConfiguredUngrouped.length > 0 ? (
+                        <div className={styles.providerCards}>
+                          {cloudConfiguredGrouped.map((group) => (
+                            <ProviderGroupCard
+                              key={group.groupKey}
+                              group={group}
+                              onSaved={refreshProvidersSilently}
+                              onOpenConfig={handleOpenConfig}
+                              onOpenModels={handleOpenModels}
                             />
-                            <span className={styles.availableItemName}>
-                              {provider.name}
-                            </span>
-                            <span className={styles.availableItemAction}>
-                              {t("models.configureAction")}
-                              <ChevronRight
-                                size={14}
-                                strokeWidth={1.7}
-                                aria-hidden="true"
-                              />
-                            </span>
-                          </motion.button>
-                        ))}
-                      </div>
+                          ))}
+                          {renderProviderCards(cloudConfiguredUngrouped)}
+                        </div>
+                      ) : (
+                        <div className={styles.emptyConfigured}>
+                          <span
+                            className={styles.emptyConfiguredIcon}
+                            aria-hidden="true"
+                          >
+                            <Plug size={22} strokeWidth={1.6} />
+                          </span>
+                          <div>
+                            <h3>{t("models.connectProviderTitle")}</h3>
+                            <p>{t("models.noConfigured")}</p>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  )}
-                </>
-              )}
-            </div>
+
+                    {/* Cloud Available */}
+                    {cloudAvailableGroups.length > 0 && (
+                      <div
+                        id="available-providers"
+                        className={styles.panelSectionDashed}
+                      >
+                        <div className={styles.panelTitle}>
+                          <span className={styles.panelDotGray} />
+                          {t("models.availableGroup")}
+                        </div>
+                        <div className={styles.availableGrid}>
+                          {cloudAvailableGroups.map((g) => (
+                            <motion.button
+                              type="button"
+                              whileTap={
+                                reducedMotion ? undefined : { scale: 0.98 }
+                              }
+                              transition={{
+                                type: "spring",
+                                stiffness: 400,
+                                damping: 30,
+                              }}
+                              key={g.key}
+                              className={styles.availableItem}
+                              onClick={() => {
+                                if (g.providers.length > 1) {
+                                  setVariantSelectGroup(g);
+                                } else {
+                                  handleOpenConfig(g.firstProvider);
+                                }
+                              }}
+                            >
+                              <ProviderIcon
+                                providerId={g.firstProvider.id}
+                                size={24}
+                                decorative
+                                loading="lazy"
+                              />
+                              <span className={styles.availableItemName}>
+                                {g.name}
+                              </span>
+                              {g.hasFree && (
+                                <span className={styles.freeTag}>FREE</span>
+                              )}
+                              <span className={styles.availableItemAction}>
+                                {t("models.configureAction")}
+                                <ChevronRight
+                                  size={14}
+                                  strokeWidth={1.7}
+                                  aria-hidden="true"
+                                />
+                              </span>
+                            </motion.button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {/* Local Configured */}
+                    {localConfigured.length > 0 && (
+                      <div className={styles.panelSection}>
+                        <div className={styles.panelTitle}>
+                          <span className={styles.panelDotGreen} />
+                          {t("models.configuredGroup")}
+                        </div>
+                        <div className={styles.providerCards}>
+                          {renderProviderCards(localConfigured)}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Local Available */}
+                    {localAvailable.length > 0 && (
+                      <div className={styles.panelSectionDashed}>
+                        <div className={styles.panelTitle}>
+                          <span className={styles.panelDotGray} />
+                          {t("models.availableGroup")}
+                        </div>
+                        <div className={styles.availableGrid}>
+                          {localAvailable.map((provider) => (
+                            <motion.button
+                              type="button"
+                              whileTap={
+                                reducedMotion ? undefined : { scale: 0.98 }
+                              }
+                              transition={{
+                                type: "spring",
+                                stiffness: 400,
+                                damping: 30,
+                              }}
+                              key={provider.id}
+                              className={styles.availableItem}
+                              onClick={() => handleOpenConfig(provider)}
+                            >
+                              <ProviderIcon
+                                providerId={provider.id}
+                                size={24}
+                                decorative
+                                loading="lazy"
+                              />
+                              <span className={styles.availableItemName}>
+                                {provider.name}
+                              </span>
+                              <span className={styles.availableItemAction}>
+                                {t("models.configureAction")}
+                                <ChevronRight
+                                  size={14}
+                                  strokeWidth={1.7}
+                                  aria-hidden="true"
+                                />
+                              </span>
+                            </motion.button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </SettingsSection>
             <CustomProviderModal
               open={addProviderOpen}
               onClose={() => setAddProviderOpen(false)}
@@ -678,9 +678,9 @@ function ModelsPage() {
               </div>
             </Modal>
           </div>
-        </>
-      )}
-    </motion.div>
+        )}
+      </motion.div>
+    </SettingsPage>
   );
 }
 

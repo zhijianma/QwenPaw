@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { getAgentDisplayName } from "@/utils/agentDisplayName";
-import { PageHeader } from "@/components/PageHeader";
+import { SettingsPage } from "@/components/settings";
 import { useAgentStore } from "@/stores/agentStore";
 import { supportsPortabilityImport } from "@/utils/agentBackend";
 import type {
@@ -473,577 +473,601 @@ function ImportWorkflow() {
     setAssetPages((current) => ({ ...current, [key]: page }));
 
   return (
-    <div className={styles.page}>
-      <PageHeader
-        current={t("portabilityImport.title")}
-        extra={<InlineHelp>{t("portabilityImport.description")}</InlineHelp>}
-      />
-      <main className={styles.content}>
-        {job && job.agent_id !== selectedAgent && (
-          <Alert
-            type="warning"
-            showIcon
-            message={t("portabilityImport.targetAgent", {
-              agent: job.agent_id,
-            })}
-          />
-        )}
-        <Steps
-          current={current}
-          items={[
-            { title: t("portabilityImport.steps.sources") },
-            { title: t("portabilityImport.steps.inventory") },
-            { title: t("portabilityImport.steps.progress") },
-          ]}
-        />
-        <section
-          className={styles.route}
-          aria-label={t("portabilityImport.title")}
-        >
-          <div className={styles.routeSources}>
-            <AnimatePresence initial={false}>
-              {routeSources.length ? (
-                routeSources.map((source) => (
-                  <motion.span
-                    key={source}
-                    layout
-                    className={styles.routeSource}
-                    initial={{ opacity: 0, scale: reducedMotion ? 1 : 0.96 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: reducedMotion ? 1 : 0.96 }}
-                    transition={
-                      reducedMotion
-                        ? { duration: 0 }
-                        : { type: "spring", stiffness: 360, damping: 38 }
-                    }
-                  >
-                    {sources.find((item) => item.source === source)?.name ??
-                      source}
-                  </motion.span>
-                ))
-              ) : (
-                <span key="empty" className={styles.routeEmpty}>
-                  {t("portabilityImport.chooseSources")}
-                </span>
-              )}
-            </AnimatePresence>
-          </div>
-          <ArrowRight size={20} aria-hidden="true" />
-          <div className={styles.routeTarget}>
-            <strong>QwenPaw</strong>
-            <span>
-              {t("portabilityImport.targetAgent", {
-                agent: targetAgent
-                  ? getAgentDisplayName(targetAgent, t)
-                  : targetId,
+    <SettingsPage
+      header={{
+        current: t("portabilityImport.title"),
+        extra: <InlineHelp>{t("portabilityImport.description")}</InlineHelp>,
+      }}
+    >
+      <div className={styles.page}>
+        <main className={styles.content}>
+          {job && job.agent_id !== selectedAgent && (
+            <Alert
+              type="warning"
+              showIcon
+              message={t("portabilityImport.targetAgent", {
+                agent: job.agent_id,
               })}
-            </span>
-          </div>
-        </section>
-        {error && (
-          <Alert
-            type="error"
-            showIcon
-            message={sourceDetectionFailed ? detectError : error}
-            action={
-              requirement ? (
-                <Button
-                  onClick={() =>
-                    manageHarness(requirement.plugin_id, requirement.state)
-                  }
-                >
-                  {t(
-                    requirement.state === "missing"
-                      ? "pluginManager.installBtn"
-                      : requirement.state === "failed"
-                      ? "pluginManager.repair"
-                      : "common.enable",
-                  )}
-                </Button>
-              ) : sourceDetectionFailed ? (
-                <Button onClick={() => void detect().catch(() => undefined)}>
-                  {t("common.retry")}
-                </Button>
-              ) : undefined
-            }
+            />
+          )}
+          <Steps
+            current={current}
+            items={[
+              { title: t("portabilityImport.steps.sources") },
+              { title: t("portabilityImport.steps.inventory") },
+              { title: t("portabilityImport.steps.progress") },
+            ]}
           />
-        )}
-        {job && !isDone && (
-          <div className={styles.actions}>
-            <Button
-              danger
-              disabled={isCancelling}
-              loading={loading}
-              onClick={() => void abandon()}
-            >
-              {t(
-                isCancelling ? "portabilityImport.cancelling" : "common.cancel",
-              )}
-            </Button>
-          </div>
-        )}
-
-        {!job && !sourceDetectionFailed && (
-          <section className={styles.section}>
-            <div className={styles.sectionHeading}>
-              <h3>
-                {t("portabilityImport.chooseSources")}{" "}
-                <InlineHelp>
-                  {t("portabilityImport.chooseSourcesHint")}
-                </InlineHelp>
-              </h3>
-            </div>
-            {loading && !sources.length ? (
-              <div className={styles.center}>
-                <Spin />
-              </div>
-            ) : (
-              <div className={styles.sourceGrid}>
-                {sources.map((source) => (
-                  <Card key={source.source} className={styles.sourceCard}>
-                    <Checkbox
-                      checked={selectedSources.includes(source.source)}
-                      disabled={
-                        !source.detected || source.plugin_state !== "available"
-                      }
-                      onChange={(event) =>
-                        updateSources((selected) =>
-                          event.target.checked
-                            ? [...selected, source.source]
-                            : selected.filter((item) => item !== source.source),
-                        )
+          <section
+            className={styles.route}
+            aria-label={t("portabilityImport.title")}
+          >
+            <div className={styles.routeSources}>
+              <AnimatePresence initial={false}>
+                {routeSources.length ? (
+                  routeSources.map((source) => (
+                    <motion.span
+                      key={source}
+                      layout
+                      className={styles.routeSource}
+                      initial={{ opacity: 0, scale: reducedMotion ? 1 : 0.96 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: reducedMotion ? 1 : 0.96 }}
+                      transition={
+                        reducedMotion
+                          ? { duration: 0 }
+                          : { type: "spring", stiffness: 360, damping: 38 }
                       }
                     >
-                      <strong>{source.name}</strong>
-                    </Checkbox>
-                    {source.plugin_state !== "available" && (
-                      <div>
-                        <p>
-                          {t("portabilityImport.harnessRequired", {
-                            plugin: source.plugin_id,
-                            state: t(
-                              `portabilityImport.pluginStates.${source.plugin_state}`,
-                            ),
-                          })}
-                        </p>
-                        <Button
-                          onClick={() =>
-                            manageHarness(source.plugin_id, source.plugin_state)
-                          }
-                        >
-                          {t(
-                            source.plugin_state === "missing"
-                              ? "pluginManager.installBtn"
-                              : source.plugin_state === "failed"
-                              ? "pluginManager.repair"
-                              : "common.enable",
-                          )}
-                        </Button>
-                      </div>
-                    )}
-                    <Tag color={source.detected ? "success" : "default"}>
-                      {t(
-                        source.detected
-                          ? "portabilityImport.detected"
-                          : "portabilityImport.notDetected",
-                      )}
-                    </Tag>
-                  </Card>
-                ))}
-              </div>
-            )}
-            {!loading && sources.every((source) => !source.detected) && (
-              <Empty description={t("portabilityImport.noSources")} />
-            )}
-            <div className={styles.actions}>
-              <Button
-                type="primary"
-                disabled={!selectedSources.length}
-                loading={loading}
-                onClick={() => void scan(selectedSources)}
-              >
-                {t("portabilityImport.continue")}
-              </Button>
+                      {sources.find((item) => item.source === source)?.name ??
+                        source}
+                    </motion.span>
+                  ))
+                ) : (
+                  <span key="empty" className={styles.routeEmpty}>
+                    {t("portabilityImport.chooseSources")}
+                  </span>
+                )}
+              </AnimatePresence>
+            </div>
+            <ArrowRight size={20} aria-hidden="true" />
+            <div className={styles.routeTarget}>
+              <strong>QwenPaw</strong>
+              <span>
+                {t("portabilityImport.targetAgent", {
+                  agent: targetAgent
+                    ? getAgentDisplayName(targetAgent, t)
+                    : targetId,
+                })}
+              </span>
             </div>
           </section>
-        )}
-
-        {job?.state === "scanning" && (
-          <div className={styles.center}>
-            <Spin size="large" />
-            <span>{t("portabilityImport.scanning")}</span>
-          </div>
-        )}
-
-        {job?.state === "awaiting_selection" && (
-          <section className={styles.section}>
-            <div className={styles.sectionHeading}>
-              <h3>{t("portabilityImport.chooseContent")}</h3>
-              <p>{t("portabilityImport.defaultSelected")}</p>
+          {error && (
+            <Alert
+              type="error"
+              showIcon
+              message={sourceDetectionFailed ? detectError : error}
+              action={
+                requirement ? (
+                  <Button
+                    onClick={() =>
+                      manageHarness(requirement.plugin_id, requirement.state)
+                    }
+                  >
+                    {t(
+                      requirement.state === "missing"
+                        ? "pluginManager.installBtn"
+                        : requirement.state === "failed"
+                        ? "pluginManager.repair"
+                        : "common.enable",
+                    )}
+                  </Button>
+                ) : sourceDetectionFailed ? (
+                  <Button onClick={() => void detect().catch(() => undefined)}>
+                    {t("common.retry")}
+                  </Button>
+                ) : undefined
+              }
+            />
+          )}
+          {job && !isDone && (
+            <div className={styles.actions}>
+              <Button
+                danger
+                disabled={isCancelling}
+                loading={loading}
+                onClick={() => void abandon()}
+              >
+                {t(
+                  isCancelling
+                    ? "portabilityImport.cancelling"
+                    : "common.cancel",
+                )}
+              </Button>
             </div>
-            {job.providers.map((provider) => (
-              <Card key={provider.source} title={provider.source.toUpperCase()}>
-                {provider.state === "failed" ? (
-                  <Alert type="error" showIcon message={provider.error} />
-                ) : (
-                  <>
-                    <div className={styles.row}>
+          )}
+
+          {!job && !sourceDetectionFailed && (
+            <section className={styles.section}>
+              <div className={styles.sectionHeading}>
+                <h3>
+                  {t("portabilityImport.chooseSources")}{" "}
+                  <InlineHelp>
+                    {t("portabilityImport.chooseSourcesHint")}
+                  </InlineHelp>
+                </h3>
+              </div>
+              {loading && !sources.length ? (
+                <div className={styles.center}>
+                  <Spin />
+                </div>
+              ) : (
+                <div className={styles.sourceGrid}>
+                  {sources.map((source) => (
+                    <Card key={source.source} className={styles.sourceCard}>
                       <Checkbox
-                        checked={
-                          currentSelections[provider.source]?.sessions ?? false
+                        checked={selectedSources.includes(source.source)}
+                        disabled={
+                          !source.detected ||
+                          source.plugin_state !== "available"
                         }
-                        disabled={!provider.sessions_total}
                         onChange={(event) =>
-                          updateSelection(provider.source, (selection) => ({
-                            ...selection,
-                            sessions: event.target.checked,
-                          }))
+                          updateSources((selected) =>
+                            event.target.checked
+                              ? [...selected, source.source]
+                              : selected.filter(
+                                  (item) => item !== source.source,
+                                ),
+                          )
                         }
                       >
-                        {t("portabilityImport.conversations")}
+                        <strong>{source.name}</strong>
                       </Checkbox>
-                      <span>
-                        {t("portabilityImport.items", {
-                          count: provider.sessions_total,
-                        })}
-                      </span>
-                    </div>
-                    {provider.assets.length > 0 &&
-                      (() => {
-                        const selectable = provider.assets.filter(isSelectable);
-                        const selectedIds = new Set(
-                          GROUPS.flatMap((type) =>
-                            (
-                              currentSelections[provider.source]?.[
-                                FIELDS[type]
-                              ] ?? []
-                            ).map((id) => `${type}:${id}`),
-                          ),
-                        );
-                        const selected = selectable.filter((asset) =>
-                          selectedIds.has(
-                            `${asset.asset_type}:${asset.source_id}`,
-                          ),
-                        ).length;
-                        return (
-                          <div className={styles.row}>
-                            <Checkbox
-                              disabled={!selectable.length}
-                              checked={Boolean(
-                                selectable.length &&
-                                  selected === selectable.length,
-                              )}
-                              indeterminate={Boolean(
-                                selected && selected < selectable.length,
-                              )}
-                              onChange={(event) =>
-                                toggleTools(provider, event.target.checked)
-                              }
-                            >
-                              {t("portabilityImport.toolsSetup")}
-                            </Checkbox>
-                            <span>
-                              {t("portabilityImport.items", {
-                                count: provider.assets.length,
-                              })}
-                            </span>
-                          </div>
-                        );
-                      })()}
-                    <Collapse
-                      className={styles.groups}
-                      defaultActiveKey={[...GROUPS]}
-                      items={GROUPS.flatMap((type) => {
-                        const assets = provider.assets.filter(
-                          (asset) => asset.asset_type === type,
-                        );
-                        if (!assets.length) return [];
-                        const field = FIELDS[type];
-                        const selected = new Set(
-                          currentSelections[provider.source]?.[field] ?? [],
-                        );
-                        const selectable = assets.filter(isSelectable);
-                        const selectedCount = selectable.filter((asset) =>
-                          selected.has(asset.source_id),
-                        ).length;
-                        const pageKey = `select:${provider.source}:${type}`;
-                        const page = assetPage(pageKey);
-                        const pageAssets = assets.slice(
-                          (page - 1) * ASSET_PAGE_SIZE,
-                          page * ASSET_PAGE_SIZE,
-                        );
-                        return [
-                          {
-                            key: type,
-                            label: (
+                      {source.plugin_state !== "available" && (
+                        <div>
+                          <p>
+                            {t("portabilityImport.harnessRequired", {
+                              plugin: source.plugin_id,
+                              state: t(
+                                `portabilityImport.pluginStates.${source.plugin_state}`,
+                              ),
+                            })}
+                          </p>
+                          <Button
+                            onClick={() =>
+                              manageHarness(
+                                source.plugin_id,
+                                source.plugin_state,
+                              )
+                            }
+                          >
+                            {t(
+                              source.plugin_state === "missing"
+                                ? "pluginManager.installBtn"
+                                : source.plugin_state === "failed"
+                                ? "pluginManager.repair"
+                                : "common.enable",
+                            )}
+                          </Button>
+                        </div>
+                      )}
+                      <Tag color={source.detected ? "success" : "default"}>
+                        {t(
+                          source.detected
+                            ? "portabilityImport.detected"
+                            : "portabilityImport.notDetected",
+                        )}
+                      </Tag>
+                    </Card>
+                  ))}
+                </div>
+              )}
+              {!loading && sources.every((source) => !source.detected) && (
+                <Empty description={t("portabilityImport.noSources")} />
+              )}
+              <div className={styles.actions}>
+                <Button
+                  type="primary"
+                  disabled={!selectedSources.length}
+                  loading={loading}
+                  onClick={() => void scan(selectedSources)}
+                >
+                  {t("portabilityImport.continue")}
+                </Button>
+              </div>
+            </section>
+          )}
+
+          {job?.state === "scanning" && (
+            <div className={styles.center}>
+              <Spin size="large" />
+              <span>{t("portabilityImport.scanning")}</span>
+            </div>
+          )}
+
+          {job?.state === "awaiting_selection" && (
+            <section className={styles.section}>
+              <div className={styles.sectionHeading}>
+                <h3>{t("portabilityImport.chooseContent")}</h3>
+                <p>{t("portabilityImport.defaultSelected")}</p>
+              </div>
+              {job.providers.map((provider) => (
+                <Card
+                  key={provider.source}
+                  title={provider.source.toUpperCase()}
+                >
+                  {provider.state === "failed" ? (
+                    <Alert type="error" showIcon message={provider.error} />
+                  ) : (
+                    <>
+                      <div className={styles.row}>
+                        <Checkbox
+                          checked={
+                            currentSelections[provider.source]?.sessions ??
+                            false
+                          }
+                          disabled={!provider.sessions_total}
+                          onChange={(event) =>
+                            updateSelection(provider.source, (selection) => ({
+                              ...selection,
+                              sessions: event.target.checked,
+                            }))
+                          }
+                        >
+                          {t("portabilityImport.conversations")}
+                        </Checkbox>
+                        <span>
+                          {t("portabilityImport.items", {
+                            count: provider.sessions_total,
+                          })}
+                        </span>
+                      </div>
+                      {provider.assets.length > 0 &&
+                        (() => {
+                          const selectable =
+                            provider.assets.filter(isSelectable);
+                          const selectedIds = new Set(
+                            GROUPS.flatMap((type) =>
+                              (
+                                currentSelections[provider.source]?.[
+                                  FIELDS[type]
+                                ] ?? []
+                              ).map((id) => `${type}:${id}`),
+                            ),
+                          );
+                          const selected = selectable.filter((asset) =>
+                            selectedIds.has(
+                              `${asset.asset_type}:${asset.source_id}`,
+                            ),
+                          ).length;
+                          return (
+                            <div className={styles.row}>
                               <Checkbox
                                 disabled={!selectable.length}
                                 checked={Boolean(
                                   selectable.length &&
-                                    selectedCount === selectable.length,
+                                    selected === selectable.length,
                                 )}
                                 indeterminate={Boolean(
-                                  selectedCount &&
-                                    selectedCount < selectable.length,
+                                  selected && selected < selectable.length,
                                 )}
-                                onClick={(event) => event.stopPropagation()}
                                 onChange={(event) =>
-                                  toggleGroup(
-                                    provider,
-                                    type,
-                                    event.target.checked,
-                                  )
+                                  toggleTools(provider, event.target.checked)
                                 }
                               >
-                                {t(`portabilityImport.groups.${type}`)} (
-                                {assets.length})
+                                {t("portabilityImport.toolsSetup")}
                               </Checkbox>
-                            ),
-                            children: (
-                              <>
-                                {pageAssets.map((asset) => (
-                                  <div
-                                    className={styles.assetRow}
-                                    key={asset.source_id}
-                                  >
-                                    <Tooltip
-                                      title={
-                                        asset.requires_sessions
-                                          ? t(
-                                              "portabilityImport.heartbeatRequiresSessions",
-                                            )
-                                          : undefined
-                                      }
+                              <span>
+                                {t("portabilityImport.items", {
+                                  count: provider.assets.length,
+                                })}
+                              </span>
+                            </div>
+                          );
+                        })()}
+                      <Collapse
+                        className={styles.groups}
+                        defaultActiveKey={[...GROUPS]}
+                        items={GROUPS.flatMap((type) => {
+                          const assets = provider.assets.filter(
+                            (asset) => asset.asset_type === type,
+                          );
+                          if (!assets.length) return [];
+                          const field = FIELDS[type];
+                          const selected = new Set(
+                            currentSelections[provider.source]?.[field] ?? [],
+                          );
+                          const selectable = assets.filter(isSelectable);
+                          const selectedCount = selectable.filter((asset) =>
+                            selected.has(asset.source_id),
+                          ).length;
+                          const pageKey = `select:${provider.source}:${type}`;
+                          const page = assetPage(pageKey);
+                          const pageAssets = assets.slice(
+                            (page - 1) * ASSET_PAGE_SIZE,
+                            page * ASSET_PAGE_SIZE,
+                          );
+                          return [
+                            {
+                              key: type,
+                              label: (
+                                <Checkbox
+                                  disabled={!selectable.length}
+                                  checked={Boolean(
+                                    selectable.length &&
+                                      selectedCount === selectable.length,
+                                  )}
+                                  indeterminate={Boolean(
+                                    selectedCount &&
+                                      selectedCount < selectable.length,
+                                  )}
+                                  onClick={(event) => event.stopPropagation()}
+                                  onChange={(event) =>
+                                    toggleGroup(
+                                      provider,
+                                      type,
+                                      event.target.checked,
+                                    )
+                                  }
+                                >
+                                  {t(`portabilityImport.groups.${type}`)} (
+                                  {assets.length})
+                                </Checkbox>
+                              ),
+                              children: (
+                                <>
+                                  {pageAssets.map((asset) => (
+                                    <div
+                                      className={styles.assetRow}
+                                      key={asset.source_id}
                                     >
-                                      <Checkbox
-                                        disabled={!isSelectable(asset)}
-                                        checked={
-                                          isSelectable(asset) &&
-                                          selected.has(asset.source_id)
-                                        }
-                                        onChange={(event) =>
-                                          toggleAsset(
-                                            provider,
-                                            asset,
-                                            event.target.checked,
-                                          )
+                                      <Tooltip
+                                        title={
+                                          asset.requires_sessions
+                                            ? t(
+                                                "portabilityImport.heartbeatRequiresSessions",
+                                              )
+                                            : undefined
                                         }
                                       >
-                                        {asset.name}
-                                      </Checkbox>
-                                    </Tooltip>
-                                    {asset.blocked_reason && (
-                                      <span>{asset.blocked_reason}</span>
-                                    )}
-                                  </div>
-                                ))}
-                                {assets.length > ASSET_PAGE_SIZE && (
-                                  <Pagination
-                                    current={page}
-                                    pageSize={ASSET_PAGE_SIZE}
-                                    size="small"
-                                    total={assets.length}
-                                    onChange={(next) =>
-                                      setAssetPage(pageKey, next)
-                                    }
-                                  />
-                                )}
-                              </>
-                            ),
-                          },
-                        ];
-                      })}
+                                        <Checkbox
+                                          disabled={!isSelectable(asset)}
+                                          checked={
+                                            isSelectable(asset) &&
+                                            selected.has(asset.source_id)
+                                          }
+                                          onChange={(event) =>
+                                            toggleAsset(
+                                              provider,
+                                              asset,
+                                              event.target.checked,
+                                            )
+                                          }
+                                        >
+                                          {asset.name}
+                                        </Checkbox>
+                                      </Tooltip>
+                                      {asset.blocked_reason && (
+                                        <span>{asset.blocked_reason}</span>
+                                      )}
+                                    </div>
+                                  ))}
+                                  {assets.length > ASSET_PAGE_SIZE && (
+                                    <Pagination
+                                      current={page}
+                                      pageSize={ASSET_PAGE_SIZE}
+                                      size="small"
+                                      total={assets.length}
+                                      onChange={(next) =>
+                                        setAssetPage(pageKey, next)
+                                      }
+                                    />
+                                  )}
+                                </>
+                              ),
+                            },
+                          ];
+                        })}
+                      />
+                    </>
+                  )}
+                </Card>
+              ))}
+              <div className={styles.actions}>
+                <Button
+                  type="primary"
+                  disabled={!hasSelection}
+                  loading={loading}
+                  onClick={startImport}
+                >
+                  {t("portabilityImport.start")}
+                </Button>
+              </div>
+            </section>
+          )}
+
+          {job && current === 2 && (
+            <section className={styles.section}>
+              <div>
+                <Progress
+                  percent={isDone ? 100 : percent}
+                  status={job.state === "failed" ? "exception" : "active"}
+                />
+              </div>
+              <div className={styles.resultHeader}>
+                {isDone ? <CheckCircle2 /> : <PackageOpen />}
+                <div>
+                  <h3>
+                    {t(
+                      isDone
+                        ? "portabilityImport.finished"
+                        : isCancelling
+                        ? "portabilityImport.cancelling"
+                        : "portabilityImport.importing",
+                    )}
+                  </h3>
+                  <p>
+                    {t(
+                      isCancelling
+                        ? "portabilityImport.cancellingHint"
+                        : "portabilityImport.keepOpen",
+                    )}
+                  </p>
+                </div>
+              </div>
+              {job.providers.map((provider) => (
+                <Card
+                  key={provider.source}
+                  title={provider.source.toUpperCase()}
+                >
+                  {provider.selection.sessions &&
+                    provider.sessions_total > 0 && (
+                      <div className={styles.row}>
+                        <span>{t("portabilityImport.conversations")}</span>
+                        <ConversationStatus provider={provider} />
+                      </div>
+                    )}
+                  {provider.assets
+                    .slice(
+                      (assetPage(`result:${provider.source}`) - 1) *
+                        ASSET_PAGE_SIZE,
+                      assetPage(`result:${provider.source}`) * ASSET_PAGE_SIZE,
+                    )
+                    .map((asset) => (
+                      <div
+                        className={styles.assetRow}
+                        key={`${asset.asset_type}:${asset.source_id}`}
+                      >
+                        <span>{asset.name}</span>
+                        <AssetStatus asset={asset} />
+                        {asset.state === "failed" && isSelectable(asset) && (
+                          <Checkbox
+                            aria-label={asset.name}
+                            checked={selectedRetryKeySet.has(
+                              retryKey({ provider, asset }),
+                            )}
+                            disabled={!isDone}
+                            onChange={(event) =>
+                              toggleRetry(
+                                { provider, asset },
+                                event.target.checked,
+                              )
+                            }
+                          />
+                        )}
+                      </div>
+                    ))}
+                  {provider.assets.length > ASSET_PAGE_SIZE && (
+                    <Pagination
+                      current={assetPage(`result:${provider.source}`)}
+                      pageSize={ASSET_PAGE_SIZE}
+                      size="small"
+                      total={provider.assets.length}
+                      onChange={(next) =>
+                        setAssetPage(`result:${provider.source}`, next)
+                      }
                     />
+                  )}
+                  {provider.error && (
+                    <Alert
+                      icon={<CircleAlert />}
+                      type="error"
+                      showIcon
+                      message={provider.error}
+                    />
+                  )}
+                </Card>
+              ))}
+              {job.logs.length > 0 && (
+                <Collapse
+                  items={[
+                    {
+                      key: "logs",
+                      label: t("portabilityImport.details"),
+                      children: (
+                        <pre className={styles.logs}>{job.logs.join("\n")}</pre>
+                      ),
+                    },
+                  ]}
+                />
+              )}
+              <div className={styles.actions}>
+                {isDone && failedAssets.length > 0 && (
+                  <>
+                    <Checkbox
+                      checked={
+                        selectedRetryAssets.length === failedAssets.length
+                      }
+                      indeterminate={Boolean(
+                        selectedRetryAssets.length &&
+                          selectedRetryAssets.length < failedAssets.length,
+                      )}
+                      onChange={(event) =>
+                        toggleAllRetries(event.target.checked)
+                      }
+                    >
+                      {t("portabilityImport.selectAllFailed")}
+                    </Checkbox>
+                    <Button
+                      disabled={!selectedRetryAssets.length || loading}
+                      loading={loading}
+                      onClick={() => setConfirmRetry(true)}
+                    >
+                      {t("portabilityImport.retrySelected", {
+                        count: selectedRetryAssets.length,
+                      })}
+                    </Button>
                   </>
                 )}
-              </Card>
-            ))}
-            <div className={styles.actions}>
-              <Button
-                type="primary"
-                disabled={!hasSelection}
-                loading={loading}
-                onClick={startImport}
-              >
-                {t("portabilityImport.start")}
-              </Button>
-            </div>
-          </section>
-        )}
-
-        {job && current === 2 && (
-          <section className={styles.section}>
-            <div>
-              <Progress
-                percent={isDone ? 100 : percent}
-                status={job.state === "failed" ? "exception" : "active"}
-              />
-            </div>
-            <div className={styles.resultHeader}>
-              {isDone ? <CheckCircle2 /> : <PackageOpen />}
-              <div>
-                <h3>
-                  {t(
-                    isDone
-                      ? "portabilityImport.finished"
-                      : isCancelling
-                      ? "portabilityImport.cancelling"
-                      : "portabilityImport.importing",
-                  )}
-                </h3>
-                <p>
-                  {t(
-                    isCancelling
-                      ? "portabilityImport.cancellingHint"
-                      : "portabilityImport.keepOpen",
-                  )}
-                </p>
+                <Button
+                  type="primary"
+                  disabled={!isDone}
+                  onClick={() => {
+                    reset();
+                    navigate("/chat");
+                  }}
+                >
+                  {t("portabilityImport.done")}
+                </Button>
               </div>
-            </div>
-            {job.providers.map((provider) => (
-              <Card key={provider.source} title={provider.source.toUpperCase()}>
-                {provider.selection.sessions && provider.sessions_total > 0 && (
-                  <div className={styles.row}>
-                    <span>{t("portabilityImport.conversations")}</span>
-                    <ConversationStatus provider={provider} />
-                  </div>
-                )}
-                {provider.assets
-                  .slice(
-                    (assetPage(`result:${provider.source}`) - 1) *
-                      ASSET_PAGE_SIZE,
-                    assetPage(`result:${provider.source}`) * ASSET_PAGE_SIZE,
-                  )
-                  .map((asset) => (
-                    <div
-                      className={styles.assetRow}
-                      key={`${asset.asset_type}:${asset.source_id}`}
-                    >
-                      <span>{asset.name}</span>
-                      <AssetStatus asset={asset} />
-                      {asset.state === "failed" && isSelectable(asset) && (
-                        <Checkbox
-                          aria-label={asset.name}
-                          checked={selectedRetryKeySet.has(
-                            retryKey({ provider, asset }),
-                          )}
-                          disabled={!isDone}
-                          onChange={(event) =>
-                            toggleRetry(
-                              { provider, asset },
-                              event.target.checked,
-                            )
-                          }
-                        />
-                      )}
-                    </div>
-                  ))}
-                {provider.assets.length > ASSET_PAGE_SIZE && (
-                  <Pagination
-                    current={assetPage(`result:${provider.source}`)}
-                    pageSize={ASSET_PAGE_SIZE}
-                    size="small"
-                    total={provider.assets.length}
-                    onChange={(next) =>
-                      setAssetPage(`result:${provider.source}`, next)
-                    }
-                  />
-                )}
-                {provider.error && (
-                  <Alert
-                    icon={<CircleAlert />}
-                    type="error"
-                    showIcon
-                    message={provider.error}
-                  />
-                )}
-              </Card>
-            ))}
-            {job.logs.length > 0 && (
-              <Collapse
-                items={[
-                  {
-                    key: "logs",
-                    label: t("portabilityImport.details"),
-                    children: (
-                      <pre className={styles.logs}>{job.logs.join("\n")}</pre>
-                    ),
-                  },
-                ]}
-              />
-            )}
-            <div className={styles.actions}>
-              {isDone && failedAssets.length > 0 && (
-                <>
-                  <Checkbox
-                    checked={selectedRetryAssets.length === failedAssets.length}
-                    indeterminate={Boolean(
-                      selectedRetryAssets.length &&
-                        selectedRetryAssets.length < failedAssets.length,
-                    )}
-                    onChange={(event) => toggleAllRetries(event.target.checked)}
-                  >
-                    {t("portabilityImport.selectAllFailed")}
-                  </Checkbox>
-                  <Button
-                    disabled={!selectedRetryAssets.length || loading}
-                    loading={loading}
-                    onClick={() => setConfirmRetry(true)}
-                  >
-                    {t("portabilityImport.retrySelected", {
-                      count: selectedRetryAssets.length,
-                    })}
-                  </Button>
-                </>
-              )}
-              <Button
-                type="primary"
-                disabled={!isDone}
-                onClick={() => {
-                  reset();
-                  navigate("/chat");
-                }}
-              >
-                {t("portabilityImport.done")}
-              </Button>
-            </div>
-          </section>
-        )}
-        <Modal
-          open={confirmRetry}
-          title={t("common.retry")}
-          okText={t("common.retry")}
-          cancelText={t("common.cancel")}
-          onCancel={() => setConfirmRetry(false)}
-          onOk={() => void runRetry()}
-        >
-          {t("portabilityImport.retryConfirm", {
-            count: selectedRetryAssets.length,
-          })}
-        </Modal>
-        <Modal
-          open={Boolean(pluginAction)}
-          title={t("portabilityImport.pluginWarningTitle")}
-          okText={t("portabilityImport.pluginWarningAction")}
-          cancelText={t("common.cancel")}
-          okButtonProps={{ disabled: !pluginConfirmed }}
-          onCancel={() => setPluginAction(null)}
-          onOk={() => void confirmPluginAction()}
-        >
-          <p>{t("portabilityImport.pluginWarning")}</p>
-          <ul>
-            {pluginNames.map((name) => (
-              <li key={name}>{name}</li>
-            ))}
-          </ul>
-          <Checkbox
-            checked={pluginConfirmed}
-            onChange={(event) => setPluginConfirmed(event.target.checked)}
+            </section>
+          )}
+          <Modal
+            open={confirmRetry}
+            title={t("common.retry")}
+            okText={t("common.retry")}
+            cancelText={t("common.cancel")}
+            onCancel={() => setConfirmRetry(false)}
+            onOk={() => void runRetry()}
           >
-            {t("portabilityImport.pluginWarningConfirm")}
-          </Checkbox>
-        </Modal>
-      </main>
-    </div>
+            {t("portabilityImport.retryConfirm", {
+              count: selectedRetryAssets.length,
+            })}
+          </Modal>
+          <Modal
+            open={Boolean(pluginAction)}
+            title={t("portabilityImport.pluginWarningTitle")}
+            okText={t("portabilityImport.pluginWarningAction")}
+            cancelText={t("common.cancel")}
+            okButtonProps={{ disabled: !pluginConfirmed }}
+            onCancel={() => setPluginAction(null)}
+            onOk={() => void confirmPluginAction()}
+          >
+            <p>{t("portabilityImport.pluginWarning")}</p>
+            <ul>
+              {pluginNames.map((name) => (
+                <li key={name}>{name}</li>
+              ))}
+            </ul>
+            <Checkbox
+              checked={pluginConfirmed}
+              onChange={(event) => setPluginConfirmed(event.target.checked)}
+            >
+              {t("portabilityImport.pluginWarningConfirm")}
+            </Checkbox>
+          </Modal>
+        </main>
+      </div>
+    </SettingsPage>
   );
 }
