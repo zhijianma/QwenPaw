@@ -52,6 +52,17 @@ in `toolbar` or section actions, and keep creation/editing in the existing
 `SettingsDrawer`, modal, or route. Stable entity keys and the existing close
 handler must survive layout changes.
 
+When a collection already owns a richer shared header, expose that header's
+props and pass them to `SettingsPage` instead of nesting its `PageHeader`.
+For example, the marketplace section switch and actions are produced by
+`useMarketplaceHeaderProps`; both the standalone market page and plugin
+manager consume the same navigation contract while rendering one header.
+
+An embedded settings block must not create another `SettingsPage`. General
+settings owns the page header, while its navigation editor is a named
+`SettingsSection`. This keeps search targets and sortable IDs stable without
+introducing a nested page landmark.
+
 ## Data and diagnostic composition
 
 Charts, logs, tables, and dense statistics use `full`. Keep local scrolling
