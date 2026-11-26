@@ -30,6 +30,7 @@ vi.mock("./useSidebarEntryGroups", () => ({
   }),
 }));
 import NavigationSettings from "./NavigationSettings";
+import { reorderNavigationEntries } from "./navigationOrder";
 beforeEach(() => {
   vi.clearAllMocks();
   vi.useFakeTimers();
@@ -93,5 +94,29 @@ describe("sidebar entry editing", () => {
     });
     expect(mocks.setFocusItemIds).toHaveBeenCalledWith(["unavailable.plugin"]);
     expect(screen.getByRole("button", { name: "common.edit" })).toBeVisible();
+  });
+  it("keeps stable entry labels and keyboard order after reordering", async () => {
+    renderWithProviders(<NavigationSettings />);
+    fireEvent.click(screen.getByRole("button", { name: "common.edit" }));
+    const tools = screen.getByRole("button", {
+      name: "settingsCenter.moveEntry Tools",
+    });
+    const files = screen.getByRole("button", {
+      name: "settingsCenter.moveEntry Files",
+    });
+
+    expect(tools).toHaveTextContent("Tools");
+    expect(files).toHaveTextContent("Files");
+    expect(tools).toHaveAttribute("aria-roledescription", "sortable");
+    expect(
+      reorderNavigationEntries(
+        ["core.tools", "core.files", "unavailable.plugin"],
+        "core.tools",
+        "core.files",
+      ),
+    ).toEqual(["core.files", "core.tools", "unavailable.plugin"]);
+    expect(
+      screen.getByRole("button", { name: "settingsCenter.moveEntry Tools" }),
+    ).toBe(tools);
   });
 });

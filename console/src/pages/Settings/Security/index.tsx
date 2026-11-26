@@ -10,7 +10,7 @@ import {
   FileGuardSection,
   AllowNoAuthHostsTab,
 } from "./components";
-import { PageHeader } from "@/components/PageHeader";
+import { SettingsPage } from "@/components/settings";
 import styles from "./index.module.less";
 
 function SecurityPage() {
@@ -64,161 +64,167 @@ function SecurityPage() {
   // Loading state
   if (loading) {
     return (
-      <div className={styles.securityPage}>
-        <div className={styles.centerState}>
-          <span className={styles.stateText}>{t("common.loading")}</span>
+      <SettingsPage header={{ current: t("security.security") }}>
+        <div className={styles.securityPage}>
+          <div className={styles.centerState}>
+            <span className={styles.stateText}>{t("common.loading")}</span>
+          </div>
         </div>
-      </div>
+      </SettingsPage>
     );
   }
 
   // Error state
   if (error) {
     return (
-      <div className={styles.securityPage}>
-        <div className={styles.centerState}>
-          <span className={styles.stateTextError}>{error}</span>
-          <Button size="small" onClick={fetchAll} style={{ marginTop: 12 }}>
-            {t("environments.retry")}
-          </Button>
+      <SettingsPage header={{ current: t("security.security") }}>
+        <div className={styles.securityPage}>
+          <div className={styles.centerState}>
+            <span className={styles.stateTextError}>{error}</span>
+            <Button size="small" onClick={fetchAll} style={{ marginTop: 12 }}>
+              {t("environments.retry")}
+            </Button>
+          </div>
         </div>
-      </div>
+      </SettingsPage>
     );
   }
 
   return (
-    <div className={styles.securityPage}>
-      <PageHeader current={t("security.security")} />
+    <SettingsPage header={{ current: t("security.security") }}>
+      <div className={styles.securityPage}>
+        <div className={styles.content}>
+          <Tabs
+            className={styles.mainTabs}
+            activeKey={activeTab}
+            tabBarExtraContent={
+              activeTab !== "allowNoAuthHosts" ? (
+                <InlineHelp
+                  subject={t(
+                    activeTab === "toolGuard"
+                      ? "security.toolGuardTitle"
+                      : `security.${activeTab}.title`,
+                  )}
+                >
+                  {t(
+                    activeTab === "toolGuard"
+                      ? "security.toolGuardDescription"
+                      : `security.${activeTab}.description`,
+                  )}
+                </InlineHelp>
+              ) : undefined
+            }
+            onChange={(value) => {
+              void (activeTab === "toolGuard"
+                ? flushSave()
+                : activeTab === "fileGuard"
+                ? fileGuardHandlers?.save()
+                : allowNoAuthHostsHandlers?.save());
+              setActiveTab(value);
+            }}
+            items={[
+              {
+                key: "toolGuard",
+                label: (
+                  <span className={styles.tabLabel}>
+                    {t("security.toolGuardTitle")}
+                  </span>
+                ),
+                children: (
+                  <ToolGuardTab
+                    onValuesChange={scheduleSave}
+                    form={form}
+                    config={config}
+                    enabled={enabled}
+                    setEnabled={setEnabled}
+                    sandboxEnabled={sandboxEnabled}
+                    setSandboxEnabled={setSandboxEnabled}
+                    sandboxReason={sandboxReason}
+                    toolOptions={toolOptions}
+                    mergedRules={mergedRules}
+                    toggleRule={toggleRule}
+                    toggleAutoDeny={toggleAutoDeny}
+                    onPreviewRule={setPreviewRule}
+                    onEditRule={openEditRule}
+                    onDeleteRule={deleteCustomRule}
+                    openAddRule={openAddRule}
+                    shellEvasionChecks={shellEvasionChecks}
+                    toggleShellEvasionCheck={toggleShellEvasionCheck}
+                  />
+                ),
+              },
+              {
+                key: "fileGuard",
+                label: (
+                  <span className={styles.tabLabel}>
+                    {t("security.fileGuard.title")}
+                  </span>
+                ),
+                children: (
+                  <div className={styles.tabContent}>
+                    <div className={styles.sectionFileGuardContainer}>
+                      <FileGuardSection
+                        onSave={onFileGuardHandlersReady}
+                        denyPathsActive={denyPathsActive}
+                        denyPathsLoading={denyPathsLoading}
+                        denyPathsProtectedPaths={denyPathsProtectedPaths}
+                        denyPathsPlatformSupported={denyPathsPlatformSupported}
+                        sandboxEnabled={sandboxEnabled}
+                        sandboxReason={sandboxReason}
+                        toggleDenyPaths={toggleDenyPaths}
+                      />
+                    </div>
+                  </div>
+                ),
+              },
+              {
+                key: "skillScanner",
+                label: (
+                  <span className={styles.tabLabel}>
+                    {t("security.skillScanner.title")}
+                  </span>
+                ),
+                children: (
+                  <div className={styles.tabContent}>
+                    <div className={styles.sectionSkillScannerContainer}>
+                      <SkillScannerSection />
+                    </div>
+                  </div>
+                ),
+              },
+              {
+                key: "allowNoAuthHosts",
+                label: (
+                  <span className={styles.tabLabel}>
+                    {t("security.allowNoAuthHosts.title")}
+                  </span>
+                ),
+                children: (
+                  <AllowNoAuthHostsTab
+                    onSave={onAllowNoAuthHostsHandlersReady}
+                  />
+                ),
+              },
+            ]}
+          />
+        </div>
 
-      <div className={styles.content}>
-        <Tabs
-          className={styles.mainTabs}
-          activeKey={activeTab}
-          tabBarExtraContent={
-            activeTab !== "allowNoAuthHosts" ? (
-              <InlineHelp
-                subject={t(
-                  activeTab === "toolGuard"
-                    ? "security.toolGuardTitle"
-                    : `security.${activeTab}.title`,
-                )}
-              >
-                {t(
-                  activeTab === "toolGuard"
-                    ? "security.toolGuardDescription"
-                    : `security.${activeTab}.description`,
-                )}
-              </InlineHelp>
-            ) : undefined
-          }
-          onChange={(value) => {
-            void (activeTab === "toolGuard"
-              ? flushSave()
-              : activeTab === "fileGuard"
-              ? fileGuardHandlers?.save()
-              : allowNoAuthHostsHandlers?.save());
-            setActiveTab(value);
-          }}
-          items={[
-            {
-              key: "toolGuard",
-              label: (
-                <span className={styles.tabLabel}>
-                  {t("security.toolGuardTitle")}
-                </span>
-              ),
-              children: (
-                <ToolGuardTab
-                  onValuesChange={scheduleSave}
-                  form={form}
-                  config={config}
-                  enabled={enabled}
-                  setEnabled={setEnabled}
-                  sandboxEnabled={sandboxEnabled}
-                  setSandboxEnabled={setSandboxEnabled}
-                  sandboxReason={sandboxReason}
-                  toolOptions={toolOptions}
-                  mergedRules={mergedRules}
-                  toggleRule={toggleRule}
-                  toggleAutoDeny={toggleAutoDeny}
-                  onPreviewRule={setPreviewRule}
-                  onEditRule={openEditRule}
-                  onDeleteRule={deleteCustomRule}
-                  openAddRule={openAddRule}
-                  shellEvasionChecks={shellEvasionChecks}
-                  toggleShellEvasionCheck={toggleShellEvasionCheck}
-                />
-              ),
-            },
-            {
-              key: "fileGuard",
-              label: (
-                <span className={styles.tabLabel}>
-                  {t("security.fileGuard.title")}
-                </span>
-              ),
-              children: (
-                <div className={styles.tabContent}>
-                  <div className={styles.sectionFileGuardContainer}>
-                    <FileGuardSection
-                      onSave={onFileGuardHandlersReady}
-                      denyPathsActive={denyPathsActive}
-                      denyPathsLoading={denyPathsLoading}
-                      denyPathsProtectedPaths={denyPathsProtectedPaths}
-                      denyPathsPlatformSupported={denyPathsPlatformSupported}
-                      sandboxEnabled={sandboxEnabled}
-                      sandboxReason={sandboxReason}
-                      toggleDenyPaths={toggleDenyPaths}
-                    />
-                  </div>
-                </div>
-              ),
-            },
-            {
-              key: "skillScanner",
-              label: (
-                <span className={styles.tabLabel}>
-                  {t("security.skillScanner.title")}
-                </span>
-              ),
-              children: (
-                <div className={styles.tabContent}>
-                  <div className={styles.sectionSkillScannerContainer}>
-                    <SkillScannerSection />
-                  </div>
-                </div>
-              ),
-            },
-            {
-              key: "allowNoAuthHosts",
-              label: (
-                <span className={styles.tabLabel}>
-                  {t("security.allowNoAuthHosts.title")}
-                </span>
-              ),
-              children: (
-                <AllowNoAuthHostsTab onSave={onAllowNoAuthHostsHandlersReady} />
-              ),
-            },
+        <RuleModal
+          open={editModal}
+          editingRule={editingRule}
+          existingRuleIds={[
+            ...builtinRules.map((r) => r.id),
+            ...customRules.map((r) => r.id),
           ]}
+          saving={saving}
+          onOk={handleEditSave}
+          onCancel={() => setEditModal(false)}
+          form={editForm}
         />
+
+        <PreviewModal rule={previewRule} onClose={() => setPreviewRule(null)} />
       </div>
-
-      <RuleModal
-        open={editModal}
-        editingRule={editingRule}
-        existingRuleIds={[
-          ...builtinRules.map((r) => r.id),
-          ...customRules.map((r) => r.id),
-        ]}
-        saving={saving}
-        onOk={handleEditSave}
-        onCancel={() => setEditModal(false)}
-        form={editForm}
-      />
-
-      <PreviewModal rule={previewRule} onClose={() => setPreviewRule(null)} />
-    </div>
+    </SettingsPage>
   );
 }
 

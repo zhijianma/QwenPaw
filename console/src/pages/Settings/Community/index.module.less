@@ -3,18 +3,34 @@
 }
 .content {
   display: flex;
+  width: 100%;
+  min-width: 0;
   padding: 24px;
   max-width: 920px;
+  box-sizing: border-box;
+
+  > :global(.ant-space-item),
+  :global(.ant-card) {
+    min-width: 0;
+  }
 }
 .fullWidth {
   width: 100%;
 }
 .passwordForm {
   display: flex;
+  width: 100%;
+  min-width: 0;
   flex-direction: column;
   gap: 12px;
   max-width: 460px;
   padding-top: 20px;
   margin-top: 8px;
   border-top: 1px solid var(--border-color, #eee);
+}
+
+@media (max-width: 480px) {
+  .content {
+    padding: 16px;
+  }
 }

@@ -28,7 +28,7 @@ import {
   ChannelAvailableItem,
   type ChannelKey,
 } from "./components";
-import { PageHeader } from "@/components/PageHeader";
+import { SettingsPage } from "@/components/settings";
 import {
   captureChannelSaveJob,
   keepConsoleEnabled,
@@ -344,11 +344,11 @@ function ChannelsPage() {
   ];
 
   return (
-    <div className={styles.channelsPage}>
-      <PageHeader
-        className={styles.pageHeader}
-        items={[{ title: t("channels.title") }]}
-        center={
+    <SettingsPage
+      header={{
+        className: styles.pageHeader,
+        items: [{ title: t("channels.title") }],
+        center: (
           <div className={styles.filterTabs}>
             {FILTER_TABS.map(({ key, label }) => (
               <button
@@ -365,8 +365,8 @@ function ChannelsPage() {
               </button>
             ))}
           </div>
-        }
-        extra={
+        ),
+        extra: (
           <Space size={8} wrap>
             <Badge dot={pendingCount > 0} offset={[-4, 4]}>
               <Button
@@ -391,133 +391,138 @@ function ChannelsPage() {
               {t("channels.manageAccessControl")}
             </Button>
           </Space>
-        }
-      />
-      <div className={styles.channelsContainer}>
-        {loading ? (
-          <div className={styles.loading}>
-            <span className={styles.loadingText}>{t("channels.loading")}</span>
-          </div>
-        ) : error ? (
-          <div className={styles.loadError} role="alert">
-            <TriangleAlert size={24} aria-hidden="true" />
-            <span>{t("channels.loadFailed")}</span>
-            <Button
-              icon={<RefreshCcw size={16} />}
-              onClick={() => void fetchChannels()}
-            >
-              {t("common.retry")}
-            </Button>
-          </div>
-        ) : (
-          <>
-            {/* Enabled Channels Section */}
-            <div className={styles.panelSection}>
-              <div className={styles.panelTitle}>
-                <span className={styles.panelDotGreen} />
-                {t("channels.enabledSection")}
-                <span className={styles.panelCount}>
-                  {t("channels.enabledCount", { count: enabledCards.length })}
-                </span>
+        ),
+      }}
+    >
+      <div className={styles.channelsPage}>
+        <div className={styles.channelsContainer}>
+          {loading ? (
+            <div className={styles.loading}>
+              <span className={styles.loadingText}>
+                {t("channels.loading")}
+              </span>
+            </div>
+          ) : error ? (
+            <div className={styles.loadError} role="alert">
+              <TriangleAlert size={24} aria-hidden="true" />
+              <span>{t("channels.loadFailed")}</span>
+              <Button
+                icon={<RefreshCcw size={16} />}
+                onClick={() => void fetchChannels()}
+              >
+                {t("common.retry")}
+              </Button>
+            </div>
+          ) : (
+            <>
+              {/* Enabled Channels Section */}
+              <div className={styles.panelSection}>
+                <div className={styles.panelTitle}>
+                  <span className={styles.panelDotGreen} />
+                  {t("channels.enabledSection")}
+                  <span className={styles.panelCount}>
+                    {t("channels.enabledCount", { count: enabledCards.length })}
+                  </span>
+                </div>
+
+                {enabledCards.length > 0 ? (
+                  <div className={styles.channelsGrid}>
+                    {enabledCards.map(({ key, config }, index) => (
+                      <Cascade key={key} index={index}>
+                        <ChannelCard
+                          channelKey={key}
+                          config={config}
+                          iconUrl={channelSchemas[key]?.icon}
+                          onClick={() => handleCardClick(key)}
+                        />
+                      </Cascade>
+                    ))}
+                  </div>
+                ) : (
+                  <div className={styles.emptyConfigured}>
+                    <p>{t("channels.noEnabledChannels")}</p>
+                    {disabledCards.length > 0 && (
+                      <Button
+                        type="primary"
+                        onClick={() => {
+                          document
+                            .getElementById("available-channels")
+                            ?.scrollIntoView({ behavior: "smooth" });
+                        }}
+                      >
+                        {t("channels.goEnableChannels")}
+                      </Button>
+                    )}
+                  </div>
+                )}
               </div>
 
-              {enabledCards.length > 0 ? (
-                <div className={styles.channelsGrid}>
-                  {enabledCards.map(({ key, config }, index) => (
-                    <Cascade key={key} index={index}>
-                      <ChannelCard
+              {/* Available Channels Section */}
+              {disabledCards.length > 0 && (
+                <div
+                  id="available-channels"
+                  className={styles.panelSectionDashed}
+                >
+                  <div className={styles.panelTitle}>
+                    <span className={styles.panelDotGray} />
+                    {t("channels.availableSection")}
+                  </div>
+                  <div className={styles.availableGrid}>
+                    {disabledCards.map(({ key }) => (
+                      <ChannelAvailableItem
+                        key={key}
                         channelKey={key}
-                        config={config}
                         iconUrl={channelSchemas[key]?.icon}
                         onClick={() => handleCardClick(key)}
                       />
-                    </Cascade>
-                  ))}
-                </div>
-              ) : (
-                <div className={styles.emptyConfigured}>
-                  <p>{t("channels.noEnabledChannels")}</p>
-                  {disabledCards.length > 0 && (
-                    <Button
-                      type="primary"
-                      onClick={() => {
-                        document
-                          .getElementById("available-channels")
-                          ?.scrollIntoView({ behavior: "smooth" });
-                      }}
-                    >
-                      {t("channels.goEnableChannels")}
-                    </Button>
-                  )}
+                    ))}
+                  </div>
                 </div>
               )}
-            </div>
-
-            {/* Available Channels Section */}
-            {disabledCards.length > 0 && (
-              <div
-                id="available-channels"
-                className={styles.panelSectionDashed}
-              >
-                <div className={styles.panelTitle}>
-                  <span className={styles.panelDotGray} />
-                  {t("channels.availableSection")}
-                </div>
-                <div className={styles.availableGrid}>
-                  {disabledCards.map(({ key }) => (
-                    <ChannelAvailableItem
-                      key={key}
-                      channelKey={key}
-                      iconUrl={channelSchemas[key]?.icon}
-                      onClick={() => handleCardClick(key)}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-          </>
-        )}
+            </>
+          )}
+        </div>
+        <ChannelFormDrawer
+          key={`${agentId}:${activeKey ?? "closed"}`}
+          ownerKey={`${agentId}:${activeKey ?? "closed"}`}
+          open={drawerOpen}
+          activeKey={activeKey}
+          activeLabel={activeLabel}
+          saving={saving}
+          initialValues={activeValues}
+          isBuiltin={activeKey ? isBuiltin(activeKey) : true}
+          channelSchema={activeKey ? channelSchemas[activeKey] : undefined}
+          channelSchemaLoading={
+            schemasLoading || (!!activeKey && !channelSchemas[activeKey])
+          }
+          onClose={handleDrawerClose}
+          onSubmit={handleSubmit}
+          onSubmitSnapshot={handleSubmitSnapshot}
+          onRuntimeChange={fetchChannels}
+        />
+        <AccessControlDrawer
+          open={aclDrawerOpen && aclDrawerAgentId !== null}
+          ownerAgentId={aclDrawerAgentId}
+          canMutate={canMutate}
+          onStale={() => void fetchChannels()}
+          onClose={() => {
+            setAclDrawerOpen(false);
+            setAclDrawerAgentId(null);
+          }}
+        />
+        <PendingApprovalsDrawer
+          open={pendingDrawerOpen && pendingDrawerAgentId !== null}
+          ownerAgentId={pendingDrawerAgentId}
+          canMutate={canMutate}
+          onStale={() => void fetchChannels()}
+          onClose={() => {
+            setPendingDrawerOpen(false);
+            setPendingDrawerAgentId(null);
+            void fetchPendingCount();
+          }}
+        />
       </div>
-      <ChannelFormDrawer
-        key={`${agentId}:${activeKey ?? "closed"}`}
-        ownerKey={`${agentId}:${activeKey ?? "closed"}`}
-        open={drawerOpen}
-        activeKey={activeKey}
-        activeLabel={activeLabel}
-        saving={saving}
-        initialValues={activeValues}
-        isBuiltin={activeKey ? isBuiltin(activeKey) : true}
-        channelSchema={activeKey ? channelSchemas[activeKey] : undefined}
-        channelSchemaLoading={
-          schemasLoading || (!!activeKey && !channelSchemas[activeKey])
-        }
-        onClose={handleDrawerClose}
-        onSubmit={handleSubmit}
-        onSubmitSnapshot={handleSubmitSnapshot}
-        onRuntimeChange={fetchChannels}
-      />
-      <AccessControlDrawer
-        open={aclDrawerOpen && aclDrawerAgentId !== null}
-        ownerAgentId={aclDrawerAgentId}
-        canMutate={canMutate}
-        onStale={() => void fetchChannels()}
-        onClose={() => {
-          setAclDrawerOpen(false);
-          setAclDrawerAgentId(null);
-        }}
-      />
-      <PendingApprovalsDrawer
-        open={pendingDrawerOpen && pendingDrawerAgentId !== null}
-        ownerAgentId={pendingDrawerAgentId}
-        canMutate={canMutate}
-        onStale={() => void fetchChannels()}
-        onClose={() => {
-          setPendingDrawerOpen(false);
-          setPendingDrawerAgentId(null);
-          void fetchPendingCount();
-        }}
-      />
-    </div>
+    </SettingsPage>
   );
 }
 

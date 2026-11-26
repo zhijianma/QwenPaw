@@ -29,6 +29,7 @@ import { useTranslation } from "react-i18next";
 import { useLocation } from "react-router-dom";
 
 import { LANGUAGE_LIST } from "@/constants/languageList";
+import { SettingsPage } from "@/components/settings";
 import { useTheme, type ThemeMode } from "@/contexts/ThemeContext";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import type { ThemeConfig } from "@/api/modules/theme";
@@ -405,384 +406,393 @@ export default function GeneralSettings() {
 
   return (
     <LayoutGroup id={surfaceId}>
-      <div className={styles.preferencePage}>
-        <div className={styles.pageTitle}>
-          <h2>{t("settingsCenter.pages.general", "General")}</h2>
-        </div>
-
-        <section className={styles.settingsSection}>
-          <Cascade>
-            <h3 className={styles.sectionTitle}>
-              {t(
-                "settingsCenter.appearanceAndLanguage",
-                "Appearance & language",
-              )}
-            </h3>
-            <div className={styles.settingsCard}>
-              <div className={styles.settingRow} data-setting-block>
-                <span className={styles.settingIcon}>
-                  <Languages size={18} />
-                </span>
-                <span className={styles.settingCopy}>
-                  <strong id={languageLabelId}>
-                    {t("sidebar.settings.language")}
-                  </strong>
-                  <small>
-                    {t(
-                      "settingsCenter.languageHint",
-                      "Changes the interface language on this device.",
-                    )}
-                  </small>
-                </span>
-                <Select
-                  className={styles.settingControl}
-                  aria-labelledby={languageLabelId}
-                  value={currentLanguage}
-                  options={LANGUAGES}
-                  onChange={changeLanguage}
-                />
-              </div>
-
-              <div className={styles.settingRow} data-setting-block>
-                <span className={styles.settingIcon}>
-                  <Palette size={18} />
-                </span>
-                <span className={styles.settingCopy}>
-                  <strong>{t("sidebar.settings.theme")}</strong>
-                  <small>
-                    {t(
-                      "settingsCenter.themeHint",
-                      "Use a light, dark or system-matched appearance.",
-                    )}
-                  </small>
-                </span>
-                <div
-                  className={styles.appearanceChoices}
-                  role="group"
-                  aria-label={t("sidebar.settings.theme")}
-                >
-                  {(["light", "dark", "system"] as ThemeMode[]).map((mode) => {
-                    const Icon =
-                      mode === "light" ? Sun : mode === "dark" ? Moon : Monitor;
-                    return (
-                      <InteractiveCard key={mode} tilt={2}>
-                        <button
-                          className={styles.appearanceChoice}
-                          data-mode={mode}
-                          data-press
-                          aria-pressed={themeMode === mode}
-                          onClick={() => setThemeMode(mode)}
-                        >
-                          <span
-                            className={styles.miniWindow}
-                            aria-hidden="true"
-                          >
-                            <span className={styles.miniSidebar}>
-                              <i />
-                              <i />
-                              <i />
-                            </span>
-                            <span className={styles.miniChat}>
-                              <i />
-                              <i />
-                              <i />
-                            </span>
-                          </span>
-                          <span className={styles.modeLabel}>
-                            <Icon size={16} />
-                            {t(`theme.${mode}`)}
-                            {themeMode === mode && <Check size={14} />}
-                          </span>
-                          <RunningGlow active={themeMode === mode} />
-                        </button>
-                      </InteractiveCard>
-                    );
-                  })}
-                </div>
-              </div>
-              <div className={styles.settingRow} data-setting-block>
-                <span className={styles.settingIcon}>
-                  <ALargeSmall size={18} />
-                </span>
-                <span className={styles.settingCopy}>
-                  <strong id="settingsUiFontSizeLabel">
-                    {t("settingsCenter.uiFontSize", "Console font size")}
-                  </strong>
-                  <small>
-                    {t(
-                      "settingsCenter.uiFontSizeHint",
-                      "Set the base font size for the console and login pages.",
-                    )}
-                  </small>
-                </span>
-                <div className={styles.fontSizeControl}>
-                  <InputNumber
-                    className={styles.fontSizeInput}
-                    min={UI_FONT_SIZE_MIN}
-                    max={UI_FONT_SIZE_MAX}
-                    step={1}
-                    value={uiFontSize}
-                    onChange={changeUiFontSize}
-                    aria-labelledby="settingsUiFontSizeLabel"
-                  />
-                  <span className={styles.fontSizeUnit}>px</span>
-                </div>
-              </div>
-              <div className={styles.settingRow} data-setting-block>
-                <span className={styles.settingIcon}>
-                  <Monitor size={18} />
-                </span>
-                <span className={styles.settingCopy}>
-                  <strong>{t("sidebar.settings.desktopMode")}</strong>
-                  <small>
-                    {t(
-                      "settingsCenter.desktopModeHint",
-                      "Open the multi-window desktop workspace.",
-                    )}
-                  </small>
-                </span>
-                <Button
-                  onClick={() =>
-                    window.location.assign(
-                      getOsRootHref(window.location.pathname),
-                    )
-                  }
-                >
-                  {t("settingsCenter.open", "Open")}
-                </Button>
-              </div>
-              <div className={styles.customRow}>
-                <span className={styles.paletteDots} aria-hidden="true">
-                  {THEME_PRESETS.slice(0, 5).map((preset) => (
-                    <i
-                      key={preset.id}
-                      style={{ background: preset.theme.accent }}
-                    />
-                  ))}
-                </span>
-                <motion.button
-                  data-settings-open="theme"
-                  className={styles.customButton}
-                  style={{ borderRadius: 24 }}
-                  whileTap={reduced ? undefined : { scale: 0.96 }}
-                  transition={{ type: "spring", stiffness: 420, damping: 28 }}
-                  layoutId={reduced || mobile ? undefined : surfaceId}
-                  onClick={() => setEditorOpen(true)}
-                  aria-haspopup="dialog"
-                  aria-expanded={editorOpen}
-                >
-                  <SlidersHorizontal size={16} />
-                  {t("settingsCenter.customTheme", "Custom theme")}
-                </motion.button>
-              </div>
-            </div>
-          </Cascade>
-        </section>
-
-        <NotificationSettings />
-
-        <section className={styles.settingsSection} data-setting-block>
-          <NavigationSettings />
-        </section>
-
-        <section className={styles.settingsSection}>
-          <Cascade index={1}>
-            <h3 className={styles.sectionTitle}>
-              {t("settingsCenter.chatDisplay", "Message display")}
-            </h3>
-            <div className={styles.settingsCard}>
-              <div className={styles.settingRow} data-setting-block>
-                <span className={styles.settingIcon}>
-                  <Expand size={18} />
-                </span>
-                <span className={styles.settingCopy}>
-                  <strong>
-                    {t("settingsCenter.contentWidth", "Message width")}
-                  </strong>
-                  <small>
-                    {t(
-                      "settingsCenter.contentWidthHint",
-                      "Choose the standard or wide conversation width.",
-                    )}
-                  </small>
-                </span>
-                <Segmented<ContentWidth>
-                  className={styles.segmentedControl}
-                  vertical={mobile}
-                  aria-label={t("settingsCenter.contentWidth", "Message width")}
-                  value={wideMode ? "wide" : "standard"}
-                  options={[
-                    {
-                      value: "standard",
-                      label: t(
-                        "settingsCenter.contentWidthStandard",
-                        "Standard",
-                      ),
-                    },
-                    {
-                      value: "wide",
-                      label: t("settingsCenter.contentWidthWide", "Wide"),
-                    },
-                  ]}
-                  onChange={changeContentWidth}
-                />
-              </div>
-              <div className={styles.settingRow} data-setting-block>
-                <span className={styles.settingIcon}>
-                  <MessageSquareText size={18} />
-                </span>
-                <span className={styles.settingCopy}>
-                  <strong>
-                    {t(
-                      "settingsCenter.assistantDisplay",
-                      "Assistant message collapse",
-                    )}
-                  </strong>
-                  <small>
-                    {t(
-                      "settingsCenter.assistantDisplayHint",
-                      "Control how intermediate text, reasoning and tools collapse.",
-                    )}
-                  </small>
-                </span>
-                <Segmented<AssistantMessageDisplayPreference>
-                  className={styles.messageDisplayControl}
-                  vertical={mobile}
-                  value={assistantDisplayMode}
-                  options={[
-                    {
-                      value: "expanded",
-                      label: t("settingsCenter.displayExpanded", "Expanded"),
-                    },
-                    {
-                      value: "process-collapsed",
-                      label: t(
-                        "settingsCenter.displayProcessCollapsed",
-                        "Collapse process",
-                      ),
-                    },
-                    {
-                      value: "result-collapsed",
-                      label: t(
-                        "settingsCenter.displayResultCollapsed",
-                        "Collapse results",
-                      ),
-                    },
-                  ]}
-                  onChange={changeAssistantDisplayMode}
-                />
-              </div>
-              <div className={styles.settingRow} data-setting-block>
-                <span className={styles.settingIcon}>
-                  <BrainCircuit size={18} />
-                </span>
-                <span className={styles.settingCopy}>
-                  <strong>
-                    {t("settingsCenter.thinkingDisplay", "Show thinking")}
-                  </strong>
-                  <small>
-                    {t(
-                      "settingsCenter.thinkingDisplayHint",
-                      "Show model reasoning in conversations without changing model behavior.",
-                    )}
-                  </small>
-                </span>
-                <Switch
-                  aria-label={t(
-                    "settingsCenter.thinkingDisplay",
-                    "Show thinking",
-                  )}
-                  checked={showThinking}
-                  onChange={changeShowThinking}
-                />
-              </div>
-              <div className={styles.settingRow} data-setting-block>
-                <span className={styles.settingIcon}>
-                  <Wrench size={18} />
-                </span>
-                <span className={styles.settingCopy}>
-                  <strong>
-                    {t("settingsCenter.toolDisplay", "Tool display")}
-                  </strong>
-                  <small>
-                    {t(
-                      "settingsCenter.toolDisplayHint",
-                      "Choose what appears after opening a tool card.",
-                    )}
-                  </small>
-                </span>
-                <Segmented<ToolDisplayPreference>
-                  className={styles.segmentedControl}
-                  vertical={mobile}
-                  value={toolDisplayMode}
-                  options={[
-                    {
-                      value: "current",
-                      label: t(
-                        "settingsCenter.toolDisplayCurrent",
-                        "Card view",
-                      ),
-                    },
-                    {
-                      value: "raw-input-output",
-                      label: t(
-                        "settingsCenter.toolDisplayRaw",
-                        "Raw parameters",
-                      ),
-                    },
-                  ]}
-                  onChange={changeToolDisplayMode}
-                />
-              </div>
-            </div>
-          </Cascade>
-        </section>
-
-        {isTauriRuntime() && (
+      <SettingsPage
+        header={{ current: t("settingsCenter.pages.general", "General") }}
+      >
+        <div className={styles.preferencePage}>
           <section className={styles.settingsSection}>
-            <Cascade index={2}>
+            <Cascade>
               <h3 className={styles.sectionTitle}>
-                {t("settingsCenter.desktopApplication", "Desktop app")}
+                {t(
+                  "settingsCenter.appearanceAndLanguage",
+                  "Appearance & language",
+                )}
               </h3>
               <div className={styles.settingsCard}>
+                <div className={styles.settingRow} data-setting-block>
+                  <span className={styles.settingIcon}>
+                    <Languages size={18} />
+                  </span>
+                  <span className={styles.settingCopy}>
+                    <strong id={languageLabelId}>
+                      {t("sidebar.settings.language")}
+                    </strong>
+                    <small>
+                      {t(
+                        "settingsCenter.languageHint",
+                        "Changes the interface language on this device.",
+                      )}
+                    </small>
+                  </span>
+                  <Select
+                    className={styles.settingControl}
+                    aria-labelledby={languageLabelId}
+                    value={currentLanguage}
+                    options={LANGUAGES}
+                    onChange={changeLanguage}
+                  />
+                </div>
+
+                <div className={styles.settingRow} data-setting-block>
+                  <span className={styles.settingIcon}>
+                    <Palette size={18} />
+                  </span>
+                  <span className={styles.settingCopy}>
+                    <strong>{t("sidebar.settings.theme")}</strong>
+                    <small>
+                      {t(
+                        "settingsCenter.themeHint",
+                        "Use a light, dark or system-matched appearance.",
+                      )}
+                    </small>
+                  </span>
+                  <div
+                    className={styles.appearanceChoices}
+                    role="group"
+                    aria-label={t("sidebar.settings.theme")}
+                  >
+                    {(["light", "dark", "system"] as ThemeMode[]).map(
+                      (mode) => {
+                        const Icon =
+                          mode === "light"
+                            ? Sun
+                            : mode === "dark"
+                            ? Moon
+                            : Monitor;
+                        return (
+                          <InteractiveCard key={mode} tilt={2}>
+                            <button
+                              className={styles.appearanceChoice}
+                              data-mode={mode}
+                              data-press
+                              aria-pressed={themeMode === mode}
+                              onClick={() => setThemeMode(mode)}
+                            >
+                              <span
+                                className={styles.miniWindow}
+                                aria-hidden="true"
+                              >
+                                <span className={styles.miniSidebar}>
+                                  <i />
+                                  <i />
+                                  <i />
+                                </span>
+                                <span className={styles.miniChat}>
+                                  <i />
+                                  <i />
+                                  <i />
+                                </span>
+                              </span>
+                              <span className={styles.modeLabel}>
+                                <Icon size={16} />
+                                {t(`theme.${mode}`)}
+                                {themeMode === mode && <Check size={14} />}
+                              </span>
+                              <RunningGlow active={themeMode === mode} />
+                            </button>
+                          </InteractiveCard>
+                        );
+                      },
+                    )}
+                  </div>
+                </div>
+                <div className={styles.settingRow} data-setting-block>
+                  <span className={styles.settingIcon}>
+                    <ALargeSmall size={18} />
+                  </span>
+                  <span className={styles.settingCopy}>
+                    <strong id="settingsUiFontSizeLabel">
+                      {t("settingsCenter.uiFontSize", "Console font size")}
+                    </strong>
+                    <small>
+                      {t(
+                        "settingsCenter.uiFontSizeHint",
+                        "Set the base font size for the console and login pages.",
+                      )}
+                    </small>
+                  </span>
+                  <div className={styles.fontSizeControl}>
+                    <InputNumber
+                      className={styles.fontSizeInput}
+                      min={UI_FONT_SIZE_MIN}
+                      max={UI_FONT_SIZE_MAX}
+                      step={1}
+                      value={uiFontSize}
+                      onChange={changeUiFontSize}
+                      aria-labelledby="settingsUiFontSizeLabel"
+                    />
+                    <span className={styles.fontSizeUnit}>px</span>
+                  </div>
+                </div>
                 <div className={styles.settingRow} data-setting-block>
                   <span className={styles.settingIcon}>
                     <Monitor size={18} />
                   </span>
                   <span className={styles.settingCopy}>
-                    <strong>{t("desktop.closeWindow.preference")}</strong>
+                    <strong>{t("sidebar.settings.desktopMode")}</strong>
                     <small>
                       {t(
-                        "settingsCenter.closeBehaviorHint",
-                        "Choose what happens when the desktop window closes.",
+                        "settingsCenter.desktopModeHint",
+                        "Open the multi-window desktop workspace.",
                       )}
                     </small>
                   </span>
-                  <Select<CloseBehavior>
-                    className={styles.settingControl}
-                    value={closeBehavior}
-                    onChange={changeCloseBehavior}
+                  <Button
+                    onClick={() =>
+                      window.location.assign(
+                        getOsRootHref(window.location.pathname),
+                      )
+                    }
+                  >
+                    {t("settingsCenter.open", "Open")}
+                  </Button>
+                </div>
+                <div className={styles.customRow}>
+                  <span className={styles.paletteDots} aria-hidden="true">
+                    {THEME_PRESETS.slice(0, 5).map((preset) => (
+                      <i
+                        key={preset.id}
+                        style={{ background: preset.theme.accent }}
+                      />
+                    ))}
+                  </span>
+                  <motion.button
+                    data-settings-open="theme"
+                    className={styles.customButton}
+                    style={{ borderRadius: 24 }}
+                    whileTap={reduced ? undefined : { scale: 0.96 }}
+                    transition={{ type: "spring", stiffness: 420, damping: 28 }}
+                    layoutId={reduced || mobile ? undefined : surfaceId}
+                    onClick={() => setEditorOpen(true)}
+                    aria-haspopup="dialog"
+                    aria-expanded={editorOpen}
+                  >
+                    <SlidersHorizontal size={16} />
+                    {t("settingsCenter.customTheme", "Custom theme")}
+                  </motion.button>
+                </div>
+              </div>
+            </Cascade>
+          </section>
+
+          <NotificationSettings />
+
+          <section className={styles.settingsSection} data-setting-block>
+            <NavigationSettings />
+          </section>
+
+          <section className={styles.settingsSection}>
+            <Cascade index={1}>
+              <h3 className={styles.sectionTitle}>
+                {t("settingsCenter.chatDisplay", "Message display")}
+              </h3>
+              <div className={styles.settingsCard}>
+                <div className={styles.settingRow} data-setting-block>
+                  <span className={styles.settingIcon}>
+                    <Expand size={18} />
+                  </span>
+                  <span className={styles.settingCopy}>
+                    <strong>
+                      {t("settingsCenter.contentWidth", "Message width")}
+                    </strong>
+                    <small>
+                      {t(
+                        "settingsCenter.contentWidthHint",
+                        "Choose the standard or wide conversation width.",
+                      )}
+                    </small>
+                  </span>
+                  <Segmented<ContentWidth>
+                    className={styles.segmentedControl}
+                    vertical={mobile}
+                    aria-label={t(
+                      "settingsCenter.contentWidth",
+                      "Message width",
+                    )}
+                    value={wideMode ? "wide" : "standard"}
                     options={[
                       {
-                        value: "ask",
-                        label: t("desktop.closeWindow.askEveryTime"),
+                        value: "standard",
+                        label: t(
+                          "settingsCenter.contentWidthStandard",
+                          "Standard",
+                        ),
                       },
                       {
-                        value: "minimize-to-tray",
-                        label: t("desktop.closeWindow.keepRunning"),
-                      },
-                      {
-                        value: "stop-service",
-                        label: t("desktop.closeWindow.stopService"),
+                        value: "wide",
+                        label: t("settingsCenter.contentWidthWide", "Wide"),
                       },
                     ]}
+                    onChange={changeContentWidth}
+                  />
+                </div>
+                <div className={styles.settingRow} data-setting-block>
+                  <span className={styles.settingIcon}>
+                    <MessageSquareText size={18} />
+                  </span>
+                  <span className={styles.settingCopy}>
+                    <strong>
+                      {t(
+                        "settingsCenter.assistantDisplay",
+                        "Assistant message collapse",
+                      )}
+                    </strong>
+                    <small>
+                      {t(
+                        "settingsCenter.assistantDisplayHint",
+                        "Control how intermediate text, reasoning and tools collapse.",
+                      )}
+                    </small>
+                  </span>
+                  <Segmented<AssistantMessageDisplayPreference>
+                    className={styles.messageDisplayControl}
+                    vertical={mobile}
+                    value={assistantDisplayMode}
+                    options={[
+                      {
+                        value: "expanded",
+                        label: t("settingsCenter.displayExpanded", "Expanded"),
+                      },
+                      {
+                        value: "process-collapsed",
+                        label: t(
+                          "settingsCenter.displayProcessCollapsed",
+                          "Collapse process",
+                        ),
+                      },
+                      {
+                        value: "result-collapsed",
+                        label: t(
+                          "settingsCenter.displayResultCollapsed",
+                          "Collapse results",
+                        ),
+                      },
+                    ]}
+                    onChange={changeAssistantDisplayMode}
+                  />
+                </div>
+                <div className={styles.settingRow} data-setting-block>
+                  <span className={styles.settingIcon}>
+                    <BrainCircuit size={18} />
+                  </span>
+                  <span className={styles.settingCopy}>
+                    <strong>
+                      {t("settingsCenter.thinkingDisplay", "Show thinking")}
+                    </strong>
+                    <small>
+                      {t(
+                        "settingsCenter.thinkingDisplayHint",
+                        "Show model reasoning in conversations without changing model behavior.",
+                      )}
+                    </small>
+                  </span>
+                  <Switch
+                    aria-label={t(
+                      "settingsCenter.thinkingDisplay",
+                      "Show thinking",
+                    )}
+                    checked={showThinking}
+                    onChange={changeShowThinking}
+                  />
+                </div>
+                <div className={styles.settingRow} data-setting-block>
+                  <span className={styles.settingIcon}>
+                    <Wrench size={18} />
+                  </span>
+                  <span className={styles.settingCopy}>
+                    <strong>
+                      {t("settingsCenter.toolDisplay", "Tool display")}
+                    </strong>
+                    <small>
+                      {t(
+                        "settingsCenter.toolDisplayHint",
+                        "Choose what appears after opening a tool card.",
+                      )}
+                    </small>
+                  </span>
+                  <Segmented<ToolDisplayPreference>
+                    className={styles.segmentedControl}
+                    vertical={mobile}
+                    value={toolDisplayMode}
+                    options={[
+                      {
+                        value: "current",
+                        label: t(
+                          "settingsCenter.toolDisplayCurrent",
+                          "Card view",
+                        ),
+                      },
+                      {
+                        value: "raw-input-output",
+                        label: t(
+                          "settingsCenter.toolDisplayRaw",
+                          "Raw parameters",
+                        ),
+                      },
+                    ]}
+                    onChange={changeToolDisplayMode}
                   />
                 </div>
               </div>
             </Cascade>
           </section>
-        )}
-      </div>
+
+          {isTauriRuntime() && (
+            <section className={styles.settingsSection}>
+              <Cascade index={2}>
+                <h3 className={styles.sectionTitle}>
+                  {t("settingsCenter.desktopApplication", "Desktop app")}
+                </h3>
+                <div className={styles.settingsCard}>
+                  <div className={styles.settingRow} data-setting-block>
+                    <span className={styles.settingIcon}>
+                      <Monitor size={18} />
+                    </span>
+                    <span className={styles.settingCopy}>
+                      <strong>{t("desktop.closeWindow.preference")}</strong>
+                      <small>
+                        {t(
+                          "settingsCenter.closeBehaviorHint",
+                          "Choose what happens when the desktop window closes.",
+                        )}
+                      </small>
+                    </span>
+                    <Select<CloseBehavior>
+                      className={styles.settingControl}
+                      value={closeBehavior}
+                      onChange={changeCloseBehavior}
+                      options={[
+                        {
+                          value: "ask",
+                          label: t("desktop.closeWindow.askEveryTime"),
+                        },
+                        {
+                          value: "minimize-to-tray",
+                          label: t("desktop.closeWindow.keepRunning"),
+                        },
+                        {
+                          value: "stop-service",
+                          label: t("desktop.closeWindow.stopService"),
+                        },
+                      ]}
+                    />
+                  </div>
+                </div>
+              </Cascade>
+            </section>
+          )}
+        </div>
+      </SettingsPage>
       {mobile ? (
         <BottomSheet
           open={editorOpen}

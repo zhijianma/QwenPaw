@@ -21,7 +21,7 @@ import {
 } from "./components";
 import { useSessions } from "./useSessions";
 import api from "../../../api";
-import { PageHeader } from "@/components/PageHeader";
+import { SettingsPage } from "@/components/settings";
 import { ChannelIcon } from "../Channels/components";
 import styles from "./index.module.less";
 
@@ -289,11 +289,11 @@ function SessionsPage() {
   };
 
   return (
-    <div className={styles.sessionsPage}>
-      <PageHeader
-        className={styles.pageHeader}
-        items={[{ title: t("nav.control") }, { title: t("sessions.title") }]}
-        extra={
+    <SettingsPage
+      header={{
+        className: styles.pageHeader,
+        items: [{ title: t("nav.control") }, { title: t("sessions.title") }],
+        extra: (
           <div className={styles.headerRight}>
             <FilterBar
               isMobile={isCompactLayout}
@@ -324,189 +324,191 @@ function SessionsPage() {
               </>
             )}
           </div>
-        }
-      />
+        ),
+      }}
+    >
+      <div className={styles.sessionsPage}>
+        <Tabs
+          activeKey={activeTab}
+          onChange={(key) => setActiveTab(key as "active" | "archived")}
+          items={[
+            {
+              key: "active",
+              label: `${t("sessions.activeTab", "Active")} (${activeCount})`,
+            },
+            {
+              key: "archived",
+              label: `${t(
+                "sessions.archivedTab",
+                "Archived",
+              )} (${archivedCount})`,
+            },
+          ]}
+          style={{ padding: "0 16px" }}
+        />
 
-      <Tabs
-        activeKey={activeTab}
-        onChange={(key) => setActiveTab(key as "active" | "archived")}
-        items={[
-          {
-            key: "active",
-            label: `${t("sessions.activeTab", "Active")} (${activeCount})`,
-          },
-          {
-            key: "archived",
-            label: `${t(
-              "sessions.archivedTab",
-              "Archived",
-            )} (${archivedCount})`,
-          },
-        ]}
-        style={{ padding: "0 16px" }}
-      />
-
-      {isCompactLayout ? (
-        <div className={styles.mobileCardList}>
-          {loading && mobileSessions.length === 0 && (
-            <div
-              className={styles.mobileListState}
-              role="status"
-              aria-live="polite"
-            >
-              <LoaderCircle
-                className={styles.mobileLoadingIcon}
-                size={24}
-                aria-hidden="true"
-              />
-              <span>{t("sessions.loading")}</span>
-            </div>
-          )}
-          {!loading && error && (
-            <div
-              className={`${styles.mobileListState} ${styles.mobileErrorState}`}
-              role="alert"
-            >
-              <TriangleAlert size={24} aria-hidden="true" />
-              <span>{t("sessions.loadFailed")}</span>
-              <Button
-                className={styles.mobileRetryButton}
-                onClick={() => void refreshSessions()}
+        {isCompactLayout ? (
+          <div className={styles.mobileCardList}>
+            {loading && mobileSessions.length === 0 && (
+              <div
+                className={styles.mobileListState}
+                role="status"
+                aria-live="polite"
               >
-                <RefreshCcw size={16} aria-hidden="true" />
-                {t("common.retry")}
-              </Button>
-            </div>
-          )}
-          {mobileSessions.map((session) => (
-            <Card
-              key={session.id}
-              className={styles.mobileSessionCard}
-              size="small"
-              styles={{ body: { padding: 24 } }}
-            >
-              <div className={styles.mobileSessionHeader}>
-                <Checkbox
-                  className={styles.mobileSelection}
-                  checked={selectedRowKeys.includes(session.id)}
-                  aria-label={t("sessions.selectSession", {
-                    defaultValue: "Select {{name}}",
-                    name: session.name || session.id,
-                  })}
-                  onChange={(event) =>
-                    handleMobileSelectionChange(
-                      session.id,
-                      event.target.checked,
-                    )
-                  }
+                <LoaderCircle
+                  className={styles.mobileLoadingIcon}
+                  size={24}
+                  aria-hidden="true"
                 />
-                <span className={styles.mobileSessionName}>
-                  {session.name || session.id}
-                </span>
-                <span className={styles.mobileSessionChannel}>
-                  <ChannelIcon channelKey={session.channel} size={24} />
-                </span>
+                <span>{t("sessions.loading")}</span>
               </div>
-              <div className={styles.mobileSessionMeta}>
-                <span>ID: {session.id}</span>
-                {session.user_id && <span>User: {session.user_id}</span>}
-                <span>Created: {formatTime(session.created_at)}</span>
-              </div>
-              <div className={styles.mobileSessionActions}>
-                {isArchivedTab ? (
-                  <>
-                    <Button
-                      size="small"
-                      className={styles.mobileActionBtn}
-                      onClick={() => handleArchiveToggle(session)}
-                    >
-                      {t("sessions.archive.unaction", "Unarchive")}
-                    </Button>
-                    <Button
-                      size="small"
-                      className={styles.mobileActionBtn}
-                      danger
-                      onClick={() => handleDelete(session.id)}
-                    >
-                      {t("common.delete")}
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <Button
-                      size="small"
-                      className={styles.mobileActionBtn}
-                      onClick={() => handleEdit(session)}
-                    >
-                      {t("common.edit")}
-                    </Button>
-                    <Button
-                      size="small"
-                      className={styles.mobileActionBtn}
-                      onClick={() => handleView(session)}
-                    >
-                      {t("common.view")}
-                    </Button>
-                    <Button
-                      size="small"
-                      className={styles.mobileActionBtn}
-                      onClick={() => handleArchiveToggle(session)}
-                    >
-                      {t("sessions.archive.action", "Archive")}
-                    </Button>
-                    <Button
-                      size="small"
-                      className={styles.mobileActionBtn}
-                      danger
-                      onClick={() => handleDelete(session.id)}
-                    >
-                      {t("common.delete")}
-                    </Button>
-                  </>
-                )}
-              </div>
-            </Card>
-          ))}
-          {hasMoreMobileSessions && (
-            <div className={styles.mobileLoadMore}>
-              <Button
-                className={styles.mobileLoadMoreButton}
-                onClick={handleLoadMoreMobileSessions}
+            )}
+            {!loading && error && (
+              <div
+                className={`${styles.mobileListState} ${styles.mobileErrorState}`}
+                role="alert"
               >
-                {t("common.loadMore", "Load more")}
-              </Button>
-            </div>
-          )}
-        </div>
-      ) : (
-        <Card className={styles.tableCard} styles={{ body: { padding: 0 } }}>
-          <Table
-            columns={columns}
-            dataSource={filteredSessions}
-            loading={loading}
-            rowKey="id"
-            rowSelection={rowSelection}
-            rowClassName={(record) =>
-              selectedRowKeys.includes(record.id) ? styles.selectedRow : ""
-            }
-            scroll={{ x: 1500 }}
-            pagination={{
-              pageSize: 10,
-              showSizeChanger: false,
-            }}
-          />
-        </Card>
-      )}
+                <TriangleAlert size={24} aria-hidden="true" />
+                <span>{t("sessions.loadFailed")}</span>
+                <Button
+                  className={styles.mobileRetryButton}
+                  onClick={() => void refreshSessions()}
+                >
+                  <RefreshCcw size={16} aria-hidden="true" />
+                  {t("common.retry")}
+                </Button>
+              </div>
+            )}
+            {mobileSessions.map((session) => (
+              <Card
+                key={session.id}
+                className={styles.mobileSessionCard}
+                size="small"
+                styles={{ body: { padding: 24 } }}
+              >
+                <div className={styles.mobileSessionHeader}>
+                  <Checkbox
+                    className={styles.mobileSelection}
+                    checked={selectedRowKeys.includes(session.id)}
+                    aria-label={t("sessions.selectSession", {
+                      defaultValue: "Select {{name}}",
+                      name: session.name || session.id,
+                    })}
+                    onChange={(event) =>
+                      handleMobileSelectionChange(
+                        session.id,
+                        event.target.checked,
+                      )
+                    }
+                  />
+                  <span className={styles.mobileSessionName}>
+                    {session.name || session.id}
+                  </span>
+                  <span className={styles.mobileSessionChannel}>
+                    <ChannelIcon channelKey={session.channel} size={24} />
+                  </span>
+                </div>
+                <div className={styles.mobileSessionMeta}>
+                  <span>ID: {session.id}</span>
+                  {session.user_id && <span>User: {session.user_id}</span>}
+                  <span>Created: {formatTime(session.created_at)}</span>
+                </div>
+                <div className={styles.mobileSessionActions}>
+                  {isArchivedTab ? (
+                    <>
+                      <Button
+                        size="small"
+                        className={styles.mobileActionBtn}
+                        onClick={() => handleArchiveToggle(session)}
+                      >
+                        {t("sessions.archive.unaction", "Unarchive")}
+                      </Button>
+                      <Button
+                        size="small"
+                        className={styles.mobileActionBtn}
+                        danger
+                        onClick={() => handleDelete(session.id)}
+                      >
+                        {t("common.delete")}
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button
+                        size="small"
+                        className={styles.mobileActionBtn}
+                        onClick={() => handleEdit(session)}
+                      >
+                        {t("common.edit")}
+                      </Button>
+                      <Button
+                        size="small"
+                        className={styles.mobileActionBtn}
+                        onClick={() => handleView(session)}
+                      >
+                        {t("common.view")}
+                      </Button>
+                      <Button
+                        size="small"
+                        className={styles.mobileActionBtn}
+                        onClick={() => handleArchiveToggle(session)}
+                      >
+                        {t("sessions.archive.action", "Archive")}
+                      </Button>
+                      <Button
+                        size="small"
+                        className={styles.mobileActionBtn}
+                        danger
+                        onClick={() => handleDelete(session.id)}
+                      >
+                        {t("common.delete")}
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </Card>
+            ))}
+            {hasMoreMobileSessions && (
+              <div className={styles.mobileLoadMore}>
+                <Button
+                  className={styles.mobileLoadMoreButton}
+                  onClick={handleLoadMoreMobileSessions}
+                >
+                  {t("common.loadMore", "Load more")}
+                </Button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <Card className={styles.tableCard} styles={{ body: { padding: 0 } }}>
+            <Table
+              columns={columns}
+              dataSource={filteredSessions}
+              loading={loading}
+              rowKey="id"
+              rowSelection={rowSelection}
+              rowClassName={(record) =>
+                selectedRowKeys.includes(record.id) ? styles.selectedRow : ""
+              }
+              scroll={{ x: 1500 }}
+              pagination={{
+                pageSize: 10,
+                showSizeChanger: false,
+              }}
+            />
+          </Card>
+        )}
 
-      <SessionDrawer
-        open={drawerOpen}
-        editingSession={editingSession}
-        form={form}
-        saving={saving}
-        onClose={handleDrawerClose}
-        onSubmit={handleSubmit}
-      />
-    </div>
+        <SessionDrawer
+          open={drawerOpen}
+          editingSession={editingSession}
+          form={form}
+          saving={saving}
+          onClose={handleDrawerClose}
+          onSubmit={handleSubmit}
+        />
+      </div>
+    </SettingsPage>
   );
 }
 

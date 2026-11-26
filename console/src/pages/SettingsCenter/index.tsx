@@ -343,6 +343,19 @@ function pageKeyFromPath(pathname: string) {
   return key || "general";
 }
 
+const TEMPLATE_PAGE_KEYS = new Set([
+  "heartbeat",
+  "agent-config",
+  "security",
+  "voice",
+  "models",
+  "environments",
+  "token-usage",
+  "debug",
+  "backups",
+  "import",
+]);
+
 export default function SettingsCenter({
   routeId,
   pluginContext,
@@ -980,6 +993,9 @@ export default function SettingsCenter({
         <main
           ref={contentRef}
           className={styles.content}
+          data-settings-template={
+            TEMPLATE_PAGE_KEYS.has(activePage?.key ?? "") || undefined
+          }
           data-core-settings={
             !routeId &&
             activePage?.key !== "models" &&

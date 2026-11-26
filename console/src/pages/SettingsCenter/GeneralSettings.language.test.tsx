@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders } from "@/test/common_setup";
 
 const mocks = vi.hoisted(() => ({
+  language: "en",
   updateLanguage: vi.fn(),
   changeLanguage: vi.fn(),
 }));
@@ -19,11 +20,16 @@ vi.mock("@/hooks/useIsMobile", () => ({
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     i18n: {
-      language: "en",
-      resolvedLanguage: "en",
+      language: mocks.language,
+      resolvedLanguage: mocks.language,
       changeLanguage: mocks.changeLanguage,
     },
-    t: (key: string) => (key === "sidebar.settings.language" ? "语言" : key),
+    t: (key: string) =>
+      key === "sidebar.settings.language"
+        ? mocks.language === "vi"
+          ? "Ngôn ngữ"
+          : "Language"
+        : key,
   }),
 }));
 
@@ -32,6 +38,11 @@ import GeneralSettings from "./GeneralSettings";
 describe("GeneralSettings language persistence", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.language = "en";
+    mocks.updateLanguage.mockResolvedValue(undefined);
+    mocks.changeLanguage.mockImplementation(async (language: string) => {
+      mocks.language = language;
+    });
     localStorage.removeItem("language");
   });
 
@@ -46,7 +57,21 @@ describe("GeneralSettings language persistence", () => {
   it("names the language selector from its visible heading", () => {
     renderWithProviders(<GeneralSettings />);
 
-    expect(screen.getByRole("combobox", { name: "语言" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "Language" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the selector associated with its translated visible label", async () => {
+    const { rerender } = renderWithProviders(<GeneralSettings />);
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Language" }));
+    fireEvent.click(await screen.findByText("Tiếng Việt"));
+    rerender(<GeneralSettings />);
+
+    expect(
+      screen.getByRole("combobox", { name: "Ngôn ngữ" }),
+    ).toBeInTheDocument();
   });
 
   it("surfaces a rejected remote write to the user", async () => {
@@ -55,7 +80,7 @@ describe("GeneralSettings language persistence", () => {
 
     renderWithProviders(<GeneralSettings />);
 
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: "语言" }));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Language" }));
     fireEvent.click(await screen.findByText("Tiếng Việt"));
 
     expect(mocks.changeLanguage).toHaveBeenCalledWith("vi");

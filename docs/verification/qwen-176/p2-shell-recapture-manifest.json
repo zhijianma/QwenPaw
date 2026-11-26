@@ -1,0 +1,299 @@
+{
+  "schemaVersion": 2,
+  "capturedAt": "2026-11-25T11:20:52.887Z",
+  "origin": "http://127.0.0.1:5180",
+  "browserProfile": "qwen178-paired-profile",
+  "browserIsolation": "fresh-process-per-service",
+  "rasterization": "--disable-gpu",
+  "baseSha": "30a06ee0dec4cf3af57dc4710109c78b866dfd1b",
+  "targetSha": "021bed2bc5228bdbc051e7f4cd769300ff2e4fd5",
+  "comparedFields": [
+    "route",
+    "viewport",
+    "locale",
+    "theme",
+    "accent",
+    "agent",
+    "fixture",
+    "visibleVersion",
+    "shell"
+  ],
+  "pairs": [
+    {
+      "name": "general",
+      "before": {
+        "name": "general",
+        "file": "before/general.png",
+        "serviceSha": "30a06ee0dec4cf3af57dc4710109c78b866dfd1b",
+        "sha256": "c4d257f1536614cea47ca50ca904325bc94863fc6a22d5a362ba44e9f592a2cf",
+        "route": "/settings/general",
+        "viewport": {
+          "width": 1440,
+          "height": 3000,
+          "dpr": 1,
+          "zoom": 1
+        },
+        "locale": "zh",
+        "theme": "dark",
+        "accent": "#a7c080",
+        "agent": "默认智能体",
+        "fixture": "shared-local-backend-8004",
+        "visibleVersion": "v2.3.1b1",
+        "shell": {
+          "shellReady": true,
+          "sidebarMode": "settings-expanded",
+          "sidebarWidth": 280,
+          "navigationItemCount": 22,
+          "historyItemCount": 0,
+          "visibleHistoryItemCount": 0,
+          "agent": "默认智能体",
+          "version": "v2.3.1b1",
+          "referenceTextLength": 119,
+          "referenceTextSha256": "e708f8419e70944c3e3933dba82b451c1abcbc28988f1a89677043249024094d"
+        },
+        "clientWidth": 1440,
+        "scrollWidth": 1440
+      },
+      "after": {
+        "name": "general",
+        "file": "after/general.png",
+        "serviceSha": "021bed2bc5228bdbc051e7f4cd769300ff2e4fd5",
+        "sha256": "0ade1a2a427d8c5945b7cbf34a80c81f6e1a3200309c5837d3079e39b9ecb1f4",
+        "route": "/settings/general",
+        "viewport": {
+          "width": 1440,
+          "height": 3000,
+          "dpr": 1,
+          "zoom": 1
+        },
+        "locale": "zh",
+        "theme": "dark",
+        "accent": "#a7c080",
+        "agent": "默认智能体",
+        "fixture": "shared-local-backend-8004",
+        "visibleVersion": "v2.3.1b1",
+        "shell": {
+          "shellReady": true,
+          "sidebarMode": "settings-expanded",
+          "sidebarWidth": 280,
+          "navigationItemCount": 22,
+          "historyItemCount": 0,
+          "visibleHistoryItemCount": 0,
+          "agent": "默认智能体",
+          "version": "v2.3.1b1",
+          "referenceTextLength": 119,
+          "referenceTextSha256": "e708f8419e70944c3e3933dba82b451c1abcbc28988f1a89677043249024094d"
+        },
+        "clientWidth": 1440,
+        "scrollWidth": 1440
+      }
+    },
+    {
+      "name": "navigation-settings",
+      "before": {
+        "name": "navigation-settings",
+        "file": "before/navigation-settings.png",
+        "serviceSha": "30a06ee0dec4cf3af57dc4710109c78b866dfd1b",
+        "sha256": "5dd5f6cb01777cb88ee781170843dae6b6192e80488d5313404561a21da0a024",
+        "route": "/settings/general",
+        "viewport": {
+          "width": 1440,
+          "height": 3000,
+          "dpr": 1,
+          "zoom": 1
+        },
+        "locale": "zh",
+        "theme": "dark",
+        "accent": "#a7c080",
+        "agent": "默认智能体",
+        "fixture": "shared-local-backend-8004",
+        "visibleVersion": "v2.3.1b1",
+        "shell": {
+          "shellReady": true,
+          "sidebarMode": "settings-expanded",
+          "sidebarWidth": 280,
+          "navigationItemCount": 22,
+          "historyItemCount": 0,
+          "visibleHistoryItemCount": 0,
+          "agent": "默认智能体",
+          "version": "v2.3.1b1",
+          "referenceTextLength": 119,
+          "referenceTextSha256": "e708f8419e70944c3e3933dba82b451c1abcbc28988f1a89677043249024094d"
+        },
+        "clientWidth": 1440,
+        "scrollWidth": 1440
+      },
+      "after": {
+        "name": "navigation-settings",
+        "file": "after/navigation-settings.png",
+        "serviceSha": "021bed2bc5228bdbc051e7f4cd769300ff2e4fd5",
+        "sha256": "66a25d1b8994185e55fb0f3c9ab73274a7a06f9beb601c79cf45fa7e623da836",
+        "route": "/settings/general",
+        "viewport": {
+          "width": 1440,
+          "height": 3000,
+          "dpr": 1,
+          "zoom": 1
+        },
+        "locale": "zh",
+        "theme": "dark",
+        "accent": "#a7c080",
+        "agent": "默认智能体",
+        "fixture": "shared-local-backend-8004",
+        "visibleVersion": "v2.3.1b1",
+        "shell": {
+          "shellReady": true,
+          "sidebarMode": "settings-expanded",
+          "sidebarWidth": 280,
+          "navigationItemCount": 22,
+          "historyItemCount": 0,
+          "visibleHistoryItemCount": 0,
+          "agent": "默认智能体",
+          "version": "v2.3.1b1",
+          "referenceTextLength": 119,
+          "referenceTextSha256": "e708f8419e70944c3e3933dba82b451c1abcbc28988f1a89677043249024094d"
+        },
+        "clientWidth": 1440,
+        "scrollWidth": 1440
+      }
+    },
+    {
+      "name": "community",
+      "before": {
+        "name": "community",
+        "file": "before/community.png",
+        "serviceSha": "30a06ee0dec4cf3af57dc4710109c78b866dfd1b",
+        "sha256": "d3f82ea4e89365a8827c77f5289a7ba518eac25fbfac3d0625c6649dd6359fd5",
+        "route": "/community-settings",
+        "viewport": {
+          "width": 1440,
+          "height": 1800,
+          "dpr": 1,
+          "zoom": 1
+        },
+        "locale": "zh",
+        "theme": "dark",
+        "accent": "#a7c080",
+        "agent": "默认智能体",
+        "fixture": "shared-local-backend-8004",
+        "visibleVersion": "v2.3.1b1",
+        "shell": {
+          "shellReady": true,
+          "sidebarMode": "workspace-expanded",
+          "sidebarWidth": 280,
+          "navigationItemCount": 9,
+          "historyItemCount": 47,
+          "visibleHistoryItemCount": 47,
+          "agent": "默认智能体",
+          "version": "v2.3.1b1",
+          "referenceTextLength": 1444,
+          "referenceTextSha256": "d12fad9eb73ad62beea0749eccae1b42b8dae9c9e2310e6d5a7b4209f957e093"
+        },
+        "clientWidth": 1440,
+        "scrollWidth": 1440
+      },
+      "after": {
+        "name": "community",
+        "file": "after/community.png",
+        "serviceSha": "021bed2bc5228bdbc051e7f4cd769300ff2e4fd5",
+        "sha256": "31c70e775edf6083493f9b56d05305207fa11d7d60d39b852d580336646de29c",
+        "route": "/community-settings",
+        "viewport": {
+          "width": 1440,
+          "height": 1800,
+          "dpr": 1,
+          "zoom": 1
+        },
+        "locale": "zh",
+        "theme": "dark",
+        "accent": "#a7c080",
+        "agent": "默认智能体",
+        "fixture": "shared-local-backend-8004",
+        "visibleVersion": "v2.3.1b1",
+        "shell": {
+          "shellReady": true,
+          "sidebarMode": "workspace-expanded",
+          "sidebarWidth": 280,
+          "navigationItemCount": 9,
+          "historyItemCount": 47,
+          "visibleHistoryItemCount": 47,
+          "agent": "默认智能体",
+          "version": "v2.3.1b1",
+          "referenceTextLength": 1444,
+          "referenceTextSha256": "d12fad9eb73ad62beea0749eccae1b42b8dae9c9e2310e6d5a7b4209f957e093"
+        },
+        "clientWidth": 1440,
+        "scrollWidth": 1440
+      }
+    },
+    {
+      "name": "community-390",
+      "before": {
+        "name": "community-390",
+        "file": "before/community-390.png",
+        "serviceSha": "30a06ee0dec4cf3af57dc4710109c78b866dfd1b",
+        "sha256": "908a124286ed04cb480e9dab276764725e69cf63517056f84586030e9b3833d4",
+        "route": "/community-settings",
+        "viewport": {
+          "width": 390,
+          "height": 1400,
+          "dpr": 1,
+          "zoom": 1
+        },
+        "locale": "zh",
+        "theme": "dark",
+        "accent": "#a7c080",
+        "agent": "默认智能体",
+        "fixture": "shared-local-backend-8004",
+        "visibleVersion": "v2.3.1b1",
+        "shell": {
+          "shellReady": true,
+          "sidebarMode": "workspace-compact",
+          "sidebarWidth": 56,
+          "navigationItemCount": 11,
+          "historyItemCount": 36,
+          "visibleHistoryItemCount": 0,
+          "agent": "默认智能体",
+          "version": "v2.3.1b1",
+          "referenceTextLength": 1226,
+          "referenceTextSha256": "c8c47bb9d823913c0778c10166fe5a5d710fdea398910c1f12fd5c65fde3e83d"
+        },
+        "clientWidth": 390,
+        "scrollWidth": 390
+      },
+      "after": {
+        "name": "community-390",
+        "file": "after/community-390.png",
+        "serviceSha": "021bed2bc5228bdbc051e7f4cd769300ff2e4fd5",
+        "sha256": "7cabc0f5daa3d46e2c06f9636f2a763ee7b37381b68bb284690aa8265e3ca1e1",
+        "route": "/community-settings",
+        "viewport": {
+          "width": 390,
+          "height": 1400,
+          "dpr": 1,
+          "zoom": 1
+        },
+        "locale": "zh",
+        "theme": "dark",
+        "accent": "#a7c080",
+        "agent": "默认智能体",
+        "fixture": "shared-local-backend-8004",
+        "visibleVersion": "v2.3.1b1",
+        "shell": {
+          "shellReady": true,
+          "sidebarMode": "workspace-compact",
+          "sidebarWidth": 56,
+          "navigationItemCount": 11,
+          "historyItemCount": 36,
+          "visibleHistoryItemCount": 0,
+          "agent": "默认智能体",
+          "version": "v2.3.1b1",
+          "referenceTextLength": 1226,
+          "referenceTextSha256": "c8c47bb9d823913c0778c10166fe5a5d710fdea398910c1f12fd5c65fde3e83d"
+        },
+        "clientWidth": 390,
+        "scrollWidth": 390
+      }
+    }
+  ]
+}
